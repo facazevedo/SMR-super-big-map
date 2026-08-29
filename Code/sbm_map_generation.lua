@@ -467,8 +467,12 @@ end
 -- Preserve SafeCall's exact behavior and result tuple while timing only the opt-in diagnostic run.
 local function TimedSafeCall(name, map, func, ...)
 	local diagnostics = SuperBigMap.Diagnostics
+	local optimization_trace = SuperBigMap.OptimizationTrace
+	local optimization_active = type(optimization_trace) == "table"
+		and type(optimization_trace.IsActive) == "function"
+		and optimization_trace.IsActive() == true
 	if not (diagnostics and type(diagnostics.LoadingEnabled) == "function"
-		and diagnostics.LoadingEnabled() == true) then
+		and diagnostics.LoadingEnabled() == true) and not optimization_active then
 		return SafeCall(func, ...)
 	end
 	local token = LoadingBegin(name, map)
@@ -5036,6 +5040,8 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 			and type(AnnotateDecorRelief) == "function"
 		local direct_terrain_ok, direct_terrain_grids = false, 0
 		if direct_terrain then
+			SuperBigMap.OptimizationTrace.Start(destination,
+				"temporary-source direct terrain stretch")
 			local direct_token = LoadingBegin(
 				"stretch temporary source terrain directly to destination", destination)
 			local call_ok, stretch_ok, stretched_grids = pcall(
@@ -5182,6 +5188,8 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		end
 	end
 	if not ok then
+		SuperBigMap.OptimizationTrace.Before(
+			"temporary source migration rollback cleanup", destination)
 		local pending = SuperBigMap.State.pending_vanilla_underground_seed
 		if type(pending) ~= "table" or pending.surface == destination then
 			SuperBigMap.State.pending_vanilla_underground_seed = nil
@@ -5203,10 +5211,16 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		end
 		destination.SuperBigMapPendingNativeSurfacePassageBuildable = nil
 		ReleaseRetainedNativeSourceMap(destination, "temporary source migration failed")
+		SuperBigMap.OptimizationTrace.After(
+			"temporary source migration rollback cleanup", destination)
 	end
 	SuperBigMap.State.vanilla_source_migration_active = false
 	if not ok then
 		EndSurfaceExpansionLoading(destination)
+		SuperBigMap.OptimizationTrace.Error("temporary source migration", destination,
+			migration_error)
+		SuperBigMap.OptimizationTrace.Finish(destination, false,
+			"temporary source migration failed")
 		error("temporary vanilla source migration failed: " .. tostring(migration_error))
 	end
 	SetLoadingPhase("Finishing the expanded map...")
@@ -9918,6 +9932,7 @@ function Lazy.RestorePendingEngineGlobals()
 end
 
 function Lazy.MarkBlocked(surface, reason)
+	SuperBigMap.OptimizationTrace.Error("lazy underground fail-closed block", surface, reason)
 	if surface ~= nil then Lazy.LIVE_SURFACE_GENERATION_TRANSACTIONS[surface] = nil end
 	local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
 	local report = surface and surface.SuperBigMapLazyUndergroundFeasibilityReport
@@ -10062,6 +10077,8 @@ function Lazy.PublishSurfaceCapsules(surface, descriptor)
 	end
 	local created = {}
 	local function rollback(reason)
+		SuperBigMap.OptimizationTrace.Before("lazy capsule publication rollback cleanup",
+			surface)
 		local new_objects = { UndergroundPassage = {}, UndergroundTunnelMarker = {},
 			SurfaceUndergroundTunnelSign = {} }
 		local scan_ok = true
@@ -10106,8 +10123,13 @@ function Lazy.PublishSurfaceCapsules(surface, descriptor)
 		end)
 		cleanup_verified = cleanup_verified and residual_ok and residual_count == 0
 		if not cleanup_verified then
+			SuperBigMap.OptimizationTrace.Error(
+				"lazy capsule publication rollback cleanup", surface,
+				"rollback could not prove zero residual objects")
 			return nil, tostring(reason) .. " | capsule object rollback could not prove zero passages/markers/signs"
 		end
+		SuperBigMap.OptimizationTrace.After("lazy capsule publication rollback cleanup",
+			surface, { residuals = residual_count })
 		return nil, reason
 	end
 	for index, capsule in ipairs(descriptor.capsules or {}) do
@@ -10187,8 +10209,12 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 			(tonumber(report.fresh_grid_main_plan_invocations) or 0) + 1
 	end
 	local main_plan_started = Lazy.Now()
+	SuperBigMap.OptimizationTrace.Before("lazy capsule main plan", surface, {
+		after_canonical_grid = tostring(after_canonical_grid),
+	})
 	local capsules, plan_report = Lazy.BuildCapsulePlan(surface, pending, next_map)
 	local main_plan_ms = math.max(0, Lazy.Now() - main_plan_started)
+	SuperBigMap.OptimizationTrace.After("lazy capsule main plan", surface, plan_report)
 	if type(plan_report) == "table" then
 		plan_report.stock_search_after_canonical_grid = after_canonical_grid
 	end
@@ -10220,8 +10246,11 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 			(tonumber(report.fresh_grid_replay_invocations) or 0) + 1
 	end
 	local replay_started = Lazy.Now()
+	SuperBigMap.OptimizationTrace.Before("lazy capsule deterministic replay", surface)
 	local twins, twin_report = Lazy.ReplayCapsulePlan(surface, pending, next_map)
 	local replay_ms = math.max(0, Lazy.Now() - replay_started)
+	SuperBigMap.OptimizationTrace.After("lazy capsule deterministic replay", surface,
+		twin_report)
 	if type(twin_report) == "table" then
 		twin_report.stock_search_after_canonical_grid = after_canonical_grid
 	end
@@ -10386,18 +10415,33 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 	descriptor.capsule_planner_stock_search_cap = plan_report.full_search_cap
 	descriptor.private_rng.final_state = plan_report.private_final_state
 	local publication_started = Lazy.Now()
+	SuperBigMap.OptimizationTrace.Before("lazy capsule object publication", surface, {
+		capsules = #capsules,
+	})
 	local created, publish_reason = Lazy.PublishSurfaceCapsules(surface, descriptor)
 	report.fresh_grid_publication_ms = math.max(0, Lazy.Now() - publication_started)
+	if created then
+		SuperBigMap.OptimizationTrace.After("lazy capsule object publication", surface, {
+			created = #created, publication_ms = report.fresh_grid_publication_ms,
+		})
+	else
+		SuperBigMap.OptimizationTrace.Error("lazy capsule object publication", surface,
+			publish_reason)
+	end
 	if not created or #created ~= 2 then return Lazy.MarkBlocked(surface, publish_reason) end
 	-- Capsule publication permanently removes the only consumer of the retained native Surface view.
 	-- Release its non-serializable map/grid now, before T1 and before an immediate save can occur.
+	SuperBigMap.OptimizationTrace.Before("lazy release retained native source", surface)
 	ReleaseRetainedNativeSourceMap(surface, outer_passage_active
 		and "v972 bounded direct-ring passage capsules published"
 		or "v970 capped-stock capsules published")
+	SuperBigMap.OptimizationTrace.After("lazy release retained native source", surface)
 	local retained_buildable = surface.SuperBigMapPendingNativeSurfacePassageBuildable
 	if type(retained_buildable) == "table" and retained_buildable.grid then
+		SuperBigMap.OptimizationTrace.Before("lazy free retained native buildable grid", surface)
 		SuperBigMap.FreeOwnedGrid(retained_buildable.grid)
 		retained_buildable.grid = nil
+		SuperBigMap.OptimizationTrace.After("lazy free retained native buildable grid", surface)
 	end
 	surface.SuperBigMapPendingNativeSurfacePassageBuildable = nil
 	descriptor.state = "surface-capsules-published-awaiting-final-grid"
@@ -10454,12 +10498,38 @@ function Lazy.PrepareImplementationCapsulesAroundRebuild(surface, rebuild, reaso
 	local fallback_count = 0
 	local function canonical_rebuild(label)
 		rebuild_count = rebuild_count + 1
+		SuperBigMap.OptimizationTrace.Before("lazy canonical RebuildFinal", surface, {
+			label = label, ordinal = rebuild_count,
+		})
 		local ok, err = rebuild(label)
+		if ok == true then
+			SuperBigMap.OptimizationTrace.After("lazy canonical RebuildFinal", surface, {
+				label = label, ordinal = rebuild_count,
+			})
+		else
+			SuperBigMap.OptimizationTrace.Error("lazy canonical RebuildFinal", surface, err, {
+				label = label, ordinal = rebuild_count,
+			})
+		end
 		if ok ~= true and retry_rebuild == true then
 			fallback_count = fallback_count + 1
 			rebuild_count = rebuild_count + 1
+			SuperBigMap.OptimizationTrace.Before(
+				"lazy canonical RebuildFinal fallback", surface, {
+					label = label, ordinal = rebuild_count,
+				})
 			local fallback_ok, fallback_err = rebuild(label .. " failure fallback")
-			if fallback_ok == true then return true, nil end
+			if fallback_ok == true then
+				SuperBigMap.OptimizationTrace.After(
+					"lazy canonical RebuildFinal fallback", surface, {
+						label = label, ordinal = rebuild_count,
+					})
+				return true, nil
+			end
+			SuperBigMap.OptimizationTrace.Error(
+				"lazy canonical RebuildFinal fallback", surface, fallback_err, {
+					label = label, ordinal = rebuild_count,
+				})
 			return false, tostring(err) .. " | fallback failed: " .. tostring(fallback_err)
 		end
 		return ok == true, err
@@ -10802,9 +10872,12 @@ function Lazy.Capture(surface, pending, next_map)
 end
 
 function Lazy.FinalizeImplementation(surface)
+	SuperBigMap.OptimizationTrace.Before("lazy capsule finalization", surface)
 	local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
 	local report = surface and surface.SuperBigMapLazyUndergroundFeasibilityReport
 	if type(descriptor) ~= "table" or type(report) ~= "table" then
+		SuperBigMap.OptimizationTrace.EarlyReturn("lazy capsule finalization", surface,
+			"no eligible descriptor/report")
 		return true, report
 	end
 	if descriptor.state == "fallback-eager-after-precommit-failure"
@@ -10812,13 +10885,25 @@ function Lazy.FinalizeImplementation(surface)
 		report.enablement_ready = false
 		report.used = false
 		report.fallback_eager_completed = true
+		SuperBigMap.OptimizationTrace.EarlyReturn("lazy capsule finalization", surface,
+			"literal eager fallback authoritative")
 		return true, report
 	end
-	if descriptor.state == "blocked" then return false, descriptor.failure end
+	if descriptor.state == "blocked" then
+		SuperBigMap.OptimizationTrace.Error("lazy capsule finalization", surface,
+			descriptor.failure)
+		return false, descriptor.failure
+	end
 	if descriptor.state ~= "surface-capsules-published-awaiting-final-grid" then
 		return Lazy.MarkBlocked(surface, "unexpected post-final lazy state: " .. tostring(descriptor.state))
 	end
+	SuperBigMap.OptimizationTrace.Before("lazy validate published capsules", surface)
 	local valid, reason = Lazy.ValidatePublishedCapsules(surface, descriptor)
+	if valid then
+		SuperBigMap.OptimizationTrace.After("lazy validate published capsules", surface)
+	else
+		SuperBigMap.OptimizationTrace.Error("lazy validate published capsules", surface, reason)
+	end
 	if not valid then return Lazy.MarkBlocked(surface, reason) end
 	report.capsule_plan_pending = false
 	report.final_grid_revalidation = true
@@ -10862,6 +10947,7 @@ function Lazy.FinalizeImplementation(surface)
 		digest = descriptor.plan_digest, final_grid_revalidation = "true",
 		access_gate_installed = tostring(report.access_gate_installed == true),
 	}, surface)
+	SuperBigMap.OptimizationTrace.After("lazy capsule finalization", surface, report)
 	return report.enablement_ready == true, report
 end
 
@@ -11096,6 +11182,239 @@ function Lazy.OwnedSurfaceGenerationInFlight(surface, descriptor, report)
 			"closing-canonical-rebuild"
 	end
 	return false
+end
+
+-- Ralph-only, process-local optimization trace. Production pays no timer, formatting, console, or
+-- file-I/O cost unless a staging script supplies a non-empty unique path before T0. The path is not
+-- a config field and is never copied onto a map/save. Trace publication is deliberately fail-open:
+-- generation behavior, RNG, and operation order remain authoritative even if diagnostics fail.
+SuperBigMap.OptimizationTrace = SuperBigMap.OptimizationTrace or {}
+SuperBigMap.OptimizationTrace.SCHEMA = "smr.sbm.optimization-trace.v1"
+SuperBigMap.OptimizationTrace.MAX_RECORDS = 1024
+SuperBigMap.OptimizationTrace.MAX_BYTES = 524288
+
+function SuperBigMap.OptimizationTrace.ConfiguredPath()
+	local path = rawget(_G, "g_SmrRalphOptimizationTracePath")
+	return type(path) == "string" and path ~= "" and #path <= 1024 and path or nil
+end
+
+function SuperBigMap.OptimizationTrace.Now()
+	local clock = Global("GetPreciseTicks") or Global("RealTime")
+	if type(clock) ~= "function" then return 0 end
+	local ok, value = pcall(clock)
+	return ok and type(value) == "number" and value or 0
+end
+
+function SuperBigMap.OptimizationTrace.IsActive()
+	local trace = SuperBigMap.OptimizationTrace
+	local runtime = trace.runtime
+	return type(runtime) == "table" and runtime.active == true
+		and runtime.path == trace.ConfiguredPath()
+end
+
+function SuperBigMap.OptimizationTrace.Encode(value, limit)
+	value = tostring(value == nil and "" or value):gsub("[\r\n\t|;]+", " ")
+	limit = tonumber(limit) or 160
+	return #value <= limit and value or (value:sub(1, limit) .. "...")
+end
+
+function SuperBigMap.OptimizationTrace.MapFields(map)
+	local mapdata = (type(map) == "table" or type(map) == "userdata") and map.mapdata or nil
+	return tostring(map and map.slot or ""),
+		SuperBigMap.OptimizationTrace.Encode(type(mapdata) == "table" and mapdata.Environment or ""),
+		SuperBigMap.OptimizationTrace.Encode(type(mapdata) == "table" and mapdata.id
+			or map and map.name or "")
+end
+
+function SuperBigMap.OptimizationTrace.EncodeCounters(data)
+	if type(data) ~= "table" then return "" end
+	local keys = {}
+	for key, value in pairs(data) do
+		if type(value) ~= "table" and type(value) ~= "function"
+			and type(value) ~= "userdata" and type(value) ~= "thread" then
+			keys[#keys + 1] = key
+		end
+	end
+	table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+	local fields = {}
+	for index = 1, math.min(#keys, 32) do
+		local key = keys[index]
+		fields[#fields + 1] = SuperBigMap.OptimizationTrace.Encode(key, 64) .. "="
+			.. SuperBigMap.OptimizationTrace.Encode(data[key], 160)
+	end
+	if #keys > 32 then fields[#fields + 1] = "omitted=" .. tostring(#keys - 32) end
+	return table.concat(fields, ";")
+end
+
+function SuperBigMap.OptimizationTrace.Publish()
+	local trace = SuperBigMap.OptimizationTrace
+	local runtime = trace.runtime
+	if type(runtime) ~= "table" or runtime.active ~= true
+		or runtime.write_disabled == true then return false end
+	local write = Global("AsyncStringToFile")
+	if type(write) ~= "function" then
+		runtime.write_failures = (runtime.write_failures or 0) + 1
+		runtime.write_disabled = true
+		return false
+	end
+	local payload = table.concat(runtime.rows, "\n") .. "\n"
+	if #payload > trace.MAX_BYTES then
+		runtime.truncated = true
+		runtime.write_disabled = true
+		return false
+	end
+	local started = trace.Now()
+	local call_ok, write_error = pcall(write, runtime.path, payload)
+	local elapsed = math.max(0, trace.Now() - started)
+	runtime.write_ms = (runtime.write_ms or 0) + elapsed
+	runtime.last_publish_ms = elapsed
+	if not call_ok or write_error then
+		runtime.write_failures = (runtime.write_failures or 0) + 1
+		runtime.last_write_error = trace.Encode(call_ok and write_error or write_error)
+		if runtime.write_failures >= 3 then runtime.write_disabled = true end
+		return false
+	end
+	return true
+end
+
+function SuperBigMap.OptimizationTrace.EmitActive(edge, phase, map, data)
+	local trace = SuperBigMap.OptimizationTrace
+	local runtime = trace.runtime
+	if #runtime.rows >= trace.MAX_RECORDS + 1 then
+		runtime.truncated = true
+		return false
+	end
+	local now = trace.Now()
+	local raw_elapsed = math.max(0, now - runtime.started_at)
+	local raw_delta = math.max(0, now - runtime.previous_at)
+	local diagnostic_before = runtime.emit_ms or 0
+	local net_elapsed = math.max(0, raw_elapsed - diagnostic_before)
+	local net_delta = math.max(0, raw_delta - (runtime.diagnostic_since_previous or 0))
+	runtime.sequence = runtime.sequence + 1
+	local slot, environment, map_name = trace.MapFields(map or runtime.map)
+	local line = table.concat({
+		tostring(runtime.sequence), tostring(raw_elapsed), tostring(net_elapsed),
+		tostring(raw_delta), tostring(net_delta), trace.Encode(edge, 24),
+		trace.Encode(phase, 160), slot, environment, map_name,
+		trace.EncodeCounters(data), tostring(runtime.emit_ms or 0),
+		tostring(runtime.write_ms or 0),
+		tostring(runtime.console_ms or 0), tostring(runtime.write_failures or 0),
+	}, "\t")
+	runtime.rows[#runtime.rows + 1] = line
+	runtime.previous_at = now
+	local console_started = trace.Now()
+	local print_fn = Global("print")
+	if type(print_fn) == "function" then
+		pcall(print_fn, "[SBM OptimizationTrace] seq=" .. tostring(runtime.sequence)
+			.. " edge=" .. trace.Encode(edge, 24) .. " phase=" .. trace.Encode(phase, 160)
+			.. " elapsed_ms=" .. tostring(raw_elapsed) .. " delta_ms=" .. tostring(raw_delta))
+	end
+	local console_elapsed = math.max(0, trace.Now() - console_started)
+	runtime.console_ms = (runtime.console_ms or 0) + console_elapsed
+	trace.Publish()
+	local write_elapsed = runtime.last_publish_ms or 0
+	local emit_elapsed = math.max(0, trace.Now() - now)
+	runtime.emit_ms = (runtime.emit_ms or 0) + emit_elapsed
+	runtime.compute_ms = (runtime.compute_ms or 0)
+		+ math.max(0, emit_elapsed - console_elapsed - write_elapsed)
+	runtime.diagnostic_since_previous = emit_elapsed
+	runtime.last_publish_ms = 0
+	if map then
+		map.SuperBigMapOptimizationTraceRecords = runtime.sequence
+		map.SuperBigMapOptimizationTraceWriteMs = runtime.write_ms
+		map.SuperBigMapOptimizationTraceConsoleMs = runtime.console_ms
+		map.SuperBigMapOptimizationTraceComputeMs = runtime.compute_ms
+		map.SuperBigMapOptimizationTraceOverheadMs = runtime.emit_ms
+	end
+	return true
+end
+
+function SuperBigMap.OptimizationTrace.Emit(edge, phase, map, data)
+	local trace = SuperBigMap.OptimizationTrace
+	if not trace.IsActive() then return false end
+	local runtime = trace.runtime
+	local emit_ok, emitted = pcall(trace.EmitActive, edge, phase, map, data)
+	if not emit_ok then
+		-- A malformed diagnostic value or an engine-side console/file surprise must never abort
+		-- generation. Preserve only bounded scalar failure state and leave gameplay untouched.
+		runtime.emit_failures = math.min(3, (runtime.emit_failures or 0) + 1)
+		runtime.last_emit_error = tostring(emitted):sub(1, 160)
+		if runtime.emit_failures >= 3 then runtime.write_disabled = true end
+		return false
+	end
+	return emitted == true
+end
+
+function SuperBigMap.OptimizationTrace.Start(map, reason)
+	local trace = SuperBigMap.OptimizationTrace
+	local path = trace.ConfiguredPath()
+	if not path then return false end
+	if trace.IsActive() then return true end
+	local now = trace.Now()
+	trace.runtime = {
+		active = true, path = path, map = map, started_at = now, previous_at = now,
+		sequence = 0, rows = {
+			"schema=" .. trace.SCHEMA,
+			"sequence\telapsed_ms_raw\telapsed_ms_net\tdelta_ms_raw\tdelta_ms_net"
+				.. "\tedge\tphase\tmap_slot\tenvironment\tmap\tcounters"
+				.. "\tdiagnostic_emit_ms_before\tdiagnostic_write_ms_before"
+				.. "\tdiagnostic_console_ms_before\twrite_failures",
+		}, emit_ms = 0, compute_ms = 0, write_ms = 0, console_ms = 0,
+		diagnostic_since_previous = 0,
+		write_failures = 0, emit_failures = 0, write_disabled = false, truncated = false,
+	}
+	trace.Emit("SESSION", "optimization.trace.start", map, { reason = tostring(reason or "") })
+	return true
+end
+
+function SuperBigMap.OptimizationTrace.Before(phase, map, data)
+	return SuperBigMap.OptimizationTrace.Emit("BEFORE", phase, map, data)
+end
+
+function SuperBigMap.OptimizationTrace.After(phase, map, data)
+	return SuperBigMap.OptimizationTrace.Emit("AFTER", phase, map, data)
+end
+
+function SuperBigMap.OptimizationTrace.Step(phase, map, data)
+	return SuperBigMap.OptimizationTrace.Emit("STEP", phase, map, data)
+end
+
+function SuperBigMap.OptimizationTrace.Error(phase, map, reason, data)
+	local trace = SuperBigMap.OptimizationTrace
+	if not trace.IsActive() then return false end
+	-- Never annotate an authoritative report table in place: the trace is observational only.
+	local fields = { error = tostring(reason or "unknown") }
+	if type(data) == "table" then
+		for key, value in pairs(data) do fields[key] = value end
+	end
+	return trace.Emit("ERROR", phase, map, fields)
+end
+
+function SuperBigMap.OptimizationTrace.EarlyReturn(phase, map, reason)
+	return SuperBigMap.OptimizationTrace.Emit("EARLY_RETURN", phase, map,
+		{ reason = tostring(reason or "") })
+end
+
+function SuperBigMap.OptimizationTrace.Finish(map, ok, reason)
+	local trace = SuperBigMap.OptimizationTrace
+	if not trace.IsActive() then return false end
+	trace.Emit("SESSION", "optimization.trace.finish", map, {
+		ok = tostring(ok == true), reason = tostring(reason or ""),
+		final_publish_excluded_from_file_overhead = "true",
+	})
+	local runtime = trace.runtime
+	if map and type(runtime) == "table" then
+		map.SuperBigMapOptimizationTraceRecords = runtime.sequence
+		map.SuperBigMapOptimizationTraceWriteMs = runtime.write_ms
+		map.SuperBigMapOptimizationTraceConsoleMs = runtime.console_ms
+		map.SuperBigMapOptimizationTraceComputeMs = runtime.compute_ms
+		map.SuperBigMapOptimizationTraceOverheadMs = runtime.emit_ms
+		map.SuperBigMapOptimizationTraceWriteFailures = runtime.write_failures
+		map.SuperBigMapOptimizationTraceEmitFailures = runtime.emit_failures
+		map.SuperBigMapOptimizationTraceTruncated = runtime.truncated == true
+	end
+	runtime.active = false
+	return true
 end
 
 function Lazy.ValidatePersistedState(surface)
@@ -13894,11 +14213,17 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 		-- full-map fallback while MapGenerated/CityInitialized can satisfy the gate.
 		return true
 	end
+	SuperBigMap.OptimizationTrace.Start(map,
+		"surface stretch readiness: " .. tostring(readiness_source or readiness))
 	local create_thread = Global("CreateRealTimeThread")
 	local yield_protected_call = Global("sprocall")
 	if type(create_thread) ~= "function" or type(yield_protected_call) ~= "function" then
+		SuperBigMap.OptimizationTrace.EarlyReturn("surface stretch scheduling", map,
+			"real-time thread API unavailable")
 		map.SuperBigMapStretchPipelinePending = false
 		EndSurfaceExpansionLoading(map)
+		SuperBigMap.OptimizationTrace.Finish(map, false,
+			"surface stretch scheduling API unavailable")
 		return false
 	end
 	map.SuperBigMapSurfaceStretchAwaitingReadiness = false
@@ -13911,6 +14236,10 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 		local deferred_surface_error = nil
 		local function publish_deferred_surface_completion()
 			if deferred_surface_completion ~= true then return false end
+			SuperBigMap.OptimizationTrace.Before(
+				"surface completion publication", map, {
+					terrain_grids = deferred_surface_n_grids,
+				})
 			if map.SuperBigMapStretchPipelinePending == true then
 				FinalizeDeferredStretchState(map, "surface")
 			end
@@ -13923,6 +14252,14 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				error = deferred_surface_error and tostring(deferred_surface_error) or "",
 			}, deferred_surface_error == nil)
 			deferred_surface_completion = false
+			SuperBigMap.OptimizationTrace.After(
+				"surface completion publication", map, {
+					stretch_done = tostring(map.SuperBigMapSurfaceStretchDone == true),
+					post_pipeline_revalidation_complete = tostring(
+						map.SuperBigMapSurfacePostPipelineRevalidationComplete == true),
+				})
+			SuperBigMap.OptimizationTrace.Finish(map, true,
+				"deferred surface completion published")
 			return true
 		end
 		local function rebuild_surface_final(reason)
@@ -13946,7 +14283,10 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 			EndSurfaceExpansionLoading(map)
 		end
 		if map.SuperBigMapSurfaceStretchDone == true then
+			SuperBigMap.OptimizationTrace.EarlyReturn("surface expansion pipeline", map,
+				"surface stretch already done")
 			end_loading()
+			SuperBigMap.OptimizationTrace.Finish(map, true, "surface already complete")
 			return
 		end
 		-- Only maps the mod ACTUALLY expanded are candidates. Skip SILENTLY (no
@@ -13964,14 +14304,20 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 		local custom_ok = not (type(grid) == "table" and type(grid.UseCustomSectorsForMap) == "function")
 			or grid.UseCustomSectorsForMap(map)
 		if map_name == "PreGame" or not is_mod_map or not custom_ok then
+			SuperBigMap.OptimizationTrace.EarlyReturn("surface expansion pipeline", map,
+				"ineligible map")
 			map.SuperBigMapSurfaceStretchDone = true
 			end_loading()
+			SuperBigMap.OptimizationTrace.Finish(map, true, "ineligible map skipped")
 			return
 		end
 		local map_w, map_h = TerrainSize(map)
 		if type(map_w) ~= "number" or map_w <= 0 or type(map_h) ~= "number" or map_h <= 0 then
+			SuperBigMap.OptimizationTrace.EarlyReturn("surface expansion pipeline", map,
+				"invalid map dimensions")
 			map.SuperBigMapSurfaceStretchDone = true
 			end_loading()
+			SuperBigMap.OptimizationTrace.Finish(map, false, "invalid map dimensions")
 			return
 		end
 
@@ -14033,7 +14379,11 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					-- each object's relationship to the PRE-stretch ground).
 					if type(AnnotateDecorRelief) == "function"
 						and map.SuperBigMapDecorReliefCapturedFromTemporarySource ~= true then
+						SuperBigMap.OptimizationTrace.Before(
+							"surface annotate decoration relief", map)
 						AnnotateDecorRelief(map)
+						SuperBigMap.OptimizationTrace.After(
+							"surface annotate decoration relief", map)
 					elseif map.SuperBigMapDecorReliefCapturedFromTemporarySource == true then
 						LoadingStep("using decor relief captured from temporary source", nil, map)
 					end
@@ -14041,7 +14391,13 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						-- The next call mutates terrain heights, so the native source-grid buildability
 						-- snapshot is no longer current until the explicit final rebuild below succeeds.
 						map.SuperBigMapSurfaceBuildableCurrent = false
+						SuperBigMap.OptimizationTrace.Before(
+							"surface StretchSourceToFull", map)
 						ok_stretch, n_grids = StretchSourceToFull(map)
+						SuperBigMap.OptimizationTrace.After(
+							"surface StretchSourceToFull", map, {
+								ok = tostring(ok_stretch == true), grids = n_grids,
+							})
 					else
 						ok_stretch, n_grids = true, 0
 					end
@@ -14061,9 +14417,21 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				-- (must run AFTER the height stretch so SetTerrainZ reads the new surface).
 				if type(ScaleDecorationsToFull) == "function" then
 					SetLoadingPhase("Repositioning surface rocks and decorations")
+					SuperBigMap.OptimizationTrace.Before(
+						"surface scale decorations", map)
 					ScaleDecorationsToFull(map, pass_batch_active)
+					SuperBigMap.OptimizationTrace.After(
+						"surface scale decorations", map)
 				end
+				SuperBigMap.OptimizationTrace.Before(
+					"surface restore prefab feature game logic", map)
 				local feature_ok, feature_stats = RestoreTransferredPrefabFeatureGameLogic(map)
+				SuperBigMap.OptimizationTrace.After(
+					"surface restore prefab feature game logic", map, {
+						ok = tostring(feature_ok == true),
+						markers = feature_stats and feature_stats.markers,
+						created = feature_stats and feature_stats.created,
+					})
 				if feature_ok ~= true then
 					error("surface prefab feature correspondence failed: "
 						.. tostring(feature_stats and feature_stats.error or "unknown error"))
@@ -14076,15 +14444,31 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						error("staged native enrichment recreation API unavailable")
 					end
 					SetLoadingPhase("Restoring the vanilla resources and anomalies")
+					SuperBigMap.OptimizationTrace.Before(
+						"surface recreate staged native enrichments", map, {
+							records = staged_record_count,
+						})
 					local recreated, recreate_stats = position_deposits.RecreateStagedNativeEnrichments(
 						map, "surface after terrain and decoration stretch")
+					SuperBigMap.OptimizationTrace.After(
+						"surface recreate staged native enrichments", map, {
+							ok = tostring(recreated == true),
+							created = recreate_stats and recreate_stats.created,
+						})
 					if recreated ~= true then
 						error("native enrichment recreation after stretch failed: "
 							.. tostring(recreate_stats and recreate_stats.error or "unknown"))
 					end
+					SuperBigMap.OptimizationTrace.Before(
+						"surface finalize deferred breakthrough anomalies", map)
 					local breakthrough_ok, breakthrough_stats =
 						SuperBigMap.FinalizeDeferredBreakthroughAnomalyInitialization(
 							map, "surface after native enrichment recreation")
+					SuperBigMap.OptimizationTrace.After(
+						"surface finalize deferred breakthrough anomalies", map, {
+							ok = tostring(breakthrough_ok == true),
+							finalized = breakthrough_stats and breakthrough_stats.finalized,
+						})
 					if breakthrough_ok ~= true then
 						error("deferred vanilla breakthrough initialization failed: "
 							.. tostring(breakthrough_stats and breakthrough_stats.error or "unknown"))
@@ -14181,8 +14565,15 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 							error("final surface RebuildBuildableGrid failed: " .. tostring(rebuild_err))
 						end
 						map.SuperBigMapSurfaceBuildableCurrent = true
+						SuperBigMap.OptimizationTrace.Before(
+							"surface audit mountain-base buildable aprons", map)
 						local apron_ok, apron_stats =
 							TerrainCopy.AuditNaturalMountainBaseBuildableAprons(map)
+						SuperBigMap.OptimizationTrace.After(
+							"surface audit mountain-base buildable aprons", map, {
+								ok = tostring(apron_ok == true), created = apron_stats and apron_stats.created,
+								failed_centers = apron_stats and apron_stats.failed_centers,
+							})
 						LoadingStep("surface mountain-base apron buildable verdict", {
 							ok = tostring(apron_ok == true),
 							created = apron_stats and apron_stats.created or 0,
@@ -14240,11 +14631,19 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 							-- TopUpDeposits may have published candidates validated against the old grids.
 							-- Force anomaly/effect selection to observe the rebuilt terrain instead.
 							if type(deposits.ClearTopUpPlacementPool) == "function" then
+								SuperBigMap.OptimizationTrace.Before(
+									"surface clear top-up placement pool after terrain rebuild", map)
 								deposits.ClearTopUpPlacementPool(map)
+								SuperBigMap.OptimizationTrace.After(
+									"surface clear top-up placement pool after terrain rebuild", map)
 							end
 						end
+						SuperBigMap.OptimizationTrace.Before(
+							"surface audit outer resource terrain", map)
 						local resource_terrain_ok, resource_terrain_audit =
 							TerrainCopy.AuditOuterResourceTerrain(map)
+						SuperBigMap.OptimizationTrace.After(
+							"surface audit outer resource terrain", map, resource_terrain_audit)
 						local first_resource_failures = tonumber(resource_terrain_audit
 							and resource_terrain_audit.resource_failures) or 0
 						local first_rocket_failures = tonumber(resource_terrain_audit
@@ -14285,10 +14684,19 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 							resource_repair_rebuild_ms = resource_repair_rebuild_ms
 								+ (GetPreciseTicks() - repair_rebuild_started)
 							if type(deposits.ClearTopUpPlacementPool) == "function" then
+								SuperBigMap.OptimizationTrace.Before(
+									"surface clear top-up placement pool after terrain repair", map)
 								deposits.ClearTopUpPlacementPool(map)
+								SuperBigMap.OptimizationTrace.After(
+									"surface clear top-up placement pool after terrain repair", map)
 							end
+							SuperBigMap.OptimizationTrace.Before(
+								"surface audit repaired outer resource terrain", map)
 							resource_terrain_ok, resource_terrain_audit =
 								TerrainCopy.AuditOuterResourceTerrain(map)
+							SuperBigMap.OptimizationTrace.After(
+								"surface audit repaired outer resource terrain", map,
+								resource_terrain_audit)
 						end
 						local final_resource_terrain_report =
 							map.SuperBigMapOuterResourceTerrainReport
@@ -14487,8 +14895,12 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 							end
 						end
 						if type(deposits.CensusFinalOuterResourceTopUps) == "function" then
+							SuperBigMap.OptimizationTrace.Before(
+								"surface census final outer resource top-ups", map)
 							local quota_ok, quota_stats = deposits.CensusFinalOuterResourceTopUps(map,
 								"pre-reveal marker census surface final", false)
+							SuperBigMap.OptimizationTrace.After(
+								"surface census final outer resource top-ups", map, quota_stats)
 							map.SuperBigMapOuterResourceCensusPreGameInit = quota_stats
 							if quota_ok ~= true then
 								error("outer resource top-up census failed: ordinary_resource_topups="
@@ -14514,8 +14926,12 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 							end
 						end
 						if type(deposits.SchedulePostDeferredSurfaceResourceTopUpCensus) == "function" then
+							SuperBigMap.OptimizationTrace.Before(
+								"surface schedule post-deferred resource census", map)
 							deposits.SchedulePostDeferredSurfaceResourceTopUpCensus(map,
 								"surface final density suite")
+							SuperBigMap.OptimizationTrace.After(
+								"surface schedule post-deferred resource census", map)
 						end
 						if type(deposits.DebugAuditFinalEnrichments) == "function" then
 							local audit_token = LoadingBegin("diagnostic surface enrichment audit", map)
@@ -14565,18 +14981,26 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 									.. tostring(passage_report and (passage_report.error
 										or passage_report.passage_pad_error) or "missing report"))
 							end
+							SuperBigMap.OptimizationTrace.Before(
+								"surface audit outer passage-pad spacing", map)
 							local passage_spacing_ok, passage_spacing =
 								deposits.AuditTopUpVanillaRepulsion(map,
 									"surface final after outer passage pad reservation")
+							SuperBigMap.OptimizationTrace.After(
+								"surface audit outer passage-pad spacing", map, passage_spacing)
 							if passage_spacing_ok ~= true
 								or tonumber(passage_spacing and passage_spacing.outer_passage_pad_failures) ~= 0 then
 								error("outer passage-pad hard spacing audit failed: "
 									.. tostring(passage_spacing
 										and passage_spacing.first_outer_passage_pad_failure or "missing report"))
 							end
+							SuperBigMap.OptimizationTrace.Before(
+								"surface census outer passage pads", map)
 							local passage_census_ok, passage_census =
 								deposits.CensusFinalOuterResourceTopUps(map,
 									"after outer passage pad reservation", false)
+							SuperBigMap.OptimizationTrace.After(
+								"surface census outer passage pads", map, passage_census)
 							if passage_census_ok ~= true
 								or tonumber(passage_census and passage_census.outer_passage_pads) ~= 2
 								or tonumber(passage_census
@@ -14611,7 +15035,11 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 							}, map)
 						end
 						if type(deposits.ClearTopUpPlacementPool) == "function" then
+							SuperBigMap.OptimizationTrace.Before(
+								"surface final top-up placement-pool cleanup", map)
 							deposits.ClearTopUpPlacementPool(map)
+							SuperBigMap.OptimizationTrace.After(
+								"surface final top-up placement-pool cleanup", map)
 						end
 					end
 				end
@@ -14632,10 +15060,14 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								and underground_map.SuperBigMapPassageSurfaceFinalCommitted ~= true
 								and underground_map.SuperBigMapUndergroundStretchDone ~= true then
 								seen_underground[underground_map] = true
+								SuperBigMap.OptimizationTrace.Before(
+									"surface align passage pair to shared hex", map)
 								local plan_ok, plan_stats = AlignPassagePairsToSharedHex(underground_map, {
 									source_bootstrap = true,
 									prepare_surface_pad = true,
 								})
+								SuperBigMap.OptimizationTrace.After(
+									"surface align passage pair to shared hex", map, plan_stats)
 								if plan_ok ~= true then
 									error("final surface passage commitment failed: "
 										.. tostring(plan_stats and plan_stats.error or "unknown error")
@@ -14650,19 +15082,29 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					-- entrance structures and place each badge relative to that coordinate exactly once.
 					if type(MoveEntranceVisualsToScale) == "function" then
 						SetLoadingPhase("Aligning the underground entrances")
+						SuperBigMap.OptimizationTrace.Before(
+							"surface move entrance visuals", map)
 						MoveEntranceVisualsToScale(map)
+						SuperBigMap.OptimizationTrace.After(
+							"surface move entrance visuals", map)
 					end
 				end
 				local rockets = SuperBigMap.RocketRules
 				if rockets and type(rockets.ResnapRocketsOnMap) == "function" then
+					SuperBigMap.OptimizationTrace.Before("surface resnap rockets", map)
 					SafeCall( rockets.ResnapRocketsOnMap, map)
+					SuperBigMap.OptimizationTrace.After("surface resnap rockets", map)
 				end
 				-- The first overview can begin before temporary-source objects are migrated.
 				-- Initialize the final passage and badge synchronously now that their final
 				-- positions exist; otherwise vanilla first sees them on the next zoom event.
 				local highlight = SuperBigMap.SectorHighlight
 				if highlight and type(highlight.EnsureEntranceVisualsReady) == "function" then
+					SuperBigMap.OptimizationTrace.Before(
+						"surface initialize entrance visuals", map)
 					highlight.EnsureEntranceVisualsReady(map, nil, "surface stretch complete")
+					SuperBigMap.OptimizationTrace.After(
+						"surface initialize entrance visuals", map)
 				end
 				-- LAST WORD ON THE SURFACE GAMEPLAY GRIDS, the exact counterpart of the underground's
 				-- closing rebuild. Everything above -- the density suite, the passage commitment, the
@@ -14685,7 +15127,16 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				end
 			end)
 			-- Error-path cleanup. On the normal path the transaction was already resumed above.
+			SuperBigMap.OptimizationTrace.Before("surface pass-edit rollback cleanup", map, {
+				pipeline_ok = tostring(ok_branch == true),
+			})
 			local cleanup_ok, cleanup_err = ResumeCombinedPassEdits("surface stretch cleanup", true)
+			if cleanup_ok then
+				SuperBigMap.OptimizationTrace.After("surface pass-edit rollback cleanup", map)
+			else
+				SuperBigMap.OptimizationTrace.Error("surface pass-edit rollback cleanup", map,
+					cleanup_err)
+			end
 			if not cleanup_ok then
 				if ok_branch then
 					ok_branch = false
@@ -14700,7 +15151,11 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 			}, ok_branch)
 			-- Balanced resume (always, even on error) so the loop detector is restored.
 			if type(resume_ild) == "function" then SafeCall(resume_ild, "SuperBigMapStretch") end
-			if type(ClearDecorRelief) == "function" then ClearDecorRelief(map) end
+			if type(ClearDecorRelief) == "function" then
+				SuperBigMap.OptimizationTrace.Before("surface decor-relief cleanup", map)
+				ClearDecorRelief(map)
+				SuperBigMap.OptimizationTrace.After("surface decor-relief cleanup", map)
+			end
 			local hold_completion_for_revalidation = ok_branch
 				and defer_immediate_final
 				and cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true)
@@ -14726,6 +15181,10 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				deferred_surface_error = nil
 			else
 				-- Preserve the legacy failure exit and the non-optimized success path.
+				SuperBigMap.OptimizationTrace.Before(
+					"surface completion publication", map, {
+						terrain_grids = n_grids, pipeline_ok = tostring(ok_branch == true),
+					})
 				map.SuperBigMapSurfaceStretchDone = true
 				map.SuperBigMapExpanded = true
 				end_loading()
@@ -14733,6 +15192,13 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				LoadingFinish("surface expansion complete", map, {
 					terrain_grids = n_grids, error = ok_branch and "" or tostring(branch_err),
 				}, ok_branch)
+				SuperBigMap.OptimizationTrace.After(
+					"surface completion publication", map, {
+						stretch_done = tostring(map.SuperBigMapSurfaceStretchDone == true),
+						pipeline_ok = tostring(ok_branch == true),
+					})
+				SuperBigMap.OptimizationTrace.Finish(map, ok_branch == true,
+					ok_branch and "surface completion published" or tostring(branch_err))
 			end
 			return
 		end
@@ -14799,12 +15265,21 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						LoadingFinish("surface lazy-underground capsule finalization failed", map, {
 							error = map.SuperBigMapSurfacePostPipelineRevalidationError,
 						}, false)
+						SuperBigMap.OptimizationTrace.Error(
+							"lazy capsule finalization", map,
+							map.SuperBigMapSurfacePostPipelineRevalidationError)
+						SuperBigMap.OptimizationTrace.Finish(map, false,
+							"lazy capsule finalization failed")
 					end
 				else
 					map.SuperBigMapSurfacePostPipelineRevalidationError = tostring(revalidation_err)
 					LoadingFinish("surface post-pipeline revalidation failed", map, {
 						error = tostring(revalidation_err),
 					}, false)
+					SuperBigMap.OptimizationTrace.Error(
+						"surface post-pipeline revalidation", map, revalidation_err)
+					SuperBigMap.OptimizationTrace.Finish(map, false,
+						"surface post-pipeline revalidation failed")
 				end
 			end)
 			if not revalidation_schedule_ok then
@@ -14840,6 +15315,11 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 							LoadingFinish("surface lazy-underground capsule finalization failed", map, {
 								error = map.SuperBigMapSurfacePostPipelineRevalidationError,
 							}, false)
+							SuperBigMap.OptimizationTrace.Error(
+								"lazy capsule finalization", map,
+								map.SuperBigMapSurfacePostPipelineRevalidationError)
+							SuperBigMap.OptimizationTrace.Finish(map, false,
+								"lazy capsule finalization failed")
 						end
 					else
 						map.SuperBigMapSurfacePostPipelineRevalidationScheduled = nil
@@ -14857,6 +15337,8 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 			end
 		end
 		if not thread_ok then
+			SuperBigMap.OptimizationTrace.Error("surface expansion thread", map,
+				thread_err or thread_ok)
 			if deferred_surface_completion then
 				-- Fail closed: keep both the pending state and loading cover until a canonical
 				-- rebuild can be completed; never expose the transient gameplay grids.
@@ -14876,12 +15358,18 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				LoadingFinish("surface expansion thread failed", map,
 					{ error = tostring(thread_err or thread_ok) }, false)
 			end
+			SuperBigMap.OptimizationTrace.Finish(map, false,
+				"surface expansion thread failed")
 		end
 	end)
 	if not schedule_ok then
+		SuperBigMap.OptimizationTrace.Error("surface stretch scheduling", map,
+			"CreateRealTimeThread rejected schedule")
 		map.SuperBigMapStretchPipelinePending = false
 		map.SuperBigMapSurfaceStretchScheduled = false
 		EndSurfaceExpansionLoading(map)
+		SuperBigMap.OptimizationTrace.Finish(map, false,
+			"surface stretch schedule failed")
 	end
 	return schedule_ok == true
 end
@@ -16849,7 +17337,20 @@ local function PatchDeferredUndergroundAccess(source)
 	local State = SuperBigMap.State
 	local lazy = SuperBigMap.LazyUndergroundFeasibility
 	if type(lazy) == "table" and lazy.IMPLEMENTATION == true then
-		lazy.ValidatePersistedState(lazy.StateSurface())
+		local live_surface = lazy.StateSurface()
+		SuperBigMap.OptimizationTrace.Before("lazy persisted-state live re-entry validation",
+			live_surface)
+		local persisted_ok, persisted_reason = lazy.ValidatePersistedState(live_surface)
+		local live_report = live_surface
+			and live_surface.SuperBigMapLazyUndergroundFeasibilityReport or nil
+		if persisted_ok == true then
+			SuperBigMap.OptimizationTrace.After(
+				"lazy persisted-state live re-entry validation", live_surface, live_report)
+		else
+			SuperBigMap.OptimizationTrace.Error(
+				"lazy persisted-state live re-entry validation", live_surface,
+				persisted_reason, live_report)
+		end
 		lazy.PatchConstructionRoutes()
 	end
 	local current = Global("ChangeCurrentMapSlot")

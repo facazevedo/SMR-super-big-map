@@ -25,6 +25,14 @@ local function Enabled()
 	return Config().DEBUG_LOGGING_ENABLED == true
 end
 
+-- The optimization trace is installed later by sbm_map_generation. Resolve it dynamically so the
+-- normal diagnostics module remains inert and file-I/O-free unless a staged trace session is active.
+local function OptimizationTrace()
+	local trace = SuperBigMap.OptimizationTrace
+	return type(trace) == "table" and type(trace.IsActive) == "function"
+		and trace.IsActive() == true and trace or nil
+end
+
 local function Now()
 	local fn = Global("GetPreciseTicks") or Global("RealTime")
 	if type(fn) == "function" then
@@ -273,7 +281,9 @@ local function AddTotal(name, duration)
 end
 
 function Diagnostics.LoadingStep(name, data, map)
-	if not Diagnostics.LoadingEnabled() then return false end
+	local trace = OptimizationTrace()
+	local traced = trace and trace.Step("loading.step: " .. tostring(name), map, data) == true
+	if not Diagnostics.LoadingEnabled() then return traced == true end
 	EnsureLoading(name, map)
 	local now = Now()
 	loading.sequence = loading.sequence + 1
@@ -300,7 +310,9 @@ local function ClosePhase(now, map, ok)
 end
 
 function Diagnostics.LoadingPhase(name, map, data)
-	if not Diagnostics.LoadingEnabled() then return false end
+	local trace = OptimizationTrace()
+	local traced = trace and trace.Step("loading.phase: " .. tostring(name), map, data) == true
+	if not Diagnostics.LoadingEnabled() then return traced == true end
 	EnsureLoading(name, map)
 	local now = Now()
 	ClosePhase(now, map, true)
@@ -316,15 +328,31 @@ function Diagnostics.LoadingPhase(name, map, data)
 end
 
 function Diagnostics.LoadingBegin(name, map, data)
-	if not Diagnostics.LoadingEnabled() then return false end
+	local trace = OptimizationTrace()
+	local traced = trace and trace.Before(tostring(name), map, data) == true
+	if not Diagnostics.LoadingEnabled() then
+		return traced and { name = tostring(name), map = map, optimization_trace = true } or false
+	end
 	EnsureLoading(name, map)
 	local token = { name = tostring(name), at = Now(), map = map, session = loading.session }
+	if traced == true then token.optimization_trace = true end
 	Diagnostics.LoadingStep("BEGIN " .. token.name, data, map)
 	return token
 end
 
 function Diagnostics.LoadingEnd(token, data, ok)
-	if type(token) ~= "table" or not Diagnostics.LoadingEnabled() then return false end
+	if type(token) ~= "table" then return false end
+	local trace = OptimizationTrace()
+	local traced = false
+	if token.optimization_trace == true and trace then
+		if ok == false then
+			traced = trace.Error(token.name, token.map,
+				type(data) == "table" and data.error or "operation returned failure", data) == true
+		else
+			traced = trace.After(token.name, token.map, data) == true
+		end
+	end
+	if not Diagnostics.LoadingEnabled() then return traced == true end
 	local now = Now()
 	local duration = now - (token.at or now)
 	AddTotal(token.name, duration)
@@ -336,7 +364,9 @@ function Diagnostics.LoadingEnd(token, data, ok)
 end
 
 function Diagnostics.LoadingFinish(reason, map, data, ok)
-	if not Diagnostics.LoadingEnabled() or not loading.active then return false end
+	local trace = OptimizationTrace()
+	local traced = trace and trace.Step("loading.finish: " .. tostring(reason), map, data) == true
+	if not Diagnostics.LoadingEnabled() or not loading.active then return traced == true end
 	local now = Now()
 	ClosePhase(now, map, ok)
 	local ranked = {}

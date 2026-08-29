@@ -22,6 +22,8 @@ FALSE_GLOBAL_ORACLE = (ROOT / "_ralph" / "tools"
                        / "lazy_engine_global_false_transaction_oracle.lua")
 PERSISTED_REENTRY_ORACLE = (ROOT / "_ralph" / "tools"
                             / "lazy_persisted_state_reentry_oracle.lua")
+OPTIMIZATION_TRACE_CHECK = (ROOT / "_ralph" / "tools"
+                            / "check_v975_optimization_trace.py")
 LUA53 = (ROOT / "_ralph" / "tmp" / ".tmp_surface_loading_rough_iter109_lua53"
          / "lua-5.3.6" / "src" / "luac.exe")
 LUA53_RUN = LUA53.with_name("lua.exe")
@@ -53,6 +55,9 @@ def main() -> int:
     persisted_reentry_run = subprocess.run(
         [str(LUA53_RUN), str(PERSISTED_REENTRY_ORACLE)], cwd=ROOT,
         capture_output=True, text=True, timeout=30, check=False)
+    optimization_trace_run = subprocess.run(
+        [sys.executable, str(OPTIMIZATION_TRACE_CHECK)], cwd=ROOT,
+        capture_output=True, text=True, timeout=30, check=False)
     try:
         oracle = json.loads(oracle_run.stdout)
     except json.JSONDecodeError:
@@ -65,10 +70,14 @@ def main() -> int:
                                 capture_output=True, text=True, timeout=30, check=False)
         compile_results[path.relative_to(ROOT).as_posix()] = result.returncode == 0
     checks = {
-        "metadata_v974_truthfully_retains_v972": "'version', 974," in metadata
+        "metadata_v975_truthfully_retains_v972": "'version', 975," in metadata
             and "same-session Surface rebuild re-entry" in metadata
-            and "interrupted saved states" in metadata,
-        "generator_identity_v280": "SuperBigMap.GENERATOR_PATCH_VERSION = 280" in version,
+            and "interrupted saved states" in metadata
+            and "explicit-path-only bounded Surface optimization trace" in metadata,
+        "generator_identity_v281": "SuperBigMap.GENERATOR_PATCH_VERSION = 281" in version,
+        "v975_explicit_path_optimization_trace_gate_green": (
+            optimization_trace_run.returncode == 0
+            and '"ok": true' in optimization_trace_run.stdout),
         "lazy_architecture_default_off_direct_pad_subflag_on": all(token in config for token in (
             "config.LazyUndergroundSourceGeneration = false",
             "config.LazyUndergroundOuterPassagePads = true")),
@@ -210,6 +219,7 @@ def main() -> int:
         "compile": compile_results,
         "oracle": oracle,
         "persisted_state_reentry_oracle": persisted_reentry_run.stdout.strip(),
+        "optimization_trace_check_returncode": optimization_trace_run.returncode,
     }, indent=2, sort_keys=True))
     return 0 if not failed else 1
 

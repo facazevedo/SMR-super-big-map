@@ -60,6 +60,27 @@ local function LoadingStep(name, data, map)
 	end
 end
 
+local function OptimizationTraceBoundary(edge, phase, map, data)
+	local trace = SuperBigMap.OptimizationTrace
+	local emit = type(trace) == "table" and trace[edge] or nil
+	if type(emit) == "function" then emit(phase, map, data) end
+end
+
+local function TraceBefore(phase, map, data)
+	OptimizationTraceBoundary("Before", phase, map, data)
+end
+
+local function TraceAfter(phase, map, data)
+	OptimizationTraceBoundary("After", phase, map, data)
+end
+
+local function TraceError(phase, map, reason, data)
+	local trace = SuperBigMap.OptimizationTrace
+	if type(trace) == "table" and type(trace.Error) == "function" then
+		trace.Error(phase, map, reason, data)
+	end
+end
+
 local function TerrainCreaseAudit(event, data, map)
 	local diagnostics = SuperBigMap.Diagnostics
 	if diagnostics and type(diagnostics.TerrainCreaseRepair) == "function" then
@@ -525,11 +546,13 @@ local function ResampleMapGrid(map, name, from_box, to_box, interpolate)
 		LoadingEnd(write_token, { mode = write_mode }, ok_set)
 		return ok_set == true
 	end)
+	TraceBefore("terrain map-grid temporary free", map)
 	if out and out ~= stretched then free_grid(out) end
 	if stretched and stretched ~= src_c then free_grid(stretched) end
 	if src_c and src_c ~= src then free_grid(src_c) end
 	free_grid(dst_ref)
 	free_grid(src)
+	TraceAfter("terrain map-grid temporary free", map)
 	if not ok_all then
 		LoadingStep("terrain map grid " .. tostring(name) .. ": pipeline error", {
 			error = tostring(res), metadata_source = metadata_source,
@@ -5387,6 +5410,7 @@ end
 -- owns MapGrid resampling and the authoritative gameplay-grid invalidation.
 local function StretchSourceToFull(map, source_map, terrain_only)
 	if not map then return false, 0 end
+	TraceBefore("StretchSourceToFull complete grid suite", map)
 	local terrain_api = Global("terrain")
 	local GridToCompute = Global("GridToCompute")
 	local GridResample = Global("GridResample")
@@ -5397,6 +5421,8 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 	if type(terrain_api) ~= "table" or type(GridToCompute) ~= "function" or type(GridResample) ~= "function"
 		or type(IsComputeGrid) ~= "function" or type(NewComputeGrid) ~= "function"
 		or type(box_fn) ~= "function" or type(point_fn) ~= "function" then
+		TraceError("StretchSourceToFull complete grid suite", map,
+			"required terrain/grid APIs unavailable")
 		return false, 0
 	end
 	local sw_tiles = map.SuperBigMapSourceWidthTiles or map.SuperBigMapGeneratorWidthTiles
@@ -5410,9 +5436,13 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 	end
 	if type(sw_tiles) ~= "number" or type(sh_tiles) ~= "number" or sw_tiles <= 0 or sh_tiles <= 0
 		or type(full_tw) ~= "number" or type(full_th) ~= "number" or full_tw <= 0 or full_th <= 0 then
+		TraceError("StretchSourceToFull complete grid suite", map,
+			"source/destination geometry unavailable")
 		return false, 0
 	end
 	if full_tw <= sw_tiles and full_th <= sh_tiles then
+		TraceError("StretchSourceToFull complete grid suite", map,
+			"destination is not larger than source")
 		return false, 0
 	end
 	-- Force FLOAT division: this engine's Lua does INTEGER division on int/int (6144/8192 -> 0),
@@ -5520,6 +5550,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 		local native_sub, source_compute, full_compute, stretched
 		local extraction_path = source_is_captured and "captured_generator_grid"
 			or direct_source and "direct_source_ref" or "unknown"
+		TraceBefore("terrain clutter extraction and compute copy", map)
 		local ok_all, result = pcall(function()
 			if direct_source or source_is_captured then
 				source_compute = GridToCompute(source_ref)
@@ -5555,16 +5586,22 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 				extraction_path = "full_compute_then_corner"
 			end
 
+			TraceAfter("terrain clutter extraction and compute copy", map)
+			TraceBefore("terrain clutter resample", map)
 			stretched = GridResample(source_compute, destination_w, destination_h, true)
 			if not stretched then error("clutter resample failed") end
+			TraceAfter("terrain clutter resample", map)
+			TraceBefore("terrain clutter destination write", map)
 			local set_ok, set_result = pcall(terrain_api.SetClutterGrid, map, stretched)
 			if not set_ok or set_result ~= true then
 				error("terrain.SetClutterGrid failed: " .. tostring(set_result))
 			end
+			TraceAfter("terrain clutter destination write", map)
 			local msg = Global("Msg")
 			if type(msg) == "function" then pcall(msg, "OnMapGridChanged", map, "clutter", false) end
 			return true
 		end)
+		TraceBefore("terrain clutter temporary free", map)
 		if native_sub then free_grid(native_sub) end
 		if stretched and stretched ~= source_compute then free_grid(stretched) end
 		if source_compute and source_compute ~= source_ref and source_compute ~= full_compute
@@ -5578,6 +5615,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			end
 			free_grid(captured_grid)
 		end
+		TraceAfter("terrain clutter temporary free", map)
 		local success = ok_all and result == true
 		if success then map.SuperBigMapClutterGridStretched = true end
 		LoadingEnd(token, {
@@ -5599,7 +5637,14 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			LoadingEnd(grid_token, { error = "terrain getter/setter unavailable" }, false)
 			return false
 		end
+		TraceBefore("terrain " .. tostring(label) .. " grid source read", map)
 		local ok_g, raw = pcall(get_fn, terrain_source)
+		if ok_g and raw then
+			TraceAfter("terrain " .. tostring(label) .. " grid source read", map)
+		else
+			TraceError("terrain " .. tostring(label) .. " grid source read", map,
+				"terrain getter failed")
+		end
 		if not ok_g or not raw then
 			LoadingEnd(grid_token, { error = "terrain getter failed" }, false)
 			return false
@@ -5758,6 +5803,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			end
 		end
 		local ok_all, res = pcall(function()
+			TraceBefore("terrain " .. tostring(label) .. " grid source extraction", map)
 			local full_c
 			local ok_size, fw, fh = pcall(function() return raw:size() end)
 			if not ok_size or type(fw) ~= "number" or type(fh) ~= "number" then
@@ -5819,6 +5865,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 				free_grid(native_sub)
 				native_sub = nil
 			end
+			TraceAfter("terrain " .. tostring(label) .. " grid source extraction", map)
 			local environment = type(map.mapdata) == "table" and map.mapdata.Environment or nil
 			-- Detect and repair coherent perimeter defects while the grid is still at vanilla
 			-- resolution.  The engine's interpolation then carries the C2 surface into the expanded
@@ -5827,6 +5874,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			if scale_values then ZDumpHeightGrid(map, "source-pre", src_sub) end
 			if scale_values and environment ~= "Underground"
 				and cfg_bool("STRETCH_REPAIR_INTERNAL_HEIGHT_STEP", true) then
+				TraceBefore("terrain height source crease detection and repair", map)
 				local source_started_ms = now_ms()
 				local detected, report, tracks = RepairInternalHeightStep(src_sub, true)
 				report.source_scan_ms = math.max(0, now_ms() - source_started_ms)
@@ -5851,10 +5899,14 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 						or "SOURCE_REPAIR_SKIPPED", source_report, map)
 					merge_step_report(source_report)
 				end
+				TraceAfter("terrain height source crease detection and repair", map,
+					internal_step_repair)
 			end
 			if scale_values then ZDumpHeightGrid(map, "source-post", src_sub) end
 			local fmt, bits = IsComputeGrid(src_sub)
+			TraceBefore("terrain " .. tostring(label) .. " grid resample", map)
 			local stretched = GridResample(src_sub, fw, fh, interpolate == true)
+			TraceAfter("terrain " .. tostring(label) .. " grid resample", map)
 			NotifyDeterminismCaptureForTest("pre_z_transform", map, {
 				grid = stretched,
 				grid_kind = scale_values and "surface_height" or "surface_terrain",
@@ -5865,6 +5917,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			-- seamless exactly as before.  It runs only after the source repair has been resampled.
 			if scale_values and environment ~= "Underground"
 				and cfg_bool("STRETCH_REPAIR_INTERNAL_HEIGHT_STEP", true) then
+				TraceBefore("terrain height destination crease repair", map)
 				local destination_started_ms = now_ms()
 				local repaired, report = RepairInternalHeightStep(stretched, false)
 				report.destination_scan_ms = math.max(0, now_ms() - destination_started_ms)
@@ -5907,6 +5960,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 					or "DESTINATION_SKIPPED", report, map)
 				merge_step_report(report)
 				map.SuperBigMapHeightStepRepairReport = internal_step_repair
+				TraceAfter("terrain height destination crease repair", map, report)
 			end
 			if scale_values then ZDumpHeightGrid(map, "finish-post", stretched) end
 			-- FULL 3D STRETCH (config STRETCH_SCALE_HEIGHTS): scale the HEIGHT VALUES by the same
@@ -5929,6 +5983,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			-- Underground terrain keeps the full similarity transform because buried wonders and
 			-- their sculpted openings require its Z ratio to remain identical to X/Y.
 			if scale_values and cfg_bool("STRETCH_SCALE_HEIGHTS", true) then
+				TraceBefore("terrain height similarity transform", map)
 				local grid_muldivadd = Global("GridMulDivAdd")
 				local grid_minmax = Global("GridMinMax")
 				if type(grid_muldivadd) == "function" then
@@ -6005,6 +6060,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 						final_max = tostring(max1),
 					}, map)
 				end
+				TraceAfter("terrain height similarity transform", map)
 			end
 			NotifyDeterminismCaptureForTest("post_z_transform", map, {
 				grid = stretched,
@@ -6015,16 +6071,31 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			-- explicit, localized post-transform terrain operation and therefore run only after the
 			-- pure-transform capture/dump, but before this grid is committed and rebuilt for gameplay.
 			if scale_values and environment ~= "Underground" then
+				TraceBefore("terrain height apron native-raster shaping", map)
 				CreateNaturalMountainBaseBuildableAprons(map, stretched)
+				TraceAfter("terrain height apron native-raster shaping", map,
+					map.SuperBigMapNaturalMountainBaseApronReport)
 			end
+			TraceBefore("terrain " .. tostring(label) .. " grid destination write", map)
 			local ok_set = pcall(set_fn, map, stretched)
 			if type(invalidate_fn) == "function" then pcall(invalidate_fn, map) end
+			if ok_set then
+				TraceAfter("terrain " .. tostring(label) .. " grid destination write", map)
+			else
+				TraceError("terrain " .. tostring(label) .. " grid destination write", map,
+					"terrain setter failed")
+			end
+			TraceBefore("terrain " .. tostring(label) .. " grid temporary free", map)
 			free_grid(src_sub)
 			if stretched ~= src_sub then free_grid(stretched) end
 			if full_c ~= raw and full_c ~= src_sub then free_grid(full_c) end
+			TraceAfter("terrain " .. tostring(label) .. " grid temporary free", map)
 			return ok_set == true
 		end)
 		local success = ok_all and res == true
+		if not success then
+			TraceError("terrain " .. tostring(label) .. " grid stretch", map, res)
+		end
 		LoadingEnd(grid_token, {
 			full_cells = tostring(measured_fw) .. "x" .. tostring(measured_fh),
 			extraction_path = extraction_path,
@@ -6090,11 +6161,13 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 		-- Height VALUES just transformed (h*zmul/zdiv + zadd, stamped by stretch_one) -> the
 		-- declared buildable/playable height ranges must follow the SAME affine transform
 		-- before any buildable rebuild.
+		TraceBefore("terrain height-range scaling", map)
 		ScaleHeightRanges(map,
 			map.SuperBigMapZScaleMul or full_tw,
 			map.SuperBigMapZScaleDiv or sw_tiles,
 			map.SuperBigMapZScaleAdd or 0,
 			map.SuperBigMapZMeasuredMaxHeight)
+		TraceAfter("terrain height-range scaling", map)
 	end
 	if not terrain_already_stretched and stretch_one("type", terrain_api.GetTypeGrid,
 		terrain_api.SetTypeGrid, terrain_api.InvalidateType, false) then
@@ -6108,6 +6181,9 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			source_tiles = tostring(sw_tiles) .. "x" .. tostring(sh_tiles),
 			destination_tiles = tostring(full_tw) .. "x" .. tostring(full_th),
 		}, map)
+		TraceAfter("StretchSourceToFull complete grid suite", map, {
+			completed_grids = done, terrain_only = "true",
+		})
 		return done > 0, done
 	end
 	if clutter_ok ~= true then
@@ -6148,7 +6224,14 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 		and map.SuperBigMapUndergroundStretchPending == true
 		and map.SuperBigMapStretchPipelinePending == true
 	local invalidate_token = LoadingBegin("invalidate expanded terrain", map)
+	TraceBefore("terrain expanded-grid revalidation", map)
 	local invalidate_ok = ReinvalidateExpandedTerrain(map, defer_intermediate_rebuild)
+	if invalidate_ok == true then
+		TraceAfter("terrain expanded-grid revalidation", map)
+	else
+		TraceError("terrain expanded-grid revalidation", map,
+			"expanded terrain revalidation failed")
+	end
 	map.SuperBigMapDeferredIntermediateTerrainRebuild = defer_intermediate_rebuild or nil
 	LoadingEnd(invalidate_token, {
 		deferred_gameplay_rebuild = tostring(defer_intermediate_rebuild == true),
@@ -6161,6 +6244,9 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 		source_tiles = tostring(sw_tiles) .. "x" .. tostring(sh_tiles),
 		destination_tiles = tostring(full_tw) .. "x" .. tostring(full_th),
 	}, map)
+	TraceAfter("StretchSourceToFull complete grid suite", map, {
+		completed_grids = done, terrain_only = "false",
+	})
 	return done > 0, done
 end
 
