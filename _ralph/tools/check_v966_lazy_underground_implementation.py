@@ -129,6 +129,19 @@ def main() -> int:
     grid = GRID.read_text(encoding="utf-8")
     version = VERSION.read_text(encoding="utf-8")
     metadata = METADATA.read_text(encoding="utf-8")
+    if "'version', 971," in metadata:
+        successor = ROOT / "_ralph" / "tools" / "check_v971_outer_passage_pad_architecture.py"
+        forwarded = subprocess.run([sys.executable, str(successor)], cwd=ROOT,
+            capture_output=True, text=True, timeout=30, check=False)
+        try:
+            payload = json.loads(forwarded.stdout)
+        except json.JSONDecodeError:
+            payload = {"ok": False, "error": forwarded.stderr or forwarded.stdout}
+        ok = forwarded.returncode == 0 and payload.get("ok") is True
+        print(json.dumps({"schema": "smr.ralph.v966.lazy-underground-forward-gate.v1",
+            "ok": ok, "successor": "v971 outer passage-pad architecture",
+            "successor_result": payload}, indent=2, sort_keys=True))
+        return 0 if ok else 1
     oracle_run = subprocess.run(
         [sys.executable, str(STATE_ORACLE)], cwd=ROOT, capture_output=True, text=True,
         timeout=30, check=False,

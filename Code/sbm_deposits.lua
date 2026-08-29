@@ -8471,6 +8471,10 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 		hard_spacing_spatial_index_maximum_world_radius = 0,
 		hard_spacing_spatial_index_world_buckets = 0,
 		hard_spacing_spatial_index_hex_buckets = 0,
+		outer_passage_pads = 0,
+		outer_passage_pad_pairs_checked = 0,
+		outer_passage_pad_failures = 0,
+		first_outer_passage_pad_failure = "",
 	}
 	do
 		local density = map.SuperBigMapEnrichmentTopUpStatus
@@ -8571,6 +8575,50 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 		end
 	end)
 	stats.markers = #entries
+	-- v971 reserves passage pads only after every enrichment has reached its final coordinate.
+	-- Include those primitive centers in the authoritative hard-spacing verdict without changing
+	-- the existing marker-pair budget or top-up/native counters. A passage is a non-surface gameplay
+	-- footprint, so the surface-pile neighbour exception never applies to a passage pair.
+	for pad_index, pad in ipairs(type(map.SuperBigMapOuterPassagePads) == "table"
+		and map.SuperBigMapOuterPassagePads or {}) do
+		stats.outer_passage_pads = stats.outer_passage_pads + 1
+		if type(pad.q) ~= "number" or type(pad.r) ~= "number"
+			or type(pad.x) ~= "number" or type(pad.y) ~= "number" then
+			stats.outer_passage_pad_failures = stats.outer_passage_pad_failures + 1
+			if stats.first_outer_passage_pad_failure == "" then
+				stats.first_outer_passage_pad_failure = "pad=" .. tostring(pad_index)
+					.. ":missing primitive world/hex coordinate"
+			end
+		else
+			for _, entry in ipairs(entries) do
+				stats.outer_passage_pad_pairs_checked =
+					stats.outer_passage_pad_pairs_checked + 1
+				if type(entry.q) ~= "number" or type(entry.r) ~= "number" then
+					stats.outer_passage_pad_failures = stats.outer_passage_pad_failures + 1
+					if stats.first_outer_passage_pad_failure == "" then
+						stats.first_outer_passage_pad_failure = "pad=" .. tostring(pad_index)
+							.. ":enrichment missing axial coordinate"
+					end
+				else
+					local dq, dr = pad.q - entry.q, pad.r - entry.r
+					local distance = math.max(math.abs(dq), math.abs(dr), math.abs(dq + dr))
+					if distance < MIN_ENRICHMENT_HEX_DISTANCE then
+						stats.outer_passage_pad_failures = stats.outer_passage_pad_failures + 1
+						if stats.first_outer_passage_pad_failure == "" then
+							stats.first_outer_passage_pad_failure = table.concat({
+								"pad=" .. tostring(pad_index),
+								"pad_hex=" .. tostring(pad.q) .. ":" .. tostring(pad.r),
+								"marker=" .. tostring(entry.marker and entry.marker.class or "?"),
+								"marker_hex=" .. tostring(entry.q) .. ":" .. tostring(entry.r),
+								"required=" .. tostring(MIN_ENRICHMENT_HEX_DISTANCE),
+								"actual=" .. tostring(distance),
+							}, "|")
+						end
+					end
+				end
+			end
+		end
+	end
 	for _, count in pairs(fallback_by_sector) do
 		stats.underground_fallback_sectors = stats.underground_fallback_sectors + 1
 		stats.underground_fallback_max_per_sector =
@@ -8791,6 +8839,7 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 		and stats.duplicate_hex_pairs == 0 and stats.repulsion_violations == 0
 		and stats.outer_ring_spacing_violations == 0
 		and stats.enrichment_spacing_violations == 0
+		and stats.outer_passage_pad_failures == 0
 		and stats.surface_quota_spacing_violations == 0
 		and stats.underground_fallback_strategy_failures == 0
 	-- Underground fallback spacing is a maximin preference, not a hard density gate. A closer
@@ -8830,6 +8879,9 @@ function DepositRules.CensusFinalOuterResourceTopUps(map, phase, require_placed)
 		unverified_outer_effect_topups = 0,
 		native_resources = 0,
 		missing_position = 0,
+		outer_passage_pads = 0,
+		outer_passage_pad_ring_failures = 0,
+		outer_passage_pad_primitive_failures = 0,
 		resource_breakdown = {}, anomaly_breakdown = {}, effect_breakdown = {},
 	}
 	if not map or IsUndergroundMap(map) or type(map.MapForEach) ~= "function" then
@@ -8994,6 +9046,18 @@ function DepositRules.CensusFinalOuterResourceTopUps(map, phase, require_placed)
 			end
 		end
 	end)
+	for _, pad in ipairs(type(map.SuperBigMapOuterPassagePads) == "table"
+		and map.SuperBigMapOuterPassagePads or {}) do
+		stats.outer_passage_pads = stats.outer_passage_pads + 1
+		if type(pad) ~= "table" or type(pad.x) ~= "number" or type(pad.y) ~= "number"
+			or type(pad.q) ~= "number" or type(pad.r) ~= "number"
+			or type(pad.angle) ~= "number" then
+			stats.outer_passage_pad_primitive_failures =
+				stats.outer_passage_pad_primitive_failures + 1
+		elseif not IsInFinalOuterResourceWorldBand(map, pad.x, pad.y, ring_sectors) then
+			stats.outer_passage_pad_ring_failures = stats.outer_passage_pad_ring_failures + 1
+		end
+	end
 	for index, cluster in ipairs(anomaly_resource_clusters) do
 		local total = cluster.resource_members + (anomaly_cluster_counts[index] or 0)
 			+ (effect_cluster_counts[index] or 0)
@@ -9028,6 +9092,8 @@ function DepositRules.CensusFinalOuterResourceTopUps(map, phase, require_placed)
 		+ stats.anomaly_resource_cluster_overflow
 		+ stats.cluster_total_member_overflow
 		+ stats.unverified_outer_effect_topups
+		+ stats.outer_passage_pad_ring_failures
+		+ stats.outer_passage_pad_primitive_failures
 	local print_fn = Global("print")
 	if type(print_fn) == "function" then
 		print_fn("[Super Big Map][OuterResourceTopUpCensus] phase=" .. tostring(phase or "unspecified")
@@ -9058,6 +9124,11 @@ function DepositRules.CensusFinalOuterResourceTopUps(map, phase, require_placed)
 			.. " unverified_outer_effect_topups="
 			.. tostring(stats.unverified_outer_effect_topups)
 			.. " native_resources=" .. tostring(stats.native_resources)
+			.. " outer_passage_pads=" .. tostring(stats.outer_passage_pads)
+			.. " outer_passage_pad_ring_failures="
+			.. tostring(stats.outer_passage_pad_ring_failures)
+			.. " outer_passage_pad_primitive_failures="
+			.. tostring(stats.outer_passage_pad_primitive_failures)
 			.. " resource_breakdown=" .. tostring(CountMapString(stats.resource_breakdown))
 			.. " anomaly_breakdown=" .. tostring(CountMapString(stats.anomaly_breakdown))
 			.. " effect_breakdown=" .. tostring(CountMapString(stats.effect_breakdown))
@@ -9076,6 +9147,12 @@ function DepositRules.CensusFinalOuterResourceTopUps(map, phase, require_placed)
 		and stats.anomaly_resource_cluster_overflow == 0
 		and stats.cluster_total_member_overflow == 0
 		and stats.unverified_outer_effect_topups == 0
+		and stats.outer_passage_pad_ring_failures == 0
+		and stats.outer_passage_pad_primitive_failures == 0
+		and (cfg().LAZY_UNDERGROUND_SOURCE_GENERATION ~= true
+			or cfg().LAZY_UNDERGROUND_OUTER_PASSAGE_PADS ~= true
+			or map.SuperBigMapOuterPassageTerrainReport == nil
+			or stats.outer_passage_pads == 2)
 		and (not stats.require_placed or stats.anomaly_unplaced == 0), stats
 end
 

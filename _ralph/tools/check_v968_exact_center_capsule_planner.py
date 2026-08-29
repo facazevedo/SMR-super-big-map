@@ -67,7 +67,7 @@ def main() -> int:
     generation = GENERATION.read_text(encoding="utf-8")
     version = VERSION.read_text(encoding="utf-8")
     metadata = METADATA.read_text(encoding="utf-8")
-    if "'version', 969," in metadata or "'version', 970," in metadata:
+    if any(f"'version', {candidate}," in metadata for candidate in (969, 970, 971)):
         successor = ROOT / "_ralph" / "tools" / "check_v969_fresh_grid_capsule_publication.py"
         forwarded = subprocess.run(
             [sys.executable, str(successor)], cwd=ROOT, capture_output=True, text=True,

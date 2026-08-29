@@ -50,8 +50,10 @@ def main() -> int:
     generation = GENERATION.read_text(encoding="utf-8")
     version = VERSION.read_text(encoding="utf-8")
     metadata = METADATA.read_text(encoding="utf-8")
-    if "'version', 970," in metadata:
-        successor = ROOT / "_ralph" / "tools" / "check_v970_capped_stock_capsule_search.py"
+    if "'version', 970," in metadata or "'version', 971," in metadata:
+        successor = ROOT / "_ralph" / "tools" / (
+            "check_v971_outer_passage_pad_architecture.py"
+            if "'version', 971," in metadata else "check_v970_capped_stock_capsule_search.py")
         forwarded = subprocess.run([sys.executable, str(successor)], cwd=ROOT,
                                    capture_output=True, text=True, timeout=30, check=False)
         try:
@@ -62,7 +64,9 @@ def main() -> int:
         print(json.dumps({
             "schema": "smr.ralph.v969.fresh-grid-forward-gate.v1",
             "ok": ok,
-            "successor": "v970 capped post-canonical stock capsule search",
+            "successor": "v971 outer passage-pad architecture"
+                if "'version', 971," in metadata
+                else "v970 capped post-canonical stock capsule search",
             "successor_result": payload,
         }, indent=2, sort_keys=True))
         return 0 if ok else 1

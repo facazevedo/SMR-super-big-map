@@ -523,6 +523,11 @@ config.LazyUndergroundFreshGridCapsulePlanning = true
 -- capped at eight stock calls per deterministic main/replay plan, so the prior 512-footprint scan
 -- cannot recur. Failure at the cap is sticky and publishes no capsule.
 config.LazyUndergroundPostCanonicalStockCapsuleSearch = true
+-- v971 outer passage-pad preconditioning. The enclosing lazy implementation remains default-off.
+-- When enabled, two private deterministic Elevator footprints are reserved only after all Surface
+-- enrichments are final, then flattened through the existing organic native outer-terrain journal.
+-- The post-canonical capsule path consumes these exact sites and performs no nearest-site search.
+config.LazyUndergroundOuterPassagePads = true
 -- TEMP test aid: remove the underground darkness blanket on any underground gameplay map,
 -- including vanilla-mode tests, and restore the previous value on surface/menu transitions.
 config.UndergroundRevealAllDarkness = false
@@ -1155,6 +1160,7 @@ C.LAZY_UNDERGROUND_FRESH_GRID_CAPSULE_PLANNING =
 	as_bool(config.LazyUndergroundFreshGridCapsulePlanning)
 C.LAZY_UNDERGROUND_POST_CANONICAL_STOCK_CAPSULE_SEARCH =
 	as_bool(config.LazyUndergroundPostCanonicalStockCapsuleSearch)
+C.LAZY_UNDERGROUND_OUTER_PASSAGE_PADS = as_bool(config.LazyUndergroundOuterPassagePads)
 C.UNDERGROUND_REVEAL_ALL_DARKNESS = as_bool(config.UndergroundRevealAllDarkness)
 C.UNDERGROUND_REVEAL_ALL_ENRICHMENTS_FOR_TESTING =
 	as_bool(config.RevealAllUndergroundEnrichmentsForTesting)

@@ -2685,7 +2685,8 @@ end
 -- byte-for-byte unchanged; only failed footprints are shaped. Building gameplay cores remain exact
 -- planes, while surface collection cores retain a safe fitted grade. A slope-aligned, irregular-width
 -- C2 quintic feather prevents either transition from reading as a stamped circular terrace.
-local function PrepareOuterResourceTerrain(map)
+local function PrepareOuterResourceTerrain(map, options)
+	local passage_only = type(options) == "table" and options.passage_only == true
 	if not cfg_bool("PREPARE_OUTER_RESOURCE_TERRAIN", true) then
 		return false, { reason = "disabled", resources = 0, patches = 0 }
 	end
@@ -2693,6 +2694,12 @@ local function PrepareOuterResourceTerrain(map)
 	if type(mapdata) ~= "table" or mapdata.Environment == "Underground"
 		or type(map.MapForEach) ~= "function" then
 		return false, { reason = "surface map unavailable", resources = 0, patches = 0 }
+	end
+	if passage_only then
+		-- A fresh invocation owns these primitive records. Never let a failed retry expose a stale
+		-- two-pad certificate from an earlier attempt on the same map instance.
+		map.SuperBigMapOuterPassagePads = nil
+		map.SuperBigMapOuterPassageTerrainReport = nil
 	end
 	local terrain_api = Global("terrain")
 	local grid_to_compute = Global("GridToCompute")
@@ -2912,7 +2919,7 @@ local function PrepareOuterResourceTerrain(map)
 		return exact_offsets_ready(q, r, rocket_offsets, true)
 	end
 
-	local patches, resource_sites, rocket_sites = {}, {}, {}
+	local patches, resource_sites, rocket_sites, passage_sites = {}, {}, {}, {}
 	local extractor_core = math.max(2,
 		cfg_number("OUTER_RESOURCE_EXTRACTOR_CORE_RADIUS_HEXES", 3))
 	local extractor_feather = math.max(extractor_core + 2,
@@ -3051,7 +3058,7 @@ local function PrepareOuterResourceTerrain(map)
 	local protected_ready_sites = {}
 	local forced_resource_repairs = 0
 	local maximum_resource_core = 0
-	for _, entry in ipairs(resources) do
+	for _, entry in ipairs(passage_only and {} or resources) do
 		local exact_extractor_offsets = entry.kind == "extractor"
 			and extractor_offsets(entry.resource) or nil
 		local radius = entry.kind == "extractor"
@@ -3141,7 +3148,7 @@ local function PrepareOuterResourceTerrain(map)
 			math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_MAXIMUM_EXTRACTOR_DEPOSITS", 3))))
 	local cluster_radius = math.max(4,
 		math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_RADIUS_HEXES", 12)))
-	local maximum_rocket_pads = math.max(0,
+	local maximum_rocket_pads = passage_only and 0 or math.max(0,
 		math.floor(cfg_number("OUTER_RESOURCE_ROCKET_PAD_MAXIMUM_COUNT", 10)))
 	local rocket_extra_feather = math.max(3,
 		cfg_number("OUTER_RESOURCE_ROCKET_PAD_EXTRA_FEATHER_HEXES", 6))
@@ -3320,6 +3327,7 @@ local function PrepareOuterResourceTerrain(map)
 				+ axial_distance(q, r, cq, cr),
 		}
 	end
+	local passage_plan
 	do
 	local cluster_groups_by_plan, cluster_groups = {}, {}
 	for index, entry in ipairs(resources) do
@@ -3341,6 +3349,353 @@ local function PrepareOuterResourceTerrain(map)
 			group.members[#group.members + 1] = index
 			if entry.cluster_anchor then group.anchors = group.anchors + 1 end
 			if entry.cluster_premium then group.premiums = group.premiums + 1 end
+		end
+	end
+
+	-- v971 lazy-underground pad reservation. This passage-only invocation runs after every
+	-- resource/anomaly/effect placement and audit, while the outer pass-edit transaction is still
+	-- suspended and before the scheduled canonical Surface rebuild. It does not alter the six
+	-- resource-cluster rocket pads or any top-up quota. Two private, deterministic Elevator centers
+	-- are selected from the physical outer two-sector band, replayed exactly, and added to this same
+	-- organic native patch journal. No engine/global RNG is consumed and no object is published here.
+	passage_plan = passage_only and {
+		requested = passage_only and cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION", false)
+			and cfg_bool("LAZY_UNDERGROUND_OUTER_PASSAGE_PADS", true),
+		used = false, error = "", required = 2, selected = 0,
+		attempt_cap_per_site = 256, attempts = 0, viable = 0, shape_checks = 0,
+		resource_rejections = 0, rocket_rejections = 0, patch_rejections = 0,
+		object_rejections = 0, ring_rejections = 0, spacing_rejections = 0,
+		deposit_filter_checks = 0, deposit_filter_rejections = 0,
+		concrete_markers = 0, geyser_markers = 0,
+		private_seed = 0, private_final_state = 0, private_draws = 0,
+		replay_attempts = 0, replay_viable = 0, replay_exact = false,
+		shape_hexes = 0, shape_radius = 0, level_core_hexes = 0,
+		outer_feather_hexes = 0, conservative_visit_radius_world = 0,
+		inner_no_write = false, all_changed_cells_outer = false, plan_digest = 0,
+	} or nil
+	if passage_plan and passage_plan.requested then
+		local get_shape = Global("GetExtendedSpawnShape")
+		local validate_shape = Global("ValidateEachShapeHexPos")
+		local snap_world = Global("SnapWorldToHex")
+		local object_grid = map.object_hex_grid
+		local get_obstructions = object_grid and object_grid.GetBuildObstructions
+		local shape_ok, passage_shape = false, nil
+		if type(get_shape) == "function" then
+			shape_ok, passage_shape = pcall(get_shape, "Elevator")
+		end
+		local const_random = type(const_tbl) == "table" and const_tbl.RandomMap or nil
+		local minimum_passage_distance = type(const_random) == "table"
+			and tonumber(const_random.UndergroundPassagesMinDistance) or nil
+		if ring_sectors ~= 2 then
+			passage_plan.error = "physical outer passage ring must be exactly two sectors"
+		elseif not shape_ok or type(passage_shape) ~= "table" or #passage_shape == 0
+			or type(validate_shape) ~= "function" or type(snap_world) ~= "function"
+			or not object_grid or type(get_obstructions) ~= "function"
+			or type(minimum_passage_distance) ~= "number" or minimum_passage_distance <= 0 then
+			passage_plan.error = "exact Elevator/passage planning APIs are unavailable"
+		else
+			local passage_offsets, passage_radius = {}, 0
+			for _, shape_pt in ipairs(passage_shape) do
+				local dq, dr = PointXY(shape_pt)
+				if type(dq) == "number" and type(dr) == "number" then
+					dq, dr = math.floor(dq + 0.5), math.floor(dr + 0.5)
+					passage_offsets[#passage_offsets + 1] = { dq, dr }
+					passage_radius = math.max(passage_radius,
+						math.max(math.abs(dq), math.abs(dr), math.abs(dq + dr)))
+				end
+			end
+			passage_plan.shape_hexes = #passage_offsets
+			passage_plan.shape_radius = passage_radius
+			local radius_reference = resources[1]
+			local reference_q = radius_reference and radius_reference.q
+			local reference_r = radius_reference and radius_reference.r
+			if type(reference_q) ~= "number" or type(reference_r) ~= "number" then
+				local reference_ok, q, r = pcall(world_to_hex, point_fn(map_w / 2, map_h / 2))
+				if reference_ok and type(q) == "number" and type(r) == "number" then
+					reference_q, reference_r = q, r
+				end
+			end
+			local passage_world_radius = type(reference_q) == "number"
+				and offsets_world_radius_hexes(reference_q, reference_r,
+					passage_offsets, passage_radius) or nil
+			if type(passage_world_radius) ~= "number" or passage_world_radius <= 0 then
+				passage_plan.error = "Elevator world-radius certificate is unavailable"
+				passage_world_radius = math.max(1, passage_radius)
+			end
+			local passage_level_core = math.ceil(passage_world_radius + 1)
+			local passage_required_core = math.ceil(passage_world_radius + 3)
+			local passage_feather = passage_required_core + math.max(3,
+				cfg_number("OUTER_RESOURCE_ROCKET_PAD_EXTRA_FEATHER_HEXES", 6))
+			-- Adaptive transition is capped at 36 height cells. The native mask can widen that
+			-- transition by 1.35, so certify the complete worst-case visit disk up front.
+			local base_transition_cells = math.max((passage_feather - passage_level_core)
+				* cells_per_hex, 36 * cells_per_hex)
+			local conservative_visit_cells = passage_level_core * cells_per_hex
+				+ base_transition_cells * 1.35 + 2
+			local conservative_visit_world = conservative_visit_cells * height_tile
+			passage_plan.level_core_hexes = passage_level_core
+			passage_plan.outer_feather_hexes = passage_feather
+			passage_plan.conservative_visit_radius_world = conservative_visit_world
+
+			local enrichment_sites, concrete_markers, geyser_markers = {}, {}, {}
+			local enrichment_scan_ok = pcall(map.MapForEach, map, "map", "DepositMarker",
+				function(marker)
+					local position = ObjectPosition(marker)
+					local x, y = PointXY(position)
+					if type(x) ~= "number" or type(y) ~= "number" then return end
+					local hex_ok, q, r = pcall(world_to_hex, point_fn(x, y))
+					if hex_ok and type(q) == "number" and type(r) == "number" then
+						enrichment_sites[#enrichment_sites + 1] = { q = q, r = r, x = x, y = y }
+					end
+					if marker.resource == "Concrete" and IsKindOfSafe(marker, "TerrainDepositMarker")
+						and type(marker.GetObstructionRadius) == "function" then
+						local radius_ok, radius = pcall(marker.GetObstructionRadius, marker)
+						if radius_ok and type(radius) == "number" and radius >= 0 then
+							concrete_markers[#concrete_markers + 1] = { marker = marker, radius = radius }
+						end
+					end
+				end)
+			local feature_presets = Global("PrefabFeaturePresets")
+			local char_presets = Global("PrefabFeatureCharPresets")
+			local geyser_scan_ok = pcall(map.MapForEach, map, "map", "PrefabFeatureMarker",
+				function(marker)
+					local feature = type(feature_presets) == "table"
+						and feature_presets[marker.FeatureType] or nil
+					if type(feature) ~= "table" or type(feature.chars) ~= "table" then return end
+					for _, char_name in ipairs(feature.chars) do
+						local preset = type(char_presets) == "table" and char_presets[char_name] or nil
+						if IsKindOfSafe(preset, "PrefabFeatureCharPreset_Geyser") then
+							if type(marker.FeatureRadius) == "number" and marker.FeatureRadius >= 0 then
+								geyser_markers[#geyser_markers + 1] = {
+									marker = marker, radius = marker.FeatureRadius }
+							end
+							return
+						end
+					end
+				end)
+			passage_plan.concrete_markers = #concrete_markers
+			passage_plan.geyser_markers = #geyser_markers
+			local existing_rockets = type(map.SuperBigMapOuterResourceRocketPads) == "table"
+				and map.SuperBigMapOuterResourceRocketPads or {}
+			local existing_resource_sites = type(map.SuperBigMapOuterResourceTerrainSites) == "table"
+				and map.SuperBigMapOuterResourceTerrainSites or {}
+			if passage_plan.error ~= "" or #passage_offsets == 0
+				or not enrichment_scan_ok or not geyser_scan_ok
+				or #existing_rockets ~= 6 then
+				passage_plan.error = passage_plan.error ~= "" and passage_plan.error
+					or #existing_rockets ~= 6
+					and "six verified resource rocket pads are unavailable"
+					or "live enrichment/Elevator footprint enumeration failed"
+			else
+				local modulus = 2147483647
+				local generator = map.RandomMapGenObject
+				local numeric_seed = type(generator) == "table" and tonumber(generator.Seed) or 0
+				local seed_material = tostring(type(generator) == "table"
+					and generator.GenerationHash or "") .. "|"
+					.. tostring(map.mapdata and map.mapdata.RandomMapPreset or "")
+					.. "|v971-outer-passage-pad-reservation"
+				local private_seed = math.abs(math.floor(numeric_seed or 0)) % modulus
+				for index = 1, #seed_material do
+					private_seed = (private_seed * 48271
+						+ string.byte(seed_material, index) + 1) % modulus
+				end
+				if private_seed == 0 then private_seed = 1 end
+				passage_plan.private_seed = private_seed
+
+				local function select_private_sites(replay)
+					local state, chosen = private_seed, {}
+					local attempts, viable = 0, 0
+					local function next_private()
+						state = (state * 48271 + 1) % modulus
+						if state == 0 then state = 1 end
+						return state
+					end
+					local inner_left, inner_top = band_x, band_y
+					local inner_right, inner_bottom = map_w - band_x, map_h - band_y
+					local minimum_distance2 = minimum_passage_distance * minimum_passage_distance
+					for site_index = 1, passage_plan.required do
+						local best
+						for _ = 1, passage_plan.attempt_cap_per_site do
+							attempts = attempts + 1
+							local sample_x = next_private() % math.max(1, math.floor(map_w))
+							local sample_y = next_private() % math.max(1, math.floor(map_h))
+							local angle = (next_private() % 6) * 3600
+							local center = snap_world(point_fn(sample_x, sample_y))
+							local x, y = PointXY(center)
+							local hex_ok, q, r = false, nil, nil
+							if type(x) == "number" and type(y) == "number" then
+								hex_ok, q, r = pcall(world_to_hex, point_fn(x, y))
+							end
+							local valid = hex_ok and type(q) == "number" and type(r) == "number"
+							if valid then
+								local nearest_x = math.max(inner_left, math.min(inner_right, x))
+								local nearest_y = math.max(inner_top, math.min(inner_bottom, y))
+								local dx, dy = x - nearest_x, y - nearest_y
+								local inner_distance = math.sqrt(dx * dx + dy * dy)
+								valid = in_outer_band(x, y)
+									and x >= conservative_visit_world and y >= conservative_visit_world
+									and x < map_w - conservative_visit_world
+									and y < map_h - conservative_visit_world
+									and inner_distance > conservative_visit_world
+								if not valid and not replay then passage_plan.ring_rejections = passage_plan.ring_rejections + 1 end
+							end
+							if valid then
+								for _, entry in ipairs(enrichment_sites) do
+									if axial_distance(q, r, entry.q, entry.r) < passage_required_core + 3 then
+										valid = false
+										if not replay then passage_plan.resource_rejections = passage_plan.resource_rejections + 1 end
+										break
+									end
+								end
+							end
+							if valid then
+								for _, rocket in ipairs(existing_rockets) do
+									local rocket_radius = tonumber(rocket.shape_radius) or rocket_hex_radius
+									if type(rocket.q) ~= "number" or type(rocket.r) ~= "number"
+										or axial_distance(q, r, rocket.q, rocket.r)
+											< passage_required_core + rocket_radius + 4 then
+										valid = false
+										if not replay then passage_plan.rocket_rejections = passage_plan.rocket_rejections + 1 end
+										break
+									end
+								end
+							end
+							if valid then
+								for _, prior in ipairs(chosen) do
+									local dx, dy = x - prior.x, y - prior.y
+									if dx * dx + dy * dy < minimum_distance2 then
+										valid = false
+										if not replay then passage_plan.spacing_rejections = passage_plan.spacing_rejections + 1 end
+										break
+									end
+								end
+							end
+							if valid then
+								for _, existing in ipairs(existing_resource_sites) do
+									local radius_cells = (tonumber(existing.patch_core_cells) or 0)
+										+ (tonumber(existing.patch_transition_cells) or 0) * 1.35 + 2
+									local dx, dy = x - (tonumber(existing.x) or x), y - (tonumber(existing.y) or y)
+									local reach = conservative_visit_world + radius_cells * height_tile
+									if dx * dx + dy * dy <= reach * reach then
+										valid = false
+										if not replay then passage_plan.patch_rejections = passage_plan.patch_rejections + 1 end
+										break
+									end
+								end
+							end
+							if valid then
+								local shape_valid = validate_shape(passage_shape, point_fn(x, y), angle,
+									function(hq, hr)
+										local ok, obstructions = pcall(get_obstructions, object_grid, hq, hr)
+										if not ok or type(obstructions) ~= "table" or #obstructions > 0 then
+											return false
+										end
+										local wx, wy = world_xy(hq, hr)
+										if not wx then return false end
+										local position = point_fn(wx, wy)
+										for _, entry in ipairs(concrete_markers) do
+											if not replay then passage_plan.deposit_filter_checks =
+												passage_plan.deposit_filter_checks + 1 end
+											local distance_ok, distance = false, nil
+											if type(position.Dist2D) == "function" then
+												distance_ok, distance = pcall(position.Dist2D, position, entry.marker)
+											end
+											if not distance_ok or type(distance) ~= "number" or distance <= entry.radius then
+												if not replay then passage_plan.deposit_filter_rejections =
+													passage_plan.deposit_filter_rejections + 1 end
+												return false
+											end
+										end
+										for _, entry in ipairs(geyser_markers) do
+											if not replay then passage_plan.deposit_filter_checks =
+												passage_plan.deposit_filter_checks + 1 end
+											local distance_ok, distance = false, nil
+											if type(position.Dist2D) == "function" then
+												distance_ok, distance = pcall(position.Dist2D, position, entry.marker)
+											end
+											if not distance_ok or type(distance) ~= "number" or distance <= entry.radius then
+												if not replay then passage_plan.deposit_filter_rejections =
+													passage_plan.deposit_filter_rejections + 1 end
+												return false
+											end
+										end
+										return true
+									end)
+								valid = shape_valid == true
+								if not replay then
+									passage_plan.shape_checks = passage_plan.shape_checks + 1
+									if not valid then passage_plan.object_rejections = passage_plan.object_rejections + 1 end
+								end
+							end
+							if valid then
+								viable = viable + 1
+								local center_height = grid_value(x / height_tile, y / height_tile)
+								local range_min, range_max = center_height, center_height
+								if range_min then
+									for _, offset in ipairs(passage_offsets) do
+										local hx, hy = world_xy(q + offset[1], r + offset[2])
+										local value = hx and grid_value(hx / height_tile, hy / height_tile) or nil
+										if not value then range_min, range_max = nil, nil; break end
+										range_min, range_max = math.min(range_min, value), math.max(range_max, value)
+									end
+								end
+								if range_min then
+									local candidate = { index = site_index, x = x, y = y, z = 0,
+										q = q, r = r, angle = angle, height_range = range_max - range_min,
+										shape_radius = passage_radius, required_core_radius = passage_required_core,
+										inner_clearance = conservative_visit_world, modified = true }
+									if not best or candidate.height_range < best.height_range then best = candidate end
+								end
+							end
+						end
+						if not best then return nil, state, attempts, viable end
+						chosen[#chosen + 1] = best
+					end
+					return chosen, state, attempts, viable
+				end
+
+				local selected, final_state, attempts, viable = select_private_sites(false)
+				local replay, replay_state, replay_attempts, replay_viable = select_private_sites(true)
+				passage_plan.attempts, passage_plan.viable = attempts, viable
+				passage_plan.private_final_state = final_state or 0
+				passage_plan.private_draws = attempts * 3
+				passage_plan.replay_attempts, passage_plan.replay_viable = replay_attempts, replay_viable
+				local replay_exact = selected and replay and #selected == 2 and #replay == 2
+					and final_state == replay_state and attempts == replay_attempts and viable == replay_viable
+				if replay_exact then
+					for index, site in ipairs(selected) do
+						local twin = replay[index]
+						if not twin or site.x ~= twin.x or site.y ~= twin.y or site.q ~= twin.q
+							or site.r ~= twin.r or site.angle ~= twin.angle
+							or site.height_range ~= twin.height_range then
+							replay_exact = false
+							break
+						end
+					end
+				end
+				passage_plan.replay_exact = replay_exact == true
+				if replay_exact then
+					local digest = private_seed
+					for _, site in ipairs(selected) do
+						digest = (digest * 48271 + math.abs(math.floor(site.q)) + 1) % modulus
+						digest = (digest * 48271 + math.abs(math.floor(site.r)) + 1) % modulus
+						digest = (digest * 48271 + site.angle + 1) % modulus
+						local patch = add_patch("passage", site.x, site.y, site.q, site.r,
+							passage_level_core, passage_feather,
+							{ passage_site = site,
+								support_cells = passage_required_core * cells_per_hex })
+						if not patch then replay_exact = false; passage_plan.error = "passage patch target unavailable"; break end
+						passage_sites[#passage_sites + 1] = site
+					end
+					passage_plan.plan_digest = digest
+				end
+				passage_plan.used = replay_exact and #passage_sites == passage_plan.required
+				passage_plan.selected = #passage_sites
+				passage_plan.inner_no_write = passage_plan.used == true
+				if not passage_plan.used and passage_plan.error == "" then
+					passage_plan.error = "private outer passage-pad plan did not repeat exactly"
+				end
+			end
 		end
 	end
 	table.sort(cluster_groups, function(a, b) return a.plan < b.plan end)
@@ -3635,6 +3990,44 @@ local function PrepareOuterResourceTerrain(map)
 		end
 	end
 	end
+	if passage_only and (not passage_plan or passage_plan.requested ~= true
+		or passage_plan.used ~= true or #passage_sites ~= 2) then
+		if grid and grid ~= raw and type(grid.free) == "function" then pcall(grid.free, grid) end
+		local failure = passage_plan or { requested = false, used = false,
+			error = "outer passage-pad reservation is disabled" }
+		failure.reason = failure.error ~= "" and failure.error
+			or "outer passage-pad reservation did not produce exactly two sites"
+		failure.patches = 0
+		failure.modified_cells = 0
+		map.SuperBigMapOuterPassageTerrainReport = failure
+		LoadingStep("outer passage terrain reservation", failure, map)
+		return false, failure
+	end
+	-- The passage-only transaction is allowed to publish terrain only after its private plan has
+	-- replayed exactly. Retain an immutable preimage so a SetHeightGrid implementation that mutates
+	-- and then throws can be rolled back and verified before this function reports failure. The
+	-- accepted resource path does not allocate this snapshot.
+	if passage_only then
+		passage_plan.transaction = {
+			original = false, rollback_attempted = false, rollback_completed = false,
+			rollback_verified = false, rollback_mismatches = -1, rollback_error = "",
+		}
+		local snapshot_ok, snapshot_or_error = pcall(function()
+			assert(type(grid.clone) == "function", "height-grid clone unavailable")
+			local snapshot = grid:clone()
+			assert(snapshot and snapshot ~= grid and snapshot ~= raw,
+				"immutable passage height preimage unavailable")
+			return snapshot
+		end)
+		if not snapshot_ok then
+			if grid ~= raw and type(grid.free) == "function" then pcall(grid.free, grid) end
+			local failure = { reason = "passage terrain transaction unavailable",
+				passage_only = true, passage_pads = 0, error = tostring(snapshot_or_error) }
+			map.SuperBigMapOuterPassageTerrainReport = failure
+			return false, failure
+		end
+		passage_plan.transaction.original = snapshot_or_error
+	end
 
 	-- If a required new core actually intersects an already-valid resource guard, preserving the old
 	-- pixels cannot satisfy both footprints.  Promote just that connected guard to a shaped core;
@@ -3738,7 +4131,7 @@ local function PrepareOuterResourceTerrain(map)
 		patch.outer_cells = patch.core_cells
 			+ math.max(existing_transition, adaptive_transition)
 		patch.maximum_core_delta = maximum_core_delta
-		local diagnostic_site = patch.resource_site or patch.rocket_site
+		local diagnostic_site = patch.resource_site or patch.rocket_site or patch.passage_site
 		if diagnostic_site then
 			diagnostic_site.patch_maximum_core_delta = maximum_core_delta
 			diagnostic_site.patch_core_cells = patch.core_cells
@@ -3753,7 +4146,7 @@ local function PrepareOuterResourceTerrain(map)
 	local precondition_components = {}
 	local precondition_minimum_delta = 2 * guim_v
 	for _, patch in ipairs(patches) do
-		local site = patch.resource_site or patch.rocket_site
+		local site = patch.resource_site or patch.rocket_site or patch.passage_site
 		local planned_cluster_footprint = type(site) == "table"
 			and site.cluster_plan ~= nil and patch.kind ~= "surface"
 		if patch.kind ~= "surface"
@@ -3764,7 +4157,7 @@ local function PrepareOuterResourceTerrain(map)
 	end
 	for _, patch in ipairs(patches) do
 		patch.precondition_selected = precondition_components[patch.component] == true
-		local diagnostic_site = patch.resource_site or patch.rocket_site
+		local diagnostic_site = patch.resource_site or patch.rocket_site or patch.passage_site
 		if diagnostic_site then
 			diagnostic_site.patch_component = patch.component
 			diagnostic_site.patch_base_transition_cells = patch.base_transition_cells
@@ -3812,7 +4205,7 @@ local function PrepareOuterResourceTerrain(map)
 	local native_is_compute = Global("IsComputeGrid")
 	local box_fn = Global("box")
 	local native_requested = cfg_bool("OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_RASTER", true)
-	local native_precondition_enabled = native_requested and not prior_terrain_plan_present
+	local native_precondition_enabled = native_requested and (passage_only or not prior_terrain_plan_present)
 		and cfg_bool("OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_PRECONDITION", true)
 	local native_available = native_requested
 		and type(native_new_grid) == "function" and type(native_resample) == "function"
@@ -3843,7 +4236,7 @@ local function PrepareOuterResourceTerrain(map)
 	local function patch_sort()
 		-- Resource access first, then rocket pads. A rocket core therefore remains exactly level even
 		-- where its feather overlaps a smaller resource-access feather.
-		local patch_order = { surface = 1, extractor = 2, rocket = 3 }
+		local patch_order = { surface = 1, extractor = 2, rocket = 3, passage = 4 }
 		table.sort(patches, function(a, b)
 			local a_order = patch_order[a.kind] or 2
 			local b_order = patch_order[b.kind] or 2
@@ -4087,7 +4480,7 @@ local function PrepareOuterResourceTerrain(map)
 						native_precondition_cells = native_precondition_cells + raster_cells
 						if pass == 1 then
 							native_precondition_sites = native_precondition_sites + 1
-							local site = patch.resource_site or patch.rocket_site
+							local site = patch.resource_site or patch.rocket_site or patch.passage_site
 							if site then
 								native_precondition_site_records[#native_precondition_site_records + 1] = site
 							end
@@ -4232,34 +4625,132 @@ local function PrepareOuterResourceTerrain(map)
 			modified_cells, shaped_patches = 0, 0
 			native_raster_cells, native_mask_samples, native_inner_restored_patch_cells = 0, 0, 0
 			native_precondition_sites, native_precondition_patches, native_precondition_cells = 0, 0, 0
-			local reset_ok, reset_error = pcall(function()
-				local failed_grid = grid
-				grid = raw
-				if failed_grid ~= raw and type(failed_grid.free) == "function" then
-					pcall(failed_grid.free, failed_grid)
-				end
-				local rebuilt = grid_to_compute(raw)
-				assert(rebuilt and type(rebuilt.size) == "function"
-					and type(rebuilt.get) == "function" and type(rebuilt.set) == "function",
-					"native fallback grid unavailable")
-				grid = rebuilt
-			end)
-			if reset_ok then
-				ok_apply, apply_error = pcall(apply_legacy_raster)
+			if passage_only then
+				-- The dedicated passage transaction has no literal fallback after planning. A failed
+				-- native journal has touched only the detached working grid; publish nothing and let
+				-- the lazy state machine block rather than installing a partially certified surface.
+				ok_apply, apply_error = false, native_raster_error
 			else
-				ok_apply, apply_error = false, reset_error
+				local reset_ok, reset_error = pcall(function()
+					local failed_grid = grid
+					grid = raw
+					if failed_grid ~= raw and type(failed_grid.free) == "function" then
+						pcall(failed_grid.free, failed_grid)
+					end
+					local rebuilt = grid_to_compute(raw)
+					assert(rebuilt and type(rebuilt.size) == "function"
+						and type(rebuilt.get) == "function" and type(rebuilt.set) == "function",
+						"native fallback grid unavailable")
+					grid = rebuilt
+				end)
+				if reset_ok then
+					ok_apply, apply_error = pcall(apply_legacy_raster)
+				else
+					ok_apply, apply_error = false, reset_error
+				end
 			end
 		end
 	else
 		if native_requested then native_raster_error = "native grid APIs unavailable" end
-		ok_apply, apply_error = pcall(apply_legacy_raster)
+		if passage_only then
+			native_raster_fallback = true
+			ok_apply, apply_error = false, native_raster_error ~= ""
+				and native_raster_error or "native grid APIs unavailable"
+		else
+			ok_apply, apply_error = pcall(apply_legacy_raster)
+		end
 	end
 	local raster_finished_ms = now_ms()
 	if type(resume) == "function" then pcall(resume, "SBMOuterResourceTerrain") end
 	local set_ok, set_error = false, "no terrain changes"
+	if passage_plan and passage_plan.transaction then passage_plan.transaction.verify = function()
+		local owned, owned_lookup = {}, {}
+		local function own(value, protected_a, protected_b)
+			if value and value ~= protected_a and value ~= protected_b and not owned_lookup[value] then
+				owned_lookup[value] = true
+				owned[#owned + 1] = value
+			end
+			return value
+		end
+		local ok, same, mismatches = pcall(function()
+			local live_raw = terrain_api.GetHeightGrid(map)
+			assert(live_raw, "restored live height grid unavailable")
+			local live_compute = grid_to_compute(live_raw)
+			local expected_compute = grid_to_compute(passage_plan.transaction.original)
+			assert(live_compute and expected_compute, "rollback comparison conversion failed")
+			own(live_compute, live_raw, passage_plan.transaction.original)
+			own(expected_compute, live_raw, passage_plan.transaction.original)
+			local live_f = native_repack(live_compute, "f", 32, true)
+			local expected_f = native_repack(expected_compute, "f", 32, true)
+			assert(live_f and expected_f, "rollback comparison repack failed")
+			own(live_f, live_raw, passage_plan.transaction.original)
+			own(expected_f, live_raw, passage_plan.transaction.original)
+			local difference = live_f:clone()
+			assert(difference and difference ~= live_f, "rollback difference clone failed")
+			own(difference, live_raw, passage_plan.transaction.original)
+			native_add_mul_div(difference, expected_f, -1)
+			native_abs(difference)
+			local count = native_count(difference, 0, 2147483647)
+			assert(type(count) == "number", "rollback difference count failed")
+			return count == 0, count
+		end)
+		local cleanup_errors = {}
+		for index = #owned, 1, -1 do
+			local value = owned[index]
+			if value and type(value.free) == "function" then
+				local free_ok, free_error = pcall(value.free, value)
+				if not free_ok then cleanup_errors[#cleanup_errors + 1] = tostring(free_error) end
+			end
+		end
+		if #cleanup_errors > 0 then
+			return false, -1, "rollback comparison cleanup failed: "
+				.. table.concat(cleanup_errors, " | ")
+		end
+		if not ok then return false, -1, tostring(same) end
+		return same == true, mismatches, same == true and "" or "restored height mismatch"
+	end end
 	local install_started_ms = now_ms()
 	if ok_apply and modified_cells > 0 then
 		set_ok, set_error = pcall(terrain_api.SetHeightGrid, map, grid)
+		-- SetHeightGrid reports engine failures through its first normal return value as well as
+		-- through Lua errors. Only nil/false is the proven success ABI; a truthy returned error must
+		-- enter the same rollback path as a throw, including when the setter already mutated live data.
+		if set_ok and set_error then set_ok = false end
+		if not set_ok and passage_plan and passage_plan.transaction
+			and passage_plan.transaction.original then
+			passage_plan.transaction.rollback_attempted = true
+			local payload
+			local clone_ok, clone_or_error = pcall(function()
+				assert(type(passage_plan.transaction.original.clone) == "function",
+					"rollback clone unavailable")
+				local value = passage_plan.transaction.original:clone()
+				assert(value and value ~= passage_plan.transaction.original,
+					"rollback clone aliases immutable preimage")
+				return value
+			end)
+			if clone_ok then
+				payload = clone_or_error
+				local restore_ok, restore_error = pcall(terrain_api.SetHeightGrid, map, payload)
+				if restore_ok and restore_error then restore_ok = false end
+				passage_plan.transaction.rollback_completed = restore_ok == true
+				if payload and type(payload.free) == "function" then pcall(payload.free, payload) end
+				if restore_ok then
+					local verified, mismatches, verify_error = passage_plan.transaction.verify()
+					passage_plan.transaction.rollback_verified = verified == true
+					passage_plan.transaction.rollback_mismatches = mismatches
+					passage_plan.transaction.rollback_error = verify_error or ""
+				else
+					passage_plan.transaction.rollback_error = tostring(restore_error)
+				end
+			else
+				passage_plan.transaction.rollback_error = tostring(clone_or_error)
+			end
+			if not passage_plan.transaction.rollback_completed
+				or not passage_plan.transaction.rollback_verified then
+				set_error = tostring(set_error) .. " | rollback failed: "
+					.. passage_plan.transaction.rollback_error
+			end
+		end
 	elseif ok_apply then
 		set_ok = true
 	end
@@ -4271,9 +4762,22 @@ local function PrepareOuterResourceTerrain(map)
 		end
 	end
 	if grid and grid ~= raw and type(grid.free) == "function" then pcall(grid.free, grid) end
+	if passage_plan and passage_plan.transaction and passage_plan.transaction.original
+		and type(passage_plan.transaction.original.free) == "function" then
+		pcall(passage_plan.transaction.original.free, passage_plan.transaction.original)
+	end
 
-	map.SuperBigMapOuterResourceTerrainSites = resource_sites
-	map.SuperBigMapOuterResourceRocketPads = rocket_sites
+	if passage_only then
+		map.SuperBigMapOuterPassagePads = set_ok and passage_sites or nil
+	else
+		map.SuperBigMapOuterResourceTerrainSites = resource_sites
+		map.SuperBigMapOuterResourceRocketPads = rocket_sites
+	end
+	if passage_only and passage_plan then
+		passage_plan.all_changed_cells_outer = set_ok == true
+			and native_raster_used == true and native_raster_fallback ~= true
+			and passage_plan.inner_no_write == true
+	end
 	local report = {
 		reason = not ok_apply and "height-grid shaping failed"
 			or not set_ok and "height-grid installation failed"
@@ -4357,6 +4861,52 @@ local function PrepareOuterResourceTerrain(map)
 		native_raster_error = native_raster_error,
 		error = not ok_apply and tostring(apply_error)
 			or not set_ok and tostring(set_error) or "",
+		passage_only = passage_only,
+		passage_pads_requested = passage_plan and passage_plan.requested == true or false,
+		passage_pads_used = passage_plan and passage_plan.used == true or false,
+		passage_pads = passage_plan and passage_plan.selected or 0,
+		passage_pad_error = passage_plan and passage_plan.error or "",
+		passage_pad_attempt_cap_per_site = passage_plan and passage_plan.attempt_cap_per_site or 0,
+		passage_pad_attempts = passage_plan and passage_plan.attempts or 0,
+		passage_pad_viable = passage_plan and passage_plan.viable or 0,
+		passage_pad_shape_checks = passage_plan and passage_plan.shape_checks or 0,
+		passage_pad_resource_rejections = passage_plan and passage_plan.resource_rejections or 0,
+		passage_pad_rocket_rejections = passage_plan and passage_plan.rocket_rejections or 0,
+		passage_pad_patch_rejections = passage_plan and passage_plan.patch_rejections or 0,
+		passage_pad_object_rejections = passage_plan and passage_plan.object_rejections or 0,
+		passage_pad_ring_rejections = passage_plan and passage_plan.ring_rejections or 0,
+		passage_pad_spacing_rejections = passage_plan and passage_plan.spacing_rejections or 0,
+		passage_pad_deposit_filter_checks = passage_plan and passage_plan.deposit_filter_checks or 0,
+		passage_pad_deposit_filter_rejections = passage_plan
+			and passage_plan.deposit_filter_rejections or 0,
+		passage_pad_concrete_markers = passage_plan and passage_plan.concrete_markers or 0,
+		passage_pad_geyser_markers = passage_plan and passage_plan.geyser_markers or 0,
+		passage_pad_private_seed = passage_plan and passage_plan.private_seed or 0,
+		passage_pad_private_final_state = passage_plan and passage_plan.private_final_state or 0,
+		passage_pad_private_draws = passage_plan and passage_plan.private_draws or 0,
+		passage_pad_replay_attempts = passage_plan and passage_plan.replay_attempts or 0,
+		passage_pad_replay_viable = passage_plan and passage_plan.replay_viable or 0,
+		passage_pad_replay_exact = passage_plan and passage_plan.replay_exact == true or false,
+		passage_pad_shape_hexes = passage_plan and passage_plan.shape_hexes or 0,
+		passage_pad_shape_radius = passage_plan and passage_plan.shape_radius or 0,
+		passage_pad_level_core_hexes = passage_plan and passage_plan.level_core_hexes or 0,
+		passage_pad_outer_feather_hexes = passage_plan and passage_plan.outer_feather_hexes or 0,
+		passage_pad_conservative_visit_radius_world = passage_plan
+			and passage_plan.conservative_visit_radius_world or 0,
+		passage_pad_plan_digest = passage_plan and passage_plan.plan_digest or 0,
+		passage_pad_inner_no_write = passage_plan and passage_plan.inner_no_write == true or false,
+		passage_pad_all_changed_cells_outer = passage_plan
+			and passage_plan.all_changed_cells_outer == true or false,
+		passage_install_rollback_attempted = passage_plan and passage_plan.transaction
+			and passage_plan.transaction.rollback_attempted == true or false,
+		passage_install_rollback_completed = passage_plan and passage_plan.transaction
+			and passage_plan.transaction.rollback_completed == true or false,
+		passage_install_rollback_verified = passage_plan and passage_plan.transaction
+			and passage_plan.transaction.rollback_verified == true or false,
+		passage_install_rollback_mismatches = passage_plan and passage_plan.transaction
+			and passage_plan.transaction.rollback_mismatches or -1,
+		passage_install_rollback_error = passage_plan and passage_plan.transaction
+			and passage_plan.transaction.rollback_error or "",
 	}
 	for _, site in ipairs(resource_sites) do
 		if site.modified then report.resource_sites_modified = report.resource_sites_modified + 1 end
@@ -4364,11 +4914,29 @@ local function PrepareOuterResourceTerrain(map)
 	for _, site in ipairs(rocket_sites) do
 		if site.modified then report.rocket_pads_modified = report.rocket_pads_modified + 1 end
 	end
-	map.SuperBigMapOuterResourceTerrainReport = report
-	LoadingStep("outer resource access and cluster landing terrain", report, map)
+	if passage_only then
+		map.SuperBigMapOuterPassageTerrainReport = report
+	else
+		map.SuperBigMapOuterResourceTerrainReport = report
+	end
+	LoadingStep(passage_only and "outer passage terrain reservation"
+		or "outer resource access and cluster landing terrain", report, map)
 	local print_fn = Global("print")
 	if type(print_fn) == "function" then
-		print_fn("[Super Big Map][OuterResourceTerrain] resources=" .. tostring(report.resources)
+		print_fn(passage_only and ("[Super Big Map][OuterPassageTerrain] pads="
+			.. tostring(report.passage_pads)
+			.. " attempts=" .. tostring(report.passage_pad_attempts)
+			.. " viable=" .. tostring(report.passage_pad_viable)
+			.. " replay_exact=" .. tostring(report.passage_pad_replay_exact)
+			.. " shape_hexes=" .. tostring(report.passage_pad_shape_hexes)
+			.. " patches=" .. tostring(report.patches)
+			.. " modified_cells=" .. tostring(report.modified_cells)
+			.. " native_raster=" .. tostring(report.native_raster_used)
+			.. " native_fallback=" .. tostring(report.native_raster_fallback)
+			.. " raster_ms=" .. tostring(report.raster_ms)
+			.. " install_ms=" .. tostring(report.install_ms)
+			.. " error=" .. tostring(report.error))
+			or ("[Super Big Map][OuterResourceTerrain] resources=" .. tostring(report.resources)
 			.. " surface=" .. tostring(report.surface_resources)
 			.. " extractor=" .. tostring(report.extractor_resources)
 			.. " resource_modified=" .. tostring(report.resource_sites_modified)
@@ -4410,9 +4978,17 @@ local function PrepareOuterResourceTerrain(map)
 			.. " native_precondition_patches=" .. tostring(report.native_precondition_patches)
 			.. " native_precondition_cells=" .. tostring(report.native_precondition_cells)
 			.. " native_error=" .. tostring(report.native_raster_error)
-			.. " error=" .. tostring(report.error))
+			.. " error=" .. tostring(report.error)))
 	end
 	return set_ok and modified_cells > 0, report
+end
+
+local function PrepareOuterPassageTerrain(map)
+	if not cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION", false)
+		or not cfg_bool("LAZY_UNDERGROUND_OUTER_PASSAGE_PADS", true) then
+		return false, { reason = "disabled", passage_pads = 0, passage_only = true }
+	end
+	return PrepareOuterResourceTerrain(map, { passage_only = true })
 end
 
 -- Run only after the engine has rebuilt passability and the buildable grid from the edited height
@@ -9160,6 +9736,7 @@ local TerrainCopy = {
 	ClearDecorRelief = ClearDecorRelief,
 	AuditNaturalMountainBaseBuildableAprons = AuditNaturalMountainBaseBuildableAprons,
 	PrepareOuterResourceTerrain = PrepareOuterResourceTerrain,
+	PrepareOuterPassageTerrain = PrepareOuterPassageTerrain,
 	AuditOuterResourceTerrain = AuditOuterResourceTerrain,
 }
 SuperBigMap.TerrainCopy = TerrainCopy

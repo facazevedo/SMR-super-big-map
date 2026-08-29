@@ -40,9 +40,11 @@ def main() -> int:
     generation = GENERATION.read_text(encoding="utf-8")
     version = VERSION.read_text(encoding="utf-8")
     metadata = METADATA.read_text(encoding="utf-8")
-    if any(f"'version', {candidate}," in metadata for candidate in (968, 969, 970)):
+    if any(f"'version', {candidate}," in metadata for candidate in (968, 969, 970, 971)):
         successor = ROOT / "_ralph" / "tools" / (
-            "check_v969_fresh_grid_capsule_publication.py"
+            "check_v971_outer_passage_pad_architecture.py"
+            if "'version', 971," in metadata
+            else "check_v969_fresh_grid_capsule_publication.py"
             if "'version', 969," in metadata or "'version', 970," in metadata
             else "check_v968_exact_center_capsule_planner.py")
         forwarded = subprocess.run(
@@ -57,7 +59,9 @@ def main() -> int:
         print(json.dumps({
             "schema": "smr.ralph.v967.bounded-capsule-planner-forward-gate.v1",
             "ok": ok,
-            "successor": "v969+ fresh-grid publication" if "'version', 969," in metadata
+            "successor": "v971 outer passage-pad architecture"
+                if "'version', 971," in metadata
+                else "v969+ fresh-grid publication" if "'version', 969," in metadata
                 or "'version', 970," in metadata
                 else "v968 depth-zero exact-center planner",
             "successor_result": payload,

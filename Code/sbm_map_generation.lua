@@ -8690,7 +8690,8 @@ if SuperBigMap.State.lazy_underground_reload_restore_ok ~= false
 			"LAZY_UNDERGROUND_FRESH_GRID_CAPSULE_PLANNING", true),
 		POST_CANONICAL_STOCK_CAPSULE_SEARCH = cfg_bool(
 			"LAZY_UNDERGROUND_POST_CANONICAL_STOCK_CAPSULE_SEARCH", true),
-		CAPSULE_PLANNER_VERSION = 5,
+		OUTER_PASSAGE_PADS = cfg_bool("LAZY_UNDERGROUND_OUTER_PASSAGE_PADS", true),
+		CAPSULE_PLANNER_VERSION = 6,
 	}
 
 function Lazy.Now()
@@ -8918,7 +8919,8 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 		full_search_mismatches = 0,
 		full_search_cap = 0,
 		stock_search_requested = Lazy.FRESH_GRID_CAPSULE_PLANNING == true
-			and Lazy.POST_CANONICAL_STOCK_CAPSULE_SEARCH == true,
+			and Lazy.POST_CANONICAL_STOCK_CAPSULE_SEARCH == true
+			and Lazy.OUTER_PASSAGE_PADS ~= true,
 		stock_search_used = false,
 		stock_search_start_attempts = 0,
 		stock_search_selected = 0,
@@ -8928,10 +8930,18 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 		stock_search_pause_requested = false,
 		stock_search_pause_used = false,
 		stock_search_resume_ok = false,
+		outer_passage_pad_requested = Lazy.OUTER_PASSAGE_PADS == true,
+		outer_passage_pad_used = false,
+		outer_passage_pad_report_exact = false,
+		outer_passage_pad_plan_digest = 0,
+		outer_passage_pad_terrain_modified_cells = 0,
+		outer_passage_pad_native_raster_cells = 0,
+		outer_passage_pad_native_fallback = false,
 		publication_validation_ms = 0,
 		marker_scan_ms = 0,
 		marker_index_requested = Lazy.FRESH_GRID_CAPSULE_PLANNING == true
-			and Lazy.POST_CANONICAL_STOCK_CAPSULE_SEARCH ~= true,
+			and Lazy.POST_CANONICAL_STOCK_CAPSULE_SEARCH ~= true
+			and Lazy.OUTER_PASSAGE_PADS ~= true,
 		marker_index_used = false,
 		marker_index_fallback = false,
 		marker_index_fallback_reason = "",
@@ -9266,7 +9276,110 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 	end
 	local capsules = {}
 	local max_attempts = 512
-	if report.stock_search_requested == true then
+	if report.outer_passage_pad_requested == true then
+		-- v971: terrain planning has already selected and organically preconditioned exactly two
+		-- dedicated Elevator pads in the physical outer ring. Consume that primitive journal verbatim.
+		-- Main performs the only two native depth-zero validations after the first canonical rebuild;
+		-- deterministic replay compares the immutable journal and performs no grid/search call.
+		local terrain_report = surface.SuperBigMapOuterPassageTerrainReport
+		local reserved = surface.SuperBigMapOuterPassagePads
+		local hex_find_buildable = Global("HexGridFindBuildable")
+		local validate_shape = Global("ValidateEachShapeHexPos")
+		local unbuildable_fn = Global("buildUnbuildableZ")
+		if type(terrain_report) ~= "table" or type(reserved) ~= "table" or #reserved ~= 2
+			or terrain_report.passage_only ~= true
+			or terrain_report.passage_pads_requested ~= true
+			or terrain_report.passage_pads_used ~= true
+			or tonumber(terrain_report.passage_pads) ~= 2
+			or terrain_report.passage_pad_replay_exact ~= true
+			or terrain_report.passage_pad_inner_no_write ~= true
+			or terrain_report.passage_pad_all_changed_cells_outer ~= true
+			or terrain_report.native_raster_used ~= true
+			or terrain_report.native_raster_fallback == true
+			or tostring(terrain_report.error or "") ~= ""
+			or type(hex_find_buildable) ~= "function" or type(validate_shape) ~= "function"
+			or type(unbuildable_fn) ~= "function" or type(buildable.GetZ) ~= "function"
+			or not buildable.z_grid or type(object_grid.GetBuildObstructions) ~= "function" then
+			return fail("certified v971 outer passage-pad journal is unavailable")
+		end
+		local sentinel_ok, unbuildable_z = pcall(unbuildable_fn)
+		if not sentinel_ok or type(unbuildable_z) ~= "number" then
+			return fail("v971 outer passage-pad validation sentinel is unavailable")
+		end
+		local function validate_reserved_center(capsule)
+			local original_z = false
+			local function shape_pos_filter(q, r)
+				local z = buildable:GetZ(q, r)
+				original_z = original_z or z
+				if z == unbuildable_z or z ~= original_z then return false end
+				local obstructions = object_grid:GetBuildObstructions(q, r)
+				if #obstructions > 0 then return false end
+				if deposit_filter and not deposit_filter(q, r) then return false end
+				return true
+			end
+			local function continue_check(q, r)
+				local x, y = hex_to_world(q, r)
+				return validate_shape(shape, point_fn(x, y), capsule.angle,
+					shape_pos_filter) ~= true
+			end
+			local bq, br, depth = hex_find_buildable(capsule.q, capsule.r,
+				object_grid, buildable.z_grid, unbuildable_z, continue_check, 0)
+			if bq == nil and br == nil and depth == nil then return nil end
+			if bq ~= capsule.q or br ~= capsule.r or depth ~= 0
+				or type(original_z) ~= "number" then
+				error("v971 depth-zero passage-pad validator returned a contrary tuple")
+			end
+			return original_z
+		end
+		for index, site in ipairs(reserved) do
+			if type(site) ~= "table" or tonumber(site.index) ~= index
+				or type(site.x) ~= "number" or type(site.y) ~= "number"
+				or type(site.q) ~= "number" or type(site.r) ~= "number"
+				or type(site.angle) ~= "number" then
+				return fail("v971 outer passage-pad primitive site is malformed")
+			end
+			local world_ok, wx, wy = pcall(hex_to_world, site.q, site.r)
+			if not world_ok or wx ~= site.x or wy ~= site.y then
+				return fail("v971 outer passage-pad world/hex tuple mismatch")
+			end
+			capsules[index] = { index = index, x = site.x, y = site.y, z = 0,
+				q = site.q, r = site.r, angle = site.angle }
+		end
+		report.attempts = tonumber(terrain_report.passage_pad_attempts) or 0
+		report.bounded_used = true
+		report.bounded_max_depth = 0
+		report.outer_passage_pad_used = true
+		report.outer_passage_pad_report_exact = true
+		report.outer_passage_pad_plan_digest = tonumber(
+			terrain_report.passage_pad_plan_digest) or 0
+		report.outer_passage_pad_terrain_modified_cells = tonumber(
+			terrain_report.modified_cells) or 0
+		report.outer_passage_pad_native_raster_cells = tonumber(
+			terrain_report.native_raster_cells) or 0
+		report.outer_passage_pad_native_fallback = terrain_report.native_raster_fallback == true
+		if not replay_only then
+			local validation_started = now()
+			for _, capsule in ipairs(capsules) do
+				report.publication_validation_calls = report.publication_validation_calls + 1
+				local validation_ok, z = pcall(validate_reserved_center, capsule)
+				if not validation_ok or type(z) ~= "number" then
+					report.full_search_mismatches = report.full_search_mismatches + 1
+					report.publication_validation_ms = math.max(0, now() - validation_started)
+					return fail("v971 conditioned passage pad failed exact depth-zero validation")
+				end
+				report.publication_validation_exact_centers =
+					report.publication_validation_exact_centers + 1
+			end
+			report.publication_validation_ms = math.max(0, now() - validation_started)
+			report.full_validation_complete = report.publication_validation_calls == 2
+				and report.publication_validation_exact_centers == 2
+				and report.full_search_calls == 0 and report.full_search_mismatches == 0
+			report.plan_safe_for_publication = report.full_validation_complete
+		else
+			report.full_validation_complete = true
+			report.plan_safe_for_publication = true
+		end
+	elseif report.stock_search_requested == true then
 		-- v970: fresh canonical grids make stock nearest-buildable search sparse and cheap (the
 		-- iter200 corpus found both sites in three starts). Preserve the exact stock footprint/Z,
 		-- obstruction, and literal deposit/geyser predicates; only the private start/angle stream and
@@ -9577,9 +9690,16 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 		report.plan_safe_for_publication = report.full_validation_complete
 	end
 	report.capsules_planned = #capsules
-	report.private_domain = Lazy.DOMAIN
-	report.private_seed = private_seed
-	report.private_final_state = private_state
+	report.private_domain = report.outer_passage_pad_used
+		and "SuperBigMap/v971/outer-passage-pad-reservation" or Lazy.DOMAIN
+	report.private_seed = report.outer_passage_pad_used
+		and (tonumber(surface.SuperBigMapOuterPassageTerrainReport
+			and surface.SuperBigMapOuterPassageTerrainReport.passage_pad_private_seed) or 0)
+		or private_seed
+	report.private_final_state = report.outer_passage_pad_used
+		and (tonumber(surface.SuperBigMapOuterPassageTerrainReport
+			and surface.SuperBigMapOuterPassageTerrainReport.passage_pad_private_final_state) or 0)
+		or private_state
 	report.surface_seed = surface_seed
 	report.reserved_underground_seed = reserved_seed
 	report.inner_margin_x = margin_x
@@ -9588,13 +9708,16 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 	report.concrete_markers = #concrete_markers
 	report.geyser_markers = #geyser_markers
 	if #capsules ~= report.capsules_required then
-		return fail("private capsule planner did not find exactly two valid inner sites")
+		return fail("private capsule planner did not find exactly two valid sites")
 	end
-	local digest = private_seed
+	local digest = report.outer_passage_pad_used
+		and report.outer_passage_pad_plan_digest or private_seed
 	for _, capsule in ipairs(capsules) do
-		digest = (digest * 48271 + math.abs(math.floor(capsule.q)) + 1) % modulus
-		digest = (digest * 48271 + math.abs(math.floor(capsule.r)) + 1) % modulus
-		digest = (digest * 48271 + capsule.angle + 1) % modulus
+		if not report.outer_passage_pad_used then
+			digest = (digest * 48271 + math.abs(math.floor(capsule.q)) + 1) % modulus
+			digest = (digest * 48271 + math.abs(math.floor(capsule.r)) + 1) % modulus
+			digest = (digest * 48271 + capsule.angle + 1) % modulus
+		end
 	end
 	report.plan_digest = digest
 	report.planner_used = true
@@ -9997,6 +10120,9 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 		map_preset = descriptor.map_preset }
 	local stock_search_active = Lazy.FRESH_GRID_CAPSULE_PLANNING == true
 		and Lazy.POST_CANONICAL_STOCK_CAPSULE_SEARCH == true
+		and Lazy.OUTER_PASSAGE_PADS ~= true
+	local outer_passage_active = Lazy.FRESH_GRID_CAPSULE_PLANNING == true
+		and Lazy.OUTER_PASSAGE_PADS == true
 	if stock_search_active and not after_canonical_grid then
 		return Lazy.MarkBlocked(surface,
 			"v970 stock capsule search was invoked before canonical Surface grids")
@@ -10045,7 +10171,33 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 		twin_report.stock_search_after_canonical_grid = after_canonical_grid
 	end
 	local validation_contract = plan_report.plan_safe_for_publication == true
-	if stock_search_active then
+	if outer_passage_active then
+		validation_contract = validation_contract
+			and after_canonical_grid == true
+			and plan_report.outer_passage_pad_used == true
+			and plan_report.outer_passage_pad_report_exact == true
+			and plan_report.outer_passage_pad_native_fallback == false
+			and plan_report.outer_passage_pad_plan_digest > 0
+			and plan_report.attempts == 512
+			and plan_report.private_draws == plan_report.attempts * 3
+			and plan_report.bounded_max_depth == 0
+			and plan_report.bounded_search_calls == 0
+			and plan_report.exact_center_shape_checks == 0
+			and plan_report.publication_validation_calls == 2
+			and plan_report.publication_validation_exact_centers == 2
+			and plan_report.full_search_calls == 0
+			and plan_report.full_search_mismatches == 0
+			and twin_report and twin_report.replay_only == true
+			and twin_report.outer_passage_pad_used == true
+			and twin_report.outer_passage_pad_report_exact == true
+			and twin_report.outer_passage_pad_plan_digest
+				== plan_report.outer_passage_pad_plan_digest
+			and twin_report.attempts == plan_report.attempts
+			and twin_report.private_draws == plan_report.private_draws
+			and twin_report.publication_validation_calls == 0
+			and twin_report.full_search_calls == 0
+			and twin_report.full_search_mismatches == 0
+	elseif stock_search_active then
 		validation_contract = validation_contract and plan_report.stock_search_used == true
 			and plan_report.stock_search_after_canonical_grid == true
 			and plan_report.full_search_cap == 8
@@ -10154,6 +10306,8 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 	report.repeat_marker_exclusion_exact =
 		twin_report and twin_report.marker_exclusion_exact == true
 	report.stock_search_replay_exact = stock_search_active and repeat_exact == true
+	report.outer_passage_pad_capsule_repeat_exact =
+		outer_passage_active and repeat_exact == true
 	if not repeat_exact then return Lazy.MarkBlocked(surface, "capsule plan did not repeat exactly") end
 	descriptor.capsules = capsules
 	descriptor.plan_digest = plan_report.plan_digest
@@ -10161,6 +10315,7 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 	descriptor.capsule_planner_bounded = Lazy.BOUNDED_CAPSULE_PLANNER == true
 	descriptor.capsule_planner_max_depth = plan_report.bounded_max_depth
 	descriptor.capsule_planner_stock_search = stock_search_active
+	descriptor.capsule_planner_outer_passage_pads = outer_passage_active
 	descriptor.capsule_planner_stock_search_cap = plan_report.full_search_cap
 	descriptor.private_rng.final_state = plan_report.private_final_state
 	local publication_started = Lazy.Now()
@@ -10169,7 +10324,9 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 	if not created or #created ~= 2 then return Lazy.MarkBlocked(surface, publish_reason) end
 	-- Capsule publication permanently removes the only consumer of the retained native Surface view.
 	-- Release its non-serializable map/grid now, before T1 and before an immediate save can occur.
-	ReleaseRetainedNativeSourceMap(surface, "v970 capped-stock capsules published")
+	ReleaseRetainedNativeSourceMap(surface, outer_passage_active
+		and "v971 conditioned outer passage capsules published"
+		or "v970 capped-stock capsules published")
 	local retained_buildable = surface.SuperBigMapPendingNativeSurfacePassageBuildable
 	if type(retained_buildable) == "table" and retained_buildable.grid then
 		SuperBigMap.FreeOwnedGrid(retained_buildable.grid)
@@ -10196,7 +10353,8 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 	if not report.descriptor_primitive then
 		return Lazy.MarkBlocked(surface, "published descriptor is not primitive")
 	end
-	LoadingStep("capped-stock lazy underground capsule plan published", {
+	LoadingStep(outer_passage_active and "conditioned outer lazy underground capsule plan published"
+		or "capped-stock lazy underground capsule plan published", {
 		attempts = report.attempts, bounded_calls = report.bounded_search_calls,
 		bounded_ms = report.bounded_search_ms, max_depth = report.bounded_max_depth,
 		max_returned_depth = report.bounded_search_max_returned_depth,
@@ -14219,6 +14377,77 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								error = call_ok and "" or tostring(audit_ok),
 								markers = call_ok and audit_stats and audit_stats.markers or nil,
 							}, call_ok and audit_ok ~= false)
+						end
+						-- v971 lazy-underground implementation only: all enrichment coordinates are now
+						-- immutable. Reserve and organically precondition two dedicated outer-ring Elevator
+						-- pads in a separate native transaction. The surrounding pass-edit epoch remains
+						-- suspended; the scheduled canonical rebuild below is their first grid publication.
+						if cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION", false)
+							and cfg_bool("LAZY_UNDERGROUND_OUTER_PASSAGE_PADS", true) then
+							if type(TerrainCopy.PrepareOuterPassageTerrain) ~= "function" then
+								error("outer passage terrain reservation is unavailable")
+							end
+							local _, passage_report = TimedSafeCall(
+								"surface prepare outer passage terrain", map,
+								TerrainCopy.PrepareOuterPassageTerrain, map)
+							if type(passage_report) ~= "table"
+								or passage_report.passage_pads_requested ~= true
+								or passage_report.passage_pads_used ~= true
+								or tonumber(passage_report.passage_pads) ~= 2
+								or passage_report.passage_pad_replay_exact ~= true
+								or passage_report.passage_pad_inner_no_write ~= true
+								or passage_report.passage_pad_all_changed_cells_outer ~= true
+								or passage_report.native_raster_used ~= true
+								or passage_report.native_raster_fallback == true
+								or tostring(passage_report.error or "") ~= "" then
+								error("outer passage terrain reservation failed: "
+									.. tostring(passage_report and (passage_report.error
+										or passage_report.passage_pad_error) or "missing report"))
+							end
+							local passage_spacing_ok, passage_spacing =
+								deposits.AuditTopUpVanillaRepulsion(map,
+									"surface final after outer passage pad reservation")
+							if passage_spacing_ok ~= true
+								or tonumber(passage_spacing and passage_spacing.outer_passage_pad_failures) ~= 0 then
+								error("outer passage-pad hard spacing audit failed: "
+									.. tostring(passage_spacing
+										and passage_spacing.first_outer_passage_pad_failure or "missing report"))
+							end
+							local passage_census_ok, passage_census =
+								deposits.CensusFinalOuterResourceTopUps(map,
+									"after outer passage pad reservation", false)
+							if passage_census_ok ~= true
+								or tonumber(passage_census and passage_census.outer_passage_pads) ~= 2
+								or tonumber(passage_census
+									and passage_census.outer_passage_pad_ring_failures) ~= 0
+								or tonumber(passage_census
+									and passage_census.outer_passage_pad_primitive_failures) ~= 0 then
+								error("outer passage-pad census failed")
+							end
+							LoadingStep("outer passage pad policy certificate", {
+								pads = passage_report.passage_pads,
+								attempts = passage_report.passage_pad_attempts,
+								viable = passage_report.passage_pad_viable,
+								shape_checks = passage_report.passage_pad_shape_checks,
+								private_draws = passage_report.passage_pad_private_draws,
+								replay_exact = passage_report.passage_pad_replay_exact,
+								plan_digest = passage_report.passage_pad_plan_digest,
+								patches = passage_report.patches,
+								modified_cells = passage_report.modified_cells,
+								native_raster_cells = passage_report.native_raster_cells,
+								inner_no_write = passage_report.passage_pad_inner_no_write,
+								all_changed_cells_outer =
+									passage_report.passage_pad_all_changed_cells_outer,
+								planning_ms = passage_report.planning_ms,
+								raster_ms = passage_report.raster_ms,
+								install_ms = passage_report.install_ms,
+								spacing_pairs = passage_spacing.outer_passage_pad_pairs_checked,
+								spacing_failures = passage_spacing.outer_passage_pad_failures,
+								census_pads = passage_census.outer_passage_pads,
+								ring_failures = passage_census.outer_passage_pad_ring_failures,
+								primitive_failures =
+									passage_census.outer_passage_pad_primitive_failures,
+							}, map)
 						end
 						if type(deposits.ClearTopUpPlacementPool) == "function" then
 							deposits.ClearTopUpPlacementPool(map)
