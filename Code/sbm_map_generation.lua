@@ -8686,8 +8686,17 @@ if SuperBigMap.State.lazy_underground_reload_restore_ok ~= false
 		IMPLEMENTATION = cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION", false),
 		BOUNDED_CAPSULE_PLANNER = cfg_bool(
 			"LAZY_UNDERGROUND_BOUNDED_CAPSULE_PLANNER", true),
-		CAPSULE_PLANNER_VERSION = 3,
+		FRESH_GRID_CAPSULE_PLANNING = cfg_bool(
+			"LAZY_UNDERGROUND_FRESH_GRID_CAPSULE_PLANNING", true),
+		CAPSULE_PLANNER_VERSION = 4,
 	}
+
+function Lazy.Now()
+	local precise_ticks = Global("GetPreciseTicks")
+	if type(precise_ticks) ~= "function" then return 0 end
+	local call_ok, value = pcall(precise_ticks)
+	return call_ok and type(value) == "number" and value or 0
+end
 
 function Lazy.PrimitiveTree(value, seen)
 	local value_type = type(value)
@@ -8907,6 +8916,24 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 		full_search_mismatches = 0,
 		full_search_cap = 0,
 		marker_scan_ms = 0,
+		marker_index_requested = Lazy.FRESH_GRID_CAPSULE_PLANNING == true,
+		marker_index_used = false,
+		marker_index_fallback = false,
+		marker_index_fallback_reason = "",
+		marker_index_bucket_size = 4096,
+		marker_index_markers = 0,
+		marker_index_bucket_entries = 0,
+		marker_index_queries = 0,
+		marker_index_candidate_checks = 0,
+		marker_index_literal_checks = 0,
+		marker_index_position_equivalence_checks = 0,
+		marker_index_position_equivalence_mismatches = 0,
+		marker_index_stream_comparisons = 0,
+		marker_index_stream_mismatches = 0,
+		marker_index_stream_complete = false,
+		marker_index_selection_equivalent = false,
+		marker_exclusion_exact = false,
+		marker_index_build_ms = 0,
 		full_search_ms = 0,
 		total_ms = 0,
 		full_validation_complete = false,
@@ -8926,6 +8953,18 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 		report.exact_center_total_shape_checks = report.exact_center_shape_checks
 			+ report.publication_validation_calls
 		report.unbounded_search_calls = report.full_search_calls
+		if report.marker_index_requested == true then
+			report.marker_index_stream_complete = report.marker_index_used == true
+				and report.marker_index_stream_comparisons == report.marker_index_queries
+			report.marker_index_selection_equivalent = report.marker_index_stream_complete
+				and report.marker_index_stream_mismatches == 0
+				and report.marker_index_position_equivalence_mismatches == 0
+			report.marker_exclusion_exact = report.marker_index_selection_equivalent
+				or report.marker_index_fallback == true
+		else
+			-- The flag-off branch below is the literal v968 ordered full-marker filter.
+			report.marker_exclusion_exact = true
+		end
 		report.total_ms = math.max(0, now() - total_started)
 	end
 	local function fail(reason)
@@ -8972,8 +9011,9 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 	end
 
 	-- Match the stock concrete/geyser exclusion without using FindPassageSpawnPos's random
-	-- passable-point fallback. The private permutation below simply tries another deterministic
-	-- center when the bounded stock-equivalent search rejects one.
+	-- passable-point fallback. The exact final distance predicates remain literal. A conservative
+	-- bucket index only removes markers whose radius bounding box cannot contain the queried shape
+	-- cell; any indexing uncertainty falls back to the original full ordered marker arrays.
 	local marker_scan_started = now()
 	local concrete_markers = {}
 	local geyser_markers = {}
@@ -9002,7 +9042,177 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 	end
 	report.marker_scan_ms = math.max(0, now() - marker_scan_started)
 	local deposit_filter
-	if #concrete_markers > 0 or #geyser_markers > 0 then
+	if Lazy.FRESH_GRID_CAPSULE_PLANNING == true then
+		local marker_index_started = now()
+		local marker_index = { concrete = {}, geyser = {} }
+		local empty_markers = {}
+		local marker_index_ok = true
+		local marker_index_reason = ""
+		local marker_index_entries = 0
+		local safe_world_number = 2147483647
+		local safe_bucket_bound = 1048576
+		local function finite_safe(value, limit)
+			return type(value) == "number" and value == value
+				and value >= -limit and value <= limit
+		end
+		local function add_marker_to_index(index, marker, radius)
+			if not finite_safe(radius, safe_world_number) or radius < 0
+				or type(marker.GetPos) ~= "function" then
+				return false, "marker position/radius is not finite and safely bounded"
+			end
+			local position_ok, marker_position = pcall(marker.GetPos, marker)
+			if not position_ok or not marker_position then return false, "marker GetPos failed" end
+			local xy_ok, marker_x, marker_y = pcall(PointXY, marker_position)
+			if not xy_ok or not finite_safe(marker_x, safe_world_number)
+				or not finite_safe(marker_y, safe_world_number) then
+				return false, "marker position is not finite and safely bounded"
+			end
+			report.marker_index_position_equivalence_checks =
+				report.marker_index_position_equivalence_checks + 1
+			local distance_method = marker_position.Dist2D
+			local distance_ok, center_distance = false, nil
+			if type(distance_method) == "function" then
+				distance_ok, center_distance = pcall(distance_method, marker_position, marker)
+			end
+			if not distance_ok or center_distance ~= 0 then
+				report.marker_index_position_equivalence_mismatches =
+					report.marker_index_position_equivalence_mismatches + 1
+				return false, "marker GetPos does not match Dist2D object coercion"
+			end
+			local bucket_size = report.marker_index_bucket_size
+			-- One extra closed world unit makes boundary/rounding inclusion conservative. The
+			-- unchanged ordered Dist2D/radius predicate below remains authoritative.
+			local min_bx = math.floor((marker_x - radius - 1) / bucket_size)
+			local max_bx = math.floor((marker_x + radius + 1) / bucket_size)
+			local min_by = math.floor((marker_y - radius - 1) / bucket_size)
+			local max_by = math.floor((marker_y + radius + 1) / bucket_size)
+			if not finite_safe(min_bx, safe_bucket_bound)
+				or not finite_safe(max_bx, safe_bucket_bound)
+				or not finite_safe(min_by, safe_bucket_bound)
+				or not finite_safe(max_by, safe_bucket_bound)
+				or min_bx > max_bx or min_by > max_by then
+				return false, "marker index bounds are unsafe"
+			end
+			local span_x, span_y = max_bx - min_bx + 1, max_by - min_by + 1
+			if not finite_safe(span_x, 4096) or not finite_safe(span_y, 4096)
+				or span_x < 1 or span_y < 1
+				or span_x > 1 and min_bx + 1 == min_bx
+				or span_y > 1 and min_by + 1 == min_by then
+				return false, "marker index bounds are not safely incrementable"
+			end
+			local marker_entries = span_x * span_y
+			if marker_entries < 1 or marker_entries > 4096
+				or marker_index_entries + marker_entries > 65536 then
+				return false, "marker index extent exceeded conservative cap"
+			end
+			for bx = min_bx, max_bx do
+				local x_bucket = index[bx]
+				if not x_bucket then x_bucket = {}; index[bx] = x_bucket end
+				for by = min_by, max_by do
+					local bucket = x_bucket[by]
+					if not bucket then bucket = {}; x_bucket[by] = bucket end
+					bucket[#bucket + 1] = marker
+					marker_index_entries = marker_index_entries + 1
+				end
+			end
+			return true
+		end
+		for _, marker in ipairs(concrete_markers) do
+			if type(marker.GetObstructionRadius) == "function" then
+				local radius_ok, radius = pcall(marker.GetObstructionRadius, marker)
+				if not radius_ok or not finite_safe(radius, safe_world_number) then
+					marker_index_ok, marker_index_reason = false,
+						"concrete obstruction radius is unsafe"
+					break
+				end
+				local indexed, reason = add_marker_to_index(marker_index.concrete, marker, radius)
+				if not indexed then marker_index_ok, marker_index_reason = false, reason; break end
+			end
+		end
+		if marker_index_ok then
+			for _, marker in ipairs(geyser_markers) do
+				if type(marker.FeatureRadius) == "number" then
+					local indexed, reason = add_marker_to_index(
+						marker_index.geyser, marker, marker.FeatureRadius)
+					if not indexed then marker_index_ok, marker_index_reason = false, reason; break end
+				end
+			end
+		end
+		report.marker_index_build_ms = math.max(0, now() - marker_index_started)
+		report.marker_index_used = marker_index_ok
+		report.marker_index_fallback = not marker_index_ok
+		report.marker_index_fallback_reason = marker_index_reason
+		report.marker_index_markers = #concrete_markers + #geyser_markers
+		report.marker_index_bucket_entries = marker_index_ok and marker_index_entries or 0
+		local function first_rejecting_marker(position, concrete_candidates,
+			geyser_candidates, indexed)
+			for _, marker in ipairs(concrete_candidates) do
+				if indexed then
+					report.marker_index_candidate_checks =
+						report.marker_index_candidate_checks + 1
+				else
+					report.marker_index_literal_checks = report.marker_index_literal_checks + 1
+				end
+				if type(marker.GetObstructionRadius) == "function"
+					and position:Dist2D(marker) <= marker:GetObstructionRadius() then
+					return marker
+				end
+			end
+			for _, marker in ipairs(geyser_candidates) do
+				if indexed then
+					report.marker_index_candidate_checks =
+						report.marker_index_candidate_checks + 1
+				else
+					report.marker_index_literal_checks = report.marker_index_literal_checks + 1
+				end
+				if type(marker.FeatureRadius) == "number"
+					and position:Dist2D(marker) <= marker.FeatureRadius then
+					return marker
+				end
+			end
+			return nil
+		end
+		deposit_filter = function(q, r)
+			local wx, wy = hex_to_world(q, r)
+			local position = point_fn(wx, wy)
+			report.marker_index_queries = report.marker_index_queries + 1
+			if marker_index_ok and (not finite_safe(wx, safe_world_number)
+				or not finite_safe(wy, safe_world_number)) then
+				marker_index_ok = false
+				report.marker_index_used = false
+				report.marker_index_fallback = true
+				report.marker_index_fallback_reason = "query position is unsafe"
+			end
+			if marker_index_ok then
+				local bucket_size = report.marker_index_bucket_size
+				local bx, by = math.floor(wx / bucket_size), math.floor(wy / bucket_size)
+				local concrete_x = marker_index.concrete[bx]
+				local geyser_x = marker_index.geyser[bx]
+				local concrete_candidates = concrete_x and concrete_x[by] or empty_markers
+				local geyser_candidates = geyser_x and geyser_x[by] or empty_markers
+				local indexed_rejection = first_rejecting_marker(
+					position, concrete_candidates, geyser_candidates, true)
+				local literal_rejection = first_rejecting_marker(
+					position, concrete_markers, geyser_markers, false)
+				report.marker_index_stream_comparisons =
+					report.marker_index_stream_comparisons + 1
+				if indexed_rejection ~= literal_rejection then
+					report.marker_index_stream_mismatches =
+						report.marker_index_stream_mismatches + 1
+					marker_index_ok = false
+					report.marker_index_used = false
+					report.marker_index_fallback = true
+					report.marker_index_fallback_reason =
+						"indexed/literal ordered marker stream mismatch"
+				end
+				return literal_rejection == nil
+			end
+			return first_rejecting_marker(
+				position, concrete_markers, geyser_markers, false) == nil
+		end
+	elseif #concrete_markers > 0 or #geyser_markers > 0 then
+		-- Literal v968 flag-off behavior. Keep the original arrays, order, and predicates; no v969
+		-- index table/helper/query is constructed or consulted in this branch.
 		deposit_filter = function(q, r)
 			local wx, wy = hex_to_world(q, r)
 			local position = point_fn(wx, wy)
@@ -9573,9 +9783,16 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 		authority_tag = descriptor.authority_tag }
 	local next_map = { map_name = descriptor.map_name, map_slot = descriptor.map_slot,
 		map_preset = descriptor.map_preset }
+	if report.fresh_grid_architecture_used == true then
+		report.fresh_grid_main_plan_invocations =
+			(tonumber(report.fresh_grid_main_plan_invocations) or 0) + 1
+	end
+	local main_plan_started = Lazy.Now()
 	local capsules, plan_report = Lazy.BuildCapsulePlan(surface, pending, next_map)
+	local main_plan_ms = math.max(0, Lazy.Now() - main_plan_started)
 	if not capsules then
 		for key, value in pairs(plan_report or {}) do report[key] = value end
+		report.fresh_grid_main_plan_ms = main_plan_ms
 		if plan_report and plan_report.retryable_after_canonical_grid == true
 			and not after_canonical_grid and Lazy.BOUNDED_CAPSULE_PLANNER == true then
 			report.pre_final_retry_requested = true
@@ -9596,11 +9813,18 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 		return Lazy.MarkBlocked(surface,
 			"bounded capsule plan failed: " .. tostring(plan_report and plan_report.error))
 	end
+	if report.fresh_grid_architecture_used == true then
+		report.fresh_grid_replay_invocations =
+			(tonumber(report.fresh_grid_replay_invocations) or 0) + 1
+	end
+	local replay_started = Lazy.Now()
 	local twins, twin_report = Lazy.ReplayCapsulePlan(surface, pending, next_map)
+	local replay_ms = math.max(0, Lazy.Now() - replay_started)
 	local validation_contract = plan_report.plan_safe_for_publication == true
 	if Lazy.BOUNDED_CAPSULE_PLANNER == true then
 		validation_contract = validation_contract and plan_report.bounded_max_depth == 0
 			and plan_report.exact_center_shape_checks == plan_report.attempts
+			and plan_report.marker_exclusion_exact == true
 			and plan_report.publication_validation_calls == 2
 			and plan_report.publication_validation_exact_centers == 2
 			and plan_report.publication_validation_depth == 0
@@ -9608,6 +9832,7 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 			and plan_report.full_search_mismatches == 0
 			and twin_report.replay_only == true
 			and twin_report.exact_center_shape_checks == twin_report.attempts
+			and twin_report.marker_exclusion_exact == true
 			and twin_report.publication_validation_calls == 0
 			and twin_report.full_search_calls == 0
 	else
@@ -9626,10 +9851,22 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 		end
 	end
 	for key, value in pairs(plan_report or {}) do report[key] = value end
+	report.fresh_grid_main_plan_ms = main_plan_ms
+	report.fresh_grid_replay_ms = replay_ms
 	report.repeat_attempts = twin_report and twin_report.attempts or 0
 	report.repeat_bounded_search_calls = twin_report and twin_report.bounded_search_calls or 0
 	report.repeat_bounded_search_ms = twin_report and twin_report.bounded_search_ms or 0
 	report.repeat_full_search_calls = twin_report and twin_report.full_search_calls or -1
+	report.repeat_marker_index_used = twin_report and twin_report.marker_index_used == true
+	report.repeat_marker_index_fallback = twin_report and twin_report.marker_index_fallback == true
+	report.repeat_marker_index_stream_comparisons =
+		twin_report and twin_report.marker_index_stream_comparisons or 0
+	report.repeat_marker_index_stream_mismatches =
+		twin_report and twin_report.marker_index_stream_mismatches or -1
+	report.repeat_marker_index_stream_complete =
+		twin_report and twin_report.marker_index_stream_complete == true
+	report.repeat_marker_exclusion_exact =
+		twin_report and twin_report.marker_exclusion_exact == true
 	if not repeat_exact then return Lazy.MarkBlocked(surface, "capsule plan did not repeat exactly") end
 	descriptor.capsules = capsules
 	descriptor.plan_digest = plan_report.plan_digest
@@ -9637,11 +9874,13 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 	descriptor.capsule_planner_bounded = Lazy.BOUNDED_CAPSULE_PLANNER == true
 	descriptor.capsule_planner_max_depth = plan_report.bounded_max_depth
 	descriptor.private_rng.final_state = plan_report.private_final_state
+	local publication_started = Lazy.Now()
 	local created, publish_reason = Lazy.PublishSurfaceCapsules(surface, descriptor)
+	report.fresh_grid_publication_ms = math.max(0, Lazy.Now() - publication_started)
 	if not created or #created ~= 2 then return Lazy.MarkBlocked(surface, publish_reason) end
 	-- Capsule publication permanently removes the only consumer of the retained native Surface view.
 	-- Release its non-serializable map/grid now, before T1 and before an immediate save can occur.
-	ReleaseRetainedNativeSourceMap(surface, "v968 final-domain capsules published")
+	ReleaseRetainedNativeSourceMap(surface, "v969 fresh-grid capsules published")
 	local retained_buildable = surface.SuperBigMapPendingNativeSurfacePassageBuildable
 	if type(retained_buildable) == "table" and retained_buildable.grid then
 		SuperBigMap.FreeOwnedGrid(retained_buildable.grid)
@@ -9658,6 +9897,9 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 		or "immediately-before-canonical-final-surface-grid-rebuild"
 	report.capsule_plan_retry_pending = false
 	report.capsule_plan_retry_used = after_canonical_grid
+		and report.fresh_grid_architecture_used ~= true
+	report.fresh_grid_plan_used = after_canonical_grid
+		and report.fresh_grid_architecture_used == true
 	report.surface_markers_spawned = true
 	report.surface_capsule_objects_persisted = true
 	report.native_source_retention_released_before_t1 = true
@@ -9691,8 +9933,6 @@ function Lazy.PrepareImplementationCapsulesAroundRebuild(surface, rebuild, reaso
 	if type(rebuild) ~= "function" then
 		return Lazy.MarkBlocked(surface, "canonical surface rebuild callback is unavailable")
 	end
-	local capsule_ok, capsule_err, retry_after_grid =
-		Lazy.PrepareImplementationCapsulesSafe(surface, false)
 	local rebuild_count = 0
 	local fallback_count = 0
 	local function canonical_rebuild(label)
@@ -9707,6 +9947,108 @@ function Lazy.PrepareImplementationCapsulesAroundRebuild(surface, rebuild, reaso
 		end
 		return ok == true, err
 	end
+	local report = surface and surface.SuperBigMapLazyUndergroundFeasibilityReport
+	local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
+	local fresh_grid_architecture = Lazy.IMPLEMENTATION == true
+		and Lazy.BOUNDED_CAPSULE_PLANNER == true
+		and Lazy.FRESH_GRID_CAPSULE_PLANNING == true
+		and type(report) == "table" and type(descriptor) == "table"
+		and descriptor.state == "suppressed-awaiting-surface-capsules"
+	if type(report) == "table" then
+		report.fresh_grid_architecture_requested = Lazy.FRESH_GRID_CAPSULE_PLANNING == true
+		report.fresh_grid_architecture_used = fresh_grid_architecture
+	end
+	if fresh_grid_architecture then
+		-- v969: the pre-final pass/buildable grids are known stale. Do not even invoke the planner
+		-- against them. Publish canonical grids, run one fresh depth-zero plan and deterministic
+		-- replay, publish both capsules transactionally, then close their terrain/object changes.
+		local orchestration_started = Lazy.Now()
+		report.stale_plan_skipped = true
+		report.pre_final_retry_requested = false
+		report.pre_final_attempts = 0
+		report.pre_final_bounded_search_calls = 0
+		report.pre_final_bounded_search_ms = 0
+		report.capsule_plan_retry_pending = false
+		report.capsule_plan_retry_used = false
+		report.fresh_grid_main_plan_invocations = 0
+		report.fresh_grid_replay_invocations = 0
+		report.fresh_grid_expected_rebuilds = 2
+		report.fresh_grid_first_rebuild_ms = 0
+		report.fresh_grid_main_plan_ms = 0
+		report.fresh_grid_replay_ms = 0
+		report.fresh_grid_publication_ms = 0
+		report.fresh_grid_plan_replay_publication_ms = 0
+		report.fresh_grid_closing_rebuild_ms = 0
+		report.fresh_grid_orchestration_total_ms = 0
+		report.fresh_grid_phase_order =
+			"canonical-grid-publication>fresh-plan-replay>capsule-publication>closing-rebuild"
+
+		local first_rebuild_started = Lazy.Now()
+		local first_ok, first_err = canonical_rebuild(
+			reason .. " before fresh-grid capsule planning")
+		report.fresh_grid_first_rebuild_ms = math.max(0, Lazy.Now() - first_rebuild_started)
+		report.fresh_grid_first_rebuild_complete = first_ok == true
+		if first_ok ~= true then
+			report.canonical_rebuilds_during_capsule_prepare = rebuild_count
+			report.canonical_rebuild_fallbacks_during_capsule_prepare = fallback_count
+			report.fresh_grid_rebuild_shape_exact = false
+			report.fresh_grid_orchestration_total_ms =
+				math.max(0, Lazy.Now() - orchestration_started)
+			Lazy.MarkBlocked(surface,
+				"first canonical Surface grid rebuild failed: " .. tostring(first_err))
+			return false, first_err
+		end
+
+		local plan_started = Lazy.Now()
+		local capsule_ok, capsule_err = Lazy.PrepareImplementationCapsulesSafe(surface, true)
+		report.fresh_grid_plan_replay_publication_ms = math.max(0, Lazy.Now() - plan_started)
+		if capsule_ok ~= true then
+			report.canonical_rebuilds_during_capsule_prepare = rebuild_count
+			report.canonical_rebuild_fallbacks_during_capsule_prepare = fallback_count
+			report.fresh_grid_rebuild_shape_exact = false
+			report.fresh_grid_orchestration_total_ms =
+				math.max(0, Lazy.Now() - orchestration_started)
+			return false, "lazy underground fresh-grid capsule publication failed: "
+				.. tostring(capsule_err)
+		end
+
+		local closing_rebuild_started = Lazy.Now()
+		local closing_ok, closing_err = canonical_rebuild(
+			reason .. " after fresh-grid capsule publication")
+		report.fresh_grid_closing_rebuild_ms =
+			math.max(0, Lazy.Now() - closing_rebuild_started)
+		report.fresh_grid_closing_rebuild_complete = closing_ok == true
+		report.canonical_rebuilds_during_capsule_prepare = rebuild_count
+		report.canonical_rebuild_fallbacks_during_capsule_prepare = fallback_count
+		report.fresh_grid_rebuild_shape_exact = closing_ok == true
+			and rebuild_count == 2 and fallback_count == 0
+		report.fresh_grid_orchestration_total_ms =
+			math.max(0, Lazy.Now() - orchestration_started)
+		if closing_ok ~= true then
+			Lazy.MarkBlocked(surface,
+				"closing canonical Surface grid rebuild failed: " .. tostring(closing_err))
+			return false, closing_err
+		end
+		LoadingStep("fresh-grid lazy underground capsules closed", {
+			stale_attempts = report.pre_final_attempts,
+			first_rebuild_ms = report.fresh_grid_first_rebuild_ms,
+			main_plan_ms = report.fresh_grid_main_plan_ms,
+			replay_ms = report.fresh_grid_replay_ms,
+			publication_ms = report.fresh_grid_publication_ms,
+			closing_rebuild_ms = report.fresh_grid_closing_rebuild_ms,
+			total_ms = report.fresh_grid_orchestration_total_ms,
+			rebuilds = rebuild_count, rebuild_fallbacks = fallback_count,
+			marker_index_used = tostring(report.marker_index_used == true),
+			marker_stream_mismatches = report.marker_index_stream_mismatches,
+			repeat_marker_stream_mismatches = report.repeat_marker_index_stream_mismatches,
+		}, surface)
+		return true, nil
+	end
+
+	-- Literal v968 ordering remains available behind the fresh-grid sub-flag and for eager fallback
+	-- ownership states. It is never entered by the healthy v969 suppressed implementation path.
+	local capsule_ok, capsule_err, retry_after_grid =
+		Lazy.PrepareImplementationCapsulesSafe(surface, false)
 	local rebuild_ok, rebuild_err = canonical_rebuild(reason)
 	if rebuild_ok and retry_after_grid then
 		capsule_ok, capsule_err = Lazy.PrepareImplementationCapsulesSafe(surface, true)
@@ -9715,7 +10057,6 @@ function Lazy.PrepareImplementationCapsulesAroundRebuild(surface, rebuild, reaso
 				reason .. " after fresh-grid capsule publication")
 		end
 	end
-	local report = surface and surface.SuperBigMapLazyUndergroundFeasibilityReport
 	if type(report) == "table" then
 		report.canonical_rebuilds_during_capsule_prepare = rebuild_count
 		report.canonical_rebuild_fallbacks_during_capsule_prepare = fallback_count

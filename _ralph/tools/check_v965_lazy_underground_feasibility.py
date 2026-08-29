@@ -221,7 +221,7 @@ def main() -> int:
         "pinned_lua_5_3_6_compiles_generation_chunk": (
             lua53_result is not None and lua53_result.returncode == 0
         ),
-        "metadata_retained_in_v968": "'version', 968," in metadata,
+        "metadata_retained_in_v969": "'version', 969," in metadata,
         "generator_wrapper_identity_v275": "SuperBigMap.GENERATOR_PATCH_VERSION = 275" in version,
         "feasibility_flag_default_off": (
             "config.LazyUndergroundSourceGenerationFeasibility = false" in config
