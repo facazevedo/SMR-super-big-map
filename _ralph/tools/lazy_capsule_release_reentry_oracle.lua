@@ -1,4 +1,4 @@
--- Deterministic Lua 5.3 model for the v982 capsule-publication/re-entrant-release boundary.
+-- Deterministic Lua 5.3 model for the v985 capsule-publication/re-entrant-release boundary.
 
 local PUBLISHED = "surface-capsules-published-awaiting-final-grid"
 
@@ -6,9 +6,15 @@ local function closing_contract(descriptor, report)
 	return descriptor.state == PUBLISHED
 		and type(descriptor.capsules) == "table" and #descriptor.capsules == 2
 		and (tonumber(descriptor.plan_digest) or 0) > 0
+		and (tonumber(descriptor.validation_z_digest) or 0) > 0
+		and tonumber(descriptor.capsule_planner_version) == 7
 		and tonumber(report.capsules_published) == 2
+		and tonumber(report.validation_z_certificates) == 2
+		and tonumber(report.validation_z_digest) == tonumber(descriptor.validation_z_digest)
 		and report.deterministic_repeat == true
 		and report.final_grid_revalidation ~= true
+		and type(descriptor.capsules[1].validation_z) == "number"
+		and type(descriptor.capsules[2].validation_z) == "number"
 end
 
 local function block(descriptor, report, reason)
@@ -26,8 +32,10 @@ end
 local function transaction(release_callback, release_result)
 	local descriptor = {
 		state = "suppressed-awaiting-surface-capsules",
-		capsules = { { x = 1 }, { x = 2 } },
+		capsules = { { x = 1, validation_z = 7000 }, { x = 2, validation_z = 9000 } },
 		plan_digest = 982288,
+		validation_z_digest = 77123,
+		capsule_planner_version = 7,
 	}
 	local report = {
 		capsules_published = 0,
@@ -37,6 +45,8 @@ local function transaction(release_callback, release_result)
 	-- Exact production ordering: publish every closing-guard field without an intervening call.
 	descriptor.state = PUBLISHED
 	report.capsules_published = 2
+	report.validation_z_certificates = 2
+	report.validation_z_digest = descriptor.validation_z_digest
 	report.deterministic_repeat = true
 	report.final_grid_revalidation = false
 	report.surface_capsule_objects_persisted = true
@@ -90,6 +100,7 @@ local legacy_descriptor = {
 }
 local legacy_report = {
 	capsules_published = 0,
+	validation_z_certificates = 0,
 	deterministic_repeat = false,
 	final_grid_revalidation = false,
 }

@@ -1,15 +1,27 @@
--- Deterministic Lua 5.3 model for the v983 published-capsule certificate.
+-- Deterministic Lua 5.3 model for the v985 published-capsule certificate.
+
+local function validation_z_digest(descriptor)
+	local digest = descriptor.plan_digest
+	for index, capsule in ipairs(descriptor.capsules) do
+		digest = (digest * 48271 + capsule.validation_z + index) % 2147483647
+	end
+	return digest == 0 and 1 or digest
+end
 
 local function fixture()
 	local surface = {}
 	local descriptor = {
 		state = "surface-capsules-published-awaiting-final-grid",
 		plan_digest = 983289,
+		capsule_planner_version = 7,
 		capsules = {
-			{ index = 1, x = 100, y = 200, angle = 0, published = true },
-			{ index = 2, x = 300, y = 400, angle = 3600, published = true },
+			{ index = 1, x = 100, y = 200, angle = 0,
+				validation_z = 7000, published = true },
+			{ index = 2, x = 300, y = 400, angle = 3600,
+				validation_z = 9000, published = true },
 		},
 	}
+	descriptor.validation_z_digest = validation_z_digest(descriptor)
 	local report = {
 		capsules_published = 2,
 		surface_capsule_objects_persisted = true,
@@ -17,11 +29,13 @@ local function fixture()
 		deterministic_repeat = true,
 		capsule_validation_contract_exact = true,
 		plan_digest = descriptor.plan_digest,
+		validation_z_digest = descriptor.validation_z_digest,
 		main_depth_zero_validation_exact = true,
 		plan_safe_for_publication = true,
 		full_validation_complete = true,
 		publication_validation_calls = 2,
 		publication_validation_exact_centers = 2,
+		validation_z_certificates = 2,
 		publication_validation_depth = 0,
 		full_search_mismatches = 0,
 		replay_depth_zero_validation_exact = true,
@@ -66,10 +80,18 @@ end
 local function certificate(descriptor, report)
 	if descriptor.state ~= "surface-capsules-published-awaiting-final-grid"
 		and descriptor.state ~= "ready-for-first-access" then return false end
-	if #descriptor.capsules ~= 2 or descriptor.plan_digest <= 0 then return false end
+	if #descriptor.capsules ~= 2 or descriptor.plan_digest <= 0
+		or descriptor.validation_z_digest <= 0
+		or descriptor.capsule_planner_version ~= 7 then return false end
 	for index, capsule in ipairs(descriptor.capsules) do
-		if capsule.index ~= index or capsule.published ~= true then return false end
+		if capsule.index ~= index or type(capsule.validation_z) ~= "number"
+			or capsule.validation_z ~= capsule.validation_z
+			or capsule.validation_z < 0 or capsule.validation_z >= 65535
+			or capsule.validation_z ~= math.floor(capsule.validation_z)
+			or capsule.published ~= true then return false end
 	end
+	if descriptor.validation_z_digest ~= validation_z_digest(descriptor)
+		or report.validation_z_digest ~= descriptor.validation_z_digest then return false end
 	if report.capsules_published ~= 2
 		or report.surface_capsule_objects_persisted ~= true
 		or report.native_source_retention_released_before_t1 ~= true
@@ -81,6 +103,7 @@ local function certificate(descriptor, report)
 		or report.full_validation_complete ~= true
 		or report.publication_validation_calls ~= 2
 		or report.publication_validation_exact_centers ~= 2
+		or report.validation_z_certificates ~= 2
 		or report.publication_validation_depth ~= 0
 		or report.full_search_mismatches ~= 0 then return false end
 	if report.replay_depth_zero_validation_exact ~= true
@@ -163,6 +186,11 @@ local duplicate_sign = fixture(); duplicate_sign.signs[#duplicate_sign.signs + 1
 }
 local missing_planner = fixture(); missing_planner.report.main_depth_zero_validation_exact = false
 local missing_closing = fixture(); missing_closing.report.fresh_grid_closing_rebuild_complete = false
+local missing_validation_z = fixture(); missing_validation_z.descriptor.capsules[1].validation_z = nil
+local missing_validation_z_count = fixture(); missing_validation_z_count.report.validation_z_certificates = 1
+local wrong_validation_z = fixture(); wrong_validation_z.descriptor.capsules[1].validation_z = 7001
+local invalid_validation_z = fixture(); invalid_validation_z.descriptor.capsules[1].validation_z = 65535
+local old_planner = fixture(); old_planner.descriptor.capsule_planner_version = 6
 
 local checks = {
 	healthy_exact_certificate_accepted = healthy_ok == true,
@@ -177,6 +205,11 @@ local checks = {
 	duplicate_sign_rejected = validate(duplicate_sign) == false,
 	missing_planner_certificate_rejected = validate(missing_planner) == false,
 	missing_closing_rebuild_certificate_rejected = validate(missing_closing) == false,
+	missing_validation_z_rejected = validate(missing_validation_z) == false,
+	missing_validation_z_count_rejected = validate(missing_validation_z_count) == false,
+	wrong_validation_z_digest_rejected = validate(wrong_validation_z) == false,
+	invalid_validation_z_range_rejected = validate(invalid_validation_z) == false,
+	old_planner_schema_rejected = validate(old_planner) == false,
 }
 
 local ok = true
@@ -195,6 +228,11 @@ for _, key in ipairs({
 	"duplicate_sign_rejected",
 	"missing_planner_certificate_rejected",
 	"missing_closing_rebuild_certificate_rejected",
+	"missing_validation_z_rejected",
+	"missing_validation_z_count_rejected",
+	"wrong_validation_z_digest_rejected",
+	"invalid_validation_z_range_rejected",
+	"old_planner_schema_rejected",
 }) do
 	print(key .. "=" .. tostring(checks[key]))
 end

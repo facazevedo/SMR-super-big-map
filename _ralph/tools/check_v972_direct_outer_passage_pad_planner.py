@@ -26,6 +26,8 @@ CAPSULE_RELEASE_REENTRY_ORACLE = (ROOT / "_ralph" / "tools"
                                   / "lazy_capsule_release_reentry_oracle.lua")
 PUBLISHED_CAPSULE_CERTIFICATE_ORACLE = (ROOT / "_ralph" / "tools"
                                         / "lazy_published_capsule_certificate_oracle.lua")
+VALIDATION_Z_CLONE_ORACLE = (ROOT / "_ralph" / "tools"
+                             / "v985_validation_z_clone_oracle.lua")
 OPTIMIZATION_TRACE_CHECK = (ROOT / "_ralph" / "tools"
                             / "check_v975_optimization_trace.py")
 LUA53 = (ROOT / "_ralph" / "tmp" / ".tmp_surface_loading_rough_iter109_lua53"
@@ -72,6 +74,9 @@ def main() -> int:
     published_capsule_certificate_run = subprocess.run(
         [str(LUA53_RUN), str(PUBLISHED_CAPSULE_CERTIFICATE_ORACLE)], cwd=ROOT,
         capture_output=True, text=True, timeout=30, check=False)
+    validation_z_clone_run = subprocess.run(
+        [str(LUA53_RUN), str(VALIDATION_Z_CLONE_ORACLE)], cwd=ROOT,
+        capture_output=True, text=True, timeout=30, check=False)
     optimization_trace_run = subprocess.run(
         [sys.executable, str(OPTIMIZATION_TRACE_CHECK)], cwd=ROOT,
         capture_output=True, text=True, timeout=30, check=False)
@@ -83,16 +88,17 @@ def main() -> int:
     engine_probe = ENGINE_PROBE.read_text(encoding="utf-8")
     for path in (CONFIG, TERRAIN, GENERATION, DEPOSITS, VERSION, METADATA, ENGINE_PROBE,
                  FALSE_GLOBAL_ORACLE, PERSISTED_REENTRY_ORACLE,
-                 CAPSULE_RELEASE_REENTRY_ORACLE, PUBLISHED_CAPSULE_CERTIFICATE_ORACLE):
+                 CAPSULE_RELEASE_REENTRY_ORACLE, PUBLISHED_CAPSULE_CERTIFICATE_ORACLE,
+                 VALIDATION_Z_CLONE_ORACLE):
         result = subprocess.run([str(LUA53), "-p", str(path)], cwd=ROOT,
                                 capture_output=True, text=True, timeout=30, check=False)
         compile_results[path.relative_to(ROOT).as_posix()] = result.returncode == 0
     checks = {
-        "metadata_v984_truthfully_retains_v972": "'version', 984," in metadata
-            and "exact successful same-session lazy-state re-entry phase sequence" in metadata
-            and "fail-closed lifecycle validation" in metadata,
-        "generator_identity_v290": "SuperBigMap.GENERATOR_PATCH_VERSION = 290" in version,
-        "v984_default_off_safe_optimization_trace_gate_green": (
+        "metadata_v985_truthfully_retains_v972": "'version', 985," in metadata
+            and "prepublication buildable-Z certificate" in metadata
+            and "fail-closed post-publication validation" in metadata,
+        "generator_identity_v291": "SuperBigMap.GENERATOR_PATCH_VERSION = 291" in version,
+        "v985_default_off_safe_optimization_trace_gate_green": (
             optimization_trace_run.returncode == 0
             and '"ok": true' in optimization_trace_run.stdout),
         "lazy_architecture_default_off_direct_pad_subflag_on": all(token in config for token in (
@@ -220,12 +226,30 @@ def main() -> int:
                 in published_capsule_certificate_run.stdout
             and "missing_closing_rebuild_certificate_rejected=true"
                 in published_capsule_certificate_run.stdout
+            and "missing_validation_z_rejected=true"
+                in published_capsule_certificate_run.stdout
+            and "missing_validation_z_count_rejected=true"
+                in published_capsule_certificate_run.stdout
+            and "wrong_validation_z_digest_rejected=true"
+                in published_capsule_certificate_run.stdout
+            and "invalid_validation_z_range_rejected=true"
+                in published_capsule_certificate_run.stdout
+            and "old_planner_schema_rejected=true"
+                in published_capsule_certificate_run.stdout
             and all(token in generation for token in (
                 "function Lazy.ValidatePublishedCapsuleCertificate(surface, descriptor, report)",
                 "report.main_depth_zero_validation_exact == true",
                 "report.replay_depth_zero_validation_exact == true",
                 "report.fresh_grid_closing_rebuild_complete == true",
                 "report.canonical_rebuilds_during_capsule_prepare) == 2",
+                "capsule.validation_z = z",
+                "report.validation_z_certificates = report.validation_z_certificates + 1",
+                "CAPSULE_PLANNER_VERSION = 7",
+                "descriptor.validation_z_digest = plan_report.validation_z_digest",
+                "validation_z ~= math.floor(validation_z)",
+                'return false, "published capsule validation-Z digest is invalid"',
+                'type(capsule.validation_z) ~= "number"',
+                "tonumber(report.validation_z_certificates) == 2",
                 "counts[index] = (counts[index] or 0) + 1",
                 "if counts[index] ~= 1 or not object then",
                 'return nil, "surface capsule " .. tostring(index) .. " angle changed"',
@@ -238,6 +262,18 @@ def main() -> int:
                 generation.index("function Lazy.ValidatePublishedCapsules(surface, descriptor)"):
                 generation.index("function Lazy.Capture(surface, pending, next_map)")
             ]),
+        "validation_z_private_clone_contract_oracle_green": (
+            validation_z_clone_run.returncode == 0
+            and "ok=true" in validation_z_clone_run.stdout
+            and "live_final_grid_rejects_self_occupancy=true"
+                in validation_z_clone_run.stdout
+            and "clone_accepts_exact_certified_pad=true" in validation_z_clone_run.stdout
+            and "only_own_family_ignored=true" in validation_z_clone_run.stdout
+            and "unrelated_blocker_rejected=true" in validation_z_clone_run.stdout
+            and "wrong_validation_z_rejected=true" in validation_z_clone_run.stdout
+            and "live_grid_unchanged=true" in validation_z_clone_run.stdout
+            and "only_exact_footprint_restored=true" in validation_z_clone_run.stdout
+            and "private_clone_freed=true" in validation_z_clone_run.stdout),
         "pipeline_markers_are_phase_specific_not_common_guards": (
             "SuperBigMapStretchPipelinePending" not in common_guard
             and "SuperBigMapSurfaceStretchScheduled" not in common_guard
@@ -329,6 +365,7 @@ def main() -> int:
                 "candidate.outer_passage_pad_shape_checks >= 8",
                 "candidate.outer_passage_pad_shape_checks <= candidate.attempts",
                 "candidate.outer_passage_pad_plan_ms <= 2000",
+                "candidate.validation_z_certificates == publication_calls",
                 "candidate.outer_passage_pad_private_draws == candidate.attempts * 3",
                 "outer_plan_contract(plan_report, 2)", "outer_plan_contract(twin_report, 0)",
                 "candidate.bounded_max_depth == 0",

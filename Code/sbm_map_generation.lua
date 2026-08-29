@@ -8725,7 +8725,7 @@ if SuperBigMap.State.lazy_underground_reload_restore_ok ~= false
 		POST_CANONICAL_STOCK_CAPSULE_SEARCH = cfg_bool(
 			"LAZY_UNDERGROUND_POST_CANONICAL_STOCK_CAPSULE_SEARCH", true),
 		OUTER_PASSAGE_PADS = cfg_bool("LAZY_UNDERGROUND_OUTER_PASSAGE_PADS", true),
-		CAPSULE_PLANNER_VERSION = 6,
+		CAPSULE_PLANNER_VERSION = 7,
 		-- Process-local ownership, never saved state. Weak map keys disappear across reloads, letting
 		-- validation distinguish lifecycle re-entry from a genuinely interrupted saved game.
 		LIVE_SURFACE_GENERATION_TRANSACTIONS = setmetatable({}, { __mode = "k" }),
@@ -8951,6 +8951,8 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 		publication_validation_calls = 0,
 		publication_validation_exact_centers = 0,
 		publication_validation_depth = 0,
+		validation_z_certificates = 0,
+		validation_z_digest = 0,
 		full_search_calls = 0,
 		full_search_exact_centers = 0,
 		full_search_mismatches = 0,
@@ -9441,11 +9443,19 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 			for _, capsule in ipairs(capsules) do
 				report.publication_validation_calls = report.publication_validation_calls + 1
 				local validation_ok, z = pcall(validate_reserved_center, capsule)
-				if not validation_ok or type(z) ~= "number" then
+				if not validation_ok or type(z) ~= "number" or z ~= z
+					or z < 0 or z >= 65535 or z ~= math.floor(z) then
 					report.full_search_mismatches = report.full_search_mismatches + 1
 					report.publication_validation_ms = math.max(0, now() - validation_started)
 					return fail("v972 conditioned passage pad failed exact depth-zero validation")
 				end
+				-- Passage publication mutates the live buildable grid. Retain the exact
+				-- canonical prepublication Z as a distinct primitive validation_z certificate
+				-- (capsule.z later becomes the published terrain Z), so a detached
+				-- post-T1 probe can reconstruct only this committed footprint on a private
+				-- clone without weakening or mutating the live map.
+				capsule.validation_z = z
+				report.validation_z_certificates = report.validation_z_certificates + 1
 				report.publication_validation_exact_centers =
 					report.publication_validation_exact_centers + 1
 			end
@@ -9499,7 +9509,8 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 			end
 			local bq, br, depth = hex_find_buildable(capsule.q, capsule.r,
 				object_grid, buildable.z_grid, unbuildable_z, continue_check, 0)
-			return bq == capsule.q and br == capsule.r and depth == 0
+			if bq == capsule.q and br == capsule.r and depth == 0 then return original_z end
+			return nil
 		end
 		report.stock_search_used = true
 		report.full_search_cap = stock_search_cap
@@ -9589,12 +9600,16 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 			local validation_started = now()
 			for _, capsule in ipairs(capsules) do
 				report.publication_validation_calls = report.publication_validation_calls + 1
-				local validate_ok, exact = pcall(validate_selected_center, capsule)
-				if not validate_ok or exact ~= true then
+				local validate_ok, validation_z = pcall(validate_selected_center, capsule)
+				if not validate_ok or type(validation_z) ~= "number"
+					or validation_z ~= validation_z or validation_z < 0
+					or validation_z >= 65535 or validation_z ~= math.floor(validation_z) then
 					report.full_search_mismatches = report.full_search_mismatches + 1
 					report.publication_validation_ms = math.max(0, now() - validation_started)
 					return fail("stock-selected capsule failed fresh depth-zero validation")
 				end
+				capsule.validation_z = validation_z
+				report.validation_z_certificates = report.validation_z_certificates + 1
 				report.publication_validation_exact_centers =
 					report.publication_validation_exact_centers + 1
 			end
@@ -9651,7 +9666,7 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 				error("depth-zero HexGridFindBuildable returned a contrary ABI tuple")
 			end
 			local x, y = hex_to_world(q, r)
-			return x, y, depth, q, r
+			return x, y, depth, q, r, original_z
 		end
 
 		local bounded_started = now()
@@ -9710,15 +9725,19 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 			for _, capsule in ipairs(capsules) do
 				report.publication_validation_calls =
 					report.publication_validation_calls + 1
-				local validate_ok, x, y, depth, q, r = pcall(validate_exact_center,
+				local validate_ok, x, y, depth, q, r, validation_z = pcall(validate_exact_center,
 					point_fn(capsule.x, capsule.y), capsule.angle)
 				if not validate_ok or x ~= capsule.x or y ~= capsule.y or depth ~= 0
-					or q ~= capsule.q or r ~= capsule.r then
+					or q ~= capsule.q or r ~= capsule.r or type(validation_z) ~= "number"
+					or validation_z ~= validation_z or validation_z < 0
+					or validation_z >= 65535 or validation_z ~= math.floor(validation_z) then
 					report.full_search_mismatches = report.full_search_mismatches + 1
 					report.full_search_ms = math.max(0, now() - full_started)
 					report.capsules_planned = #capsules
 					return fail("fresh depth-zero publication validation disagreed with selected center")
 				end
+				capsule.validation_z = validation_z
+				report.validation_z_certificates = report.validation_z_certificates + 1
 				report.publication_validation_exact_centers =
 					report.publication_validation_exact_centers + 1
 			end
@@ -9799,6 +9818,18 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 		end
 	end
 	report.plan_digest = digest
+	-- Keep the deterministic plan digest/replay contract unchanged: validation_z exists only on
+	-- the main plan after canonical depth-zero validation. Bind those two primitive values to the
+	-- unchanged plan digest with a separate certificate so later descriptor drift is detectable.
+	if not replay_only and report.validation_z_certificates == report.capsules_required then
+		local validation_digest = digest
+		for index, capsule in ipairs(capsules) do
+			validation_digest = (validation_digest * 48271
+				+ capsule.validation_z + index) % modulus
+		end
+		if validation_digest == 0 then validation_digest = 1 end
+		report.validation_z_digest = validation_digest
+	end
 	report.planner_used = true
 	finish_report()
 	return capsules, report
@@ -10309,6 +10340,9 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 				and candidate.bounded_search_calls == 0
 				and candidate.publication_validation_calls == publication_calls
 				and candidate.publication_validation_exact_centers == publication_calls
+				and candidate.validation_z_certificates == publication_calls
+				and (publication_calls == 0 and candidate.validation_z_digest == 0
+					or publication_calls == 2 and candidate.validation_z_digest > 0)
 				and candidate.full_search_calls == 0
 				and candidate.full_search_mismatches == 0
 		end
@@ -10338,6 +10372,8 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 			and plan_report.marker_exclusion_exact == true
 			and plan_report.publication_validation_calls == 2
 			and plan_report.publication_validation_exact_centers == 2
+			and plan_report.validation_z_certificates == 2
+			and plan_report.validation_z_digest > 0
 			and plan_report.full_search_mismatches == 0
 			and twin_report and twin_report.plan_safe_for_publication == true
 			and twin_report.replay_only == true and twin_report.stock_search_used == true
@@ -10355,6 +10391,8 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 			and twin_report.marker_index_used == false
 			and twin_report.marker_exclusion_exact == true
 			and twin_report.publication_validation_calls == 0
+			and twin_report.validation_z_certificates == 0
+			and twin_report.validation_z_digest == 0
 			and twin_report.full_search_mismatches == 0
 	elseif Lazy.BOUNDED_CAPSULE_PLANNER == true then
 		validation_contract = validation_contract and plan_report.bounded_max_depth == 0
@@ -10362,6 +10400,8 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 			and plan_report.marker_exclusion_exact == true
 			and plan_report.publication_validation_calls == 2
 			and plan_report.publication_validation_exact_centers == 2
+			and plan_report.validation_z_certificates == 2
+			and plan_report.validation_z_digest > 0
 			and plan_report.publication_validation_depth == 0
 			and plan_report.full_search_calls == 0
 			and plan_report.full_search_mismatches == 0
@@ -10369,6 +10409,8 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 			and twin_report.exact_center_shape_checks == twin_report.attempts
 			and twin_report.marker_exclusion_exact == true
 			and twin_report.publication_validation_calls == 0
+			and twin_report.validation_z_certificates == 0
+			and twin_report.validation_z_digest == 0
 			and twin_report.full_search_calls == 0
 	else
 		validation_contract = validation_contract and twin_report.plan_safe_for_publication == true
@@ -10461,6 +10503,7 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 	if not repeat_exact then return Lazy.MarkBlocked(surface, "capsule plan did not repeat exactly") end
 	descriptor.capsules = capsules
 	descriptor.plan_digest = plan_report.plan_digest
+	descriptor.validation_z_digest = plan_report.validation_z_digest
 	descriptor.capsule_planner_version = Lazy.CAPSULE_PLANNER_VERSION
 	descriptor.capsule_planner_bounded = Lazy.BOUNDED_CAPSULE_PLANNER == true
 	descriptor.capsule_planner_max_depth = plan_report.bounded_max_depth
@@ -10752,16 +10795,37 @@ function Lazy.ValidatePublishedCapsuleCertificate(surface, descriptor, report)
 			.. tostring(descriptor.state)
 	end
 	if type(descriptor.capsules) ~= "table" or #descriptor.capsules ~= 2
-		or (tonumber(descriptor.plan_digest) or 0) <= 0 then
+		or (tonumber(descriptor.plan_digest) or 0) <= 0
+		or type(descriptor.validation_z_digest) ~= "number"
+		or descriptor.validation_z_digest <= 0
+		or tonumber(descriptor.capsule_planner_version) ~= Lazy.CAPSULE_PLANNER_VERSION then
 		return false, "published capsule descriptor count/digest certificate is invalid"
 	end
 	for index, capsule in ipairs(descriptor.capsules) do
 		if type(capsule) ~= "table"
 			or capsule.index ~= nil and tonumber(capsule.index) ~= index
 			or type(capsule.x) ~= "number" or type(capsule.y) ~= "number"
-			or type(capsule.angle) ~= "number" or capsule.published ~= true then
+			or type(capsule.angle) ~= "number"
+			or type(capsule.validation_z) ~= "number"
+			or capsule.published ~= true then
 			return false, "published capsule descriptor entry is invalid: " .. tostring(index)
 		end
+	end
+	local validation_z_digest = tonumber(descriptor.plan_digest) or 0
+	for index, capsule in ipairs(descriptor.capsules) do
+		local validation_z = capsule.validation_z
+		if validation_z ~= validation_z or validation_z < 0 or validation_z >= 65535
+			or validation_z ~= math.floor(validation_z) then
+			return false, "published capsule validation-Z range is invalid: " .. tostring(index)
+		end
+		validation_z_digest = (validation_z_digest * 48271
+			+ validation_z + index) % 2147483647
+	end
+	if validation_z_digest == 0 then validation_z_digest = 1 end
+	if descriptor.validation_z_digest ~= validation_z_digest
+		or type(report.validation_z_digest) ~= "number"
+		or report.validation_z_digest ~= validation_z_digest then
+		return false, "published capsule validation-Z digest is invalid"
 	end
 	local publication_exact = tonumber(report.capsules_published) == 2
 		and report.surface_capsule_objects_persisted == true
@@ -10777,6 +10841,7 @@ function Lazy.ValidatePublishedCapsuleCertificate(surface, descriptor, report)
 		and report.full_validation_complete == true
 		and tonumber(report.publication_validation_calls) == 2
 		and tonumber(report.publication_validation_exact_centers) == 2
+		and tonumber(report.validation_z_certificates) == 2
 		and tonumber(report.publication_validation_depth) == 0
 		and tonumber(report.full_search_mismatches) == 0
 	local replay_exact = report.replay_depth_zero_validation_exact == true
@@ -11018,6 +11083,7 @@ function Lazy.Capture(surface, pending, next_map)
 		},
 		capsules = {},
 		plan_digest = 0,
+		validation_z_digest = 0,
 		literal_v964_continues = true,
 		suppression_used = false,
 		suppression_committed = false,
@@ -11451,9 +11517,18 @@ function Lazy.OwnedSurfaceGenerationInFlight(surface, descriptor, report)
 		end
 		local exact = type(descriptor.capsules) == "table" and #descriptor.capsules == 2
 			and (tonumber(descriptor.plan_digest) or 0) > 0
+			and type(descriptor.validation_z_digest) == "number"
+			and descriptor.validation_z_digest > 0
+			and tonumber(descriptor.capsule_planner_version) == Lazy.CAPSULE_PLANNER_VERSION
 			and tonumber(report.capsules_published) == 2
+			and tonumber(report.validation_z_certificates) == 2
+			and type(report.validation_z_digest) == "number"
+			and report.validation_z_digest == descriptor.validation_z_digest
 			and report.deterministic_repeat == true
 			and report.final_grid_revalidation ~= true
+		for _, capsule in ipairs(descriptor.capsules or {}) do
+			exact = exact and type(capsule.validation_z) == "number"
+		end
 		if not exact then return failed("closing_capsule_contract", false) end
 		return canonical_loading_cover("closing-canonical-rebuild")
 	end

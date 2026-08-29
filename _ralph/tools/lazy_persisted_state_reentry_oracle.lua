@@ -1,4 +1,4 @@
--- Deterministic Lua 5.3 model for the v984 persisted-state/live-rebuild distinction.
+-- Deterministic Lua 5.3 model for the v985 persisted-state/live-rebuild distinction.
 -- A process-local owner proves the exact awaiting-readiness pre-cover 100 phase. The canonical 111 phases also
 -- require the Surface loading cover. Identical serialized state after reload remains fail-closed.
 local live_transactions = setmetatable({}, { __mode = "k" })
@@ -86,8 +86,15 @@ local function owned_in_flight(surface, descriptor, report)
 			return failed("closing_phase_markers", false)
 		end
 		local exact = #descriptor.capsules == 2 and descriptor.plan_digest > 0
+			and descriptor.validation_z_digest > 0
+			and descriptor.capsule_planner_version == 7
 			and report.capsules_published == 2 and report.deterministic_repeat == true
+			and report.validation_z_certificates == 2
+			and report.validation_z_digest == descriptor.validation_z_digest
 			and report.final_grid_revalidation ~= true
+		for _, capsule in ipairs(descriptor.capsules) do
+			exact = exact and type(capsule.validation_z) == "number"
+		end
 		if not exact then return failed("closing_capsule_contract", false) end
 		return canonical_loading_cover("closing-canonical-rebuild")
 	end
@@ -148,10 +155,16 @@ end
 
 local function publish_capsules(surface)
 	surface.descriptor.state = "surface-capsules-published-awaiting-final-grid"
-	surface.descriptor.capsules = { { q = 1 }, { q = 2 } }
+	surface.descriptor.capsules = {
+		{ q = 1, validation_z = 7000 }, { q = 2, validation_z = 9000 },
+	}
 	surface.descriptor.plan_digest = 99
+	surface.descriptor.validation_z_digest = 77123
+	surface.descriptor.capsule_planner_version = 7
 	surface.report.capsule_plan_pending = false
 	surface.report.capsules_published = 2
+	surface.report.validation_z_certificates = 2
+	surface.report.validation_z_digest = surface.descriptor.validation_z_digest
 	surface.report.deterministic_repeat = true
 	surface.report.final_grid_revalidation = false
 end
