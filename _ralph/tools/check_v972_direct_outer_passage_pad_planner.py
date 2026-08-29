@@ -70,12 +70,11 @@ def main() -> int:
                                 capture_output=True, text=True, timeout=30, check=False)
         compile_results[path.relative_to(ROOT).as_posix()] = result.returncode == 0
     checks = {
-        "metadata_v975_truthfully_retains_v972": "'version', 975," in metadata
-            and "same-session Surface rebuild re-entry" in metadata
-            and "interrupted saved states" in metadata
-            and "explicit-path-only bounded Surface optimization trace" in metadata,
-        "generator_identity_v281": "SuperBigMap.GENERATOR_PATCH_VERSION = 281" in version,
-        "v975_explicit_path_optimization_trace_gate_green": (
+        "metadata_v976_truthfully_retains_v972": "'version', 976," in metadata
+            and "explicit-path-only Surface optimization trace" in metadata
+            and "default-off no-op API" in metadata,
+        "generator_identity_v282": "SuperBigMap.GENERATOR_PATCH_VERSION = 282" in version,
+        "v976_default_off_safe_optimization_trace_gate_green": (
             optimization_trace_run.returncode == 0
             and '"ok": true' in optimization_trace_run.stdout),
         "lazy_architecture_default_off_direct_pad_subflag_on": all(token in config for token in (

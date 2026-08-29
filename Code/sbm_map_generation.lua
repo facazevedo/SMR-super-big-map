@@ -63,6 +63,26 @@ local SafeCall = Engine.SafeCall
 local Unpack = Engine.Unpack
 local IsKindOfSafe = Engine.IsKindOf
 
+-- Default-off optimization-trace API. This must remain above every ordinary map-generation call
+-- and outside the lazy-underground config gate. Each entry is the same allocation-free no-op: no
+-- path lookup, clock, formatting, console/file I/O, protected call, or RNG can occur. A staged
+-- lazy-enabled diagnostic run replaces these methods with the bounded implementation below.
+SuperBigMap.OptimizationTrace = { NOOP_DEFAULT_OFF = true }
+function SuperBigMap.OptimizationTrace.Noop()
+	return false
+end
+SuperBigMap.OptimizationTrace.ConfiguredPath = SuperBigMap.OptimizationTrace.Noop
+SuperBigMap.OptimizationTrace.IsActive = SuperBigMap.OptimizationTrace.Noop
+SuperBigMap.OptimizationTrace.Start = SuperBigMap.OptimizationTrace.Noop
+SuperBigMap.OptimizationTrace.Before = SuperBigMap.OptimizationTrace.Noop
+SuperBigMap.OptimizationTrace.After = SuperBigMap.OptimizationTrace.Noop
+SuperBigMap.OptimizationTrace.Step = SuperBigMap.OptimizationTrace.Noop
+SuperBigMap.OptimizationTrace.Error = SuperBigMap.OptimizationTrace.Noop
+SuperBigMap.OptimizationTrace.EarlyReturn = SuperBigMap.OptimizationTrace.Noop
+SuperBigMap.OptimizationTrace.Finish = SuperBigMap.OptimizationTrace.Noop
+SuperBigMap.OptimizationTrace.Emit = SuperBigMap.OptimizationTrace.Noop
+SuperBigMap.OptimizationTrace.Publish = SuperBigMap.OptimizationTrace.Noop
+
 local function PointXY(pos)
 	if not pos then
 		return false
@@ -11189,6 +11209,7 @@ end
 -- a config field and is never copied onto a map/save. Trace publication is deliberately fail-open:
 -- generation behavior, RNG, and operation order remain authoritative even if diagnostics fail.
 SuperBigMap.OptimizationTrace = SuperBigMap.OptimizationTrace or {}
+SuperBigMap.OptimizationTrace.NOOP_DEFAULT_OFF = false
 SuperBigMap.OptimizationTrace.SCHEMA = "smr.sbm.optimization-trace.v1"
 SuperBigMap.OptimizationTrace.MAX_RECORDS = 1024
 SuperBigMap.OptimizationTrace.MAX_BYTES = 524288

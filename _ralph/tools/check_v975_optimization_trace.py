@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed static gate for the explicit-path-only v975 Surface optimization trace."""
+"""Fail-closed static/executable gate for the v976 default-off-safe optimization trace."""
 
 from __future__ import annotations
 
@@ -17,8 +17,10 @@ TERRAIN = ROOT / "Code" / "sbm_terrain_copy.lua"
 DIAGNOSTICS = ROOT / "Code" / "sbm_diagnostics.lua"
 VERSION = ROOT / "Code" / "sbm_version.lua"
 METADATA = ROOT / "metadata.lua"
+DEFAULT_OFF_ORACLE = ROOT / "_ralph" / "tools" / "optimization_trace_default_off_oracle.lua"
 LUA53 = (ROOT / "_ralph" / "tmp" / ".tmp_surface_loading_rough_iter109_lua53"
          / "lua-5.3.6" / "src" / "luac.exe")
+LUA53_RUN = LUA53.with_name("lua.exe")
 
 REQUIRED_PAIRED_PHASES = (
     "temporary source migration rollback cleanup",
@@ -122,23 +124,52 @@ def main() -> int:
     trace_start = generation.index("-- Ralph-only, process-local optimization trace.")
     trace_end = generation.index("function Lazy.ValidatePersistedState(surface)", trace_start)
     trace = generation[trace_start:trace_end]
+    noop_start = generation.index("-- Default-off optimization-trace API.")
+    noop_end = generation.index("local function PointXY", noop_start)
+    noop = generation[noop_start:noop_end]
+    lazy_gate = generation.index(
+        "if SuperBigMap.State.lazy_underground_reload_restore_ok ~= false")
+    first_ordinary_call = generation.index("SuperBigMap.OptimizationTrace.Start(destination,")
     code_text = "\n".join(
         path.read_text(encoding="utf-8") for path in (GENERATION, TERRAIN, DIAGNOSTICS))
     path_token = "g_SmrRalphOptimizationTracePath"
 
     compile_results: dict[str, bool] = {}
-    for path in (GENERATION, TERRAIN, DIAGNOSTICS, VERSION, METADATA):
+    for path in (GENERATION, TERRAIN, DIAGNOSTICS, VERSION, METADATA, DEFAULT_OFF_ORACLE):
         result = subprocess.run([str(LUA53), "-p", str(path)], cwd=ROOT,
                                 capture_output=True, text=True, timeout=30, check=False)
         compile_results[path.relative_to(ROOT).as_posix()] = result.returncode == 0
+    default_off_run = subprocess.run(
+        [str(LUA53_RUN), str(DEFAULT_OFF_ORACLE)], cwd=ROOT,
+        capture_output=True, text=True, timeout=30, check=False)
 
     checks = {
-        "metadata_and_generator_identity_v975_v281": (
-            "'version', 975," in metadata
-            and "explicit-path-only bounded Surface optimization trace" in metadata
-            and "SuperBigMap.GENERATOR_PATCH_VERSION = 281" in version
+        "metadata_and_generator_identity_v976_v282": (
+            "'version', 976," in metadata
+            and "explicit-path-only Surface optimization trace" in metadata
+            and "default-off no-op API" in metadata
+            and "SuperBigMap.GENERATOR_PATCH_VERSION = 282" in version
         ),
         "pinned_lua53_compiles_touched_production": all(compile_results.values()),
+        "default_off_api_is_outside_lazy_gate_and_precedes_ordinary_calls": (
+            noop_start < noop_end < first_ordinary_call < lazy_gate < trace_start
+            and "SuperBigMap.OptimizationTrace = { NOOP_DEFAULT_OFF = true }" in noop
+            and "function SuperBigMap.OptimizationTrace.Noop()" in noop
+            and all(f"{method} = SuperBigMap.OptimizationTrace.Noop" in noop for method in (
+                "ConfiguredPath", "IsActive", "Start", "Before", "After", "Step",
+                "Error", "EarlyReturn", "Finish", "Emit", "Publish"))
+            and all(token not in noop for token in (
+                "GetPreciseTicks", "RealTime", "AsyncStringToFile", "AsyncRand",
+                "InteractionRand", "g_SmrRalphOptimizationTracePath", "tostring(",
+                "string.format", "pcall("))
+        ),
+        "default_off_load_and_representative_call_oracle_green": (
+            default_off_run.returncode == 0
+            and all(token in default_off_run.stdout for token in (
+                "ok=true", "map_calls_safe=true", "terrain_calls_safe=true",
+                "diagnostic_calls_safe=true", "clock_calls=0", "format_calls=0",
+                "file_calls=0", "console_calls=0", "rng_calls=0"))
+        ),
         "production_never_assigns_or_arms_trace_path": (
             code_text.count(path_token) == 1
             and f'rawget(_G, "{path_token}")' in trace
@@ -250,12 +281,13 @@ def main() -> int:
     }
     failed = sorted(name for name, ok in checks.items() if not ok)
     output = {
-        "schema": "smr.ralph.v975.optimization-trace-check.v1",
+        "schema": "smr.ralph.v976.optimization-trace-check.v1",
         "ok": not failed,
         "failed": failed,
         "checks": checks,
         "pair_counts": pair_counts,
         "compile": compile_results,
+        "default_off_oracle": default_off_run.stdout.strip(),
         "required_literal_phases": len(REQUIRED_PAIRED_PHASES),
     }
     print(json.dumps(output, indent=2, sort_keys=True))
