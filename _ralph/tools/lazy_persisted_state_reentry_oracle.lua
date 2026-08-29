@@ -1,4 +1,4 @@
--- Deterministic Lua 5.3 model for the v978 persisted-state/live-rebuild distinction.
+-- Deterministic Lua 5.3 model for the v979 persisted-state/live-rebuild distinction.
 -- Only a process-local owner under the active loading cover may use one of the three exact
 -- phase-marker contracts. Identical serialized state after reload must remain fail-closed.
 local live_transactions = setmetatable({}, { __mode = "k" })
@@ -32,8 +32,9 @@ local function owned_in_flight(surface, descriptor, report)
 		or descriptor.materialization_attempts ~= 0 or descriptor.generation_count ~= 0 then
 		return failed("common_suppression_contract", false)
 	end
-	if globals.UndergroundMap ~= nil or globals.Maps[descriptor.map_slot] ~= nil then
-		return failed("underground_absent", false)
+	if globals.UndergroundMap then return failed("underground_map_absent", false) end
+	if globals.Maps[descriptor.map_slot] then
+		return failed("maps_slot_absent", false)
 	end
 	if type(globals.restore_tokens) == "table" and #globals.restore_tokens > 0 then
 		return failed("pending_engine_restore_tokens", #globals.restore_tokens)
@@ -152,14 +153,52 @@ publish_capsules(live)
 local closing_ok, closing_phase = validate(live)
 local closing_reentry_exact = closing_ok and closing_phase == "closing-canonical-rebuild"
 	and live.descriptor.state == "surface-capsules-published-awaiting-final-grid"
+local nil_sentinels_all_phases_accepted = pre_pipeline_reentry_exact
+	and first_reentry_exact and closing_reentry_exact
+
+-- Surviving Mars represents an unloaded engine map with literal false as well as nil. Both
+-- globals may carry that sentinel and must remain accepted through every exact owned phase.
+globals.UndergroundMap = false
+globals.Maps[2] = false
+local false_live = new_surface()
+own(false_live)
+local false_pre_ok, false_pre_phase = validate(false_live)
+false_live.stretch_pipeline_pending = true
+false_live.surface_stretch_scheduled = true
+false_live.post_pipeline_revalidation_scheduled = true
+local false_first_ok, false_first_phase = validate(false_live)
+publish_capsules(false_live)
+local false_closing_ok, false_closing_phase = validate(false_live)
+local false_sentinels_all_phases_accepted = false_pre_ok
+	and false_pre_phase == "pre-surface-pipeline"
+	and false_first_ok and false_first_phase == "first-canonical-rebuild"
+	and false_closing_ok and false_closing_phase == "closing-canonical-rebuild"
+globals.UndergroundMap = nil
+globals.Maps[2] = nil
+
+local real_underground = new_surface()
+own(real_underground)
+globals.UndergroundMap = {}
+local real_underground_map_rejected = rejected(real_underground, "underground_map_absent")
+globals.UndergroundMap = nil
+
+local occupied_maps_slot = new_surface()
+own(occupied_maps_slot)
+globals.Maps[2] = {}
+local occupied_maps_slot_rejected = rejected(occupied_maps_slot, "maps_slot_absent")
+globals.Maps[2] = nil
 
 -- Reloaded state and a separately modeled ownerless live-looking state both lack the weak owner.
+globals.UndergroundMap = false
+globals.Maps[2] = false
 local loaded = new_surface()
 loading_refs[loaded] = true
 local loaded_incomplete_rejected = rejected(loaded, "process_local_owner")
 local ownerless = new_surface()
 loading_refs[ownerless] = true
 local ownerless_rejected = rejected(ownerless, "process_local_owner")
+globals.UndergroundMap = nil
+globals.Maps[2] = nil
 
 local coverless = new_surface()
 own(coverless, false)
@@ -211,6 +250,8 @@ local error_rejected = rejected(errored, "post_pipeline_revalidation_error")
 local pre_done_or_error_rejected = done_rejected and error_rejected
 
 local ok = pre_pipeline_reentry_exact and first_reentry_exact and closing_reentry_exact
+	and nil_sentinels_all_phases_accepted and false_sentinels_all_phases_accepted
+	and real_underground_map_rejected and occupied_maps_slot_rejected
 	and loaded_incomplete_rejected and ownerless_rejected and cover_required
 	and no_restore_tokens_required and invalid_suppressed_phase_mixtures_rejected
 	and invalid_closing_phase_mixtures_rejected and pre_done_or_error_rejected
@@ -218,6 +259,10 @@ print("ok=" .. tostring(ok))
 print("pre_pipeline_reentry_exact=" .. tostring(pre_pipeline_reentry_exact))
 print("first_reentry_exact=" .. tostring(first_reentry_exact))
 print("closing_reentry_exact=" .. tostring(closing_reentry_exact))
+print("nil_sentinels_all_phases_accepted=" .. tostring(nil_sentinels_all_phases_accepted))
+print("false_sentinels_all_phases_accepted=" .. tostring(false_sentinels_all_phases_accepted))
+print("real_underground_map_rejected=" .. tostring(real_underground_map_rejected))
+print("occupied_maps_slot_rejected=" .. tostring(occupied_maps_slot_rejected))
 print("loaded_incomplete_rejected=" .. tostring(loaded_incomplete_rejected))
 print("ownerless_rejected=" .. tostring(ownerless_rejected))
 print("cover_required=" .. tostring(cover_required))

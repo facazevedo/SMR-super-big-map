@@ -11206,8 +11206,10 @@ function Lazy.OwnedSurfaceGenerationInFlight(surface, descriptor, report)
 		return failed("descriptor_generation_count", descriptor.generation_count)
 	end
 	local maps = Global("Maps")
-	if Global("UndergroundMap") ~= nil then return failed("underground_map_absent", false) end
-	if type(maps) == "table" and maps[descriptor.map_slot] ~= nil then
+	-- The engine uses literal false as its unloaded-map sentinel. Match the authoritative
+	-- ValidatePersistedState truthiness check: only a real map value means allocation occurred.
+	if Global("UndergroundMap") then return failed("underground_map_absent", false) end
+	if type(maps) == "table" and maps[descriptor.map_slot] then
 		return failed("maps_slot_absent", false)
 	end
 	local pending_restore = SuperBigMap.State.lazy_underground_engine_restore_tokens
