@@ -9277,7 +9277,8 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 	local capsules = {}
 	local max_attempts = 512
 	if report.outer_passage_pad_requested == true then
-		-- v971: terrain planning has already selected and organically preconditioned exactly two
+		-- v972: bounded direct-ring terrain planning has already selected and organically
+		-- preconditioned exactly two
 		-- dedicated Elevator pads in the physical outer ring. Consume that primitive journal verbatim.
 		-- Main performs the only two native depth-zero validations after the first canonical rebuild;
 		-- deterministic replay compares the immutable journal and performs no grid/search call.
@@ -9291,6 +9292,17 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 			or terrain_report.passage_pads_requested ~= true
 			or terrain_report.passage_pads_used ~= true
 			or tonumber(terrain_report.passage_pads) ~= 2
+			or terrain_report.passage_pad_direct_outer_sampling ~= true
+			or tonumber(terrain_report.passage_pad_attempt_cap_per_site) ~= 32
+			or tonumber(terrain_report.passage_pad_viable_target_per_site) ~= 4
+			or (tonumber(terrain_report.passage_pad_attempts) or 65) < 8
+			or (tonumber(terrain_report.passage_pad_attempts) or 65) > 64
+			or tonumber(terrain_report.passage_pad_viable) ~= 8
+			or tonumber(terrain_report.passage_pad_replay_attempts)
+				~= tonumber(terrain_report.passage_pad_attempts)
+			or tonumber(terrain_report.passage_pad_replay_viable) ~= 8
+			or (tonumber(terrain_report.passage_pad_plan_ms) or 2001) < 0
+			or (tonumber(terrain_report.passage_pad_plan_ms) or 2001) > 2000
 			or terrain_report.passage_pad_replay_exact ~= true
 			or terrain_report.passage_pad_inner_no_write ~= true
 			or terrain_report.passage_pad_all_changed_cells_outer ~= true
@@ -9300,11 +9312,11 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 			or type(hex_find_buildable) ~= "function" or type(validate_shape) ~= "function"
 			or type(unbuildable_fn) ~= "function" or type(buildable.GetZ) ~= "function"
 			or not buildable.z_grid or type(object_grid.GetBuildObstructions) ~= "function" then
-			return fail("certified v971 outer passage-pad journal is unavailable")
+			return fail("certified v972 outer passage-pad journal is unavailable")
 		end
 		local sentinel_ok, unbuildable_z = pcall(unbuildable_fn)
 		if not sentinel_ok or type(unbuildable_z) ~= "number" then
-			return fail("v971 outer passage-pad validation sentinel is unavailable")
+			return fail("v972 outer passage-pad validation sentinel is unavailable")
 		end
 		local function validate_reserved_center(capsule)
 			local original_z = false
@@ -9327,7 +9339,7 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 			if bq == nil and br == nil and depth == nil then return nil end
 			if bq ~= capsule.q or br ~= capsule.r or depth ~= 0
 				or type(original_z) ~= "number" then
-				error("v971 depth-zero passage-pad validator returned a contrary tuple")
+				error("v972 depth-zero passage-pad validator returned a contrary tuple")
 			end
 			return original_z
 		end
@@ -9336,11 +9348,11 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 				or type(site.x) ~= "number" or type(site.y) ~= "number"
 				or type(site.q) ~= "number" or type(site.r) ~= "number"
 				or type(site.angle) ~= "number" then
-				return fail("v971 outer passage-pad primitive site is malformed")
+				return fail("v972 outer passage-pad primitive site is malformed")
 			end
 			local world_ok, wx, wy = pcall(hex_to_world, site.q, site.r)
 			if not world_ok or wx ~= site.x or wy ~= site.y then
-				return fail("v971 outer passage-pad world/hex tuple mismatch")
+				return fail("v972 outer passage-pad world/hex tuple mismatch")
 			end
 			capsules[index] = { index = index, x = site.x, y = site.y, z = 0,
 				q = site.q, r = site.r, angle = site.angle }
@@ -9365,7 +9377,7 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 				if not validation_ok or type(z) ~= "number" then
 					report.full_search_mismatches = report.full_search_mismatches + 1
 					report.publication_validation_ms = math.max(0, now() - validation_started)
-					return fail("v971 conditioned passage pad failed exact depth-zero validation")
+					return fail("v972 conditioned passage pad failed exact depth-zero validation")
 				end
 				report.publication_validation_exact_centers =
 					report.publication_validation_exact_centers + 1
@@ -9691,7 +9703,7 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 	end
 	report.capsules_planned = #capsules
 	report.private_domain = report.outer_passage_pad_used
-		and "SuperBigMap/v971/outer-passage-pad-reservation" or Lazy.DOMAIN
+		and "SuperBigMap/v972/direct-outer-passage-pad-reservation" or Lazy.DOMAIN
 	report.private_seed = report.outer_passage_pad_used
 		and (tonumber(surface.SuperBigMapOuterPassageTerrainReport
 			and surface.SuperBigMapOuterPassageTerrainReport.passage_pad_private_seed) or 0)
@@ -10325,7 +10337,7 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 	-- Capsule publication permanently removes the only consumer of the retained native Surface view.
 	-- Release its non-serializable map/grid now, before T1 and before an immediate save can occur.
 	ReleaseRetainedNativeSourceMap(surface, outer_passage_active
-		and "v971 conditioned outer passage capsules published"
+		and "v972 bounded direct-ring passage capsules published"
 		or "v970 capped-stock capsules published")
 	local retained_buildable = surface.SuperBigMapPendingNativeSurfacePassageBuildable
 	if type(retained_buildable) == "table" and retained_buildable.grid then
@@ -14378,7 +14390,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								markers = call_ok and audit_stats and audit_stats.markers or nil,
 							}, call_ok and audit_ok ~= false)
 						end
-						-- v971 lazy-underground implementation only: all enrichment coordinates are now
+						-- v972 lazy-underground implementation only: all enrichment coordinates are now
 						-- immutable. Reserve and organically precondition two dedicated outer-ring Elevator
 						-- pads in a separate native transaction. The surrounding pass-edit epoch remains
 						-- suspended; the scheduled canonical rebuild below is their first grid publication.
@@ -14394,6 +14406,17 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								or passage_report.passage_pads_requested ~= true
 								or passage_report.passage_pads_used ~= true
 								or tonumber(passage_report.passage_pads) ~= 2
+								or passage_report.passage_pad_direct_outer_sampling ~= true
+								or tonumber(passage_report.passage_pad_attempt_cap_per_site) ~= 32
+								or tonumber(passage_report.passage_pad_viable_target_per_site) ~= 4
+								or (tonumber(passage_report.passage_pad_attempts) or 65) < 8
+								or (tonumber(passage_report.passage_pad_attempts) or 65) > 64
+								or tonumber(passage_report.passage_pad_viable) ~= 8
+								or tonumber(passage_report.passage_pad_replay_attempts)
+									~= tonumber(passage_report.passage_pad_attempts)
+								or tonumber(passage_report.passage_pad_replay_viable) ~= 8
+								or (tonumber(passage_report.passage_pad_plan_ms) or 2001) < 0
+								or (tonumber(passage_report.passage_pad_plan_ms) or 2001) > 2000
 								or passage_report.passage_pad_replay_exact ~= true
 								or passage_report.passage_pad_inner_no_write ~= true
 								or passage_report.passage_pad_all_changed_cells_outer ~= true

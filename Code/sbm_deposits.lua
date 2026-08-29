@@ -8575,7 +8575,7 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 		end
 	end)
 	stats.markers = #entries
-	-- v971 reserves passage pads only after every enrichment has reached its final coordinate.
+	-- v972 reserves passage pads only after every enrichment has reached its final coordinate.
 	-- Include those primitive centers in the authoritative hard-spacing verdict without changing
 	-- the existing marker-pair budget or top-up/native counters. A passage is a non-surface gameplay
 	-- footprint, so the surface-pile neighbour exception never applies to a passage pair.

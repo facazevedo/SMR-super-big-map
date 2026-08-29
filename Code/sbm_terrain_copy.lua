@@ -3352,7 +3352,7 @@ local function PrepareOuterResourceTerrain(map, options)
 		end
 	end
 
-	-- v971 lazy-underground pad reservation. This passage-only invocation runs after every
+	-- v972 lazy-underground pad reservation. This passage-only invocation runs after every
 	-- resource/anomaly/effect placement and audit, while the outer pass-edit transaction is still
 	-- suspended and before the scheduled canonical Surface rebuild. It does not alter the six
 	-- resource-cluster rocket pads or any top-up quota. Two private, deterministic Elevator centers
@@ -3362,7 +3362,10 @@ local function PrepareOuterResourceTerrain(map, options)
 		requested = passage_only and cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION", false)
 			and cfg_bool("LAZY_UNDERGROUND_OUTER_PASSAGE_PADS", true),
 		used = false, error = "", required = 2, selected = 0,
-		attempt_cap_per_site = 256, attempts = 0, viable = 0, shape_checks = 0,
+		direct_outer_sampling = true,
+		plan_started_ms = now_ms(), plan_ms = 0,
+		attempt_cap_per_site = 32, viable_target_per_site = 4,
+		attempts = 0, viable = 0, shape_checks = 0,
 		resource_rejections = 0, rocket_rejections = 0, patch_rejections = 0,
 		object_rejections = 0, ring_rejections = 0, spacing_rejections = 0,
 		deposit_filter_checks = 0, deposit_filter_rejections = 0,
@@ -3451,7 +3454,8 @@ local function PrepareOuterResourceTerrain(map, options)
 						and type(marker.GetObstructionRadius) == "function" then
 						local radius_ok, radius = pcall(marker.GetObstructionRadius, marker)
 						if radius_ok and type(radius) == "number" and radius >= 0 then
-							concrete_markers[#concrete_markers + 1] = { marker = marker, radius = radius }
+							concrete_markers[#concrete_markers + 1] = {
+								marker = marker, radius = radius, x = x, y = y }
 						end
 					end
 				end)
@@ -3465,9 +3469,12 @@ local function PrepareOuterResourceTerrain(map, options)
 					for _, char_name in ipairs(feature.chars) do
 						local preset = type(char_presets) == "table" and char_presets[char_name] or nil
 						if IsKindOfSafe(preset, "PrefabFeatureCharPreset_Geyser") then
-							if type(marker.FeatureRadius) == "number" and marker.FeatureRadius >= 0 then
+							local marker_x, marker_y = PointXY(ObjectPosition(marker))
+							if type(marker.FeatureRadius) == "number" and marker.FeatureRadius >= 0
+								and type(marker_x) == "number" and type(marker_y) == "number" then
 								geyser_markers[#geyser_markers + 1] = {
-									marker = marker, radius = marker.FeatureRadius }
+									marker = marker, radius = marker.FeatureRadius,
+									x = marker_x, y = marker_y }
 							end
 							return
 						end
@@ -3493,7 +3500,7 @@ local function PrepareOuterResourceTerrain(map, options)
 				local seed_material = tostring(type(generator) == "table"
 					and generator.GenerationHash or "") .. "|"
 					.. tostring(map.mapdata and map.mapdata.RandomMapPreset or "")
-					.. "|v971-outer-passage-pad-reservation"
+					.. "|v972-direct-outer-passage-pad-reservation"
 				local private_seed = math.abs(math.floor(numeric_seed or 0)) % modulus
 				for index = 1, #seed_material do
 					private_seed = (private_seed * 48271
@@ -3513,13 +3520,39 @@ local function PrepareOuterResourceTerrain(map, options)
 					local inner_left, inner_top = band_x, band_y
 					local inner_right, inner_bottom = map_w - band_x, map_h - band_y
 					local minimum_distance2 = minimum_passage_distance * minimum_passage_distance
+					local safe_edge = math.ceil(conservative_visit_world)
+					local along_x_span = math.max(1, math.floor(map_w - safe_edge * 2))
+					local along_y_span = math.max(1, math.floor(map_h - safe_edge * 2))
+					local perpendicular_x_span = math.max(1,
+						math.floor(band_x - conservative_visit_world - 2) - safe_edge + 1)
+					local perpendicular_y_span = math.max(1,
+						math.floor(band_y - conservative_visit_world - 2) - safe_edge + 1)
 					for site_index = 1, passage_plan.required do
-						local best
+						local best, site_viable = nil, 0
 						for _ = 1, passage_plan.attempt_cap_per_site do
 							attempts = attempts + 1
-							local sample_x = next_private() % math.max(1, math.floor(map_w))
-							local sample_y = next_private() % math.max(1, math.floor(map_h))
-							local angle = (next_private() % 6) * 3600
+							-- Sample directly inside one of the four certified outer strips. The former
+							-- whole-map sampler rejected most draws before doing any useful work.
+							local side_draw, along_draw, angle_draw =
+								next_private(), next_private(), next_private()
+							local side = side_draw % 4
+							local depth_span = side < 2 and perpendicular_x_span or perpendicular_y_span
+							local depth = safe_edge + (math.floor(side_draw / 4) % depth_span)
+							local sample_x, sample_y
+							if side == 0 then
+								sample_x = depth
+								sample_y = safe_edge + along_draw % along_y_span
+							elseif side == 1 then
+								sample_x = map_w - 1 - depth
+								sample_y = safe_edge + along_draw % along_y_span
+							elseif side == 2 then
+								sample_x = safe_edge + along_draw % along_x_span
+								sample_y = depth
+							else
+								sample_x = safe_edge + along_draw % along_x_span
+								sample_y = map_h - 1 - depth
+							end
+							local angle = (angle_draw % 6) * 3600
 							local center = snap_world(point_fn(sample_x, sample_y))
 							local x, y = PointXY(center)
 							local hex_ok, q, r = false, nil, nil
@@ -3584,42 +3617,41 @@ local function PrepareOuterResourceTerrain(map, options)
 								end
 							end
 							if valid then
+								-- A single center-distance test using the certified maximum Elevator
+								-- footprint radius conservatively replaces the old shape-hex x marker
+								-- Cartesian product. Passing it proves every footprint hex is outside.
+								for _, entry in ipairs(concrete_markers) do
+									if not replay then passage_plan.deposit_filter_checks =
+										passage_plan.deposit_filter_checks + 1 end
+									local dx, dy = x - entry.x, y - entry.y
+									local clearance = passage_world_radius * hex_size + entry.radius
+									if dx * dx + dy * dy <= clearance * clearance then
+										valid = false
+										if not replay then passage_plan.deposit_filter_rejections =
+											passage_plan.deposit_filter_rejections + 1 end
+										break
+									end
+								end
+							end
+							if valid then
+								for _, entry in ipairs(geyser_markers) do
+									if not replay then passage_plan.deposit_filter_checks =
+										passage_plan.deposit_filter_checks + 1 end
+									local dx, dy = x - entry.x, y - entry.y
+									local clearance = passage_world_radius * hex_size + entry.radius
+									if dx * dx + dy * dy <= clearance * clearance then
+										valid = false
+										if not replay then passage_plan.deposit_filter_rejections =
+											passage_plan.deposit_filter_rejections + 1 end
+										break
+									end
+								end
+							end
+							if valid then
 								local shape_valid = validate_shape(passage_shape, point_fn(x, y), angle,
 									function(hq, hr)
 										local ok, obstructions = pcall(get_obstructions, object_grid, hq, hr)
-										if not ok or type(obstructions) ~= "table" or #obstructions > 0 then
-											return false
-										end
-										local wx, wy = world_xy(hq, hr)
-										if not wx then return false end
-										local position = point_fn(wx, wy)
-										for _, entry in ipairs(concrete_markers) do
-											if not replay then passage_plan.deposit_filter_checks =
-												passage_plan.deposit_filter_checks + 1 end
-											local distance_ok, distance = false, nil
-											if type(position.Dist2D) == "function" then
-												distance_ok, distance = pcall(position.Dist2D, position, entry.marker)
-											end
-											if not distance_ok or type(distance) ~= "number" or distance <= entry.radius then
-												if not replay then passage_plan.deposit_filter_rejections =
-													passage_plan.deposit_filter_rejections + 1 end
-												return false
-											end
-										end
-										for _, entry in ipairs(geyser_markers) do
-											if not replay then passage_plan.deposit_filter_checks =
-												passage_plan.deposit_filter_checks + 1 end
-											local distance_ok, distance = false, nil
-											if type(position.Dist2D) == "function" then
-												distance_ok, distance = pcall(position.Dist2D, position, entry.marker)
-											end
-											if not distance_ok or type(distance) ~= "number" or distance <= entry.radius then
-												if not replay then passage_plan.deposit_filter_rejections =
-													passage_plan.deposit_filter_rejections + 1 end
-												return false
-											end
-										end
-										return true
+										return ok and type(obstructions) == "table" and #obstructions == 0
 									end)
 								valid = shape_valid == true
 								if not replay then
@@ -3628,7 +3660,6 @@ local function PrepareOuterResourceTerrain(map, options)
 								end
 							end
 							if valid then
-								viable = viable + 1
 								local center_height = grid_value(x / height_tile, y / height_tile)
 								local range_min, range_max = center_height, center_height
 								if range_min then
@@ -3640,11 +3671,14 @@ local function PrepareOuterResourceTerrain(map, options)
 									end
 								end
 								if range_min then
+									viable = viable + 1
+									site_viable = site_viable + 1
 									local candidate = { index = site_index, x = x, y = y, z = 0,
 										q = q, r = r, angle = angle, height_range = range_max - range_min,
 										shape_radius = passage_radius, required_core_radius = passage_required_core,
 										inner_clearance = conservative_visit_world, modified = true }
 									if not best or candidate.height_range < best.height_range then best = candidate end
+									if site_viable >= passage_plan.viable_target_per_site then break end
 								end
 							end
 						end
@@ -3697,6 +3731,9 @@ local function PrepareOuterResourceTerrain(map, options)
 				end
 			end
 		end
+	end
+	if passage_plan then
+		passage_plan.plan_ms = math.max(0, now_ms() - passage_plan.plan_started_ms)
 	end
 	table.sort(cluster_groups, function(a, b) return a.plan < b.plan end)
 	local cluster_contexts = {}
@@ -4867,6 +4904,11 @@ local function PrepareOuterResourceTerrain(map, options)
 		passage_pads = passage_plan and passage_plan.selected or 0,
 		passage_pad_error = passage_plan and passage_plan.error or "",
 		passage_pad_attempt_cap_per_site = passage_plan and passage_plan.attempt_cap_per_site or 0,
+		passage_pad_viable_target_per_site = passage_plan
+			and passage_plan.viable_target_per_site or 0,
+		passage_pad_direct_outer_sampling = passage_plan
+			and passage_plan.direct_outer_sampling == true or false,
+		passage_pad_plan_ms = passage_plan and passage_plan.plan_ms or 0,
 		passage_pad_attempts = passage_plan and passage_plan.attempts or 0,
 		passage_pad_viable = passage_plan and passage_plan.viable or 0,
 		passage_pad_shape_checks = passage_plan and passage_plan.shape_checks or 0,
@@ -4925,6 +4967,7 @@ local function PrepareOuterResourceTerrain(map, options)
 	if type(print_fn) == "function" then
 		print_fn(passage_only and ("[Super Big Map][OuterPassageTerrain] pads="
 			.. tostring(report.passage_pads)
+			.. " plan_ms=" .. tostring(report.passage_pad_plan_ms)
 			.. " attempts=" .. tostring(report.passage_pad_attempts)
 			.. " viable=" .. tostring(report.passage_pad_viable)
 			.. " replay_exact=" .. tostring(report.passage_pad_replay_exact)

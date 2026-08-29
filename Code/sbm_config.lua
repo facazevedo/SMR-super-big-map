@@ -523,7 +523,10 @@ config.LazyUndergroundFreshGridCapsulePlanning = true
 -- capped at eight stock calls per deterministic main/replay plan, so the prior 512-footprint scan
 -- cannot recur. Failure at the cap is sticky and publishes no capsule.
 config.LazyUndergroundPostCanonicalStockCapsuleSearch = true
--- v971 outer passage-pad preconditioning. The enclosing lazy implementation remains default-off.
+-- v972 bounded direct-ring passage-pad preconditioning. The enclosing lazy implementation remains
+-- default-off. Candidate centers are sampled directly inside certified physical outer-ring strips;
+-- only four viable footprints per site are scored and marker exclusion is a conservative
+-- center-radius test before the exact obstruction-shape walk.
 -- When enabled, two private deterministic Elevator footprints are reserved only after all Surface
 -- enrichments are final, then flattened through the existing organic native outer-terrain journal.
 -- The post-canonical capsule path consumes these exact sites and performs no nearest-site search.

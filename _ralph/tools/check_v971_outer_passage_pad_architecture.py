@@ -63,20 +63,19 @@ def main() -> int:
                                 capture_output=True, text=True, timeout=30, check=False)
         compile_results[path.relative_to(ROOT).as_posix()] = result.returncode == 0
 
-    plan_start = terrain.index("-- v971 lazy-underground pad reservation")
+    plan_start = terrain.index("-- v972 lazy-underground pad reservation")
     plan_end = terrain.index("-- If a required new core", plan_start)
     plan = terrain[plan_start:plan_end]
     capsule_start = generation.index("if report.outer_passage_pad_requested == true then")
     capsule_end = generation.index("elseif report.stock_search_requested == true then", capsule_start)
     capsule = generation[capsule_start:capsule_end]
-    pipeline_start = generation.index("-- v971 lazy-underground implementation only")
+    pipeline_start = generation.index("-- v972 lazy-underground implementation only")
     pipeline_end = generation.index("if type(deposits.ClearTopUpPlacementPool)", pipeline_start)
     pipeline = generation[pipeline_start:pipeline_end]
     checks = {
-        "metadata_v971_truthful": "'version', 971," in metadata
-            and "two deterministic outer-ring passage pads" in metadata
-            and "no nearest-site search" in metadata,
-        "generator_identity_v277": "SuperBigMap.GENERATOR_PATCH_VERSION = 277" in version,
+        "metadata_v971_architecture_retained_forward": "'version', 972," in metadata
+            and "passage pads directly inside certified outer-ring strips" in metadata,
+        "generator_identity_v278": "SuperBigMap.GENERATOR_PATCH_VERSION = 278" in version,
         "implementation_default_off_subflag_default_on_compiled": all(token in config for token in (
             "config.LazyUndergroundSourceGeneration = false",
             "config.LazyUndergroundOuterPassagePads = true",
@@ -111,15 +110,16 @@ def main() -> int:
             'deposits.AuditTopUpVanillaRepulsion(map, "surface final after density suite")',
             "deposits.CensusFinalOuterResourceTopUps(map,",
             '"surface final before placement-pool cleanup"',
-            "-- v971 lazy-underground implementation only",
+            "-- v972 lazy-underground implementation only",
             "TerrainCopy.PrepareOuterPassageTerrain, map",
             "deposits.ClearTopUpPlacementPool(map)"),
         "resource_path_has_no_default_off_passage_table_allocation": (
             "passage_plan = passage_only and {" in terrain
             and "for _, entry in ipairs(passage_only and {} or resources)" in terrain
             and "local maximum_rocket_pads = passage_only and 0 or math.max" in terrain),
-        "private_fixed_budget_two_site_plan_and_replay": all(token in plan for token in (
-            '"|v971-outer-passage-pad-reservation"', "attempt_cap_per_site = 256",
+        "private_bounded_two_site_plan_and_replay": all(token in plan for token in (
+            '"|v972-direct-outer-passage-pad-reservation"', "attempt_cap_per_site = 32",
+            "viable_target_per_site = 4", "local side = side_draw % 4",
             "for site_index = 1, passage_plan.required do",
             "local selected, final_state, attempts, viable = select_private_sites(false)",
             "local replay, replay_state, replay_attempts, replay_viable = select_private_sites(true)",
@@ -137,12 +137,12 @@ def main() -> int:
                 'map.MapForEach, map, "map", "DepositMarker"', "#existing_rockets ~= 6",
                 "passage_required_core + 3", "passage_required_core + rocket_radius + 4",
                 "existing_resource_sites", "conservative_visit_world + radius_cells * height_tile")),
-        "exact_elevator_shape_obstruction_concrete_geyser_classifier": all(
+        "exact_obstructions_and_conservative_marker_clearance": all(
             token in plan for token in (
                 'pcall(get_shape, "Elevator")', "validate_shape(passage_shape",
                 "GetBuildObstructions", 'marker.resource == "Concrete"',
                 '"PrefabFeatureMarker"', '"PrefabFeatureCharPreset_Geyser"',
-                "position.Dist2D")),
+                "passage_world_radius * hex_size + entry.radius")),
         "native_organic_patch_journal_has_passage_order_and_site_telemetry": all(
             token in terrain for token in (
                 'add_patch("passage"', "passage_site = site",
