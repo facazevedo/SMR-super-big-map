@@ -1,5 +1,5 @@
--- Deterministic Lua 5.3 model for the v980 persisted-state/live-rebuild distinction.
--- A process-local owner proves the exact pre-cover 000 phase. The two canonical 111 phases also
+-- Deterministic Lua 5.3 model for the v981 persisted-state/live-rebuild distinction.
+-- A process-local owner proves the exact awaiting-readiness pre-cover 100 phase. The canonical 111 phases also
 -- require the Surface loading cover. Identical serialized state after reload remains fail-closed.
 local live_transactions = setmetatable({}, { __mode = "k" })
 local loading_refs = setmetatable({}, { __mode = "k" })
@@ -65,7 +65,11 @@ local function owned_in_flight(surface, descriptor, report)
 		local exact = #descriptor.capsules == 0 and descriptor.plan_digest == 0
 			and report.capsule_plan_pending == true and report.capsules_published == 0
 		if not exact then return failed("suppressed_capsule_contract", false) end
-		if not pending and not stretch_scheduled and not post_scheduled then
+		if pending and not stretch_scheduled and not post_scheduled then
+			if surface.surface_stretch_awaiting_readiness ~= true then
+				return failed("pre_surface_awaiting_readiness",
+					surface.surface_stretch_awaiting_readiness)
+			end
 			if loading_refs[surface] == true then
 				return failed("pre_surface_loading_cover", true)
 			end
@@ -147,15 +151,17 @@ local function rejected(surface, expected_guard)
 end
 
 local live = new_surface()
+live.stretch_pipeline_pending = true
+live.surface_stretch_awaiting_readiness = true
 own(live, false)
 local pre_ok, pre_phase = validate(live)
 local pre_pipeline_reentry_exact = pre_ok and pre_phase == "pre-surface-pipeline"
 	and live.descriptor.state == "suppressed-awaiting-surface-capsules"
 
 loading_refs[live] = true
-live.stretch_pipeline_pending = true
 live.surface_stretch_scheduled = true
 live.post_pipeline_revalidation_scheduled = true
+live.surface_stretch_awaiting_readiness = false
 local first_ok, first_phase = validate(live)
 local first_reentry_exact = first_ok and first_phase == "first-canonical-rebuild"
 	and live.descriptor.state == "suppressed-awaiting-surface-capsules"
@@ -172,12 +178,14 @@ local nil_sentinels_all_phases_accepted = pre_pipeline_reentry_exact
 globals.UndergroundMap = false
 globals.Maps[2] = false
 local false_live = new_surface()
+false_live.stretch_pipeline_pending = true
+false_live.surface_stretch_awaiting_readiness = true
 own(false_live, false)
 local false_pre_ok, false_pre_phase = validate(false_live)
 loading_refs[false_live] = true
-false_live.stretch_pipeline_pending = true
 false_live.surface_stretch_scheduled = true
 false_live.post_pipeline_revalidation_scheduled = true
+false_live.surface_stretch_awaiting_readiness = false
 local false_first_ok, false_first_phase = validate(false_live)
 publish_capsules(false_live)
 local false_closing_ok, false_closing_phase = validate(false_live)
@@ -215,6 +223,8 @@ globals.Maps[2] = nil
 -- Both nil and literal-false refs are exact pre-cover values, and overall loading visibility is
 -- deliberately ignored in this phase. A true Surface ref would contradict the observed ordering.
 local pre_false_cover = new_surface()
+pre_false_cover.stretch_pipeline_pending = true
+pre_false_cover.surface_stretch_awaiting_readiness = true
 own(pre_false_cover, false)
 loading_refs[pre_false_cover] = false
 globals.visible = false
@@ -225,8 +235,21 @@ local pre_nil_and_false_cover_accepted = pre_pipeline_reentry_exact
 local pre_visibility_not_gated = pre_pipeline_reentry_exact and pre_false_ok
 
 local pre_covered = new_surface()
+pre_covered.stretch_pipeline_pending = true
+pre_covered.surface_stretch_awaiting_readiness = true
 own(pre_covered)
 local pre_true_cover_rejected = rejected(pre_covered, "pre_surface_loading_cover")
+
+local pre_without_awaiting = new_surface()
+pre_without_awaiting.stretch_pipeline_pending = true
+own(pre_without_awaiting, false)
+local pre_without_awaiting_rejected =
+	rejected(pre_without_awaiting, "pre_surface_awaiting_readiness")
+
+local retired_zero_tuple = new_surface()
+retired_zero_tuple.surface_stretch_awaiting_readiness = true
+own(retired_zero_tuple, false)
+local zero_tuple_rejected = rejected(retired_zero_tuple, "suppressed_phase_markers")
 
 local first_coverless = new_surface()
 first_coverless.stretch_pipeline_pending = true
@@ -271,10 +294,11 @@ globals.restore_tokens = { {} }
 local no_restore_tokens_required = rejected(pending_restore, "pending_engine_restore_tokens")
 globals.restore_tokens = nil
 
--- The only valid suppressed marker triples are 000 and 111; reject every mixed triple.
+-- The only valid suppressed marker triples are 100 and 111. Reject 000 above and the other five
+-- tuples here; 100 without its awaiting-readiness token is rejected separately.
 local invalid_suppressed_phase_mixtures_rejected = true
 local invalid_suppressed_phase_mixture_cases = 0
-for mask = 1, 6 do
+for _, mask in ipairs({ 0, 2, 3, 4, 5, 6 }) do
 	local mixed = new_surface()
 	mixed.stretch_pipeline_pending = mask % 2 == 1
 	mixed.surface_stretch_scheduled = math.floor(mask / 2) % 2 == 1
@@ -317,6 +341,7 @@ local ok = pre_pipeline_reentry_exact and first_reentry_exact and closing_reentr
 	and pre_nil_and_false_cover_accepted and pre_visibility_not_gated
 	and pre_true_cover_rejected and canonical_coverless_all_phases_rejected
 	and canonical_hidden_all_phases_rejected
+	and pre_without_awaiting_rejected and zero_tuple_rejected
 	and no_restore_tokens_required and invalid_suppressed_phase_mixtures_rejected
 	and invalid_closing_phase_mixtures_rejected and pre_done_or_error_rejected
 print("ok=" .. tostring(ok))
@@ -333,6 +358,8 @@ print("cover_required=" .. tostring(cover_required))
 print("pre_nil_and_false_cover_accepted=" .. tostring(pre_nil_and_false_cover_accepted))
 print("pre_visibility_not_gated=" .. tostring(pre_visibility_not_gated))
 print("pre_true_cover_rejected=" .. tostring(pre_true_cover_rejected))
+print("pre_without_awaiting_rejected=" .. tostring(pre_without_awaiting_rejected))
+print("zero_tuple_rejected=" .. tostring(zero_tuple_rejected))
 print("canonical_coverless_all_phases_rejected="
 	.. tostring(canonical_coverless_all_phases_rejected))
 print("canonical_hidden_all_phases_rejected="

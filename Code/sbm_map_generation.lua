@@ -11248,16 +11248,20 @@ function Lazy.OwnedSurfaceGenerationInFlight(surface, descriptor, report)
 			and report.capsule_plan_pending == true
 			and (tonumber(report.capsules_published) or 0) == 0
 		if not exact then return failed("suppressed_capsule_contract", false) end
-		-- PatchDeferredUndergroundAccess is first installed after suppression commits but before
-		-- RunSurfaceStretchIfEnabled establishes the Surface loading ref and schedules the canonical
-		-- rebuild only after this install. The weak transaction owner above cannot survive save/load,
-		-- so it is the exact nonpersistent proof for this pre-cover state. The overall NewGame loading
-		-- screen may already be visible and is deliberately irrelevant until the canonical phases.
+		-- The first readiness probe has marked the pipeline pending and returned awaiting readiness,
+		-- but the ready probe has not established the Surface loading ref or scheduled either rebuild.
+		-- The weak transaction owner above cannot survive save/load, so it is the exact nonpersistent
+		-- proof for this 100 pre-cover state. The overall NewGame loading screen may already be visible
+		-- and is deliberately irrelevant until the canonical phases.
 		local pipeline_pending = surface.SuperBigMapStretchPipelinePending == true
 		local stretch_scheduled = surface.SuperBigMapSurfaceStretchScheduled == true
 		local post_scheduled =
 			surface.SuperBigMapSurfacePostPipelineRevalidationScheduled == true
-		if not pipeline_pending and not stretch_scheduled and not post_scheduled then
+		if pipeline_pending and not stretch_scheduled and not post_scheduled then
+			if surface.SuperBigMapSurfaceStretchAwaitingReadiness ~= true then
+				return failed("pre_surface_awaiting_readiness",
+					surface.SuperBigMapSurfaceStretchAwaitingReadiness)
+			end
 			if surface_loading_ref_maps[surface] == true then
 				return failed("pre_surface_loading_cover", true)
 			end

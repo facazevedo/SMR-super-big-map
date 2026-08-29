@@ -77,11 +77,11 @@ def main() -> int:
                                 capture_output=True, text=True, timeout=30, check=False)
         compile_results[path.relative_to(ROOT).as_posix()] = result.returncode == 0
     checks = {
-        "metadata_v980_truthfully_retains_v972": "'version', 980," in metadata
-            and "pre-pipeline state before its Surface loading cover exists" in metadata
-            and "requiring that cover throughout both canonical rebuild phases" in metadata,
-        "generator_identity_v286": "SuperBigMap.GENERATOR_PATCH_VERSION = 286" in version,
-        "v980_default_off_safe_optimization_trace_gate_green": (
+        "metadata_v981_truthfully_retains_v972": "'version', 981," in metadata
+            and "exact owned 100 lazy readiness-wait phase" in metadata
+            and "cover-gated 111 canonical rebuild phases" in metadata,
+        "generator_identity_v287": "SuperBigMap.GENERATOR_PATCH_VERSION = 287" in version,
+        "v981_default_off_safe_optimization_trace_gate_green": (
             optimization_trace_run.returncode == 0
             and '"ok": true' in optimization_trace_run.stdout),
         "lazy_architecture_default_off_direct_pad_subflag_on": all(token in config for token in (
@@ -110,6 +110,8 @@ def main() -> int:
             and "pre_nil_and_false_cover_accepted=true" in persisted_reentry_run.stdout
             and "pre_visibility_not_gated=true" in persisted_reentry_run.stdout
             and "pre_true_cover_rejected=true" in persisted_reentry_run.stdout
+            and "pre_without_awaiting_rejected=true" in persisted_reentry_run.stdout
+            and "zero_tuple_rejected=true" in persisted_reentry_run.stdout
             and "canonical_coverless_all_phases_rejected=true" in persisted_reentry_run.stdout
             and "canonical_hidden_all_phases_rejected=true" in persisted_reentry_run.stdout
             and "loaded_incomplete_rejected=true" in persisted_reentry_run.stdout
@@ -130,7 +132,9 @@ def main() -> int:
                 'type(maps) == "table" and maps[descriptor.map_slot] then',
                 "lazy_underground_engine_restore_tokens",
                 'descriptor.state == "suppressed-awaiting-surface-capsules"',
-                'if not pipeline_pending and not stretch_scheduled and not post_scheduled then',
+                'if pipeline_pending and not stretch_scheduled and not post_scheduled then',
+                'surface.SuperBigMapSurfaceStretchAwaitingReadiness ~= true',
+                'return failed("pre_surface_awaiting_readiness",',
                 'if pipeline_pending and stretch_scheduled and post_scheduled then',
                 'surface_loading_ref_maps[surface] == true',
                 'return failed("pre_surface_loading_cover", true)',
@@ -153,7 +157,7 @@ def main() -> int:
             "SuperBigMapStretchPipelinePending" not in common_guard
             and "SuperBigMapSurfaceStretchScheduled" not in common_guard
             and "SuperBigMapSurfacePostPipelineRevalidationScheduled" not in common_guard
-            and owned_guard.count("if not pipeline_pending and not stretch_scheduled"
+            and owned_guard.count("if pipeline_pending and not stretch_scheduled"
                                   " and not post_scheduled then") == 1
             and owned_guard.count("if pipeline_pending and stretch_scheduled"
                                   " and post_scheduled then") == 1
@@ -172,10 +176,11 @@ def main() -> int:
             and owned_guard.count('return failed("canonical_loading_cover", false)') == 1
             and owned_guard.count('return failed("canonical_loading_visible", visible_now)') == 1
             and owned_guard.count('return failed("pre_surface_loading_cover", true)') == 1
+            and owned_guard.count('return failed("pre_surface_awaiting_readiness",') == 1
             and owned_guard.count('canonical_loading_cover("first-canonical-rebuild")') == 1
             and owned_guard.count('canonical_loading_cover("closing-canonical-rebuild")') == 1
             and 'ExpansionLoadingVisible' not in owned_guard[
-                owned_guard.index('if not pipeline_pending and not stretch_scheduled'):
+                owned_guard.index('if pipeline_pending and not stretch_scheduled'):
                 owned_guard.index('if pipeline_pending and stretch_scheduled')]),
         "flat_read_only_engine_probe_gates_v972_budget_and_exact_geometry": all(
             token in engine_probe for token in (
