@@ -77,12 +77,11 @@ def main() -> int:
                                 capture_output=True, text=True, timeout=30, check=False)
         compile_results[path.relative_to(ROOT).as_posix()] = result.returncode == 0
     checks = {
-        "metadata_v979_truthfully_retains_v972": "'version', 979," in metadata
-            and "false unloaded-map sentinel" in metadata
-            and "fail-closed real-map" in metadata
-            and "persisted-state rejection" in metadata,
-        "generator_identity_v285": "SuperBigMap.GENERATOR_PATCH_VERSION = 285" in version,
-        "v979_default_off_safe_optimization_trace_gate_green": (
+        "metadata_v980_truthfully_retains_v972": "'version', 980," in metadata
+            and "pre-pipeline state before its Surface loading cover exists" in metadata
+            and "requiring that cover throughout both canonical rebuild phases" in metadata,
+        "generator_identity_v286": "SuperBigMap.GENERATOR_PATCH_VERSION = 286" in version,
+        "v980_default_off_safe_optimization_trace_gate_green": (
             optimization_trace_run.returncode == 0
             and '"ok": true' in optimization_trace_run.stdout),
         "lazy_architecture_default_off_direct_pad_subflag_on": all(token in config for token in (
@@ -108,6 +107,11 @@ def main() -> int:
             and "false_sentinels_all_phases_accepted=true" in persisted_reentry_run.stdout
             and "real_underground_map_rejected=true" in persisted_reentry_run.stdout
             and "occupied_maps_slot_rejected=true" in persisted_reentry_run.stdout
+            and "pre_nil_and_false_cover_accepted=true" in persisted_reentry_run.stdout
+            and "pre_visibility_not_gated=true" in persisted_reentry_run.stdout
+            and "pre_true_cover_rejected=true" in persisted_reentry_run.stdout
+            and "canonical_coverless_all_phases_rejected=true" in persisted_reentry_run.stdout
+            and "canonical_hidden_all_phases_rejected=true" in persisted_reentry_run.stdout
             and "loaded_incomplete_rejected=true" in persisted_reentry_run.stdout
             and "ownerless_rejected=true" in persisted_reentry_run.stdout
             and "invalid_suppressed_phase_mixtures_rejected=true" in persisted_reentry_run.stdout
@@ -128,12 +132,16 @@ def main() -> int:
                 'descriptor.state == "suppressed-awaiting-surface-capsules"',
                 'if not pipeline_pending and not stretch_scheduled and not post_scheduled then',
                 'if pipeline_pending and stretch_scheduled and post_scheduled then',
+                'surface_loading_ref_maps[surface] == true',
+                'return failed("pre_surface_loading_cover", true)',
+                'canonical_loading_cover("first-canonical-rebuild")',
                 '"pre-surface-pipeline"',
                 '"first-canonical-rebuild"',
                 '"suppressed_phase_markers"',
                 'descriptor.state == "surface-capsules-published-awaiting-final-grid"',
                 '"closing_phase_markers"',
                 '"closing-canonical-rebuild"',
+                'canonical_loading_cover("closing-canonical-rebuild")',
                 "Lazy.OwnedSurfaceGenerationInFlight(surface, descriptor, report)",
                 "report.persisted_state_live_reentry_allowed = true",
                 "report.persisted_state_live_reentry_count =",
@@ -158,6 +166,17 @@ def main() -> int:
                 'if Global("UndergroundMap") then return failed("underground_map_absent", false) end') == 1
             and owned_guard.count(
                 'if type(maps) == "table" and maps[descriptor.map_slot] then') == 1),
+        "surface_loading_cover_is_phase_specific": (
+            'return failed("loading_cover", false)' not in owned_guard
+            and owned_guard.count('local function canonical_loading_cover(phase)') == 1
+            and owned_guard.count('return failed("canonical_loading_cover", false)') == 1
+            and owned_guard.count('return failed("canonical_loading_visible", visible_now)') == 1
+            and owned_guard.count('return failed("pre_surface_loading_cover", true)') == 1
+            and owned_guard.count('canonical_loading_cover("first-canonical-rebuild")') == 1
+            and owned_guard.count('canonical_loading_cover("closing-canonical-rebuild")') == 1
+            and 'ExpansionLoadingVisible' not in owned_guard[
+                owned_guard.index('if not pipeline_pending and not stretch_scheduled'):
+                owned_guard.index('if pipeline_pending and stretch_scheduled')]),
         "flat_read_only_engine_probe_gates_v972_budget_and_exact_geometry": all(
             token in engine_probe for token in (
                 'schema = "smr.ralph.v972.direct-outer-passage-pad-engine-probe.v1"',

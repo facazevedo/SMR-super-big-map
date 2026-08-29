@@ -1,6 +1,6 @@
--- Deterministic Lua 5.3 model for the v979 persisted-state/live-rebuild distinction.
--- Only a process-local owner under the active loading cover may use one of the three exact
--- phase-marker contracts. Identical serialized state after reload must remain fail-closed.
+-- Deterministic Lua 5.3 model for the v980 persisted-state/live-rebuild distinction.
+-- A process-local owner proves the exact pre-cover 000 phase. The two canonical 111 phases also
+-- require the Surface loading cover. Identical serialized state after reload remains fail-closed.
 local live_transactions = setmetatable({}, { __mode = "k" })
 local loading_refs = setmetatable({}, { __mode = "k" })
 local globals = { Maps = {}, UndergroundMap = nil, restore_tokens = nil, visible = true }
@@ -48,8 +48,15 @@ local function owned_in_flight(surface, descriptor, report)
 	if surface.post_pipeline_revalidation_error ~= nil then
 		return failed("post_pipeline_revalidation_error", surface.post_pipeline_revalidation_error)
 	end
-	if loading_refs[surface] ~= true then return failed("loading_cover", false) end
-	if globals.visible ~= true then return failed("loading_visible", globals.visible) end
+	local function canonical_loading_cover(phase)
+		if loading_refs[surface] ~= true then
+			return failed("canonical_loading_cover", false)
+		end
+		if globals.visible ~= true then
+			return failed("canonical_loading_visible", globals.visible)
+		end
+		return true, phase
+	end
 
 	local pending = surface.stretch_pipeline_pending == true
 	local stretch_scheduled = surface.surface_stretch_scheduled == true
@@ -59,10 +66,13 @@ local function owned_in_flight(surface, descriptor, report)
 			and report.capsule_plan_pending == true and report.capsules_published == 0
 		if not exact then return failed("suppressed_capsule_contract", false) end
 		if not pending and not stretch_scheduled and not post_scheduled then
+			if loading_refs[surface] == true then
+				return failed("pre_surface_loading_cover", true)
+			end
 			return true, "pre-surface-pipeline"
 		end
 		if pending and stretch_scheduled and post_scheduled then
-			return true, "first-canonical-rebuild"
+			return canonical_loading_cover("first-canonical-rebuild")
 		end
 		return failed("suppressed_phase_markers",
 			tostring(pending) .. "/" .. tostring(stretch_scheduled) .. "/" .. tostring(post_scheduled))
@@ -75,7 +85,7 @@ local function owned_in_flight(surface, descriptor, report)
 			and report.capsules_published == 2 and report.deterministic_repeat == true
 			and report.final_grid_revalidation ~= true
 		if not exact then return failed("closing_capsule_contract", false) end
-		return true, "closing-canonical-rebuild"
+		return canonical_loading_cover("closing-canonical-rebuild")
 	end
 	return failed("descriptor_state", descriptor.state)
 end
@@ -137,11 +147,12 @@ local function rejected(surface, expected_guard)
 end
 
 local live = new_surface()
-own(live)
+own(live, false)
 local pre_ok, pre_phase = validate(live)
 local pre_pipeline_reentry_exact = pre_ok and pre_phase == "pre-surface-pipeline"
 	and live.descriptor.state == "suppressed-awaiting-surface-capsules"
 
+loading_refs[live] = true
 live.stretch_pipeline_pending = true
 live.surface_stretch_scheduled = true
 live.post_pipeline_revalidation_scheduled = true
@@ -161,8 +172,9 @@ local nil_sentinels_all_phases_accepted = pre_pipeline_reentry_exact
 globals.UndergroundMap = false
 globals.Maps[2] = false
 local false_live = new_surface()
-own(false_live)
+own(false_live, false)
 local false_pre_ok, false_pre_phase = validate(false_live)
+loading_refs[false_live] = true
 false_live.stretch_pipeline_pending = true
 false_live.surface_stretch_scheduled = true
 false_live.post_pipeline_revalidation_scheduled = true
@@ -200,9 +212,58 @@ local ownerless_rejected = rejected(ownerless, "process_local_owner")
 globals.UndergroundMap = nil
 globals.Maps[2] = nil
 
-local coverless = new_surface()
-own(coverless, false)
-local cover_required = rejected(coverless, "loading_cover")
+-- Both nil and literal-false refs are exact pre-cover values, and overall loading visibility is
+-- deliberately ignored in this phase. A true Surface ref would contradict the observed ordering.
+local pre_false_cover = new_surface()
+own(pre_false_cover, false)
+loading_refs[pre_false_cover] = false
+globals.visible = false
+local pre_false_ok, pre_false_phase = validate(pre_false_cover)
+globals.visible = true
+local pre_nil_and_false_cover_accepted = pre_pipeline_reentry_exact
+	and pre_false_ok and pre_false_phase == "pre-surface-pipeline"
+local pre_visibility_not_gated = pre_pipeline_reentry_exact and pre_false_ok
+
+local pre_covered = new_surface()
+own(pre_covered)
+local pre_true_cover_rejected = rejected(pre_covered, "pre_surface_loading_cover")
+
+local first_coverless = new_surface()
+first_coverless.stretch_pipeline_pending = true
+first_coverless.surface_stretch_scheduled = true
+first_coverless.post_pipeline_revalidation_scheduled = true
+own(first_coverless, false)
+local first_coverless_rejected = rejected(first_coverless, "canonical_loading_cover")
+local closing_coverless = new_surface()
+closing_coverless.stretch_pipeline_pending = true
+closing_coverless.surface_stretch_scheduled = true
+closing_coverless.post_pipeline_revalidation_scheduled = true
+publish_capsules(closing_coverless)
+own(closing_coverless, false)
+local closing_coverless_rejected = rejected(closing_coverless, "canonical_loading_cover")
+local canonical_coverless_all_phases_rejected =
+	first_coverless_rejected and closing_coverless_rejected
+
+local first_hidden = new_surface()
+first_hidden.stretch_pipeline_pending = true
+first_hidden.surface_stretch_scheduled = true
+first_hidden.post_pipeline_revalidation_scheduled = true
+own(first_hidden)
+globals.visible = false
+local first_hidden_rejected = rejected(first_hidden, "canonical_loading_visible")
+globals.visible = true
+local closing_hidden = new_surface()
+closing_hidden.stretch_pipeline_pending = true
+closing_hidden.surface_stretch_scheduled = true
+closing_hidden.post_pipeline_revalidation_scheduled = true
+publish_capsules(closing_hidden)
+own(closing_hidden)
+globals.visible = false
+local closing_hidden_rejected = rejected(closing_hidden, "canonical_loading_visible")
+globals.visible = true
+local canonical_hidden_all_phases_rejected = first_hidden_rejected and closing_hidden_rejected
+local cover_required = canonical_coverless_all_phases_rejected
+	and canonical_hidden_all_phases_rejected and pre_true_cover_rejected
 
 local pending_restore = new_surface()
 own(pending_restore)
@@ -253,6 +314,9 @@ local ok = pre_pipeline_reentry_exact and first_reentry_exact and closing_reentr
 	and nil_sentinels_all_phases_accepted and false_sentinels_all_phases_accepted
 	and real_underground_map_rejected and occupied_maps_slot_rejected
 	and loaded_incomplete_rejected and ownerless_rejected and cover_required
+	and pre_nil_and_false_cover_accepted and pre_visibility_not_gated
+	and pre_true_cover_rejected and canonical_coverless_all_phases_rejected
+	and canonical_hidden_all_phases_rejected
 	and no_restore_tokens_required and invalid_suppressed_phase_mixtures_rejected
 	and invalid_closing_phase_mixtures_rejected and pre_done_or_error_rejected
 print("ok=" .. tostring(ok))
@@ -266,6 +330,13 @@ print("occupied_maps_slot_rejected=" .. tostring(occupied_maps_slot_rejected))
 print("loaded_incomplete_rejected=" .. tostring(loaded_incomplete_rejected))
 print("ownerless_rejected=" .. tostring(ownerless_rejected))
 print("cover_required=" .. tostring(cover_required))
+print("pre_nil_and_false_cover_accepted=" .. tostring(pre_nil_and_false_cover_accepted))
+print("pre_visibility_not_gated=" .. tostring(pre_visibility_not_gated))
+print("pre_true_cover_rejected=" .. tostring(pre_true_cover_rejected))
+print("canonical_coverless_all_phases_rejected="
+	.. tostring(canonical_coverless_all_phases_rejected))
+print("canonical_hidden_all_phases_rejected="
+	.. tostring(canonical_hidden_all_phases_rejected))
 print("no_restore_tokens_required=" .. tostring(no_restore_tokens_required))
 print("invalid_suppressed_phase_mixtures_rejected="
 	.. tostring(invalid_suppressed_phase_mixtures_rejected))

@@ -1,4 +1,4 @@
--- Executable Lua 5.3 oracle for the v979 default-off optimization-trace API.
+-- Executable Lua 5.3 oracle for the v980 default-off optimization-trace API.
 local saved_print = print
 local saved_tostring = tostring
 local saved_string_format = string.format

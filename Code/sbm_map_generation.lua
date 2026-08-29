@@ -11227,12 +11227,21 @@ function Lazy.OwnedSurfaceGenerationInFlight(surface, descriptor, report)
 		return failed("post_pipeline_revalidation_error",
 			surface.SuperBigMapSurfacePostPipelineRevalidationError)
 	end
-	if surface_loading_ref_maps[surface] ~= true then return failed("loading_cover", false) end
-	local visible = SuperBigMap.ExpansionLoadingVisible
-	if type(visible) ~= "function" then return failed("loading_visible_function", type(visible)) end
-	local visible_ok, visible_now = pcall(visible)
-	if not visible_ok then return failed("loading_visible_call", false) end
-	if visible_now ~= true then return failed("loading_visible", visible_now) end
+	local function canonical_loading_cover(phase)
+		if surface_loading_ref_maps[surface] ~= true then
+			return failed("canonical_loading_cover", false)
+		end
+		local visible = SuperBigMap.ExpansionLoadingVisible
+		if type(visible) ~= "function" then
+			return failed("canonical_loading_visible_function", type(visible))
+		end
+		local visible_ok, visible_now = pcall(visible)
+		if not visible_ok then return failed("canonical_loading_visible_call", false) end
+		if visible_now ~= true then
+			return failed("canonical_loading_visible", visible_now)
+		end
+		return true, phase
+	end
 	if descriptor.state == "suppressed-awaiting-surface-capsules" then
 		local exact = type(descriptor.capsules) == "table" and #descriptor.capsules == 0
 			and (tonumber(descriptor.plan_digest) or 0) == 0
@@ -11240,18 +11249,22 @@ function Lazy.OwnedSurfaceGenerationInFlight(surface, descriptor, report)
 			and (tonumber(report.capsules_published) or 0) == 0
 		if not exact then return failed("suppressed_capsule_contract", false) end
 		-- PatchDeferredUndergroundAccess is first installed after suppression commits but before
-		-- RunSurfaceStretchIfEnabled schedules the post-pipeline canonical rebuild. The weak owner
-		-- and loading-cover tokens above are process-local and cannot survive save/load, so this
-		-- precise pre-schedule state is owned live work rather than persisted incomplete state.
+		-- RunSurfaceStretchIfEnabled establishes the Surface loading ref and schedules the canonical
+		-- rebuild only after this install. The weak transaction owner above cannot survive save/load,
+		-- so it is the exact nonpersistent proof for this pre-cover state. The overall NewGame loading
+		-- screen may already be visible and is deliberately irrelevant until the canonical phases.
 		local pipeline_pending = surface.SuperBigMapStretchPipelinePending == true
 		local stretch_scheduled = surface.SuperBigMapSurfaceStretchScheduled == true
 		local post_scheduled =
 			surface.SuperBigMapSurfacePostPipelineRevalidationScheduled == true
 		if not pipeline_pending and not stretch_scheduled and not post_scheduled then
+			if surface_loading_ref_maps[surface] == true then
+				return failed("pre_surface_loading_cover", true)
+			end
 			return true, "pre-surface-pipeline"
 		end
 		if pipeline_pending and stretch_scheduled and post_scheduled then
-			return true, "first-canonical-rebuild"
+			return canonical_loading_cover("first-canonical-rebuild")
 		end
 		return failed("suppressed_phase_markers",
 			tostring(pipeline_pending) .. "/" .. tostring(stretch_scheduled)
@@ -11269,7 +11282,7 @@ function Lazy.OwnedSurfaceGenerationInFlight(surface, descriptor, report)
 			and report.deterministic_repeat == true
 			and report.final_grid_revalidation ~= true
 		if not exact then return failed("closing_capsule_contract", false) end
-		return true, "closing-canonical-rebuild"
+		return canonical_loading_cover("closing-canonical-rebuild")
 	end
 	return failed("descriptor_state", descriptor.state)
 end

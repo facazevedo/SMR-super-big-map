@@ -1,4 +1,4 @@
--- Executable Lua 5.3 oracle for the v979 yield-safe optimization-trace publication boundary.
+-- Executable Lua 5.3 oracle for the v980 yield-safe optimization-trace publication boundary.
 local function read(path)
 	local file, open_error = io.open(path, "rb")
 	if not file then error(open_error) end
