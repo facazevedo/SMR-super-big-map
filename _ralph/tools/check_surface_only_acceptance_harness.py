@@ -302,8 +302,21 @@ def main() -> int:
             "FileSystemWatcher" in executor
             and "-EventName Exited" in executor
             and "Wait-Event -Timeout" in executor
+            and "-SourceIdentifier $changedId" in executor
+            and "-SourceIdentifier $exitId" in executor
+            and "Get-EventSubscriber -SourceIdentifier $sourceId" in executor
+            and "Wait-NonEmptyFile $DeferredT1" in executor
+            and "Wait-NonEmptyFile $Census" in executor
+            and executor.index("Wait-NonEmptyFile $DeferredT1") < executor.index("Assert-ExactTokens $DeferredT1")
+            and executor.index("Wait-NonEmptyFile $Census") < executor.index("Assert-ExactTokens $Census")
             and "Start-Sleep -Milliseconds 20" not in executor
             and "\n    Start-Sleep -Milliseconds 25\n" not in executor
+        ),
+        "executor_has_ps5_wait_lifecycle_self_test": (
+            "function Invoke-WaitLifecycleSelfTest" in executor
+            and "subscriber_count_before" in executor
+            and "deferred_returned_before_census" in executor
+            and "-SelfTest" in executor
         ),
         "executor_has_no_stale_canonical2_t1_baseline": (
             "planner_canonical_rebuilds=2" not in executor

@@ -1,7 +1,8 @@
 param(
-    [Parameter(Mandatory = $true)][string]$ContractPath,
-    [Parameter(Mandatory = $true)][ValidatePattern('^[A-Fa-f0-9]{64}$')][string]$ContractSha256,
-    [switch]$Launch
+    [string]$ContractPath,
+    [ValidatePattern('^[A-Fa-f0-9]{64}$')][string]$ContractSha256,
+    [switch]$Launch,
+    [switch]$SelfTest
 )
 
 # Reusable cold Surface acceptance executor.  The contract is deliberately content
@@ -228,10 +229,16 @@ function Wait-NonEmptyFile([string]$Path, [DateTime]$DeadlineUtc, [Diagnostics.P
     $watcher.NotifyFilter = [IO.NotifyFilters]::FileName -bor [IO.NotifyFilters]::LastWrite -bor [IO.NotifyFilters]::Size
     $watcher.EnableRaisingEvents = $true
     $TrackedProcess.EnableRaisingEvents = $true
-    $fileSubscription = Register-ObjectEvent -InputObject $watcher -EventName Changed
-    $createdSubscription = Register-ObjectEvent -InputObject $watcher -EventName Created
-    $renamedSubscription = Register-ObjectEvent -InputObject $watcher -EventName Renamed
-    $exitSubscription = Register-ObjectEvent -InputObject $TrackedProcess -EventName Exited
+    $nonce = [Guid]::NewGuid().ToString('N')
+    $changedId = "smr.surface.wait.$nonce.changed"
+    $createdId = "smr.surface.wait.$nonce.created"
+    $renamedId = "smr.surface.wait.$nonce.renamed"
+    $exitId = "smr.surface.wait.$nonce.exited"
+    $sourceIds = @($changedId, $createdId, $renamedId, $exitId)
+    $fileSubscription = Register-ObjectEvent -InputObject $watcher -EventName Changed -SourceIdentifier $changedId
+    $createdSubscription = Register-ObjectEvent -InputObject $watcher -EventName Created -SourceIdentifier $createdId
+    $renamedSubscription = Register-ObjectEvent -InputObject $watcher -EventName Renamed -SourceIdentifier $renamedId
+    $exitSubscription = Register-ObjectEvent -InputObject $TrackedProcess -EventName Exited -SourceIdentifier $exitId
     try {
         while ([DateTime]::UtcNow -lt $DeadlineUtc) {
             # The only wait races filesystem sentinel events with the exact tracked
@@ -244,18 +251,29 @@ function Wait-NonEmptyFile([string]$Path, [DateTime]$DeadlineUtc, [Diagnostics.P
             }
             if ($TrackedProcess.HasExited) { throw "tracked MarsDebug exited before sentinel: $Path" }
             $remaining = [Math]::Max(1, [Math]::Ceiling(($DeadlineUtc - [DateTime]::UtcNow).TotalSeconds))
+            # Windows PowerShell 5.1 accepts one SourceIdentifier only.  Wait on
+            # the event queue, then accept only this call's globally unique IDs.
             $event = Wait-Event -Timeout ([int]$remaining)
             if ($event) {
-                if ($event.SourceIdentifier -eq $exitSubscription.Name) {
+                if ($event.SourceIdentifier -eq $exitId) {
                     Remove-Event -EventIdentifier $event.EventIdentifier -ErrorAction SilentlyContinue
                     throw "tracked MarsDebug exited before sentinel: $Path"
                 }
-                Remove-Event -EventIdentifier $event.EventIdentifier -ErrorAction SilentlyContinue
+                if ($sourceIds -contains $event.SourceIdentifier) {
+                    Remove-Event -EventIdentifier $event.EventIdentifier -ErrorAction SilentlyContinue
+                }
             }
         }
     } finally {
-        foreach ($subscription in @($fileSubscription, $createdSubscription, $renamedSubscription, $exitSubscription)) {
-            if ($subscription) { Unregister-Event -SubscriptionId $subscription.Id -ErrorAction SilentlyContinue }
+        # Registration can return null under PS5 event races.  Source IDs are unique,
+        # so query the subscriber table directly and clean every matching entry.
+        foreach ($sourceId in $sourceIds) {
+            foreach ($subscription in @(Get-EventSubscriber -SourceIdentifier $sourceId -ErrorAction SilentlyContinue)) {
+                Unregister-Event -SubscriptionId $subscription.SubscriptionId -ErrorAction SilentlyContinue
+            }
+            foreach ($queued in @(Get-Event -SourceIdentifier $sourceId -ErrorAction SilentlyContinue)) {
+                Remove-Event -EventIdentifier $queued.EventIdentifier -ErrorAction SilentlyContinue
+            }
         }
         $watcher.Dispose()
     }
@@ -373,6 +391,62 @@ function Stop-TrackedGame([string]$Reason) {
     throw "tracked quit/identity fallback failed: $Reason"
 }
 
+function Invoke-WaitLifecycleSelfTest {
+    # PS5-only runtime proof for the exact subscription implementation above.  It
+    # uses this PowerShell process as the non-exiting tracked process; no daemon,
+    # game, deploy, or harness call is involved.
+    $before = @((Get-EventSubscriber -ErrorAction SilentlyContinue)).Count
+    $root = Join-Path ([IO.Path]::GetTempPath()) ("smr_surface_wait_" + [Guid]::NewGuid().ToString('N'))
+    $deferred = Join-Path $root 'deferred.txt'
+    $census = Join-Path $root 'census.txt'
+    $writer = $null
+    $firstReturnedBeforeCensus = $false
+    $timedOut = $false
+    try {
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        $writer = Start-Job -ScriptBlock {
+            param($DeferredPath, $CensusPath)
+            Start-Sleep -Milliseconds 300
+            [IO.File]::WriteAllText($DeferredPath, 'deferred' + [Environment]::NewLine)
+            Start-Sleep -Milliseconds 800
+            [IO.File]::WriteAllText($CensusPath, 'census' + [Environment]::NewLine)
+        } -ArgumentList $deferred, $census
+        $self = Get-Process -Id $PID -ErrorAction Stop
+        Wait-NonEmptyFile $deferred ([DateTime]::UtcNow.AddSeconds(10)) $self
+        $firstReturnedBeforeCensus = -not (Test-Path -LiteralPath $census -PathType Leaf)
+        Wait-NonEmptyFile $census ([DateTime]::UtcNow.AddSeconds(10)) $self
+        try {
+            Wait-NonEmptyFile (Join-Path $root 'never-arrives.txt') ([DateTime]::UtcNow.AddMilliseconds(100)) $self
+        } catch { $timedOut = $_.Exception.Message -like 'timeout waiting for*' }
+        Wait-Job -Job $writer -Timeout 5 | Out-Null
+        Receive-Job -Job $writer -ErrorAction Stop | Out-Null
+        if (-not $firstReturnedBeforeCensus -or -not $timedOut) {
+            throw 'delayed sentinel ordering or timeout race self-test failed'
+        }
+    } finally {
+        if ($writer) { Remove-Job -Job $writer -Force -ErrorAction SilentlyContinue }
+        if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+    }
+    $after = @((Get-EventSubscriber -ErrorAction SilentlyContinue)).Count
+    if ($after -ne $before) { throw "event subscriber leak: before=$before after=$after" }
+    [ordered]@{
+        schema = 'smr.ralph.surface-only-wait-lifecycle-selftest.v1'
+        ok = $true
+        subscriber_count_before = $before
+        subscriber_count_after = $after
+        deferred_returned_before_census = $firstReturnedBeforeCensus
+        timeout_race_rejected = $timedOut
+    } | ConvertTo-Json -Compress
+}
+
+if ($SelfTest) {
+    Invoke-WaitLifecycleSelfTest
+    return
+}
+if ([string]::IsNullOrWhiteSpace($ContractPath) -or [string]::IsNullOrWhiteSpace($ContractSha256)) {
+    throw 'ContractPath and ContractSha256 are required unless -SelfTest is used'
+}
+
 if ((Get-Sha256 $ContractPath) -cne $ContractSha256.ToUpperInvariant()) { throw 'contract SHA-256 mismatch' }
 $script:Contract = Get-Content -LiteralPath $ContractPath -Raw | ConvertFrom-Json
 if ($script:Contract.schema -cne 'smr.ralph.surface-only-acceptance-contract.v1') { throw 'unsupported surface-only contract schema' }
@@ -474,6 +548,11 @@ try {
     $t1Utc = [DateTime]::UtcNow
     $elapsedMs = [Math]::Round((([double]($t1Timestamp - $t0Timestamp) * 1000.0) / [double]$timingFrequency), 4)
     if ($elapsedMs -ge 100000.0) { throw "Surface T0-to-T1 strict <100000ms budget exceeded: $elapsedMs ms" }
+    # Deferred proof and the observer census are separate atomic post-T1 files.
+    # Wait for each with the same process-exit race before any content validation.
+    $postT1EvidenceDeadline = [DateTime]::UtcNow.AddSeconds(120)
+    Wait-NonEmptyFile $DeferredT1 $postT1EvidenceDeadline $script:TrackedProcess
+    Wait-NonEmptyFile $Census $postT1EvidenceDeadline $script:TrackedProcess
 
     # These are the invariant portion of the iter241 Surface T1/Close-ready
     # verifier.  Contracts may add candidate-specific values, but cannot relax this
