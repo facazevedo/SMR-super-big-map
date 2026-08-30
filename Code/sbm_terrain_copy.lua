@@ -8609,7 +8609,7 @@ end
 local function AlignPassagePairsToSharedHex(underground_map, options)
 	options = type(options) == "table" and options or {}
 	local function heartbeat(phase, edge, fields)
-		local emit = SuperBigMap.DiagnosticPhaseHeartbeat
+		local emit = options.diagnostic_heartbeat or SuperBigMap.DiagnosticPhaseHeartbeat
 		if type(emit) == "function" then emit(underground_map, phase, edge, fields) end
 	end
 	local source_bootstrap = options.source_bootstrap == true

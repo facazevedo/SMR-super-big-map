@@ -10012,7 +10012,8 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map, options)
 		return false, { error = "materialization deadline clock is unavailable", deadline_exceeded = true }
 	end
 	local function heartbeat(phase, edge, fields)
-		local emit = SuperBigMap.DiagnosticPhaseHeartbeat
+		local emit = type(options) == "table" and options.diagnostic_heartbeat
+			or SuperBigMap.DiagnosticPhaseHeartbeat
 		if type(emit) == "function" then emit(map, phase, edge, fields) end
 	end
 	local function deadline_expired()

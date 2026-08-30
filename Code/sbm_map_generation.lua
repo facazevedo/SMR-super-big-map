@@ -58,7 +58,6 @@ local underground_shared_wonder_texture_pins =
 -- so existing call sites are unchanged; only the gen-time TerrainSize below stays local.
 local Engine = SuperBigMap.Engine
 local Global = Engine.Global
-local TryCall = Engine.TryCall
 local SafeCall = Engine.SafeCall
 local Unpack = Engine.Unpack
 local IsKindOfSafe = Engine.IsKindOf
@@ -83,14 +82,14 @@ SuperBigMap.OptimizationTrace.Finish = SuperBigMap.OptimizationTrace.Noop
 SuperBigMap.OptimizationTrace.Emit = SuperBigMap.OptimizationTrace.Noop
 SuperBigMap.OptimizationTrace.Publish = SuperBigMap.OptimizationTrace.Noop
 
--- Post-T1 diagnostic heartbeat.  This API lives outside every feature/config gate because a
--- deferred GenerateRandomMap reload can replace the lazy helper while its old synchronous call
--- stack is still running.  Ordinary production performs one raw global lookup and returns: no
--- clock, formatting, allocation, file/console I/O, protected call, or RNG is touched without the
--- explicitly staged process-local sink.  Each active record has a unique name and ends with the
--- completion marker; the external watchdog ignores a torn last write.
-function SuperBigMap.DiagnosticPhaseHeartbeat(map, phase, edge, fields)
-	local sink = rawget(_G, "g_SmrRalphDiagnosticFailureSink")
+-- Post-T1 diagnostic heartbeat. The staged debugger environment is not the mod environment, so
+-- a debugger `_G` value is not visible to an already-installed production wrapper. Installation
+-- therefore copies the primitive sink identity into this module closure and publishes only an
+-- emitter function. The wrapper passes that emitter down the synchronous materialization stack;
+-- a GenerateRandomMap module reload cannot revoke or replace the private capability already on
+-- the stack. Ordinary production sees a nil closure local and returns before clock/format/I/O/RNG.
+local DiagnosticHeartbeat = {}
+function DiagnosticHeartbeat.ValidateSink(sink)
 	if type(sink) ~= "table"
 		or sink.schema ~= "smr.ralph.lazy-terminal-failure-sink.v1"
 		or sink.diagnostic_only ~= true
@@ -100,9 +99,18 @@ function SuperBigMap.DiagnosticPhaseHeartbeat(map, phase, edge, fields)
 		or not sink.manifest_sha256:match("^[0-9a-fA-F]+$")
 		or #sink.manifest_sha256 ~= 64
 		or type(sink.heartbeat_prefix) ~= "string" or sink.heartbeat_prefix == ""
-		or #sink.heartbeat_prefix > 1000 then
-		return false
+		or #sink.heartbeat_prefix > 1000
+		or type(sink.bundle_path) ~= "string" or sink.bundle_path == ""
+		or #sink.bundle_path > 1000
+		or type(sink.sentinel_path) ~= "string" or sink.sentinel_path == ""
+		or #sink.sentinel_path > 1000 then
+		return false, "diagnostic sink contract is invalid"
 	end
+	return true
+end
+
+function DiagnosticHeartbeat.Emit(sink, map, phase, edge, fields)
+	if not DiagnosticHeartbeat.ValidateSink(sink) then return false end
 	local write = Global("AsyncStringToFile")
 	local clock = Global("GetPreciseTicks") or Global("RealTime")
 	if type(write) ~= "function" or type(clock) ~= "function" then return false end
@@ -169,6 +177,66 @@ function SuperBigMap.DiagnosticPhaseHeartbeat(map, phase, edge, fields)
 	local protected_write = Global("sprocall") or pcall
 	local call_ok, write_error = protected_write(write, path, payload)
 	return call_ok and not write_error
+end
+
+function SuperBigMap.DiagnosticPhaseHeartbeat(map, phase, edge, fields)
+	return DiagnosticHeartbeat.Emit(DiagnosticHeartbeat.sink, map, phase, edge, fields)
+end
+
+function SuperBigMap.InstallDiagnosticPhaseHeartbeatSink(sink, surface)
+	local valid, reason = DiagnosticHeartbeat.ValidateSink(sink)
+	if not valid then return false, reason end
+	if DiagnosticHeartbeat.sink ~= nil then
+		return false, "diagnostic heartbeat sink is already installed"
+	end
+	local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
+	local report = surface and surface.SuperBigMapLazyUndergroundFeasibilityReport
+	local maps = Global("Maps")
+	if type(descriptor) ~= "table" or type(report) ~= "table"
+		or descriptor.state ~= "ready-for-first-access"
+		or tonumber(descriptor.materialization_attempts) ~= 0
+		or tonumber(descriptor.generation_count) ~= 0
+		or type(maps) ~= "table" or maps[2] then
+		return false, "diagnostic heartbeat sink requires the exact pre-access T1 state"
+	end
+	-- Copy only bounded primitives. The staged table is never retained, and neither the private
+	-- capability nor its emitter is attached to a map/descriptor/report/save.
+	local private = {
+		schema = sink.schema,
+		diagnostic_only = true,
+		acceptance_timing_eligible = false,
+		nonce = sink.nonce,
+		manifest_sha256 = sink.manifest_sha256:lower(),
+		bundle_path = sink.bundle_path,
+		sentinel_path = sink.sentinel_path,
+		heartbeat_prefix = sink.heartbeat_prefix,
+		heartbeat_sequence = 0,
+	}
+	local function emitter(map, phase, edge, fields)
+		return DiagnosticHeartbeat.Emit(private, map, phase, edge, fields)
+	end
+	if not emitter(surface, "diagnostic-heartbeat-handshake", "BEFORE", {
+		owner = "mod-environment-closure",
+	}) or not emitter(surface, "diagnostic-heartbeat-handshake", "AFTER", {
+		owner = "mod-environment-closure",
+	}) then
+		return false, "diagnostic heartbeat handshake publication failed"
+	end
+	DiagnosticHeartbeat.sink = private
+	local State = SuperBigMap.State
+	State.lazy_diagnostic_heartbeat_emitter = emitter
+	State.lazy_diagnostic_heartbeat_required = true
+	State.lazy_diagnostic_heartbeat_authorize = function(candidate)
+		return candidate == emitter and DiagnosticHeartbeat.sink == private
+	end
+	return true, {
+		schema = "smr.sbm.lazy-phase-heartbeat-handshake.v1",
+		nonce = private.nonce,
+		manifest_sha256 = private.manifest_sha256,
+		heartbeat_sequence = private.heartbeat_sequence,
+		private_capability = true,
+		pre_access = true,
+	}
 end
 
 local function PointXY(pos)
@@ -10108,7 +10176,7 @@ end
 -- terminal sentinel last, so observing the sentinel is an atomic publication handshake. Neither
 -- object is persisted, and publication failure never changes gameplay failure semantics.
 function Lazy.PublishDiagnosticTerminalFailure(surface, reason)
-	local sink = rawget(_G, "g_SmrRalphDiagnosticFailureSink")
+	local sink = DiagnosticHeartbeat.sink
 	if type(sink) ~= "table"
 		or sink.schema ~= "smr.ralph.lazy-terminal-failure-sink.v1"
 		or sink.diagnostic_only ~= true
@@ -12332,7 +12400,9 @@ function Lazy.ValidateCompletedPairs(surface, underground, descriptor)
 end
 
 function Lazy.MaterializeTransaction(surface, descriptor, route, expected_owner, capability_debug)
-	SuperBigMap.DiagnosticPhaseHeartbeat(surface, "lazy-materialization-transaction", "BEFORE", {
+	local heartbeat = type(expected_owner) == "table" and expected_owner.diagnostic_heartbeat
+		or SuperBigMap.DiagnosticPhaseHeartbeat
+	heartbeat(surface, "lazy-materialization-transaction", "BEFORE", {
 		route = route,
 	})
 	if type(expected_owner) ~= "table"
@@ -12349,21 +12419,21 @@ function Lazy.MaterializeTransaction(surface, descriptor, route, expected_owner,
 	})
 	local reconstructed, reconstruct_error = Lazy.ReconstructRecipeValues(descriptor)
 	if not reconstructed then return nil, "recipe reconstruction failed: " .. tostring(reconstruct_error) end
-	SuperBigMap.DiagnosticPhaseHeartbeat(surface, "lazy-recipe-reconstruction", "AFTER")
+	heartbeat(surface, "lazy-recipe-reconstruction", "AFTER")
 	local params = reconstructed.params
-	SuperBigMap.DiagnosticPhaseHeartbeat(surface, "lazy-passage-binding", "BEFORE")
+	heartbeat(surface, "lazy-passage-binding", "BEFORE")
 	local binding, bind_reason = Lazy.InstallPassageBinding(surface, descriptor)
 	if not binding then return nil, "passage binder install failed: " .. tostring(bind_reason) end
-	SuperBigMap.DiagnosticPhaseHeartbeat(surface, "lazy-passage-binding", "AFTER")
+	heartbeat(surface, "lazy-passage-binding", "AFTER")
 	local callback_count, callback_map = 0, nil
 	params.on_map_generated = function(map)
 		callback_count = callback_count + 1
 		callback_map = map
-		SuperBigMap.DiagnosticPhaseHeartbeat(map, "lazy-native-on-map-generated", "BEFORE", {
+		heartbeat(map, "lazy-native-on-map-generated", "BEFORE", {
 			callback_count = callback_count,
 		})
 		local published, reason = Lazy.PublishGeneratedUnderground(map)
-		SuperBigMap.DiagnosticPhaseHeartbeat(map, "lazy-native-on-map-generated",
+		heartbeat(map, "lazy-native-on-map-generated",
 			published and "AFTER" or "ERROR", { reason = reason })
 		if not published then error(reason) end
 	end
@@ -12379,20 +12449,20 @@ function Lazy.MaterializeTransaction(surface, descriptor, route, expected_owner,
 		reserved_seed = reconstructed.generator_seed,
 	}
 	local generate = Global("GenerateRandomMap")
-	SuperBigMap.DiagnosticPhaseHeartbeat(surface, "lazy-native-GenerateRandomMap", "BEFORE", {
+	heartbeat(surface, "lazy-native-GenerateRandomMap", "BEFORE", {
 		map_name = descriptor.map_name, map_slot = descriptor.map_slot,
 	})
 	local generated = type(generate) == "function"
 		and PackValues(pcall(generate, descriptor.map_name, descriptor.map_preset, params))
 		or { false, "GenerateRandomMap is unavailable", n = 2 }
-	SuperBigMap.DiagnosticPhaseHeartbeat(callback_map or surface,
+	heartbeat(callback_map or surface,
 		"lazy-native-GenerateRandomMap", generated[1] and "AFTER" or "ERROR", {
 		callback_count = callback_count, error = generated[1] and "" or generated[2],
 	})
-	SuperBigMap.DiagnosticPhaseHeartbeat(callback_map or surface,
+	heartbeat(callback_map or surface,
 		"lazy-passage-binding-restore", "BEFORE")
 	local restored = Lazy.RestoreTransientPassageBinding(binding)
-	SuperBigMap.DiagnosticPhaseHeartbeat(callback_map or surface,
+	heartbeat(callback_map or surface,
 		"lazy-passage-binding-restore", restored and "AFTER" or "ERROR")
 	State.pending_vanilla_underground_seed = nil
 	if not generated[1] then
@@ -12452,6 +12522,7 @@ function Lazy.MaterializeTransaction(surface, descriptor, route, expected_owner,
 		module_reloaded = SuperBigMap.LazyUndergroundFeasibility ~= Lazy,
 		deadline_started_ms = expected_owner.deadline_started_ms,
 		deadline_ms = expected_owner.deadline_ms,
+		diagnostic_heartbeat = expected_owner.diagnostic_heartbeat,
 	}
 	local authorize_depth, authorize_calls = 0, 0
 	capability.authorize = function(presented, expected_map)
@@ -12511,11 +12582,11 @@ function Lazy.MaterializeTransaction(surface, descriptor, route, expected_owner,
 	underground.SuperBigMapLazyMaterializationCapabilityDebug = capability_debug
 	local pipeline = Lazy.RunDeferredPipeline
 	if type(pipeline) ~= "function" then return nil, "deferred underground pipeline is unavailable" end
-	SuperBigMap.DiagnosticPhaseHeartbeat(underground, "lazy-deferred-underground-pipeline", "BEFORE", {
+	heartbeat(underground, "lazy-deferred-underground-pipeline", "BEFORE", {
 		deadline_ms = authorized_context.deadline_ms,
 	})
 	local pipeline_ok, pipeline_reason = pipeline(underground, true, capability)
-	SuperBigMap.DiagnosticPhaseHeartbeat(underground, "lazy-deferred-underground-pipeline",
+	heartbeat(underground, "lazy-deferred-underground-pipeline",
 		pipeline_ok == true and "AFTER" or "ERROR", { reason = pipeline_reason })
 	AppendMaterializationCapabilityDebug(capability_debug, "after-deferred-pipeline", {
 		ok = pipeline_ok == true,
@@ -12568,8 +12639,11 @@ function Lazy.MaterializeTransaction(surface, descriptor, route, expected_owner,
 	return underground, nil
 end
 
-function Lazy.Materialize(surface, route)
+function Lazy.Materialize(surface, route, diagnostic_heartbeat)
 	if Lazy.IMPLEMENTATION ~= true then return nil, "functional implementation is disabled" end
+	if diagnostic_heartbeat ~= nil and type(diagnostic_heartbeat) ~= "function" then
+		return nil, "diagnostic heartbeat capability is malformed"
+	end
 	surface = surface or Lazy.StateSurface()
 	local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
 	if type(descriptor) ~= "table" or descriptor.implementation ~= true then
@@ -12594,6 +12668,11 @@ function Lazy.Materialize(surface, route)
 	end
 	if descriptor.state ~= "ready-for-first-access" then
 		return Lazy.MarkBlocked(surface, "first access observed state " .. tostring(descriptor.state))
+	end
+	if diagnostic_heartbeat and not diagnostic_heartbeat(surface,
+		"lazy-materialize-entry", "BEFORE", { route = route }) then
+		return Lazy.MarkBlocked(surface,
+			"required diagnostic materialize-entry heartbeat publication failed")
 	end
 	descriptor.materialization_attempts = (tonumber(descriptor.materialization_attempts) or 0) + 1
 	if descriptor.materialization_attempts ~= 1 then
@@ -12631,6 +12710,7 @@ function Lazy.Materialize(surface, route)
 		reserved_seed = descriptor.reserved_seed,
 		route = report.materialization_route,
 		attempt = descriptor.materialization_attempts,
+		diagnostic_heartbeat = diagnostic_heartbeat,
 	}
 	owner.deadline_started_ms = Lazy.Now()
 	owner.deadline_ms = owner.deadline_started_ms > 0
@@ -12649,12 +12729,13 @@ function Lazy.Materialize(surface, route)
 		route = tostring(route), attempt = descriptor.materialization_attempts,
 		map_name = descriptor.map_name, reserved_seed = tostring(descriptor.reserved_seed),
 	}, surface)
-	SuperBigMap.DiagnosticPhaseHeartbeat(surface, "lazy-first-access-materialization", "BEFORE", {
+	local heartbeat = owner.diagnostic_heartbeat or SuperBigMap.DiagnosticPhaseHeartbeat
+	heartbeat(surface, "lazy-first-access-materialization", "BEFORE", {
 		deadline_ms = owner.deadline_ms, route = route,
 	})
 	local call_ok, underground, reason = pcall(
 		Lazy.MaterializeTransaction, surface, descriptor, route, owner, capability_debug)
-	SuperBigMap.DiagnosticPhaseHeartbeat(underground or surface,
+	heartbeat(underground or surface,
 		"lazy-first-access-materialization", call_ok and underground and "AFTER" or "ERROR", {
 		reason = call_ok and reason or underground,
 	})
@@ -16820,25 +16901,27 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 		map.SuperBigMapStretchPipelinePending = true
 	end
 	local function run_pipeline()
+		local phase_heartbeat = capability_context and capability_context.diagnostic_heartbeat
+			or SuperBigMap.DiagnosticPhaseHeartbeat
 		local heartbeat_open_phase
 		local function HeartbeatPhase(phase, fields)
 			if heartbeat_open_phase then
-				SuperBigMap.DiagnosticPhaseHeartbeat(
+				phase_heartbeat(
 					map, heartbeat_open_phase, "AFTER", { next_phase = phase })
 			end
 			heartbeat_open_phase = tostring(phase)
-			SuperBigMap.DiagnosticPhaseHeartbeat(map, heartbeat_open_phase, "BEFORE", fields)
+			phase_heartbeat(map, heartbeat_open_phase, "BEFORE", fields)
 		end
 		local function FinishHeartbeat(ok, reason)
 			if heartbeat_open_phase then
-				SuperBigMap.DiagnosticPhaseHeartbeat(map, heartbeat_open_phase,
+				phase_heartbeat(map, heartbeat_open_phase,
 					ok == true and "AFTER" or "ERROR", { reason = reason })
 				heartbeat_open_phase = nil
 			end
-			SuperBigMap.DiagnosticPhaseHeartbeat(map, "underground-expansion-pipeline",
+			phase_heartbeat(map, "underground-expansion-pipeline",
 				ok == true and "AFTER" or "ERROR", { reason = reason })
 		end
-		SuperBigMap.DiagnosticPhaseHeartbeat(map, "underground-expansion-pipeline", "BEFORE", {
+		phase_heartbeat(map, "underground-expansion-pipeline", "BEFORE", {
 			force_now = force_now == true,
 			deadline_ms = capability_context and capability_context.deadline_ms,
 		})
@@ -17063,6 +17146,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 				local pair_ok, pair_stats = AlignPassagePairsToSharedHex(map, {
 					lazy_materialization_capability = materialization_capability,
 					lazy_materialization_context = capability_context,
+					diagnostic_heartbeat = phase_heartbeat,
 				})
 				map.SuperBigMapUndergroundPassagePairOK = pair_ok == true
 				if pair_ok ~= true then
@@ -17238,6 +17322,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 					deadline_ms = capability_context and capability_context.deadline_ms,
 					deadline_started_ms = capability_context
 						and capability_context.deadline_started_ms,
+					diagnostic_heartbeat = phase_heartbeat,
 				})
 				map.SuperBigMapUndergroundEnrichmentReachabilityOK = audit_ok == true
 				LoadingEnd(reachability_token, {
@@ -18608,7 +18693,32 @@ local function PatchDeferredUndergroundAccess(source)
 		SetLoadingPhase("Preparing the underground map for first access")
 		local ok, err = true, nil
 		if lazy_pending then
-			target, err = lazy.Materialize(lazy_surface, "change-current-map-slot")
+			local heartbeat = State.lazy_diagnostic_heartbeat_emitter
+			local authorize_heartbeat = State.lazy_diagnostic_heartbeat_authorize
+			local heartbeat_authorized = type(heartbeat) == "function"
+				and type(authorize_heartbeat) == "function"
+				and authorize_heartbeat(heartbeat) == true
+			if State.lazy_diagnostic_heartbeat_required == true
+				and not heartbeat_authorized then
+				err = "required diagnostic heartbeat capability was lost before materialization"
+				target = nil
+			else
+				heartbeat = heartbeat_authorized and heartbeat or nil
+				if heartbeat and not heartbeat(lazy_surface,
+					"lazy-wrapper-materialize-call", "BEFORE", {
+						route = "change-current-map-slot",
+					}) then
+					err = "required diagnostic wrapper heartbeat publication failed"
+					target = nil
+				else
+					target, err = lazy.Materialize(
+						lazy_surface, "change-current-map-slot", heartbeat)
+					if heartbeat then
+						heartbeat(target or lazy_surface, "lazy-wrapper-materialize-call",
+							target and "AFTER" or "ERROR", { reason = err })
+					end
+				end
+			end
 			ok = target ~= nil
 		else
 			ok, err = RunUndergroundStretchIfEnabled(target, true)
@@ -19012,6 +19122,9 @@ function MapGeneration.RestoreVanillaBehavior()
 	State.change_current_map_slot_wrapper = nil
 	State.original_change_current_map_slot = nil
 	State.underground_access_patch_version = nil
+	State.lazy_diagnostic_heartbeat_emitter = nil
+	State.lazy_diagnostic_heartbeat_authorize = nil
+	State.lazy_diagnostic_heartbeat_required = nil
 	local hud_class = Engine.ClassTable and Engine.ClassTable("HUDButtonMapSwitch")
 	if type(hud_class) == "table" and State.underground_hud_init_wrapper
 		and hud_class.Init == State.underground_hud_init_wrapper

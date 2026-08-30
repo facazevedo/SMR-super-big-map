@@ -26,11 +26,13 @@ META = (ROOT / "metadata.lua").read_text(encoding="utf-8")
 api = GEN.index("function SuperBigMap.DiagnosticPhaseHeartbeat")
 lazy_gate = GEN.index("-- v965 LAZY UNDERGROUND")
 assert api < lazy_gate, "heartbeat API must survive lazy helper reload/config-off"
-guard = GEN[api: GEN.index('local write = Global("AsyncStringToFile")', api)]
+guard = GEN[api: GEN.index("function SuperBigMap.InstallDiagnosticPhaseHeartbeatSink", api)]
 for token in ("GetPreciseTicks", "RealTime", "AsyncStringToFile", "string.format", "pcall("):
     assert token not in guard, f"default-off heartbeat guard performs work: {token}"
 for token in (
-    'rawget(_G, "g_SmrRalphDiagnosticFailureSink")',
+    "return DiagnosticHeartbeat.Emit(DiagnosticHeartbeat.sink, map, phase, edge, fields)",
+    "function SuperBigMap.InstallDiagnosticPhaseHeartbeatSink(sink, surface)",
+    "DiagnosticHeartbeat.sink = private",
     'sink.diagnostic_only ~= true',
     'sink.acceptance_timing_eligible ~= false',
     'type(sink.heartbeat_prefix) ~= "string"',
@@ -39,6 +41,7 @@ for token in (
     'string.format("%04d.txt", sequence)',
 ):
     assert token in GEN, f"missing heartbeat token: {token}"
+assert 'rawget(_G, "g_SmrRalphDiagnosticFailureSink")' not in GEN
 
 phases = (
     "lazy-native-GenerateRandomMap",
@@ -114,10 +117,10 @@ for token in ("default_off_calls=3", "global_calls=0", "clock_calls=0", "file_ca
               "rng_calls=0", "console_calls=0"):
     assert token in DEFAULT_OFF_ORACLE
 
-assert "SuperBigMap.GENERATOR_PATCH_VERSION = 298" in VERSION
-assert re.search(r"'version',\s*992\b", META)
+assert "SuperBigMap.GENERATOR_PATCH_VERSION = 299" in VERSION
+assert re.search(r"'version',\s*993\b", META)
 print("ok=true")
-print("heartbeat_default_off_guard=raw-global-return")
+print("heartbeat_default_off_guard=private-nil-closure-return")
 print("heartbeat_phase_pairs=materialization+pipeline+flatten+relocation")
 print("relocation_candidate_cap=512")
 print("relocation_global_sample_cap=4096")

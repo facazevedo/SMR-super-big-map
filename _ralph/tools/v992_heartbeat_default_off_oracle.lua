@@ -7,7 +7,7 @@ local function read(path)
 	return text
 end
 local source = read("Code/sbm_map_generation.lua")
-local first = assert(source:find("function SuperBigMap.DiagnosticPhaseHeartbeat", 1, true))
+local first = assert(source:find("local DiagnosticHeartbeat = {}", 1, true))
 local last = assert(source:find("local function PointXY", first, true))
 local function_body = source:sub(first, last - 1)
 local calls = { global = 0, clock = 0, file = 0, rng = 0, console = 0 }
