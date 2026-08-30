@@ -149,11 +149,11 @@ def main() -> int:
         capture_output=True, text=True, timeout=30, check=False)
 
     checks = {
-		"metadata_and_generator_identity_v995_v301": (
-			"'version', 995," in metadata
-			and "monotonic deadline" in metadata
-			and "atomic phase heartbeats" in metadata
-			and "SuperBigMap.GENERATOR_PATCH_VERSION = 301" in version
+		"metadata_and_generator_identity_v996_v302": (
+			"'version', 996," in metadata
+			and "bounded, deterministic enrichment transaction" in metadata
+			and "first external view or elevator request" in metadata
+			and "SuperBigMap.GENERATOR_PATCH_VERSION = 302" in version
         ),
         "pinned_lua53_compiles_touched_production": all(compile_results.values()),
         "default_off_api_is_outside_lazy_gate_and_precedes_ordinary_calls": (
