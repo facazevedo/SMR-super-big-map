@@ -69,11 +69,11 @@ def main() -> None:
         raise SystemExit("pair false path still relies on error()")
     if re.search(r'if audit_ok ~= true then\s+error\(', generation):
         raise SystemExit("enrichment false path still relies on error()")
-    require(metadata, "'version', 994", "metadata v994")
-    require(version, "GENERATOR_PATCH_VERSION = 300", "generator patch 300")
+    require(metadata, "'version', 995", "metadata v995")
+    require(version, "GENERATOR_PATCH_VERSION = 301", "generator patch 301")
 
     print("ok=true")
-    print("version=994")
+    print("version=995")
     print("explicit_false_boundaries=2")
     print("persisted_debug_channels=2")
     print("relocation_order=precheck>SetPos>exact-terrain-certificate")

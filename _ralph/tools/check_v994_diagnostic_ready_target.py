@@ -7,7 +7,7 @@ VERSION = (ROOT / "Code/sbm_version.lua").read_text(encoding="utf-8")
 META = (ROOT / "metadata.lua").read_text(encoding="utf-8")
 
 required = (
-    "function SuperBigMap.InstallDiagnosticPhaseHeartbeatSink(sink, surface, expected_descriptor)",
+    "function SuperBigMap.InstallDiagnosticPhaseHeartbeatSink(sink, surface, expected_descriptor,",
     "local ready_target = State.lazy_diagnostic_ready_target",
     "ready_target.surface ~= surface",
     "ready_target.descriptor ~= expected_descriptor",
@@ -24,10 +24,10 @@ required = (
 missing = [token for token in required if token not in MAP]
 if missing:
     raise SystemExit("missing ready-target contract: " + repr(missing))
-if "SuperBigMap.GENERATOR_PATCH_VERSION = 300" not in VERSION:
-    raise SystemExit("generator patch 300 missing")
-if not re.search(r"'version',\s*994\b", META):
-    raise SystemExit("metadata v994 missing")
+if "SuperBigMap.GENERATOR_PATCH_VERSION = 301" not in VERSION:
+    raise SystemExit("generator patch 301 missing")
+if not re.search(r"'version',\s*995\b", META):
+    raise SystemExit("metadata v995 missing")
 installer = MAP[MAP.index("function SuperBigMap.InstallDiagnosticPhaseHeartbeatSink"):
                 MAP.index("local function PointXY")]
 for forbidden in ('rawget(_G, "g_SmrRalphSurfaceReferenceState")', "AsyncRand"):
@@ -35,8 +35,8 @@ for forbidden in ('rawget(_G, "g_SmrRalphSurfaceReferenceState")', "AsyncRand"):
         raise SystemExit("installer trusts forbidden identity/RNG: " + forbidden)
 
 print("ok=true")
-print("version=994")
-print("generator_patch=300")
+print("version=995")
+print("generator_patch=301")
 print("ready_target=process-local-surface+descriptor+report")
 print("loaded_ready_diagnostic_arm=false")
 print("ordinary_loaded_ready_materialization_unchanged=true")

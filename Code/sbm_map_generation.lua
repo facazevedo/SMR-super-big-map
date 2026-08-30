@@ -109,10 +109,10 @@ function DiagnosticHeartbeat.ValidateSink(sink)
 	return true
 end
 
-function DiagnosticHeartbeat.Emit(sink, map, phase, edge, fields)
+function DiagnosticHeartbeat.Emit(sink, map, phase, edge, fields, write_capability, clock_capability)
 	if not DiagnosticHeartbeat.ValidateSink(sink) then return false end
-	local write = Global("AsyncStringToFile")
-	local clock = Global("GetPreciseTicks") or Global("RealTime")
+	local write = write_capability
+	local clock = clock_capability
 	if type(write) ~= "function" or type(clock) ~= "function" then return false end
 	local now_ok, now = pcall(clock)
 	if not now_ok or type(now) ~= "number" then return false end
@@ -180,14 +180,27 @@ function DiagnosticHeartbeat.Emit(sink, map, phase, edge, fields)
 end
 
 function SuperBigMap.DiagnosticPhaseHeartbeat(map, phase, edge, fields)
-	return DiagnosticHeartbeat.Emit(DiagnosticHeartbeat.sink, map, phase, edge, fields)
+	return DiagnosticHeartbeat.Emit(DiagnosticHeartbeat.sink, map, phase, edge, fields,
+		DiagnosticHeartbeat.write_capability, DiagnosticHeartbeat.clock_capability)
 end
 
-function SuperBigMap.InstallDiagnosticPhaseHeartbeatSink(sink, surface, expected_descriptor)
+function SuperBigMap.InstallDiagnosticPhaseHeartbeatSink(sink, surface, expected_descriptor,
+		write_capability, clock_capability)
 	local valid, reason = DiagnosticHeartbeat.ValidateSink(sink)
 	if not valid then return false, reason end
 	if DiagnosticHeartbeat.sink ~= nil then
 		return false, "diagnostic heartbeat sink is already installed"
+	end
+	if type(write_capability) ~= "function" or type(clock_capability) ~= "function" then
+		return false, "diagnostic heartbeat transport capabilities are unavailable"
+	end
+	local first_clock_ok, first_clock = pcall(clock_capability)
+	local second_clock_ok, second_clock = pcall(clock_capability)
+	if not first_clock_ok or not second_clock_ok
+		or type(first_clock) ~= "number" or type(second_clock) ~= "number"
+		or first_clock ~= first_clock or second_clock ~= second_clock
+		or second_clock < first_clock then
+		return false, "diagnostic heartbeat monotonic clock capability is invalid"
 	end
 	local State = SuperBigMap.State
 	local ready_target = State.lazy_diagnostic_ready_target
@@ -223,7 +236,8 @@ function SuperBigMap.InstallDiagnosticPhaseHeartbeatSink(sink, surface, expected
 		heartbeat_sequence = 0,
 	}
 	local function emitter(map, phase, edge, fields)
-		return DiagnosticHeartbeat.Emit(private, map, phase, edge, fields)
+		return DiagnosticHeartbeat.Emit(private, map, phase, edge, fields,
+			write_capability, clock_capability)
 	end
 	if not emitter(surface, "diagnostic-heartbeat-handshake", "BEFORE", {
 		owner = "mod-environment-closure",
@@ -233,10 +247,14 @@ function SuperBigMap.InstallDiagnosticPhaseHeartbeatSink(sink, surface, expected
 		return false, "diagnostic heartbeat handshake publication failed"
 	end
 	DiagnosticHeartbeat.sink = private
+	DiagnosticHeartbeat.write_capability = write_capability
+	DiagnosticHeartbeat.clock_capability = clock_capability
 	State.lazy_diagnostic_heartbeat_emitter = emitter
 	State.lazy_diagnostic_heartbeat_required = true
 	State.lazy_diagnostic_heartbeat_authorize = function(candidate)
 		return candidate == emitter and DiagnosticHeartbeat.sink == private
+			and DiagnosticHeartbeat.write_capability == write_capability
+			and DiagnosticHeartbeat.clock_capability == clock_capability
 	end
 	return true, {
 		schema = "smr.sbm.lazy-phase-heartbeat-handshake.v1",
@@ -10200,7 +10218,7 @@ function Lazy.PublishDiagnosticTerminalFailure(surface, reason)
 		or #sink.sentinel_path > 1024 then
 		return false
 	end
-	local write = Global("AsyncStringToFile")
+	local write = DiagnosticHeartbeat.write_capability
 	if type(write) ~= "function" then return false end
 	local function bounded(value, limit)
 		value = tostring(value == nil and "" or value):gsub("[\r\n\t]+", " ")
@@ -17598,7 +17616,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 			branch_err = branch_result
 		end
 		if heartbeat_open_phase then
-			SuperBigMap.DiagnosticPhaseHeartbeat(map, heartbeat_open_phase,
+			phase_heartbeat(map, heartbeat_open_phase,
 				ok_branch and "AFTER" or "ERROR", { reason = branch_err })
 			heartbeat_open_phase = nil
 		end
@@ -19157,6 +19175,9 @@ function MapGeneration.RestoreVanillaBehavior()
 	State.lazy_diagnostic_heartbeat_authorize = nil
 	State.lazy_diagnostic_heartbeat_required = nil
 	State.lazy_diagnostic_ready_target = nil
+	DiagnosticHeartbeat.sink = nil
+	DiagnosticHeartbeat.write_capability = nil
+	DiagnosticHeartbeat.clock_capability = nil
 	local hud_class = Engine.ClassTable and Engine.ClassTable("HUDButtonMapSwitch")
 	if type(hud_class) == "table" and State.underground_hud_init_wrapper
 		and hud_class.Init == State.underground_hud_init_wrapper
