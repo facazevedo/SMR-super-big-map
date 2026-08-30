@@ -58,7 +58,7 @@ try {
         $cleanupValue.exact_kill_identity_match -ne $true) {
         throw 'watchdog publication contract failed'
     }
-    if ((Get-FileHash -LiteralPath $bundle -Algorithm SHA256).Hash.ToLowerInvariant() -cne
+    if ((Get-SbmFileSha256 -Path $bundle) -cne
         $terminalValue.bundle_sha256) { throw 'terminal did not bind the causal bundle' }
     Write-Output 'ok=true'
     Write-Output 'hang_classification=exact-inflight-phase'
