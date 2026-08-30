@@ -99,10 +99,10 @@ def main() -> int:
                                 capture_output=True, text=True, timeout=30, check=False)
         compile_results[path.relative_to(ROOT).as_posix()] = result.returncode == 0
     checks = {
-        "metadata_v992_truthfully_retains_v972": "'version', 992," in metadata
+        "metadata_v993_truthfully_retains_v972": "'version', 993," in metadata
             and "monotonic deadline" in metadata
             and "atomic phase heartbeats" in metadata,
-        "generator_identity_v298": "SuperBigMap.GENERATOR_PATCH_VERSION = 298" in version,
+        "generator_identity_v299": "SuperBigMap.GENERATOR_PATCH_VERSION = 299" in version,
         "v987_default_off_safe_optimization_trace_gate_green": (
             optimization_trace_run.returncode == 0
             and '"ok": true' in optimization_trace_run.stdout),
