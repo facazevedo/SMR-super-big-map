@@ -28,6 +28,8 @@ PUBLISHED_CAPSULE_CERTIFICATE_ORACLE = (ROOT / "_ralph" / "tools"
                                         / "lazy_published_capsule_certificate_oracle.lua")
 VALIDATION_Z_CLONE_ORACLE = (ROOT / "_ralph" / "tools"
                              / "v985_validation_z_clone_oracle.lua")
+MATERIALIZATION_REENTRY_ORACLE = (ROOT / "_ralph" / "tools"
+                                  / "lazy_materialization_reentry_oracle.lua")
 OPTIMIZATION_TRACE_CHECK = (ROOT / "_ralph" / "tools"
                             / "check_v975_optimization_trace.py")
 LUA53 = (ROOT / "_ralph" / "tmp" / ".tmp_surface_loading_rough_iter109_lua53"
@@ -77,6 +79,9 @@ def main() -> int:
     validation_z_clone_run = subprocess.run(
         [str(LUA53_RUN), str(VALIDATION_Z_CLONE_ORACLE)], cwd=ROOT,
         capture_output=True, text=True, timeout=30, check=False)
+    materialization_reentry_run = subprocess.run(
+        [str(LUA53_RUN), str(MATERIALIZATION_REENTRY_ORACLE)], cwd=ROOT,
+        capture_output=True, text=True, timeout=30, check=False)
     optimization_trace_run = subprocess.run(
         [sys.executable, str(OPTIMIZATION_TRACE_CHECK)], cwd=ROOT,
         capture_output=True, text=True, timeout=30, check=False)
@@ -89,16 +94,16 @@ def main() -> int:
     for path in (CONFIG, TERRAIN, GENERATION, DEPOSITS, VERSION, METADATA, ENGINE_PROBE,
                  FALSE_GLOBAL_ORACLE, PERSISTED_REENTRY_ORACLE,
                  CAPSULE_RELEASE_REENTRY_ORACLE, PUBLISHED_CAPSULE_CERTIFICATE_ORACLE,
-                 VALIDATION_Z_CLONE_ORACLE):
+                 VALIDATION_Z_CLONE_ORACLE, MATERIALIZATION_REENTRY_ORACLE):
         result = subprocess.run([str(LUA53), "-p", str(path)], cwd=ROOT,
                                 capture_output=True, text=True, timeout=30, check=False)
         compile_results[path.relative_to(ROOT).as_posix()] = result.returncode == 0
     checks = {
-        "metadata_v985_truthfully_retains_v972": "'version', 985," in metadata
-            and "prepublication buildable-Z certificate" in metadata
-            and "fail-closed post-publication validation" in metadata,
-        "generator_identity_v291": "SuperBigMap.GENERATOR_PATCH_VERSION = 291" in version,
-        "v985_default_off_safe_optimization_trace_gate_green": (
+        "metadata_v986_truthfully_retains_v972": "'version', 986," in metadata
+            and "materialization re-entry fail-closed" in metadata
+            and "interrupted save/load transaction" in metadata,
+        "generator_identity_v292": "SuperBigMap.GENERATOR_PATCH_VERSION = 292" in version,
+        "v986_default_off_safe_optimization_trace_gate_green": (
             optimization_trace_run.returncode == 0
             and '"ok": true' in optimization_trace_run.stdout),
         "lazy_architecture_default_off_direct_pad_subflag_on": all(token in config for token in (
@@ -177,6 +182,25 @@ def main() -> int:
                 '"persisted incomplete lazy state: "'))
             and generation.count("Lazy.LIVE_SURFACE_GENERATION_TRANSACTIONS[surface] = {") == 1
             and generation.count("Lazy.LIVE_SURFACE_GENERATION_TRANSACTIONS[surface] = nil") >= 2),
+        "owned_live_materialization_reentry_is_distinct_and_monotonic": (
+            materialization_reentry_run.returncode == 0
+            and all(token in materialization_reentry_run.stdout for token in (
+                "ok=true", "exact_phase_history=true",
+                "pre_phase=materialization-pre-publication",
+                "map_load_phase=materialization-native-map-load",
+                "callback_phase=materialization-native-callback",
+                "pipeline_phase=materialization-deferred-pipeline",
+                "loaded_ownerless=true", "owner_mismatch=true", "pending_restore=true",
+                "wrong_map_identity=true", "invalid_generation=true",
+                "invalid_validation_z=true", "callback_block_never_overwritten=true",
+                "success_commits_and_clears_owner=true"))
+            and all(token in generation for token in (
+                'LIVE_MATERIALIZATION_TRANSACTIONS = setmetatable({}, { __mode = "k" })',
+                "function Lazy.OwnedMaterializationInFlight(surface, descriptor, report)",
+                "report.persisted_state_materialization_reentry_allowed = true",
+                'descriptor.state == "generating"',
+                'descriptor.state ~= "blocked"',
+                'materialization ownership lost before publication'))),
         "capsule_contract_published_before_reentrant_release_and_failure_is_monotonic": (
             capsule_release_reentry_run.returncode == 0
             and "ok=true" in capsule_release_reentry_run.stdout

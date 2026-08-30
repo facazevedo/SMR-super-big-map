@@ -8729,6 +8729,7 @@ if SuperBigMap.State.lazy_underground_reload_restore_ok ~= false
 		-- Process-local ownership, never saved state. Weak map keys disappear across reloads, letting
 		-- validation distinguish lifecycle re-entry from a genuinely interrupted saved game.
 		LIVE_SURFACE_GENERATION_TRANSACTIONS = setmetatable({}, { __mode = "k" }),
+		LIVE_MATERIALIZATION_TRANSACTIONS = setmetatable({}, { __mode = "k" }),
 	}
 
 function Lazy.Now()
@@ -9984,7 +9985,10 @@ end
 
 function Lazy.MarkBlocked(surface, reason)
 	SuperBigMap.OptimizationTrace.Error("lazy underground fail-closed block", surface, reason)
-	if surface ~= nil then Lazy.LIVE_SURFACE_GENERATION_TRANSACTIONS[surface] = nil end
+	if surface ~= nil then
+		Lazy.LIVE_SURFACE_GENERATION_TRANSACTIONS[surface] = nil
+		Lazy.LIVE_MATERIALIZATION_TRANSACTIONS[surface] = nil
+	end
 	local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
 	local report = surface and surface.SuperBigMapLazyUndergroundFeasibilityReport
 	if type(descriptor) == "table" then
@@ -9998,6 +10002,7 @@ function Lazy.MarkBlocked(surface, reason)
 		report.failure_sticky = true
 		report.materialization_running = false
 		report.persisted_state_live_reentry_allowed = false
+		report.persisted_state_materialization_reentry_allowed = false
 		report.error = tostring(reason or "unknown lazy-underground failure")
 	end
 	LoadingStep("lazy underground access blocked", { error = tostring(reason) }, surface)
@@ -11032,6 +11037,10 @@ function Lazy.Capture(surface, pending, next_map)
 	report.persisted_state_live_reentry_phase = ""
 	report.persisted_state_live_reentry_count = 0
 	report.persisted_state_live_reentry_phase_sequence = ""
+	report.persisted_state_materialization_reentry_allowed = false
+	report.persisted_state_materialization_reentry_phase = ""
+	report.persisted_state_materialization_reentry_count = 0
+	report.persisted_state_materialization_reentry_phase_sequence = ""
 
 	local descriptor = {
 		schema = Lazy.SCHEMA,
@@ -11535,6 +11544,130 @@ function Lazy.OwnedSurfaceGenerationInFlight(surface, descriptor, report)
 	return failed("descriptor_state", descriptor.state)
 end
 
+function Lazy.OwnedMaterializationInFlight(surface, descriptor, report)
+	local function failed(invariant, actual)
+		return false, nil, tostring(invariant) .. "=" .. tostring(actual)
+	end
+	if type(surface) ~= "table" then return failed("surface_table", type(surface)) end
+	if type(descriptor) ~= "table" then
+		return failed("descriptor_table", type(descriptor))
+	end
+	if type(report) ~= "table" then return failed("report_table", type(report)) end
+	local owner = Lazy.LIVE_MATERIALIZATION_TRANSACTIONS[surface]
+	if type(owner) ~= "table" then return failed("process_local_owner", type(owner)) end
+	if owner.descriptor ~= descriptor then return failed("owner_descriptor_identity", false) end
+	if owner.report ~= report then return failed("owner_report_identity", false) end
+	if owner.map_slot ~= descriptor.map_slot then return failed("owner_map_slot", owner.map_slot) end
+	if owner.reserved_seed ~= descriptor.reserved_seed then
+		return failed("owner_reserved_seed", owner.reserved_seed)
+	end
+	if owner.route ~= report.materialization_route then
+		return failed("owner_route", owner.route)
+	end
+	if tonumber(owner.attempt) ~= 1
+		or tonumber(owner.attempt) ~= tonumber(descriptor.materialization_attempts) then
+		return failed("owner_attempt", owner.attempt)
+	end
+	if Lazy.StateSurface() ~= surface then return failed("state_surface_identity", false) end
+	if type(surface.mapdata) ~= "table" or surface.mapdata.Environment ~= "Surface" then
+		return failed("surface_environment",
+			type(surface.mapdata) == "table" and surface.mapdata.Environment or type(surface.mapdata))
+	end
+	if descriptor.state ~= "generating" then
+		return failed("descriptor_state", descriptor.state)
+	end
+	if tonumber(descriptor.map_slot) ~= 2 then
+		return failed("descriptor_map_slot", descriptor.map_slot)
+	end
+	if descriptor.implementation ~= true or descriptor.suppression_committed ~= true
+		or descriptor.suppression_used ~= true or descriptor.literal_v964_continues ~= false then
+		return failed("descriptor_implementation_contract", false)
+	end
+	if descriptor.failure_sticky == true or tostring(descriptor.failure or "") ~= "" then
+		return failed("descriptor_failure", descriptor.failure)
+	end
+	if tonumber(descriptor.materialization_attempts) ~= 1 then
+		return failed("descriptor_materialization_attempts", descriptor.materialization_attempts)
+	end
+	local generation_count = tonumber(descriptor.generation_count)
+	if generation_count ~= 0 and generation_count ~= 1 then
+		return failed("descriptor_generation_count", descriptor.generation_count)
+	end
+	if report.suppression_committed ~= true or report.suppression_used ~= true
+		or report.literal_v964_continues ~= false or report.shadow_only ~= false then
+		return failed("report_implementation_contract", false)
+	end
+	if report.materialization_running ~= true or report.materialization_complete == true
+		or report.access_blocked == true or report.failure_sticky == true
+		or tostring(report.error or "") ~= "" then
+		return failed("report_materialization_contract", false)
+	end
+	if tonumber(report.materialization_attempts) ~= 1
+		or report.materialization_route ~= owner.route then
+		return failed("report_materialization_identity", report.materialization_attempts)
+	end
+	-- The first-access transaction may re-enter before publication, from the native on-generated
+	-- callback, or from the deferred underground pipeline. All three states retain the exact final
+	-- Surface certificate; only the weak owner proves that a `generating` descriptor is live rather
+	-- than a save/load interruption.
+	if surface.SuperBigMapSurfaceStretchDone ~= true
+		or surface.SuperBigMapStretchPipelinePending == true
+		or surface.SuperBigMapSurfacePostPipelineRevalidationComplete ~= true
+		or surface.SuperBigMapSurfacePostPipelineRevalidationError ~= nil then
+		return failed("surface_final_pipeline_contract", false)
+	end
+	if type(descriptor.capsules) ~= "table" or #descriptor.capsules ~= 2
+		or tonumber(descriptor.capsule_planner_version) ~= Lazy.CAPSULE_PLANNER_VERSION
+		or (tonumber(descriptor.plan_digest) or 0) <= 0
+		or (tonumber(descriptor.validation_z_digest) or 0) <= 0
+		or tonumber(report.capsules_published) ~= 2
+		or tonumber(report.validation_z_certificates) ~= 2
+		or report.validation_z_digest ~= descriptor.validation_z_digest
+		or report.deterministic_repeat ~= true
+		or report.final_grid_revalidation ~= true
+		or report.persisted_state_live_reentry_allowed ~= true
+		or tonumber(report.persisted_state_live_reentry_count) ~= 2
+		or report.persisted_state_live_reentry_phase_sequence
+			~= "pre-surface-pipeline>closing-canonical-rebuild" then
+		return failed("surface_capsule_certificate", false)
+	end
+	for _, capsule in ipairs(descriptor.capsules) do
+		local validation_z = capsule.validation_z
+		if type(validation_z) ~= "number" or validation_z ~= validation_z
+			or validation_z ~= math.floor(validation_z)
+			or validation_z < 0 or validation_z >= 65535 then
+			return failed("capsule_validation_z", validation_z)
+		end
+	end
+	local pending_restore = SuperBigMap.State.lazy_underground_engine_restore_tokens
+	if type(pending_restore) == "table" and #pending_restore > 0 then
+		return failed("pending_engine_restore_tokens", #pending_restore)
+	end
+	local maps = Global("Maps")
+	local maps_underground = type(maps) == "table" and maps[descriptor.map_slot] or nil
+	local global_underground = Global("UndergroundMap")
+	-- GenerateRandomMap publishes Maps[2] before its consumer callback publishes UndergroundMap.
+	-- A false/nil engine sentinel is therefore exact during native map-load re-entry. Once the
+	-- callback installs a real global, it must be the identical map object.
+	if global_underground and maps_underground ~= global_underground then
+		return failed("underground_maps_identity", false)
+	end
+	if generation_count == 1 and not maps_underground then
+		return failed("generated_map_absent", false)
+	end
+	if maps_underground then
+		if type(maps_underground.mapdata) ~= "table"
+			or maps_underground.mapdata.Environment ~= "Underground" then
+			return failed("underground_environment", type(maps_underground.mapdata) == "table"
+				and maps_underground.mapdata.Environment or type(maps_underground.mapdata))
+		end
+		return true, generation_count == 1 and "materialization-deferred-pipeline"
+			or (global_underground == maps_underground and "materialization-native-callback"
+				or "materialization-native-map-load")
+	end
+	return true, "materialization-pre-publication"
+end
+
 -- Ralph-only, process-local optimization trace. Production pays no timer, formatting, console, or
 -- file-I/O cost unless a staging script supplies a non-empty unique path before T0. The path is not
 -- a config field and is never copied onto a map/save. Trace publication is deliberately fail-open:
@@ -11786,8 +11919,32 @@ function Lazy.ValidatePersistedState(surface)
 	local maps = Global("Maps")
 	local underground = type(maps) == "table" and maps[descriptor.map_slot] or nil
 	if descriptor.state == "generating" then
+		local owned_live, live_phase, live_guard_failure =
+			Lazy.OwnedMaterializationInFlight(surface, descriptor, report)
+		if owned_live then
+			report.persisted_state_materialization_reentry_allowed = true
+			report.persisted_state_materialization_reentry_phase = live_phase
+			report.persisted_state_materialization_reentry_count =
+				(tonumber(report.persisted_state_materialization_reentry_count) or 0) + 1
+			local phase_sequence = tostring(
+				report.persisted_state_materialization_reentry_phase_sequence or "")
+			report.persisted_state_materialization_reentry_phase_sequence = phase_sequence == ""
+				and live_phase or phase_sequence .. ">" .. live_phase
+			return true, "owned live underground materialization transaction"
+		end
+		SuperBigMap.OptimizationTrace.Error(
+			"lazy materialization persisted-state guard failed: "
+				.. tostring(live_guard_failure or "unknown"),
+			surface, live_guard_failure or "unknown", {
+				descriptor_state = tostring(descriptor.state),
+				attempts = tostring(descriptor.materialization_attempts),
+				generation_count = tostring(descriptor.generation_count),
+				maps_underground = tostring(underground ~= nil),
+				global_underground = tostring(Global("UndergroundMap") ~= nil),
+			})
 		return Lazy.MarkBlocked(surface,
-			"save/load observed an interrupted lazy-underground generation transaction")
+			"save/load observed an interrupted lazy-underground generation transaction: "
+				.. tostring(live_guard_failure or "owner absent"))
 	end
 	if descriptor.state == "ready-for-first-access" then
 		if underground or Global("UndergroundMap") then
@@ -12017,6 +12174,19 @@ function Lazy.Materialize(surface, route)
 		report.materialization_route = tostring(route)
 		report.materialization_running = true
 	end
+	if type(report) ~= "table" then
+		return Lazy.MarkBlocked(surface, "lazy underground feasibility report is unavailable")
+	end
+	-- Process-local only: never copy this identity into a map/save. A reloaded `generating`
+	-- descriptor therefore remains indistinguishable from an interrupted transaction and blocks.
+	Lazy.LIVE_MATERIALIZATION_TRANSACTIONS[surface] = {
+		descriptor = descriptor,
+		report = report,
+		map_slot = descriptor.map_slot,
+		reserved_seed = descriptor.reserved_seed,
+		route = report.materialization_route,
+		attempt = descriptor.materialization_attempts,
+	}
 	LoadingStep("lazy underground first-access materialization started", {
 		route = tostring(route), attempt = descriptor.materialization_attempts,
 		map_name = descriptor.map_name, reserved_seed = tostring(descriptor.reserved_seed),
@@ -12024,28 +12194,44 @@ function Lazy.Materialize(surface, route)
 	local call_ok, underground, reason = pcall(
 		Lazy.MaterializeTransaction, surface, descriptor, route)
 	if not call_ok or not underground then
-		Lazy.MarkBlocked(surface, call_ok and reason or underground)
+		local failure = call_ok and reason or underground
+		if descriptor.state ~= "blocked" then
+			Lazy.LIVE_MATERIALIZATION_TRANSACTIONS[surface] = nil
+			Lazy.MarkBlocked(surface, failure)
+		end
 	else
-		descriptor.state = "complete"
-		descriptor.failure = ""
-		descriptor.failure_sticky = false
-		report = surface.SuperBigMapLazyUndergroundFeasibilityReport
-		if type(report) == "table" then
+		local owned_live, _, live_guard_failure =
+			Lazy.OwnedMaterializationInFlight(surface, descriptor, report)
+		if not owned_live then
+			-- A callback may already have blocked and cleared the weak owner. Never let a later
+			-- successful pcall regress that sticky failure back to `complete`.
+			if descriptor.state ~= "blocked" then
+				Lazy.LIVE_MATERIALIZATION_TRANSACTIONS[surface] = nil
+				Lazy.MarkBlocked(surface, "materialization ownership lost before publication: "
+					.. tostring(live_guard_failure or "unknown"))
+			end
+			underground = nil
+		else
+			descriptor.state = "complete"
+			descriptor.failure = ""
+			descriptor.failure_sticky = false
+			report = surface.SuperBigMapLazyUndergroundFeasibilityReport
 			report.materialization_complete = true
 			report.materialization_running = false
 			report.access_blocked = false
 			report.route_execution_coverage_proven = true
 			report.error = ""
 			report.descriptor_primitive = Lazy.PrimitiveTree(descriptor)
-		end
-		if type(report) == "table" and report.descriptor_primitive ~= true then
-			Lazy.MarkBlocked(surface, "completed lazy descriptor is not primitive")
-			underground = nil
-		else
-			LoadingStep("lazy underground first-access materialization complete", {
-				route = tostring(route), generation_count = descriptor.generation_count,
-				passages = 2, prepared = "true",
-			}, underground)
+			if report.descriptor_primitive ~= true then
+				Lazy.MarkBlocked(surface, "completed lazy descriptor is not primitive")
+				underground = nil
+			else
+				Lazy.LIVE_MATERIALIZATION_TRANSACTIONS[surface] = nil
+				LoadingStep("lazy underground first-access materialization complete", {
+					route = tostring(route), generation_count = descriptor.generation_count,
+					passages = 2, prepared = "true",
+				}, underground)
+			end
 		end
 	end
 	if type(report) == "table" and descriptor.state ~= "complete" then
