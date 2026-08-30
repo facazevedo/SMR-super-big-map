@@ -9204,6 +9204,9 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 		outer_passage_pad_terrain_modified_cells = 0,
 		outer_passage_pad_native_raster_cells = 0,
 		outer_passage_pad_native_fallback = false,
+		outer_passage_pad_finalization_dirty_digest = 0,
+		outer_passage_pad_finalization_dirty_regions = 0,
+		outer_passage_pad_finalization_dirty_provenance_exact = false,
 		publication_validation_ms = 0,
 		marker_scan_ms = 0,
 		marker_index_requested = Lazy.FRESH_GRID_CAPSULE_PLANNING == true
@@ -9655,6 +9658,12 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 		report.outer_passage_pad_native_raster_cells = tonumber(
 			terrain_report.native_raster_cells) or 0
 		report.outer_passage_pad_native_fallback = terrain_report.native_raster_fallback == true
+		report.outer_passage_pad_finalization_dirty_digest = tonumber(
+			terrain_report.passage_pad_finalization_dirty_digest) or 0
+		report.outer_passage_pad_finalization_dirty_regions = tonumber(
+			terrain_report.passage_pad_finalization_dirty_regions) or 0
+		report.outer_passage_pad_finalization_dirty_provenance_exact =
+			terrain_report.passage_pad_finalization_dirty_provenance_exact == true
 		if not replay_only then
 			local validation_started = now()
 			for _, capsule in ipairs(capsules) do
@@ -10743,6 +10752,8 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 			and twin_report.replay_only == true
 			and twin_report.outer_passage_pad_plan_digest
 				== plan_report.outer_passage_pad_plan_digest
+			and twin_report.outer_passage_pad_finalization_dirty_digest
+				== plan_report.outer_passage_pad_finalization_dirty_digest
 			and twin_report.attempts == plan_report.attempts
 			and twin_report.private_draws == plan_report.private_draws
 	elseif stock_search_active then
@@ -11075,7 +11086,25 @@ function Lazy.PrepareImplementationCapsulesAroundRebuild(surface, rebuild, reaso
 		report.capsule_plan_retry_used = false
 		report.fresh_grid_main_plan_invocations = 0
 		report.fresh_grid_replay_invocations = 0
-		report.fresh_grid_expected_rebuilds = 2
+		local outer_passage_active = Lazy.OUTER_PASSAGE_PADS == true
+		local single_flush_requested = outer_passage_active
+			and cfg_bool("OPTIMIZE_SURFACE_SINGLE_FLUSH_FINALIZATION", true)
+		report.surface_single_flush_requested = single_flush_requested
+		report.surface_single_flush_used = false
+		report.surface_single_flush_fallback = false
+		report.surface_single_flush_fallback_reason = ""
+		report.surface_single_flush_local_passability_calls = 0
+		report.surface_single_flush_buildable_calls = 0
+		report.surface_single_flush_height_snapshots = 0
+		report.surface_single_flush_height_mismatches = -1
+		report.surface_single_flush_object_family_count = 0
+		report.surface_single_flush_object_association_failures = -1
+		report.surface_single_flush_dirty_digest = 0
+		report.surface_single_flush_dirty_regions = 0
+		report.surface_single_flush_coverage_permille = 0
+		report.surface_single_flush_provenance_exact = false
+		report.surface_single_flush_cleanup_complete = false
+		report.fresh_grid_expected_rebuilds = single_flush_requested and 0 or 2
 		report.fresh_grid_first_rebuild_ms = 0
 		report.fresh_grid_main_plan_ms = 0
 		report.fresh_grid_replay_ms = 0
@@ -11083,12 +11112,57 @@ function Lazy.PrepareImplementationCapsulesAroundRebuild(surface, rebuild, reaso
 		report.fresh_grid_plan_replay_publication_ms = 0
 		report.fresh_grid_closing_rebuild_ms = 0
 		report.fresh_grid_orchestration_total_ms = 0
-		report.fresh_grid_phase_order =
-			"canonical-grid-publication>fresh-plan-replay>capsule-publication>closing-rebuild"
+		report.fresh_grid_phase_order = single_flush_requested
+			and "local-dirty-grid-publication>fresh-plan-replay>capsule-publication>local-dirty-closing"
+			or "canonical-grid-publication>fresh-plan-replay>capsule-publication>closing-rebuild"
 
 		local first_rebuild_started = Lazy.Now()
-		local first_ok, first_err = canonical_rebuild(
-			reason .. " before fresh-grid capsule planning")
+		local first_ok, first_err, single_flush_transaction
+		if single_flush_requested then
+			SuperBigMap.OptimizationTrace.Before(
+				"surface single-flush preplan local rebuild", surface)
+			local local_call_ok, local_used, local_report, local_transaction = pcall(
+				SuperBigMap.GenerationGrids.RebuildSurfaceSingleFlush,
+				surface, "preplan", nil)
+			if local_call_ok and local_used == true then
+				first_ok, first_err = true, nil
+				single_flush_transaction = local_transaction
+				report.surface_single_flush_used = true
+				report.surface_single_flush_local_passability_calls =
+					tonumber(local_report and local_report.passability_calls) or 0
+				report.surface_single_flush_buildable_calls =
+					tonumber(local_report and local_report.buildable_calls) or 0
+				report.surface_single_flush_height_snapshots =
+					tonumber(local_report and local_report.height_snapshots) or 0
+				report.surface_single_flush_provenance_exact =
+					local_report and local_report.provenance_exact == true or false
+				report.surface_single_flush_dirty_digest =
+					tonumber(local_report and local_report.dirty_digest) or 0
+				report.surface_single_flush_dirty_regions =
+					tonumber(local_report and local_report.regions) or 0
+				report.surface_single_flush_coverage_permille =
+					tonumber(local_report and local_report.coverage_permille) or 0
+				SuperBigMap.OptimizationTrace.After(
+					"surface single-flush preplan local rebuild", surface, local_report)
+			else
+				local failure = local_call_ok
+					and tostring(local_report and local_report.error or "returned false")
+					or tostring(local_used)
+				report.surface_single_flush_used = false
+				report.surface_single_flush_fallback = true
+				report.surface_single_flush_fallback_reason = failure
+				report.fresh_grid_phase_order =
+					"canonical-grid-publication>fresh-plan-replay>capsule-publication>closing-rebuild"
+				SuperBigMap.OptimizationTrace.Error(
+					"surface single-flush preplan local rebuild", surface, failure,
+					local_report)
+				first_ok, first_err = canonical_rebuild(
+					reason .. " before fresh-grid capsule planning")
+			end
+		else
+			first_ok, first_err = canonical_rebuild(
+				reason .. " before fresh-grid capsule planning")
+		end
 		report.fresh_grid_first_rebuild_ms = math.max(0, Lazy.Now() - first_rebuild_started)
 		report.fresh_grid_first_rebuild_complete = first_ok == true
 		if first_ok ~= true then
@@ -11106,6 +11180,12 @@ function Lazy.PrepareImplementationCapsulesAroundRebuild(surface, rebuild, reaso
 		local capsule_ok, capsule_err = Lazy.PrepareImplementationCapsulesSafe(surface, true)
 		report.fresh_grid_plan_replay_publication_ms = math.max(0, Lazy.Now() - plan_started)
 		if capsule_ok ~= true then
+			if single_flush_transaction then
+				local cleanup = SuperBigMap.GenerationGrids.ReleaseSurfaceSingleFlushTransaction
+				report.surface_single_flush_cleanup_complete =
+					type(cleanup) == "function" and cleanup(single_flush_transaction) == true
+				single_flush_transaction = nil
+			end
 			report.canonical_rebuilds_during_capsule_prepare = rebuild_count
 			report.canonical_rebuild_fallbacks_during_capsule_prepare = fallback_count
 			report.fresh_grid_rebuild_shape_exact = false
@@ -11116,15 +11196,85 @@ function Lazy.PrepareImplementationCapsulesAroundRebuild(surface, rebuild, reaso
 		end
 
 		local closing_rebuild_started = Lazy.Now()
-		local closing_ok, closing_err = canonical_rebuild(
-			reason .. " after fresh-grid capsule publication")
+		local closing_ok, closing_err
+		if single_flush_transaction then
+			SuperBigMap.OptimizationTrace.Before(
+				"surface single-flush closing local rebuild", surface)
+			local closing_transaction = single_flush_transaction
+			local local_call_ok, local_used, local_report = pcall(
+				SuperBigMap.GenerationGrids.RebuildSurfaceSingleFlush,
+				surface, "closing", closing_transaction)
+			single_flush_transaction = nil
+			if local_call_ok and local_used == true then
+				closing_ok, closing_err = true, nil
+				report.surface_single_flush_local_passability_calls =
+					report.surface_single_flush_local_passability_calls
+					+ (tonumber(local_report and local_report.passability_calls) or 0)
+				report.surface_single_flush_buildable_calls =
+					report.surface_single_flush_buildable_calls
+					+ (tonumber(local_report and local_report.buildable_calls) or 0)
+				report.surface_single_flush_height_snapshots =
+					tonumber(local_report and local_report.height_snapshots) or 0
+				report.surface_single_flush_height_mismatches =
+					tonumber(local_report and local_report.height_mismatches) or -1
+				report.surface_single_flush_object_family_count =
+					tonumber(local_report and local_report.object_family_count) or 0
+				report.surface_single_flush_object_association_failures =
+					tonumber(local_report and local_report.object_association_failures) or -1
+				report.surface_single_flush_cleanup_complete =
+					local_report and local_report.cleanup_complete == true or false
+				SuperBigMap.OptimizationTrace.After(
+					"surface single-flush closing local rebuild", surface, local_report)
+			else
+				local cleanup = SuperBigMap.GenerationGrids.ReleaseSurfaceSingleFlushTransaction
+				if type(cleanup) == "function" then pcall(cleanup, closing_transaction) end
+				local failure = local_call_ok
+					and tostring(local_report and local_report.error or "returned false")
+					or tostring(local_used)
+				report.surface_single_flush_used = false
+				report.surface_single_flush_fallback = true
+				report.surface_single_flush_fallback_reason = failure
+				report.fresh_grid_phase_order =
+					"local-dirty-grid-publication>fresh-plan-replay>capsule-publication>closing-rebuild"
+				SuperBigMap.OptimizationTrace.Error(
+					"surface single-flush closing local rebuild", surface, failure,
+					local_report)
+				closing_ok, closing_err = canonical_rebuild(
+					reason .. " after fresh-grid capsule publication")
+			end
+		else
+			closing_ok, closing_err = canonical_rebuild(
+				reason .. " after fresh-grid capsule publication")
+		end
 		report.fresh_grid_closing_rebuild_ms =
 			math.max(0, Lazy.Now() - closing_rebuild_started)
 		report.fresh_grid_closing_rebuild_complete = closing_ok == true
 		report.canonical_rebuilds_during_capsule_prepare = rebuild_count
 		report.canonical_rebuild_fallbacks_during_capsule_prepare = fallback_count
-		report.fresh_grid_rebuild_shape_exact = closing_ok == true
-			and rebuild_count == 2 and fallback_count == 0
+		-- Publish the rebuild cardinality actually required by the completed branch.  In
+		-- particular, a rejected local certificate must never leave the optimistic zero
+		-- from the requested branch in persisted telemetry after canonical fallback.
+		report.fresh_grid_expected_rebuilds = report.surface_single_flush_used == true
+			and 0 or rebuild_count
+		report.fresh_grid_rebuild_shape_exact = closing_ok == true and (
+			report.surface_single_flush_used == true
+				and report.surface_single_flush_fallback ~= true
+				and rebuild_count == 0 and fallback_count == 0
+				and report.surface_single_flush_provenance_exact == true
+				and report.surface_single_flush_local_passability_calls == 4
+				and report.surface_single_flush_buildable_calls == 1
+				and report.surface_single_flush_height_snapshots == 2
+				and report.surface_single_flush_height_mismatches == 0
+				and report.surface_single_flush_object_family_count == 6
+				and report.surface_single_flush_object_association_failures == 0
+				and report.surface_single_flush_dirty_digest
+					== report.outer_passage_pad_finalization_dirty_digest
+				and report.surface_single_flush_dirty_regions == 2
+				and report.surface_single_flush_coverage_permille > 0
+				and report.surface_single_flush_coverage_permille <= 150
+				and report.surface_single_flush_cleanup_complete == true
+			or report.surface_single_flush_used ~= true
+				and rebuild_count >= 1 and fallback_count == 0)
 		report.fresh_grid_orchestration_total_ms =
 			math.max(0, Lazy.Now() - orchestration_started)
 		if closing_ok ~= true then
@@ -11141,6 +11291,16 @@ function Lazy.PrepareImplementationCapsulesAroundRebuild(surface, rebuild, reaso
 			closing_rebuild_ms = report.fresh_grid_closing_rebuild_ms,
 			total_ms = report.fresh_grid_orchestration_total_ms,
 			rebuilds = rebuild_count, rebuild_fallbacks = fallback_count,
+			single_flush = tostring(report.surface_single_flush_used == true),
+			single_flush_fallback = tostring(report.surface_single_flush_fallback == true),
+			local_passability_calls = report.surface_single_flush_local_passability_calls,
+			local_buildable_calls = report.surface_single_flush_buildable_calls,
+			height_mismatches = report.surface_single_flush_height_mismatches,
+			object_association_failures =
+				report.surface_single_flush_object_association_failures,
+			dirty_digest = report.surface_single_flush_dirty_digest,
+			dirty_regions = report.surface_single_flush_dirty_regions,
+			coverage_permille = report.surface_single_flush_coverage_permille,
 			marker_index_used = tostring(report.marker_index_used == true),
 			marker_stream_mismatches = report.marker_index_stream_mismatches,
 			repeat_marker_stream_mismatches = report.repeat_marker_index_stream_mismatches,
@@ -11243,13 +11403,33 @@ function Lazy.ValidatePublishedCapsuleCertificate(surface, descriptor, report)
 	if not main_exact or not replay_exact then
 		return false, "published capsule main/replay depth-zero certificate is incomplete"
 	end
+	local local_single_flush_exact = report.surface_single_flush_requested == true
+		and report.surface_single_flush_used == true
+		and report.surface_single_flush_fallback ~= true
+		and report.surface_single_flush_provenance_exact == true
+		and tonumber(report.surface_single_flush_local_passability_calls) == 4
+		and tonumber(report.surface_single_flush_buildable_calls) == 1
+		and tonumber(report.surface_single_flush_height_snapshots) == 2
+		and tonumber(report.surface_single_flush_height_mismatches) == 0
+		and tonumber(report.surface_single_flush_object_family_count) == 6
+		and tonumber(report.surface_single_flush_object_association_failures) == 0
+		and tonumber(report.surface_single_flush_dirty_digest)
+			== tonumber(report.outer_passage_pad_finalization_dirty_digest)
+		and tonumber(report.surface_single_flush_dirty_regions) == 2
+		and (tonumber(report.surface_single_flush_coverage_permille) or 0) > 0
+		and (tonumber(report.surface_single_flush_coverage_permille) or 151) <= 150
+		and report.surface_single_flush_cleanup_complete == true
+		and tonumber(report.canonical_rebuilds_during_capsule_prepare) == 0
+	local canonical_rebuild_count = tonumber(
+		report.canonical_rebuilds_during_capsule_prepare) or -1
+	local canonical_exact = report.surface_single_flush_used ~= true
+		and canonical_rebuild_count >= 1 and canonical_rebuild_count <= 2
 	local closing_exact = report.fresh_grid_architecture_used == true
-		and tonumber(report.fresh_grid_expected_rebuilds) == 2
 		and report.fresh_grid_first_rebuild_complete == true
 		and report.fresh_grid_closing_rebuild_complete == true
 		and report.fresh_grid_rebuild_shape_exact == true
-		and tonumber(report.canonical_rebuilds_during_capsule_prepare) == 2
 		and tonumber(report.canonical_rebuild_fallbacks_during_capsule_prepare) == 0
+		and (local_single_flush_exact or canonical_exact)
 	if not closing_exact then
 		return false, "published capsule closing rebuild certificate is incomplete"
 	end
@@ -15654,6 +15834,374 @@ function SuperBigMap.GenerationGrids.RebuildOuterResourceRingOrFinal(map, ring_s
 		tostring(stage or "outer resource terrain") .. " fallback")
 	return false, report
 end
+
+-- The accepted Surface path has already rebuilt the complete outer resource ring and the complete
+-- buildable grid before the two passage-pad terrain patches are installed. Those two certified
+-- native-raster visit disks are therefore the only remaining height invalidations. Keep their
+-- preimages in a process-local transaction, rebuild the exact disks for depth-zero planning, then
+-- prove capsule publication neither changed height nor escaped the same disks before the closing
+-- local passability rebuild. This is deliberately fail-closed: callers retain RebuildFinal at each
+-- boundary whose local proof is unavailable (therefore both former calls on a preplan rejection).
+do
+local surface_single_flush_transactions = setmetatable({}, { __mode = "k" })
+
+local function ReleaseSurfaceSingleFlushTransaction(transaction)
+	if type(transaction) ~= "table" then return false end
+	local owned = surface_single_flush_transactions[transaction]
+	surface_single_flush_transactions[transaction] = nil
+	local cleanup_ok = owned ~= nil
+	for index = #(transaction.snapshots or {}), 1, -1 do
+		local snapshot = transaction.snapshots[index]
+		transaction.snapshots[index] = nil
+		if snapshot and type(snapshot.free) == "function" then
+			cleanup_ok = pcall(snapshot.free, snapshot) and cleanup_ok
+		else
+			cleanup_ok = false
+		end
+	end
+	transaction.released = true
+	return cleanup_ok
+end
+
+SuperBigMap.GenerationGrids.ReleaseSurfaceSingleFlushTransaction =
+	ReleaseSurfaceSingleFlushTransaction
+
+function SuperBigMap.GenerationGrids.RebuildSurfaceSingleFlush(map, phase, transaction)
+	phase = tostring(phase or "")
+	local previous = map and map.SuperBigMapSurfaceSingleFlushReport
+	local report = {
+		schema = 1,
+		requested = cfg_bool("OPTIMIZE_SURFACE_SINGLE_FLUSH_FINALIZATION", true),
+		used = false,
+		phase = phase,
+		provenance_exact = false,
+		regions = 0,
+		terrain_cells = 0,
+		coverage_permille = 0,
+		dependency_margin = 0,
+		height_snapshots = 0,
+		height_mismatches = -1,
+		object_family_count = 0,
+		object_association_failures = 0,
+		object_containment_failures = 0,
+		passability_calls = 0,
+		buildable_calls = 0,
+		cleanup_complete = false,
+		fallback = false,
+		error = "",
+		preplan_complete = type(previous) == "table"
+			and previous.preplan_complete == true or false,
+		closing_complete = false,
+	}
+	if map then map.SuperBigMapSurfaceSingleFlushReport = report end
+	local function reject(reason)
+		report.error = tostring(reason or "surface single-flush certificate rejected")
+		return false, report, transaction
+	end
+	if report.requested ~= true then return reject("surface single-flush is disabled") end
+	if type(map) ~= "table" or type(map.mapdata) ~= "table"
+		or map.mapdata.Environment == "Underground" then
+		return reject("surface map identity is invalid")
+	end
+	if phase ~= "preplan" and phase ~= "closing" then
+		return reject("surface single-flush phase is invalid")
+	end
+	local terrain_api = Global("terrain")
+	local box_ctor, point_fn = Global("box"), Global("point")
+	local grid_to_compute = Global("GridToCompute")
+	local grid_repack = Global("GridRepack")
+	local grid_add_mul_div = Global("GridAddMulDiv")
+	local grid_abs = Global("GridAbs")
+	local grid_count = Global("GridCount")
+	local rebuild_buildable = Global("RebuildBuildableGrid")
+	if type(terrain_api) ~= "table" or type(terrain_api.GetHeightGrid) ~= "function"
+		or type(terrain_api.InvalidateHeight) ~= "function"
+		or type(terrain_api.InvalidateType) ~= "function"
+		or type(terrain_api.RebuildPassability) ~= "function"
+		or type(box_ctor) ~= "function" or type(point_fn) ~= "function"
+		or type(grid_to_compute) ~= "function" or type(grid_repack) ~= "function"
+		or type(grid_add_mul_div) ~= "function" or type(grid_abs) ~= "function"
+		or type(grid_count) ~= "function" or type(rebuild_buildable) ~= "function" then
+		return reject("surface single-flush APIs are unavailable")
+	end
+	local pads = map.SuperBigMapOuterPassagePads
+	local terrain_report = map.SuperBigMapOuterPassageTerrainReport
+	if type(pads) ~= "table" or #pads ~= 2 or type(terrain_report) ~= "table"
+		or terrain_report.passage_only ~= true
+		or terrain_report.passage_pads_used ~= true
+		or terrain_report.passage_pad_finalization_dirty_provenance_exact ~= true
+		or tonumber(terrain_report.passage_pad_finalization_dirty_regions) ~= 2
+		or (tonumber(terrain_report.passage_pad_finalization_dirty_digest) or 0) <= 0
+		or terrain_report.passage_pad_all_changed_cells_outer ~= true
+		or terrain_report.native_raster_used ~= true
+		or terrain_report.native_raster_fallback == true
+		or tostring(terrain_report.error or "") ~= "" then
+		return reject("outer passage terrain dirty provenance is incomplete")
+	end
+	local map_w, map_h = TerrainSize(map)
+	local const_tbl = Global("const")
+	local pass_tile = type(const_tbl) == "table" and tonumber(const_tbl.PassTileSize) or 100
+	local height_tile = type(const_tbl) == "table" and tonumber(const_tbl.HeightTileSize) or 100
+	if type(map_w) ~= "number" or type(map_h) ~= "number" or map_w <= 0 or map_h <= 0
+		or type(pass_tile) ~= "number" or pass_tile <= 0
+		or type(height_tile) ~= "number" or height_tile <= 0 then
+		return reject("surface single-flush dimensions are unavailable")
+	end
+	local dependency_margin = math.floor(pass_tile * 2)
+	report.dependency_margin = dependency_margin
+	local modulus = 2147483647
+	local generator = map.RandomMapGenObject
+	local numeric_seed = type(generator) == "table" and tonumber(generator.Seed) or 0
+	local generation_hash = type(generator) == "table" and tostring(generator.GenerationHash or "") or ""
+	local preset = tostring(map.mapdata and map.mapdata.RandomMapPreset or "")
+	local seed_material = generation_hash .. "|" .. preset
+		.. "|v972-direct-outer-passage-pad-reservation"
+	local dirty_digest = math.abs(math.floor(numeric_seed or 0)) % modulus
+	for index = 1, #seed_material do
+		dirty_digest = (dirty_digest * 48271 + string.byte(seed_material, index) + 1) % modulus
+	end
+	if dirty_digest == 0 then dirty_digest = 1 end
+	local regions, total_area = {}, 0
+	local certified_radius = tonumber(
+		terrain_report.passage_pad_conservative_visit_radius_world)
+	for index, pad in ipairs(pads) do
+		local x, y = tonumber(pad and pad.x), tonumber(pad and pad.y)
+		local radius = tonumber(pad and pad.finalization_dirty_radius_world)
+		if not x or not y or not radius or radius <= 0
+			or not certified_radius or radius ~= math.ceil(certified_radius)
+			or pad.finalization_dirty_provenance_version ~= 1
+			or x ~= math.floor(x) or y ~= math.floor(y) or radius ~= math.floor(radius) then
+			return reject("passage dirty region primitive is invalid at " .. tostring(index))
+		end
+		dirty_digest = (dirty_digest * 48271 + math.abs(x) + index) % modulus
+		dirty_digest = (dirty_digest * 48271 + math.abs(y) + index) % modulus
+		dirty_digest = (dirty_digest * 48271 + radius + index) % modulus
+		local total_radius = radius + dependency_margin
+		local x0, y0 = math.floor(x - total_radius), math.floor(y - total_radius)
+		local x1, y1 = math.ceil(x + total_radius), math.ceil(y + total_radius)
+		if x0 < 0 or y0 < 0 or x1 > map_w or y1 > map_h or x0 >= x1 or y0 >= y1 then
+			return reject("passage dirty region escapes the map at " .. tostring(index))
+		end
+		local gx0, gy0 = math.max(0, math.floor(x0 / height_tile)),
+			math.max(0, math.floor(y0 / height_tile))
+		local gx1, gy1 = math.ceil(x1 / height_tile), math.ceil(y1 / height_tile)
+		regions[index] = {
+			index = index, x = x, y = y, radius = radius, total_radius = total_radius,
+			x0 = x0, y0 = y0, x1 = x1, y1 = y1,
+			box = box_ctor(x0, y0, x1, y1),
+			gx0 = gx0, gy0 = gy0, gx1 = gx1, gy1 = gy1,
+		}
+		total_area = total_area + (x1 - x0) * (y1 - y0)
+	end
+	if dirty_digest == 0 then dirty_digest = 1 end
+	if dirty_digest ~= terrain_report.passage_pad_finalization_dirty_digest then
+		return reject("passage dirty-region digest mismatch")
+	end
+	local coverage_permille = math.floor(total_area * 1000 / (map_w * map_h) + 0.5)
+	if coverage_permille <= 0 or coverage_permille > 150 then
+		return reject("passage dirty-region coverage is outside the bounded contract")
+	end
+	report.regions = #regions
+	report.dirty_digest = dirty_digest
+	report.terrain_cells = total_area
+	report.coverage_permille = coverage_permille
+	report.provenance_exact = true
+
+	local function rebuild_regions()
+		for _, region in ipairs(regions) do
+			terrain_api.InvalidateHeight(map, region.box)
+			terrain_api.InvalidateType(map, region.box)
+			terrain_api.RebuildPassability(map, region.box)
+			report.passability_calls = report.passability_calls + 1
+		end
+	end
+	if phase == "preplan" then
+		if transaction ~= nil then return reject("preplan transaction was already supplied") end
+		local raw = terrain_api.GetHeightGrid(map)
+		if not raw or type(raw.new_instance) ~= "function" or type(raw.copyrect) ~= "function" then
+			return reject("surface height snapshot API is unavailable")
+		end
+		transaction = { map = map, regions = regions, snapshots = {}, released = false }
+		surface_single_flush_transactions[transaction] = map
+		local snapshot_ok, snapshot_error = pcall(function()
+			for index, region in ipairs(regions) do
+				local width, height = region.gx1 - region.gx0, region.gy1 - region.gy0
+				assert(width > 0 and height > 0, "empty surface height snapshot")
+				local snapshot = raw:new_instance(width, height)
+				assert(snapshot and snapshot ~= raw and type(snapshot.copyrect) == "function",
+					"surface height snapshot allocation failed")
+				transaction.snapshots[index] = snapshot
+				snapshot:copyrect(raw,
+					box_ctor(region.gx0, region.gy0, region.gx1, region.gy1), point_fn(0, 0))
+			end
+			rebuild_regions()
+			rebuild_buildable(map)
+			report.buildable_calls = 1
+		end)
+		if not snapshot_ok then
+			ReleaseSurfaceSingleFlushTransaction(transaction)
+			return reject("surface preplan local rebuild failed: " .. tostring(snapshot_error))
+		end
+		report.height_snapshots = #transaction.snapshots
+		report.height_mismatches = 0
+		report.preplan_complete = true
+		report.used = true
+		return true, report, transaction
+	end
+
+	if type(transaction) ~= "table" or transaction.map ~= map
+		or transaction.released == true
+		or surface_single_flush_transactions[transaction] ~= map
+		or type(transaction.snapshots) ~= "table" or #transaction.snapshots ~= 2 then
+		return reject("surface closing transaction ownership is invalid")
+	end
+	local descriptor = map.SuperBigMapLazyUndergroundDescriptor
+	local lazy = SuperBigMap.LazyUndergroundFeasibility
+	local objects, object_reason = type(lazy) == "table"
+		and type(lazy.FindSurfaceCapsules) == "function"
+		and lazy.FindSurfaceCapsules(map, descriptor) or nil, nil
+	if not objects then
+		ReleaseSurfaceSingleFlushTransaction(transaction)
+		return reject("surface capsule family is unavailable: " .. tostring(object_reason))
+	end
+	local family, family_seen, companions = {}, {}, {}
+	local function add_family(object)
+		if object and not family_seen[object] then
+			family_seen[object] = true
+			family[#family + 1] = object
+		end
+	end
+	for _, passage in ipairs(objects) do
+		add_family(passage)
+		companions[passage] = { markers = 0, signs = 0 }
+	end
+	local scan_ok = type(map.MapForEach) == "function" and pcall(function()
+		map:MapForEach("map", "UndergroundTunnelMarker", function(marker)
+			local companion = marker and companions[marker.spawner]
+			if companion then
+				companion.markers = companion.markers + 1
+				add_family(marker)
+			end
+		end)
+		map:MapForEach("map", "SurfaceUndergroundTunnelSign", function(sign)
+			local marker = sign and sign.tunnel_marker
+			local companion = marker and companions[marker.spawner]
+			if companion then
+				companion.signs = companion.signs + 1
+				add_family(sign)
+			end
+		end)
+	end)
+	for _, passage in ipairs(objects) do
+		local companion = companions[passage]
+		if not companion or companion.markers ~= 1 or companion.signs ~= 1 then
+			report.object_association_failures = report.object_association_failures + 1
+		end
+	end
+	if not scan_ok or #family ~= 6 or report.object_association_failures ~= 0 then
+		ReleaseSurfaceSingleFlushTransaction(transaction)
+		return reject("surface capsule companion family is not exact")
+	end
+	local is_valid = Global("IsValid")
+	if type(is_valid) ~= "function" then
+		ReleaseSurfaceSingleFlushTransaction(transaction)
+		return reject("surface capsule validity API is unavailable")
+	end
+	for _, object in ipairs(family) do
+		local valid_ok, valid = pcall(is_valid, object)
+		local position = type(object.GetPos) == "function" and SafeCall(object.GetPos, object) or nil
+		local ox, oy = PointXY(position)
+		local radius = type(object.GetRadius) == "function"
+			and SafeCall(object.GetRadius, object) or nil
+		local contained = valid_ok and valid == true and type(ox) == "number"
+			and type(oy) == "number" and type(radius) == "number" and radius >= 0
+		if contained then
+			contained = false
+			for _, region in ipairs(regions) do
+				local dx, dy = ox - region.x, oy - region.y
+				if radius <= region.radius and dx * dx + dy * dy
+					<= (region.radius - radius) * (region.radius - radius) then
+					contained = true
+					break
+				end
+			end
+		end
+		if not contained then report.object_containment_failures =
+			report.object_containment_failures + 1 end
+	end
+	report.object_family_count = #family
+	if report.object_containment_failures ~= 0 then
+		ReleaseSurfaceSingleFlushTransaction(transaction)
+		return reject("surface capsule object escaped its certified dirty region")
+	end
+	local compare_ok, mismatch_or_error = pcall(function()
+		local raw = terrain_api.GetHeightGrid(map)
+		assert(raw and type(raw.new_instance) == "function", "live height grid unavailable")
+		local mismatches = 0
+		for index, region in ipairs(regions) do
+			local width, height = region.gx1 - region.gx0, region.gy1 - region.gy0
+			local current = raw:new_instance(width, height)
+			assert(current and current ~= raw and type(current.copyrect) == "function",
+				"live height snapshot allocation failed")
+			local owned, owned_set = {}, {}
+			local function own(value)
+				if value and value ~= transaction.snapshots[index] and not owned_set[value] then
+					owned_set[value] = true
+					owned[#owned + 1] = value
+				end
+				return value
+			end
+			own(current)
+			local ok_compare, compare_error = pcall(function()
+				current:copyrect(raw,
+					box_ctor(region.gx0, region.gy0, region.gx1, region.gy1), point_fn(0, 0))
+				local current_compute = grid_to_compute(current)
+				local expected_compute = grid_to_compute(transaction.snapshots[index])
+				assert(current_compute and expected_compute, "height comparison conversion failed")
+				own(current_compute)
+				own(expected_compute)
+				local current_signed = own(grid_repack(current_compute, "f", 32, true))
+				local expected_signed = own(grid_repack(expected_compute, "f", 32, true))
+				assert(current_signed and expected_signed, "height comparison repack failed")
+				local difference = own(current_signed:clone())
+				assert(difference and difference ~= current_signed,
+					"height comparison difference allocation failed")
+				grid_add_mul_div(difference, expected_signed, -1)
+				grid_abs(difference)
+				local count = grid_count(difference, 1, 2147483647)
+				assert(type(count) == "number", "height comparison count failed")
+				mismatches = mismatches + count
+			end)
+			for owned_index = #owned, 1, -1 do
+				local value = owned[owned_index]
+				if value and type(value.free) == "function" then pcall(value.free, value) end
+			end
+			if not ok_compare then error(compare_error, 0) end
+		end
+		return mismatches
+	end)
+	if not compare_ok or mismatch_or_error ~= 0 then
+		report.height_mismatches = compare_ok and mismatch_or_error or -1
+		ReleaseSurfaceSingleFlushTransaction(transaction)
+		return reject(compare_ok and "surface capsule publication changed certified height"
+			or "surface height comparison failed: " .. tostring(mismatch_or_error))
+	end
+	report.height_snapshots = #transaction.snapshots
+	report.height_mismatches = 0
+	local rebuild_ok, rebuild_error = pcall(rebuild_regions)
+	local cleanup_ok = ReleaseSurfaceSingleFlushTransaction(transaction)
+	report.cleanup_complete = cleanup_ok == true
+	if not rebuild_ok or not cleanup_ok then
+		return reject(not rebuild_ok
+			and "surface closing local rebuild failed: " .. tostring(rebuild_error)
+			or "surface single-flush snapshot cleanup failed")
+	end
+	report.preplan_complete = true
+	report.closing_complete = true
+	report.used = true
+	return true, report, nil
+end
+end -- process-local Surface single-flush transaction closure
 
 -- Stretch-only surface expansion readiness gate.
 local function SurfaceExpansionReadiness(map)

@@ -112,13 +112,32 @@ local function certificate(descriptor, report)
 		or report.repeat_publication_validation_calls ~= 0
 		or report.repeat_publication_validation_exact_centers ~= 0
 		or report.repeat_publication_validation_depth ~= 0 then return false end
+	local local_exact = report.surface_single_flush_requested == true
+		and report.surface_single_flush_used == true
+		and report.surface_single_flush_fallback ~= true
+		and report.surface_single_flush_provenance_exact == true
+		and report.surface_single_flush_local_passability_calls == 4
+		and report.surface_single_flush_buildable_calls == 1
+		and report.surface_single_flush_height_snapshots == 2
+		and report.surface_single_flush_height_mismatches == 0
+		and report.surface_single_flush_object_family_count == 6
+		and report.surface_single_flush_object_association_failures == 0
+		and report.surface_single_flush_dirty_digest
+			== report.outer_passage_pad_finalization_dirty_digest
+		and report.surface_single_flush_dirty_regions == 2
+		and report.surface_single_flush_coverage_permille > 0
+		and report.surface_single_flush_coverage_permille <= 150
+		and report.surface_single_flush_cleanup_complete == true
+		and report.canonical_rebuilds_during_capsule_prepare == 0
+	local canonical_exact = report.surface_single_flush_used ~= true
+		and report.canonical_rebuilds_during_capsule_prepare >= 1
+		and report.canonical_rebuilds_during_capsule_prepare <= 2
 	return report.fresh_grid_architecture_used == true
-		and report.fresh_grid_expected_rebuilds == 2
 		and report.fresh_grid_first_rebuild_complete == true
 		and report.fresh_grid_closing_rebuild_complete == true
 		and report.fresh_grid_rebuild_shape_exact == true
-		and report.canonical_rebuilds_during_capsule_prepare == 2
 		and report.canonical_rebuild_fallbacks_during_capsule_prepare == 0
+		and (local_exact or canonical_exact)
 end
 
 local function validate(case)
@@ -168,6 +187,33 @@ end
 
 local healthy = fixture()
 local healthy_ok = validate(healthy)
+local local_final = fixture()
+local_final.report.surface_single_flush_requested = true
+local_final.report.surface_single_flush_used = true
+local_final.report.surface_single_flush_fallback = false
+local_final.report.surface_single_flush_provenance_exact = true
+local_final.report.surface_single_flush_local_passability_calls = 4
+local_final.report.surface_single_flush_buildable_calls = 1
+local_final.report.surface_single_flush_height_snapshots = 2
+local_final.report.surface_single_flush_height_mismatches = 0
+local_final.report.surface_single_flush_object_family_count = 6
+local_final.report.surface_single_flush_object_association_failures = 0
+local_final.report.surface_single_flush_dirty_digest = 782361
+local_final.report.outer_passage_pad_finalization_dirty_digest = 782361
+local_final.report.surface_single_flush_dirty_regions = 2
+local_final.report.surface_single_flush_coverage_permille = 14
+local_final.report.surface_single_flush_cleanup_complete = true
+local_final.report.canonical_rebuilds_during_capsule_prepare = 0
+local local_final_ok = validate(local_final)
+local local_final_height_drift = fixture()
+for key, value in pairs(local_final.report) do local_final_height_drift.report[key] = value end
+local_final_height_drift.report.surface_single_flush_height_mismatches = 1
+local local_final_bad_association = fixture()
+for key, value in pairs(local_final.report) do local_final_bad_association.report[key] = value end
+local_final_bad_association.report.surface_single_flush_object_association_failures = 1
+local local_final_bad_digest = fixture()
+for key, value in pairs(local_final.report) do local_final_bad_digest.report[key] = value end
+local_final_bad_digest.report.surface_single_flush_dirty_digest = 782362
 
 local moved = fixture(); moved.passages[1].x = moved.passages[1].x + 1
 local duplicate = fixture(); duplicate.passages[#duplicate.passages + 1] = {
@@ -194,6 +240,10 @@ local old_planner = fixture(); old_planner.descriptor.capsule_planner_version = 
 
 local checks = {
 	healthy_exact_certificate_accepted = healthy_ok == true,
+	local_single_flush_exact_certificate_accepted = local_final_ok == true,
+	local_single_flush_height_drift_rejected = validate(local_final_height_drift) == false,
+	local_single_flush_bad_association_rejected = validate(local_final_bad_association) == false,
+	local_single_flush_bad_digest_rejected = validate(local_final_bad_digest) == false,
 	self_obstructed_is_valid_placement_not_called = healthy.placement_calls() == 0,
 	moved_passage_rejected = validate(moved) == false,
 	duplicate_passage_rejected = validate(duplicate) == false,
@@ -217,6 +267,10 @@ for _, value in pairs(checks) do ok = ok and value == true end
 print("ok=" .. tostring(ok))
 for _, key in ipairs({
 	"healthy_exact_certificate_accepted",
+	"local_single_flush_exact_certificate_accepted",
+	"local_single_flush_height_drift_rejected",
+	"local_single_flush_bad_association_rejected",
+	"local_single_flush_bad_digest_rejected",
 	"self_obstructed_is_valid_placement_not_called",
 	"moved_passage_rejected",
 	"duplicate_passage_rejected",

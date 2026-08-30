@@ -3733,10 +3733,24 @@ local function PrepareOuterResourceTerrain(map, options)
 				passage_plan.replay_exact = replay_exact == true
 				if replay_exact then
 					local digest = private_seed
-					for _, site in ipairs(selected) do
+					local dirty_digest = private_seed
+					for site_index, site in ipairs(selected) do
 						digest = (digest * 48271 + math.abs(math.floor(site.q)) + 1) % modulus
 						digest = (digest * 48271 + math.abs(math.floor(site.r)) + 1) % modulus
 						digest = (digest * 48271 + site.angle + 1) % modulus
+						-- This radius is the already-proven upper bound used while choosing a pad:
+						-- core + the capped adaptive feather widened by the native 1.35 mask, plus
+						-- its two-cell raster guard. Retain it as primitives so final grid work can
+						-- be restricted only when both exact terrain-write footprints are known.
+						site.finalization_dirty_radius_world =
+							math.ceil(conservative_visit_world)
+						site.finalization_dirty_provenance_version = 1
+						dirty_digest = (dirty_digest * 48271
+							+ math.abs(math.floor(site.x)) + site_index) % modulus
+						dirty_digest = (dirty_digest * 48271
+							+ math.abs(math.floor(site.y)) + site_index) % modulus
+						dirty_digest = (dirty_digest * 48271
+							+ site.finalization_dirty_radius_world + site_index) % modulus
 						local patch = add_patch("passage", site.x, site.y, site.q, site.r,
 							passage_level_core, passage_feather,
 							{ passage_site = site,
@@ -3745,6 +3759,11 @@ local function PrepareOuterResourceTerrain(map, options)
 						passage_sites[#passage_sites + 1] = site
 					end
 					passage_plan.plan_digest = digest
+					passage_plan.finalization_dirty_digest = dirty_digest == 0 and 1
+						or dirty_digest
+					passage_plan.finalization_dirty_regions = #selected
+					passage_plan.finalization_dirty_provenance_exact =
+						replay_exact == true and #selected == passage_plan.required
 				end
 				passage_plan.used = replay_exact and #passage_sites == passage_plan.required
 				passage_plan.selected = #passage_sites
@@ -4959,6 +4978,12 @@ local function PrepareOuterResourceTerrain(map, options)
 		passage_pad_conservative_visit_radius_world = passage_plan
 			and passage_plan.conservative_visit_radius_world or 0,
 		passage_pad_plan_digest = passage_plan and passage_plan.plan_digest or 0,
+		passage_pad_finalization_dirty_digest = passage_plan
+			and passage_plan.finalization_dirty_digest or 0,
+		passage_pad_finalization_dirty_regions = passage_plan
+			and passage_plan.finalization_dirty_regions or 0,
+		passage_pad_finalization_dirty_provenance_exact = passage_plan
+			and passage_plan.finalization_dirty_provenance_exact == true or false,
 		passage_pad_inner_no_write = passage_plan and passage_plan.inner_no_write == true or false,
 		passage_pad_all_changed_cells_outer = passage_plan
 			and passage_plan.all_changed_cells_outer == true or false,

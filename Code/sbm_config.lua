@@ -320,6 +320,12 @@ config.OptimizeOuterResourceTerrainNativeRaster = true
 -- only for that ring (plus the stock two-pass-tile dependency margin) before the resource audit;
 -- later whole-map final rebuilds remain unchanged and authoritative.
 config.OptimizeOuterResourceTerrainRingRebuild = true
+-- The two outer passage pads are the only terrain writes after the authoritative outer-ring
+-- rebuild. Retain their exact native-raster visit disks and rebuild just those disks before the
+-- depth-zero planner and after publication. Any incomplete provenance, unexpected object extent,
+-- height mutation, API failure, or transaction-order mismatch invokes the former whole-map
+-- canonical rebuild at the affected boundary (both boundaries when preplan proof is unavailable).
+config.OptimizeSurfaceSingleFlushFinalization = true
 -- On the initial pass, retain the broad natural feather, then settle connected components containing
 -- a high-relief extractor or landing pad once with the minimum transition width. This mirrors the
 -- successful post-rebuild repair geometry without discarding the seamless outer blend.
@@ -1003,6 +1009,8 @@ C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_RASTER =
 	as_bool(config.OptimizeOuterResourceTerrainNativeRaster)
 C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_RING_REBUILD =
 	as_bool(config.OptimizeOuterResourceTerrainRingRebuild)
+C.OPTIMIZE_SURFACE_SINGLE_FLUSH_FINALIZATION =
+	as_bool(config.OptimizeSurfaceSingleFlushFinalization)
 C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_PRECONDITION =
 	as_bool(config.OptimizeOuterResourceTerrainNativePrecondition)
 C.OPTIMIZE_OUTER_RESOURCE_ROCKET_RELIEF_DEFERRAL =

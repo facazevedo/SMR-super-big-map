@@ -149,11 +149,11 @@ def main() -> int:
         capture_output=True, text=True, timeout=30, check=False)
 
     checks = {
-		"metadata_and_generator_identity_v997_v303": (
-			"'version', 997," in metadata
-			and "deterministic 256-point stream" in metadata
-			and "shortlist-only native validation" in metadata
-			and "SuperBigMap.GENERATOR_PATCH_VERSION = 303" in version
+		"metadata_and_generator_identity_v998_v304": (
+			"'version', 998," in metadata
+			and "two certified Surface passage-pad footprints" in metadata
+			and "full canonical rebuild path as fallback" in metadata
+			and "SuperBigMap.GENERATOR_PATCH_VERSION = 304" in version
         ),
         "pinned_lua53_compiles_touched_production": all(compile_results.values()),
         "default_off_api_is_outside_lazy_gate_and_precedes_ordinary_calls": (
@@ -296,7 +296,7 @@ def main() -> int:
                 '"lazy canonical RebuildFinal"', '"lazy persisted-state live re-entry validation"',
                 '"lazy capsule main plan"', '"lazy capsule deterministic replay"',
                 '"lazy capsule object publication"', '"lazy capsule finalization"',
-                'report.fresh_grid_expected_rebuilds = 2',
+                'report.fresh_grid_expected_rebuilds = report.surface_single_flush_used == true',
             )
         ),
     }

@@ -99,10 +99,10 @@ def main() -> int:
                                 capture_output=True, text=True, timeout=30, check=False)
         compile_results[path.relative_to(ROOT).as_posix()] = result.returncode == 0
     checks = {
-        "metadata_v997_truthfully_retains_v972": "'version', 997," in metadata
-            and "deterministic 256-point stream" in metadata
-            and "shortlist-only native validation" in metadata,
-        "generator_identity_v303": "SuperBigMap.GENERATOR_PATCH_VERSION = 303" in version,
+        "metadata_v998_truthfully_retains_v972": "'version', 998," in metadata
+            and "two certified Surface passage-pad footprints" in metadata
+            and "full canonical rebuild path as fallback" in metadata,
+        "generator_identity_v304": "SuperBigMap.GENERATOR_PATCH_VERSION = 304" in version,
         "v987_default_off_safe_optimization_trace_gate_green": (
             optimization_trace_run.returncode == 0
             and '"ok": true' in optimization_trace_run.stdout),
@@ -265,7 +265,8 @@ def main() -> int:
                 "report.main_depth_zero_validation_exact == true",
                 "report.replay_depth_zero_validation_exact == true",
                 "report.fresh_grid_closing_rebuild_complete == true",
-                "report.canonical_rebuilds_during_capsule_prepare) == 2",
+                "local_single_flush_exact",
+                "canonical_rebuild_count >= 1 and canonical_rebuild_count <= 2",
                 "capsule.validation_z = z",
                 "report.validation_z_certificates = report.validation_z_certificates + 1",
                 "CAPSULE_PLANNER_VERSION = 7",
