@@ -141,7 +141,8 @@ foreach ($name in @('repo', 'stage', 'run', 'harness', 'source_config', 'deploye
         'generator_script', 'surface_t1_file', 'deferred_t1_file', 'scheduler_census_file',
         'expected_disabled_config_sha256', 'expected_enabled_config_sha256', 'expected_deploy_file_count',
         't1_timeout_seconds', 'maximum_t0_to_t1_ms', 'stage_files', 'required_surface_t1_tokens',
-        'required_deferred_t1_tokens', 'required_scheduler_census_tokens', 'allowed_initial_run_files')) {
+        'required_deferred_t1_tokens', 'required_scheduler_census_tokens', 'allowed_initial_run_files',
+        'executor_sha256')) {
     if ($null -eq $script:Contract.$name) { throw "contract missing required field: $name" }
 }
 
@@ -164,6 +165,7 @@ if (-not (Test-Path -LiteralPath $script:Repo -PathType Container) -or
     -not (Test-Path -LiteralPath $script:Stage -PathType Container) -or
     -not (Test-Path -LiteralPath $script:Run -PathType Container)) { throw 'repo/stage/run path missing' }
 if (-not (Test-Path -LiteralPath $script:Harness -PathType Leaf)) { throw 'harness path missing' }
+if ((Get-Sha256 $PSCommandPath) -cne ([string]$script:Contract.executor_sha256).ToUpperInvariant()) { throw 'surface-only executor hash mismatch' }
 if ((Get-Sha256 $SourceConfig) -cne ([string]$script:Contract.expected_disabled_config_sha256).ToUpperInvariant()) { throw 'source disabled config hash mismatch' }
 if ((Get-Sha256 $EnabledConfig) -cne ([string]$script:Contract.expected_enabled_config_sha256).ToUpperInvariant()) { throw 'staged enabled config hash mismatch' }
 foreach ($entry in $script:Contract.stage_files.psobject.Properties) {
@@ -347,6 +349,7 @@ try {
         contract_sha256 = $ContractSha256.ToUpperInvariant()
         hashes = [ordered]@{
             contract = Get-Sha256 $ContractPath
+            executor = Get-Sha256 $PSCommandPath
             generator = Get-Sha256 $Generator
             surface_t1 = Get-Sha256 $SurfaceT1
             deferred_t1 = Get-Sha256 $DeferredT1
