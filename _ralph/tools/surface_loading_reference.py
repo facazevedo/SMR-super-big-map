@@ -281,6 +281,93 @@ def surface_thread_rng_lua(mode: str, trace_path: Path | None) -> tuple[str, str
     return setup, dispatch, finalize
 
 
+def scheduler_census_lua(census_path: Path | None) -> tuple[str, str]:
+    """Return forward-safe scheduler census instrumentation.
+
+    This is deliberately independent of the RNG trace modes: surface-only
+    acceptance needs a scheduler receipt while keeping trace collection off.
+    It observes just the surface scheduler's thread dispatch, restores both
+    temporary dispatchers before the spawned thread runs, and never alters RNG.
+    """
+    if census_path is None:
+        return "", ""
+    nonce = hashlib.sha256(str(census_path.resolve()).encode("utf-8")).hexdigest()[:16]
+    setup = f'''
+\t\t\tlocal surface_scheduler_census_path = "{lua_path(census_path)}"
+\t\t\tlocal surface_scheduler_census_nonce = "{nonce}"
+\t\t\tlocal surface_scheduler = type(SBM) == "table" and type(SBM.Generation) == "table"
+\t\t\t\tand SBM.Generation.RunSurfaceStretchIfEnabled or nil
+\t\t\tlocal census_current_thread = rawget(_G, "CurrentThread")
+\t\t\tlocal census_original_thread = rawget(_G, "CreateRealTimeThread")
+\t\t\tlocal census_original_global = rawget(_G, "Global")
+\t\t\tif type(surface_scheduler) ~= "function" or type(census_current_thread) ~= "function"
+\t\t\t\tor type(census_original_thread) ~= "function" or type(census_original_global) ~= "function" then
+\t\t\t\terror("surface scheduler census capabilities unavailable")
+\t\t\tend
+\t\t\tlocal census_rows = {{
+\t\t\t\t"schema=smr.ralph.surface_scheduler_census.v1",
+\t\t\t\t"nonce=" .. surface_scheduler_census_nonce,
+\t\t\t\t"setup_executed=true",
+\t\t\t}}
+\t\t\tlocal census_lookups = 0
+\t\t\tlocal function write_scheduler_census(stage)
+\t\t\t\tcensus_rows[#census_rows + 1] = "stage=" .. tostring(stage)
+\t\t\t\tcensus_rows[#census_rows + 1] = "lookup_count=" .. tostring(census_lookups)
+\t\t\t\tlocal err = AsyncStringToFile(surface_scheduler_census_path, table.concat(census_rows, "\\n") .. "\\n")
+\t\t\t\tif err then error("surface scheduler census write failed: " .. tostring(err)) end
+\t\t\tend
+\t\t\tlocal function called_by_surface_scheduler()
+\t\t\t\tfor level = 2, 12 do
+\t\t\t\t\tlocal ok, info = pcall(debug.getinfo, level, "f")
+\t\t\t\t\tif not ok or type(info) ~= "table" then break end
+\t\t\t\t\tif info.func == surface_scheduler then return true end
+\t\t\t\tend
+\t\t\t\treturn false
+\t\t\tend
+\t\t\tlocal scoped_thread
+\t\t\tlocal scoped_global
+\t\t\tscoped_global = function(name, ...)
+\t\t\t\tlocal value = census_original_global(name, ...)
+\t\t\t\tif name == "CreateRealTimeThread" then
+\t\t\t\t\tcensus_lookups = census_lookups + 1
+\t\t\t\t\tcensus_rows[#census_rows + 1] = "lookup=" .. tostring(census_lookups)
+\t\t\t\t\tcensus_rows[#census_rows + 1] = "lookup_returned_scoped=" .. tostring(value == scoped_thread)
+\t\t\t\t\twrite_scheduler_census("global_lookup")
+\t\t\t\tend
+\t\t\t\treturn value
+\t\t\tend
+\t\t\tscoped_thread = function(fn, ...)
+\t\t\t\tif not called_by_surface_scheduler() then return census_original_thread(fn, ...) end
+\t\t\t\tif state.surface_scheduler_census_intercepted == true then
+\t\t\t\t\terror("surface scheduler census intercepted more than once")
+\t\t\t\tend
+\t\t\t\tstate.surface_scheduler_census_intercepted = true
+\t\t\t\trawset(_G, "CreateRealTimeThread", census_original_thread)
+\t\t\t\tif rawget(_G, "Global") == scoped_global then rawset(_G, "Global", census_original_global) end
+\t\t\t\tstate.surface_scheduler_census_dispatchers_restored =
+\t\t\t\t\trawget(_G, "CreateRealTimeThread") == census_original_thread and rawget(_G, "Global") == census_original_global
+\t\t\t\tif state.surface_scheduler_census_dispatchers_restored ~= true then
+\t\t\t\t\terror("surface scheduler census dispatchers did not restore")
+\t\t\t\tend
+\t\t\t\twrite_scheduler_census("scheduler_intercepted")
+\t\t\t\treturn census_original_thread(fn, ...)
+\t\t\tend
+\t\t\trawset(_G, "Global", scoped_global)
+\t\t\trawset(_G, "CreateRealTimeThread", scoped_thread)
+\t\t\tif rawget(_G, "Global") ~= scoped_global or rawget(_G, "CreateRealTimeThread") ~= scoped_thread then
+\t\t\t\terror("surface scheduler census dispatchers did not install")
+\t\t\tend
+\t\t\tstate.surface_scheduler_census_nonce = surface_scheduler_census_nonce
+\t\t\twrite_scheduler_census("setup")'''
+    finalize = '''
+\t\t\twrite_scheduler_census("finalizer_entry")
+\t\t\tif state.surface_scheduler_census_intercepted ~= true
+\t\t\t\tor state.surface_scheduler_census_dispatchers_restored ~= true then
+\t\t\t\terror("surface scheduler census did not complete")
+\t\t\tend'''
+    return setup, finalize
+
+
 def unresolved(text: str) -> list[str]:
     tokens: set[str] = set()
     start = 0
@@ -305,11 +392,13 @@ def benchmark_block(
     async_rand_seed: int,
     surface_thread_rng_mode: str = "forward",
     surface_thread_rng_trace: Path | None = None,
+    scheduler_census_path: Path | None = None,
 ) -> str:
     probe = PARITY / "determinism_capture_probe.lua"
     thread_setup, thread_dispatch, thread_finalize = surface_thread_rng_lua(
         surface_thread_rng_mode, surface_thread_rng_trace
     )
+    census_setup, census_finalize = scheduler_census_lua(scheduler_census_path)
     thread_state = "" if surface_thread_rng_mode == "forward" else f'''
 \t\t\t\tsurface_thread_rng_mode = "{surface_thread_rng_mode}",
 \t\t\t\tsurface_thread_async_rand_draw_count = 0,'''
@@ -341,7 +430,7 @@ def benchmark_block(
 \t\t\tend
 \t\t\tif type(debug) ~= "table" or type(debug.getinfo) ~= "function" then
 \t\t\t\terror("debug.getinfo unavailable for mod RNG caller identity")
-\t\t\tend{thread_setup}
+\t\t\tend{thread_setup}{census_setup}
 \t\t\tlocal async_rand_seed = state.async_rand_initial_seed
 \t\t\tlocal function called_by_mod_rand_int()
 \t\t\t\tfor level = 2, 8 do
@@ -495,7 +584,7 @@ def benchmark_block(
 \t\t\t\tend
 \t\t\t\tif state.async_rand_draw_count <= 0 then
 \t\t\t\t\terror("private mod RNG stream consumed no draws")
-\t\t\t\tend{thread_finalize}
+\t\t\t\tend{thread_finalize}{census_finalize}
 \t\t\t\trawset(_G, "AsyncRand", original_async_rand)
 \t\t\t\tstate.async_rand_dispatcher_restored = rawget(_G, "AsyncRand") == original_async_rand
 \t\t\t\tif not state.async_rand_dispatcher_restored then
@@ -530,6 +619,7 @@ def render_generation(
     async_rand_seed: int = DEFAULT_ASYNC_RAND_SEED,
     surface_thread_rng_mode: str = "forward",
     surface_thread_rng_trace: Path | None = None,
+    scheduler_census_path: Path | None = None,
 ) -> str:
     text = run_parity.GEN_TEMPLATE.read_text(encoding="utf-8")
     text = text.replace(
@@ -545,7 +635,7 @@ def render_generation(
     text = text.replace("__UNDERGROUND_PIN_BLOCK__", "")
     extra = run_parity.ROUGH_TERRAIN_BLOCK + "\n\n" + benchmark_block(
         capture_base, stable_sentinel, final_sentinel, async_rand_seed,
-        surface_thread_rng_mode, surface_thread_rng_trace,
+        surface_thread_rng_mode, surface_thread_rng_trace, scheduler_census_path,
     )
     text = text.replace("__EXTRA_SETUP__", extra)
     publish_marker = '''\t\tif __EXPAND__ then
@@ -875,9 +965,14 @@ def command_prepare(args: argparse.Namespace) -> int:
         if args.surface_thread_rng_trace is not None
         else None
     )
+    scheduler_census = (
+        args.scheduler_census.resolve()
+        if args.scheduler_census is not None
+        else None
+    )
     text = render_generation(
         capture_base, stable_sentinel, final_sentinel, args.async_rand_seed,
-        args.surface_thread_rng_mode, thread_trace,
+        args.surface_thread_rng_mode, thread_trace, scheduler_census,
     )
     generation.write_text(text, encoding="utf-8")
     compile_lua(args.luac.resolve(), generation)
@@ -919,6 +1014,11 @@ def command_prepare(args: argparse.Namespace) -> int:
             sha256_file(thread_trace)
             if args.surface_thread_rng_mode == "replay" and thread_trace
             else None
+        ),
+        "scheduler_census": str(scheduler_census) if scheduler_census else None,
+        "scheduler_census_nonce": (
+            hashlib.sha256(str(scheduler_census).encode("utf-8")).hexdigest()[:16]
+            if scheduler_census else None
         ),
         "generation_script": str(generation),
         "generation_script_bytes": generation.stat().st_size,
@@ -1227,6 +1327,7 @@ def parser() -> argparse.ArgumentParser:
         default="forward",
     )
     prepare.add_argument("--surface-thread-rng-trace", type=Path)
+    prepare.add_argument("--scheduler-census", type=Path)
     prepare.add_argument("--source-head", required=True)
     prepare.add_argument("--out", type=Path, required=True)
     prepare.add_argument("--luac", type=Path, default=DEFAULT_LUAC)

@@ -1,0 +1,383 @@
+param(
+    [Parameter(Mandatory = $true)][string]$ContractPath,
+    [Parameter(Mandatory = $true)][ValidatePattern('^[A-Fa-f0-9]{64}$')][string]$ContractSha256,
+    [switch]$Launch
+)
+
+# Reusable cold Surface acceptance executor.  The contract is deliberately content
+# addressed: this file knows no iteration, version, candidate, or stage identity.
+# A caller must pin every executable/staged input and the expected deployed hashes in
+# its contract, then pass the contract's SHA-256 on the command line.
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+
+function Get-Sha256([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "required file missing: $Path" }
+    (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToUpperInvariant()
+}
+
+function Write-Utf8NoBom([string]$Path, [string]$Text) {
+    $parent = Split-Path -Parent $Path
+    if (-not (Test-Path -LiteralPath $parent -PathType Container)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+    [IO.File]::WriteAllText($Path, $Text, (New-Object Text.UTF8Encoding($false)))
+}
+
+function Write-Json([string]$Path, $Value) {
+    Write-Utf8NoBom $Path (($Value | ConvertTo-Json -Depth 12) + "`n")
+}
+
+function Assert-ExactTokens([string]$Path, [string[]]$Tokens) {
+    $text = Get-Content -LiteralPath $Path -Raw
+    if ($text -match '(?m)^probe_error=') { throw "evidence contains probe_error: $Path" }
+    foreach ($token in @($Tokens)) {
+        if ([string]::IsNullOrWhiteSpace($token)) { throw "empty required token in contract for $Path" }
+        if ($text -notmatch ('(?m)^' + [regex]::Escape($token) + '$')) {
+            throw "evidence missing exact token '$token': $Path"
+        }
+    }
+    $text
+}
+
+function Get-UniqueInteger([string]$Text, [string]$Name) {
+    $m = [regex]::Matches($Text, '(?m)^' + [regex]::Escape($Name) + '=(?<v>-?\d+)$')
+    if ($m.Count -ne 1) { throw "integer evidence missing/duplicate: $Name" }
+    [Int64]$m[0].Groups['v'].Value
+}
+
+function Wait-NonEmptyFile([string]$Path, [DateTime]$DeadlineUtc) {
+    while ([DateTime]::UtcNow -lt $DeadlineUtc) {
+        if (Test-Path -LiteralPath $Path -PathType Leaf) {
+            try {
+                $stream = [IO.File]::Open($Path, 'Open', 'Read', 'None')
+                try { if ($stream.Length -gt 0) { return } } finally { $stream.Dispose() }
+            } catch [IO.IOException] {}
+        }
+        Start-Sleep -Milliseconds 20
+    }
+    throw "timeout waiting for $Path"
+}
+
+function Test-TcpPortClosed([int]$Port) {
+    $client = New-Object Net.Sockets.TcpClient
+    try {
+        $async = $client.BeginConnect('127.0.0.1', $Port, $null, $null)
+        if (-not $async.AsyncWaitHandle.WaitOne(250)) { return $true }
+        $client.EndConnect($async)
+        $false
+    } catch { $true } finally { $client.Dispose() }
+}
+
+function Get-ProcessIdentity([Diagnostics.Process]$Process) {
+    [ordered]@{
+        pid = $Process.Id
+        process_name = $Process.ProcessName
+        creation_time_utc_ticks = $Process.StartTime.ToUniversalTime().Ticks
+        executable_path = $Process.Path
+    }
+}
+
+function Test-ExactProcessIdentity($Identity) {
+    try {
+        $p = Get-Process -Id ([int]$Identity.pid) -ErrorAction Stop
+        $actual = Get-ProcessIdentity $p
+        $actual.process_name -ceq $Identity.process_name -and
+            $actual.creation_time_utc_ticks -eq $Identity.creation_time_utc_ticks -and
+            [string]::Equals($actual.executable_path, $Identity.executable_path, [StringComparison]::OrdinalIgnoreCase)
+    } catch { $false }
+}
+
+function Stop-ExactProcess($Identity) {
+    if (-not (Test-ExactProcessIdentity $Identity)) { return $true }
+    $p = Get-Process -Id ([int]$Identity.pid) -ErrorAction Stop
+    Stop-Process -Id $p.Id -Force
+    Start-Sleep -Milliseconds 250
+    -not (Test-ExactProcessIdentity $Identity)
+}
+
+function Invoke-Harness([string[]]$Arguments) {
+    & python $script:Harness @Arguments
+    if ($LASTEXITCODE -ne 0) { throw "harness command failed ($LASTEXITCODE): $($Arguments -join ' ')" }
+}
+
+function Assert-DeployAudit([bool]$Enabled) {
+    $raw = (& python "$script:Repo\_ralph\tools\deploy.py" audit 2>&1) -join "`n"
+    $exit = $LASTEXITCODE
+    $audit = $raw | ConvertFrom-Json
+    $countOk = $audit.source_files -eq $script:Contract.expected_deploy_file_count -and
+        $audit.destination_files -eq $script:Contract.expected_deploy_file_count
+    if ($Enabled) {
+        $mismatches = @($audit.content_mismatch)
+        if ($exit -ne 1 -or -not $countOk -or $mismatches.Count -ne 1 -or
+            $mismatches[0] -cne $script:Contract.deployed_config_repo_relative) {
+            throw 'enabled deployment audit is not exactly the pinned one-config delta'
+        }
+    } elseif ($exit -ne 0 -or -not $audit.ok -or -not $countOk) {
+        throw 'restored deployment audit is not exact'
+    }
+}
+
+function Stop-TrackedGame([string]$Reason) {
+    $script:trackedQuitAttempted = $true
+    if ($script:TrackedIdentity -and -not (Test-ExactProcessIdentity $script:TrackedIdentity) -and (Test-TcpPortClosed 8165)) {
+        $script:trackedQuitSucceeded = $true
+        return
+    }
+    & python $script:Harness quit --json --timeout 10 | Out-Host
+    if ($LASTEXITCODE -eq 0 -and $script:TrackedIdentity -and -not (Test-ExactProcessIdentity $script:TrackedIdentity) -and (Test-TcpPortClosed 8165)) {
+        $script:trackedQuitSucceeded = $true
+        return
+    }
+    if ($script:TrackedIdentity -and (Stop-ExactProcess $script:TrackedIdentity) -and (Test-TcpPortClosed 8165)) {
+        $script:trackedQuitSucceeded = $true
+        return
+    }
+    throw "tracked quit/identity fallback failed: $Reason"
+}
+
+if ((Get-Sha256 $ContractPath) -cne $ContractSha256.ToUpperInvariant()) { throw 'contract SHA-256 mismatch' }
+$script:Contract = Get-Content -LiteralPath $ContractPath -Raw | ConvertFrom-Json
+if ($script:Contract.schema -cne 'smr.ralph.surface-only-acceptance-contract.v1') { throw 'unsupported surface-only contract schema' }
+foreach ($name in @('repo', 'stage', 'run', 'harness', 'source_config', 'deployed_config', 'deployed_config_repo_relative', 'enabled_config',
+        'generator_script', 'surface_t1_file', 'deferred_t1_file', 'scheduler_census_file',
+        'expected_disabled_config_sha256', 'expected_enabled_config_sha256', 'expected_deploy_file_count',
+        't1_timeout_seconds', 'maximum_t0_to_t1_ms', 'stage_files', 'required_surface_t1_tokens',
+        'required_deferred_t1_tokens', 'required_scheduler_census_tokens', 'allowed_initial_run_files')) {
+    if ($null -eq $script:Contract.$name) { throw "contract missing required field: $name" }
+}
+
+$script:Repo = [IO.Path]::GetFullPath([string]$script:Contract.repo)
+$script:Stage = [IO.Path]::GetFullPath([string]$script:Contract.stage)
+$script:Run = [IO.Path]::GetFullPath([string]$script:Contract.run)
+$script:Harness = [IO.Path]::GetFullPath([string]$script:Contract.harness)
+$SourceConfig = [IO.Path]::GetFullPath([string]$script:Contract.source_config)
+$DeployedConfig = [IO.Path]::GetFullPath([string]$script:Contract.deployed_config)
+$EnabledConfig = Join-Path $script:Stage ([string]$script:Contract.enabled_config)
+$Generator = Join-Path $script:Stage ([string]$script:Contract.generator_script)
+$SurfaceT1 = Join-Path $script:Run ([string]$script:Contract.surface_t1_file)
+$DeferredT1 = Join-Path $script:Run ([string]$script:Contract.deferred_t1_file)
+$Census = Join-Path $script:Run ([string]$script:Contract.scheduler_census_file)
+$Receipt = Join-Path $script:Run 'surface_only_acceptance_receipt.json'
+$Timing = Join-Path $script:Run 'external_timing.json'
+$TrackedReceipt = Join-Path $script:Run 'tracked_mars_process_identity.json'
+
+if (-not (Test-Path -LiteralPath $script:Repo -PathType Container) -or
+    -not (Test-Path -LiteralPath $script:Stage -PathType Container) -or
+    -not (Test-Path -LiteralPath $script:Run -PathType Container)) { throw 'repo/stage/run path missing' }
+if (-not (Test-Path -LiteralPath $script:Harness -PathType Leaf)) { throw 'harness path missing' }
+if ((Get-Sha256 $SourceConfig) -cne ([string]$script:Contract.expected_disabled_config_sha256).ToUpperInvariant()) { throw 'source disabled config hash mismatch' }
+if ((Get-Sha256 $EnabledConfig) -cne ([string]$script:Contract.expected_enabled_config_sha256).ToUpperInvariant()) { throw 'staged enabled config hash mismatch' }
+foreach ($entry in $script:Contract.stage_files.psobject.Properties) {
+    $path = Join-Path $script:Stage $entry.Name
+    if ((Get-Sha256 $path) -cne ([string]$entry.Value).ToUpperInvariant()) { throw "stage input hash mismatch: $($entry.Name)" }
+}
+$actualInitial = @(Get-ChildItem -LiteralPath $script:Run -File | ForEach-Object Name | Sort-Object)
+$allowedInitial = @($script:Contract.allowed_initial_run_files | ForEach-Object { [string]$_ } | Sort-Object)
+if ((Compare-Object $actualInitial $allowedInitial -CaseSensitive).Count -ne 0) { throw 'run directory is not the exact fresh content-addressed topology' }
+foreach ($path in @($SurfaceT1, $DeferredT1, $Census, $Timing, $Receipt, $TrackedReceipt)) {
+    if (Test-Path -LiteralPath $path) { throw "stale surface-only output exists: $path" }
+}
+
+# Structural safety rule: this executor has one sole run-file (the surface generator).
+# The only harness call permitted after that point is the tracked quit in Stop-TrackedGame.
+
+if (-not $Launch) {
+    Write-Output 'SURFACE_ONLY_ACCEPTANCE_PREFLIGHT_OK'
+    return
+}
+
+$status = & python $script:Harness daemon status --json 2>&1
+if ($LASTEXITCODE -eq 0) { throw 'game already running; cold-run precondition failed' }
+if (@(Get-Process -Name MarsDebug -ErrorAction SilentlyContinue).Count -ne 0) { throw 'MarsDebug already exists; exact cold ownership unavailable' }
+
+$script:TrackedIdentity = $null
+$script:trackedQuitAttempted = $false
+$script:trackedQuitSucceeded = $false
+$daemonStartAttempted = $false
+$failures = New-Object 'System.Collections.Generic.List[string]'
+try {
+    Copy-Item -LiteralPath $EnabledConfig -Destination $DeployedConfig -Force
+    Assert-DeployAudit $true
+    if ((Get-Sha256 $DeployedConfig) -cne ([string]$script:Contract.expected_enabled_config_sha256).ToUpperInvariant()) { throw 'enabled deployed config hash mismatch' }
+
+    $daemonStartAttempted = $true
+    $startedUtc = [DateTime]::UtcNow
+    Invoke-Harness @('daemon', 'start', '--json', '--hidden', '--timeout', '300')
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    do {
+        $new = @(Get-Process -Name MarsDebug -ErrorAction SilentlyContinue | Where-Object { $_.StartTime.ToUniversalTime() -ge $startedUtc })
+        if ($new.Count -eq 1) { $script:TrackedIdentity = Get-ProcessIdentity $new[0]; break }
+        Start-Sleep -Milliseconds 25
+    } while ([DateTime]::UtcNow -lt $deadline)
+    if (-not $script:TrackedIdentity) { throw 'new MarsDebug process identity was not captured' }
+    Write-Json $TrackedReceipt ([ordered]@{ schema = 'smr.ralph.surface-only-tracked-process.v1'; identity = $script:TrackedIdentity })
+
+    # T0 is immediately before the only harness run-file. No operation after this line
+    # may invoke the harness except tracked quit.
+    $t0 = [DateTime]::UtcNow
+    Invoke-Harness @('run-file', '--json', '--timeout', '30', $Generator)
+    $t1Deadline = $t0.AddSeconds([int]$script:Contract.t1_timeout_seconds)
+    Wait-NonEmptyFile $SurfaceT1 $t1Deadline
+    $t1 = [DateTime]::UtcNow
+    $elapsedMs = [Math]::Round(($t1 - $t0).TotalMilliseconds, 4)
+    if ($elapsedMs -gt [double]$script:Contract.maximum_t0_to_t1_ms) { throw "Surface T0-to-T1 budget exceeded: $elapsedMs ms" }
+
+    # These are the invariant portion of the iter241 Surface T1/Close-ready
+    # verifier.  Contracts may add candidate-specific values, but cannot relax this
+    # baseline.  In particular, all map-2 creation/materialization is still absent.
+    $baselineSurfaceTokens = @(
+        'rough_terrain_at_generation_start=true', 'rough_terrain_at_t1=true',
+        'selected_random_map_preset=RoughTerrain', 'surface_stretch_done=true',
+        'surface_expansion_pending=false', 'stretch_pipeline_pending=false',
+        'post_pipeline_revalidation_complete=true', 'expansion_loading_visible=false',
+        'passage_mode=deferred-unallocated', 'lazy_underground_deferred_certificate=true',
+        'maps2_absent=true', 'underground_map_absent=true', 'surface_capsules=2',
+        'no_background_generation=true'
+    )
+    $baselineDeferredTokens = @(
+        'ok=true', 'mode=deferred-unallocated', 'maps2_absent=true', 'underground_map_absent=true',
+        'capsules=2', 'capsules_published=2', 'unlinked=2', 'exact_positions=2',
+        'engine_valid_passages=2', 'markers=2', 'signs=2', 'companion_associations_exact=true',
+        'published_capsule_certificate=true', 'descriptor_primitive=true',
+        'descriptor_state=ready-for-first-access', 'generation_count=0', 'materialization_attempts=0',
+        'implementation=true', 'suppression_committed=true', 'suppression_used=true',
+        'literal_eager=false', 'report_ready=true', 'final_grid=true', 'deterministic_repeat=true',
+        'digest_exact=true', 'recipe_capture_complete=true', 'native_retention_released=true',
+        'route_gates=true', 'no_transient_binding=true', 'no_pending_restore_tokens=true',
+        'captured_before_surface_t1_sentinel=true', 'persisted_state_live_reentry_allowed=true',
+        'persisted_state_live_reentry_phase=closing-canonical-rebuild',
+        'persisted_state_live_reentry_count=2',
+        'persisted_state_live_reentry_phase_sequence=pre-surface-pipeline>closing-canonical-rebuild',
+        'persisted_state_live_reentry_contract=true', 'persisted_state_materialization_reentry_allowed=false',
+        'persisted_state_materialization_reentry_count=0', 'persisted_state_materialization_reentry_phase=',
+        'persisted_state_materialization_reentry_phase_sequence=',
+        'materialization_reentry_certificate_phase=t1-pre-access', 'materialization_reentry_not_applicable=true',
+        'failure_sticky=false', 'planner_contract=true', 'planner_requested=true', 'planner_used=true',
+        'planner_bounded_requested=true', 'planner_bounded_used=true', 'planner_stock_requested=false',
+        'planner_stock_used=false', 'planner_stock_after_canonical_grid=true',
+        'planner_main_attempt_contract=true', 'planner_repeat_attempt_contract=true',
+        'planner_finite_capsule_tuples=2', 'planner_publication_validation_calls=2',
+        'planner_publication_validation_exact_centers=2', 'planner_publication_validation_depth=0',
+        'planner_replay_validation_identity_pinned=true', 'planner_replay_publication_validation_calls=0',
+        'planner_full_search_cap=0', 'planner_repeat_full_search_cap=0',
+        'planner_full_search_calls=0', 'planner_repeat_full_search_calls=0',
+        'planner_unbounded_search_calls=0', 'planner_total_unbounded_calls=0',
+        'planner_bounded_search_calls=0', 'planner_repeat_bounded_search_calls=0',
+        'planner_full_search_mismatches=0', 'planner_zero_search_path=true',
+        'planner_stock_trace_invalid=0', 'planner_stock_trace_selected=0',
+        'planner_stock_trace_no_result=0', 'planner_stock_trace_rejected=0', 'planner_stock_trace_rows=0',
+        'planner_trace_contract=true', 'planner_ild_balance=true', 'planner_stock_pause_requested=false',
+        'planner_stock_pause_used=false', 'planner_stock_resume_ok=false',
+        'planner_publication_rollback_residuals=0', 'planner_publication_object_shape_exact=true',
+        'planner_stale_attempts=0', 'planner_stale_bounded_search_calls=0',
+        'planner_stale_bounded_search_ms=0', 'planner_stale_plan_skipped=true',
+        'planner_retry_requested=false', 'planner_retry_pending=false', 'planner_retry_used=false',
+        'planner_retry_rebuild_consistent=true', 'planner_canonical_rebuilds=2',
+        'planner_canonical_rebuild_fallbacks=0', 'planner_fresh_grid_requested=true',
+        'planner_fresh_grid_used=true', 'planner_fresh_grid_plan_used=true',
+        'planner_fresh_grid_expected_rebuilds=2', 'planner_fresh_grid_main_plan_invocations=1',
+        'planner_fresh_grid_replay_invocations=1',
+        'planner_fresh_grid_phase_order=canonical-grid-publication>fresh-plan-replay>capsule-publication>closing-rebuild',
+        'planner_fresh_grid_first_rebuild_complete=true', 'planner_fresh_grid_closing_rebuild_complete=true',
+        'planner_fresh_grid_rebuild_shape_exact=true', 'planner_marker_contract=true',
+        'planner_marker_index_requested=false', 'planner_marker_index_used=false',
+        'planner_marker_index_fallback=false', 'planner_marker_exclusion_exact=true',
+        'planner_repeat_marker_index_used=false', 'planner_repeat_marker_index_fallback=false',
+        'planner_repeat_marker_exclusion_exact=true', 'planner_private_draws_per_attempt=3',
+        'planner_private_draws_exact=true', 'planner_private_state_exact=true',
+        'planner_outer_passage_contract=true', 'planner_outer_passage_direct_sampling=true',
+        'planner_outer_passage_attempt_cap=32', 'planner_outer_passage_viable_target=4',
+        'planner_outer_passage_viable=8', 'planner_outer_passage_replay_viable=8',
+        'planner_outer_passage_replay_exact=true', 'outer_passage_report_present=true',
+        'outer_passage_requested=true', 'outer_passage_used=true', 'outer_passage_pads=2',
+        'outer_passage_attempt_cap=32', 'outer_passage_viable_target=4',
+        'outer_passage_direct_sampling=true', 'outer_passage_viable=8', 'outer_passage_replay_viable=8',
+        'outer_passage_replay_exact=true', 'outer_passage_patches=2', 'outer_passage_native_used=true',
+        'outer_passage_native_fallback=false', 'outer_passage_native_error=',
+        'outer_passage_inner_no_write=true', 'outer_passage_all_changed_outer=true',
+        'outer_passage_install_rollback_attempted=false', 'outer_passage_install_rollback_completed=false',
+        'outer_passage_install_rollback_verified=false', 'outer_passage_install_rollback_mismatches=-1',
+        'outer_passage_report_error=', 'validation_z_count=2', 'validation_z_range_exact=true',
+        'validation_z_report_certificates=2', 'validation_z_certificate_exact=true'
+    )
+    $surfaceText = Assert-ExactTokens $SurfaceT1 @($baselineSurfaceTokens + @($script:Contract.required_surface_t1_tokens))
+    $deferredText = Assert-ExactTokens $DeferredT1 @($baselineDeferredTokens + @($script:Contract.required_deferred_t1_tokens))
+    $censusText = Assert-ExactTokens $Census @($script:Contract.required_scheduler_census_tokens)
+    foreach ($mustBeZero in @('generation_count', 'materialization_attempts')) {
+        if ((Get-UniqueInteger $deferredText $mustBeZero) -ne 0) { throw "$mustBeZero is nonzero before surface-only quit" }
+    }
+    foreach ($mustBePositive in @('planner_attempts', 'planner_outer_passage_attempts', 'planner_outer_passage_plan_digest')) {
+        if ((Get-UniqueInteger $deferredText $mustBePositive) -le 0) { throw "$mustBePositive is not positive" }
+    }
+    foreach ($timingName in @('planner_outer_passage_plan_ms', 'planner_total_ms', 'planner_fresh_grid_orchestration_total_ms')) {
+        if ((Get-UniqueInteger $deferredText $timingName) -lt 0) { throw "$timingName is negative" }
+    }
+    $attempts = Get-UniqueInteger $deferredText 'planner_attempts'
+    $outerAttempts = Get-UniqueInteger $deferredText 'planner_outer_passage_attempts'
+    $outerReplayAttempts = Get-UniqueInteger $deferredText 'planner_outer_passage_replay_attempts'
+    $outerShapeChecks = Get-UniqueInteger $deferredText 'planner_outer_passage_shape_checks'
+    $outerPrivateDraws = Get-UniqueInteger $deferredText 'planner_outer_passage_private_draws'
+    $outerDigest = Get-UniqueInteger $deferredText 'planner_outer_passage_plan_digest'
+    $validationDigest = Get-UniqueInteger $deferredText 'validation_z_digest'
+    if ($attempts -lt 8 -or $attempts -gt 64 -or
+        (Get-UniqueInteger $deferredText 'planner_repeat_attempts') -ne $attempts -or
+        (Get-UniqueInteger $deferredText 'planner_private_draws') -ne (3 * $attempts) -or
+        $outerAttempts -ne $attempts -or $outerReplayAttempts -ne $attempts -or
+        $outerShapeChecks -lt 8 -or $outerShapeChecks -gt $attempts -or
+        $outerPrivateDraws -ne (3 * $attempts) -or $outerDigest -le 0 -or
+        (Get-UniqueInteger $deferredText 'outer_passage_attempts') -ne $outerAttempts -or
+        (Get-UniqueInteger $deferredText 'outer_passage_replay_attempts') -ne $outerReplayAttempts -or
+        (Get-UniqueInteger $deferredText 'outer_passage_shape_checks') -ne $outerShapeChecks -or
+        (Get-UniqueInteger $deferredText 'outer_passage_private_draws') -ne $outerPrivateDraws -or
+        (Get-UniqueInteger $deferredText 'outer_passage_plan_digest') -ne $outerDigest -or
+        (Get-UniqueInteger $deferredText 'validation_z_report_digest') -ne $validationDigest -or $validationDigest -le 0) {
+        throw 'exact T1 planner/validation digest relation is inconsistent'
+    }
+
+    $receipt = [ordered]@{
+        schema = 'smr.ralph.surface-only-acceptance-receipt.v1'
+        ok = $true
+        diagnostic_only = $false
+        acceptance_timing_eligible = $true
+        t0_utc = $t0.ToString('o')
+        t1_utc = $t1.ToString('o')
+        t0_to_t1_ms = $elapsedMs
+        underground_access_included = $false
+        underground_release_invoked = $false
+        generator_run_file_count = 1
+        contract_sha256 = $ContractSha256.ToUpperInvariant()
+        hashes = [ordered]@{
+            contract = Get-Sha256 $ContractPath
+            generator = Get-Sha256 $Generator
+            surface_t1 = Get-Sha256 $SurfaceT1
+            deferred_t1 = Get-Sha256 $DeferredT1
+            scheduler_census = Get-Sha256 $Census
+        }
+        planner = [ordered]@{
+            attempts = Get-UniqueInteger $deferredText 'planner_attempts'
+            outer_passage_attempts = Get-UniqueInteger $deferredText 'planner_outer_passage_attempts'
+            outer_passage_plan_ms = Get-UniqueInteger $deferredText 'planner_outer_passage_plan_ms'
+            total_ms = Get-UniqueInteger $deferredText 'planner_total_ms'
+            fresh_grid_orchestration_total_ms = Get-UniqueInteger $deferredText 'planner_fresh_grid_orchestration_total_ms'
+        }
+    }
+    Write-Json $Receipt $receipt
+    Write-Json $Timing ([ordered]@{
+        schema = 'smr.ralph.external_timing.v2'; diagnostic_only = $false; acceptance_timing_eligible = $true
+        t0_utc = $t0.ToString('o'); t1_utc = $t1.ToString('o'); t0_to_t1_ms = $elapsedMs
+        trace_active = $false; underground_access_included = $false; surface_only = $true
+    })
+    Stop-TrackedGame 'successful surface-only acceptance'
+} catch {
+    $failures.Add($_.Exception.Message)
+} finally {
+    if ($daemonStartAttempted -and -not $script:trackedQuitSucceeded) {
+        try { Stop-TrackedGame 'surface-only finally cleanup' } catch { $failures.Add($_.Exception.Message) }
+    }
+    try {
+        Copy-Item -LiteralPath $SourceConfig -Destination $DeployedConfig -Force
+        if ((Get-Sha256 $DeployedConfig) -cne ([string]$script:Contract.expected_disabled_config_sha256).ToUpperInvariant()) { throw 'disabled config restore hash mismatch' }
+        Assert-DeployAudit $false
+    } catch { $failures.Add($_.Exception.Message) }
+}
+if ($failures.Count -ne 0) { throw ($failures -join ' | ') }
+Write-Output 'SURFACE_ONLY_ACCEPTANCE_COMPLETE_AND_DEPLOYMENT_RESTORED'

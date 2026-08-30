@@ -1,0 +1,56 @@
+{
+  "schema": "smr.ralph.surface-only-acceptance-contract.v1",
+  "repo": "D:\\PROJS\\SMR\\super-big-map",
+  "stage": "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tmp\\<candidate-stage>",
+  "run": "D:\\PROJS\\SMR\\super-big-map\\_ralph\\runs\\surface-loading-under-60s-rough\\artifacts\\<candidate-run>",
+  "harness": "D:\\PROJS\\SMR\\smr-harness\\cli.py",
+  "source_config": "D:\\PROJS\\SMR\\super-big-map\\Code\\sbm_config.lua",
+  "deployed_config": "C:\\Users\\fazevedo\\AppData\\Roaming\\Surviving Mars Relaunched\\Mods\\super-big-map\\Code\\sbm_config.lua",
+  "deployed_config_repo_relative": "Code/sbm_config.lua",
+  "enabled_config": "sbm_config_flag_on.lua",
+  "generator_script": "generate_14N134W_rough_reference.lua",
+  "surface_t1_file": "surface_t1_stable.txt",
+  "deferred_t1_file": "passage_deferred_t1.txt",
+  "scheduler_census_file": "surface_scheduler_census.txt",
+  "expected_disabled_config_sha256": "<64-UPPERCASE-HEX>",
+  "expected_enabled_config_sha256": "<64-UPPERCASE-HEX>",
+  "expected_deploy_file_count": 36,
+  "t1_timeout_seconds": 240,
+  "maximum_t0_to_t1_ms": 100000,
+  "stage_files": {
+    "generate_14N134W_rough_reference.lua": "<64-UPPERCASE-HEX>",
+    "sbm_config_flag_on.lua": "<64-UPPERCASE-HEX>"
+  },
+  "allowed_initial_run_files": [
+    "checkpoint_reference_iter197_v963_surface.json",
+    "stage_manifest.json"
+  ],
+  "required_surface_t1_tokens": [
+    "surface_stretch_done=true",
+    "post_pipeline_revalidation_complete=true",
+    "surface_expansion_pending=false",
+    "stretch_pipeline_pending=false",
+    "expansion_loading_visible=false",
+    "lazy_underground_deferred_certificate=true",
+    "maps2_absent=true",
+    "underground_map_absent=true",
+    "no_background_generation=true"
+  ],
+  "required_deferred_t1_tokens": [
+    "ok=true",
+    "mode=deferred-unallocated",
+    "maps2_absent=true",
+    "underground_map_absent=true",
+    "descriptor_state=ready-for-first-access",
+    "generation_count=0",
+    "materialization_attempts=0",
+    "planner_contract=true",
+    "planner_used=true",
+    "digest_exact=true",
+    "captured_before_surface_t1_sentinel=true"
+  ],
+  "required_scheduler_census_tokens": [
+    "schema=smr.ralph.surface_scheduler_census.v1",
+    "setup_executed=true"
+  ]
+}
