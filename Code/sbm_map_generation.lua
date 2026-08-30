@@ -12144,6 +12144,23 @@ function Lazy.MaterializeTransaction(surface, descriptor, route)
 	if pipeline_ok ~= true then
 		return nil, "deferred underground completion failed: " .. tostring(pipeline_reason)
 	end
+	local passage_pad_z_certificate_exact =
+		type(descriptor.materialization_passage_pad_z_digest) == "number"
+		and descriptor.materialization_passage_pad_z_digest > 0
+		and tonumber(descriptor.materialization_passage_pad_z_certificates) == 2
+		and tonumber(report and report.materialization_passage_pad_z_certificates) == 2
+		and report.materialization_passage_pad_z_digest
+			== descriptor.materialization_passage_pad_z_digest
+		and tonumber(underground.SuperBigMapUndergroundPassagePadZCertificates) == 2
+		and underground.SuperBigMapUndergroundPassagePadZDigest
+			== descriptor.materialization_passage_pad_z_digest
+	if type(report) == "table" then
+		report.materialization_passage_pad_z_certificate_exact =
+			passage_pad_z_certificate_exact == true
+	end
+	if not passage_pad_z_certificate_exact then
+		return nil, "deferred underground completion omitted the exact passage-pad target-Z certificate"
+	end
 	if descriptor.materialization_passage_pair_ok ~= true
 		or descriptor.materialization_enrichment_reachability_ok ~= true then
 		return nil, "deferred underground completion omitted a mandatory passage/enrichment audit"

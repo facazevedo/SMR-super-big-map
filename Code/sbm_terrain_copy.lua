@@ -8752,10 +8752,10 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 			local ok, valid = pcall(validate_shape, elevator_shape, center, angle or 0, valid_hex)
 			if not ok then return false, "Elevator shape validation failed" end
 			if valid ~= true then return false, failure_reason or "invalid Elevator footprint" end
-			return true
+			return true, nil, level
 		end
 		local valid = valid_hex(q, r)
-		return valid, valid and nil or failure_reason
+		return valid, valid and nil or failure_reason, valid and level or nil
 	end
 
 	-- Diagnostics only, never a placement input: footprint_buildable stops at the FIRST hex that
@@ -9021,6 +9021,94 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 		return z, nil, q, r
 	end
 
+	-- Lazy first access runs only after the underground terrain/buildable grids have been stretched
+	-- into their final domain.  At that point the generated underground anchor is intentionally still
+	-- parked at its native source coordinate, so reading BuildableGrid:GetZ there does *not* recover a
+	-- source-domain level (and can read the unbuildable sentinel at an unrelated final-domain cell).
+	-- Bind the explicit flatten level to the committed final capsule instead: first prove the live
+	-- process-local materialization transaction and the complete published Surface certificate, then
+	-- sample the untouched underground terrain at that exact final coordinate.  Surface validation_z
+	-- remains an integrity input only; it is a Surface elevation and must never become the underground
+	-- target elevation.
+	local function certified_lazy_underground_target_level(surface_anchor, map, x, y, q, r)
+		local index = tonumber(surface_anchor and surface_anchor.SuperBigMapLazyUndergroundCapsuleIndex)
+		if not index then return nil, "not a lazy underground capsule" end
+		if index ~= math.floor(index) or index < 1 or index > 2 then
+			return nil, "lazy capsule index is invalid"
+		end
+		local descriptor = surface_map and surface_map.SuperBigMapLazyUndergroundDescriptor
+		local report = surface_map and surface_map.SuperBigMapLazyUndergroundFeasibilityReport
+		local lazy = SuperBigMap.LazyUndergroundFeasibility
+		local owned, phase, owner_reason = type(lazy) == "table"
+			and type(lazy.OwnedMaterializationInFlight) == "function"
+			and lazy.OwnedMaterializationInFlight(surface_map, descriptor, report)
+		if owned ~= true or phase ~= "materialization-deferred-pipeline" then
+			return nil, "lazy target-level owner/certificate is invalid: "
+				.. tostring(owner_reason or phase)
+		end
+		if type(descriptor.capsules) ~= "table" or #descriptor.capsules ~= 2
+			or tonumber(descriptor.capsule_planner_version) ~= tonumber(lazy.CAPSULE_PLANNER_VERSION)
+			or (tonumber(descriptor.plan_digest) or 0) <= 0
+			or (tonumber(descriptor.validation_z_digest) or 0) <= 0
+			or tonumber(report.plan_digest) ~= tonumber(descriptor.plan_digest)
+			or tonumber(report.validation_z_digest) ~= tonumber(descriptor.validation_z_digest)
+			or tonumber(report.validation_z_certificates) ~= 2
+			or report.main_depth_zero_validation_exact ~= true
+			or report.replay_depth_zero_validation_exact ~= true
+			or report.final_grid_revalidation ~= true then
+			return nil, "lazy target-level published certificate is incomplete"
+		end
+		local modulus = 2147483647
+		local validation_digest = tonumber(descriptor.plan_digest)
+		for capsule_index, entry in ipairs(descriptor.capsules) do
+			local validation_z = type(entry) == "table" and entry.validation_z or nil
+			if type(validation_z) ~= "number" or validation_z ~= validation_z
+				or validation_z ~= math.floor(validation_z)
+				or validation_z < 0 or validation_z >= 65535 then
+				return nil, "lazy target-level Surface validation-Z is invalid"
+			end
+			validation_digest = (validation_digest * 48271
+				+ validation_z + capsule_index) % modulus
+		end
+		if validation_digest == 0 then validation_digest = 1 end
+		if validation_digest ~= descriptor.validation_z_digest then
+			return nil, "lazy target-level Surface validation-Z digest mismatch"
+		end
+		local capsule = descriptor.capsules[index]
+		local surface_pos = ObjectPosition(surface_anchor)
+		local sx, sy = PointXY(surface_pos)
+		local surface_angle = type(surface_anchor.GetAngle) == "function"
+			and SafeCall(surface_anchor.GetAngle, surface_anchor) or nil
+		if type(capsule) ~= "table" or tonumber(capsule.index) ~= index
+			or capsule.published ~= true
+			or capsule.x ~= x or capsule.y ~= y or capsule.q ~= q or capsule.r ~= r
+			or sx ~= x or sy ~= y or surface_angle ~= capsule.angle then
+			return nil, "lazy target-level capsule/coordinate identity mismatch"
+		end
+		if type(terrain_api) ~= "table" or type(terrain_api.GetHeight) ~= "function" then
+			return nil, "lazy target terrain height API unavailable"
+		end
+		local height_ok, target_z = pcall(terrain_api.GetHeight, map, point_fn(x, y))
+		if not height_ok or type(target_z) ~= "number" or target_z ~= target_z
+			or target_z ~= math.floor(target_z) or target_z < 0 or target_z >= 65535 then
+			return nil, "lazy committed target terrain level invalid"
+		end
+		local certificate_digest = (tonumber(descriptor.plan_digest)
+			+ tonumber(descriptor.validation_z_digest)) % modulus
+		local fields = { index, x, y, q, r, capsule.angle, capsule.validation_z, target_z }
+		for _, value in ipairs(fields) do
+			certificate_digest = (certificate_digest * 48271 + value) % modulus
+		end
+		if certificate_digest == 0 then certificate_digest = 1 end
+		return target_z, nil, {
+			index = index, target_z = target_z, digest = certificate_digest,
+			descriptor = descriptor, report = report, capsule = capsule,
+			plan_digest = descriptor.plan_digest,
+			validation_z_digest = descriptor.validation_z_digest,
+			surface_validation_z = capsule.validation_z,
+		}
+	end
+
 	local function prepare_passage_pad(anchor, map, x, y, target_z, pair_index, preparation_debug)
 		if not elevator_shape or type(flatten_build_shape) ~= "function" then
 			return false, "vanilla passage-pad preparation unavailable"
@@ -9178,6 +9266,7 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 	local seen = {}
 	local linked_pairs = {}
 	local final_prepared_validations = {}
+	local lazy_target_certificates = {}
 	if type(underground_map.MapForEach) == "function" then
 		pcall(underground_map.MapForEach, underground_map, "map", "ElevatorPassage", function(anchor)
 			local surface_anchor = anchor and anchor.other
@@ -9198,7 +9287,7 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 	local preparation_debug
 	if not source_bootstrap then
 		preparation_debug = {
-			schema = 2, bounded = true, maximum_pairs = 2, maximum_records = 24,
+			schema = 3, bounded = true, maximum_pairs = 2, maximum_records = 24,
 			pair_count = #linked_pairs,
 			records = {},
 		}
@@ -9632,7 +9721,7 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 
 		local expected_ux, expected_uy
 		local post_underground_q, post_underground_r
-		local underground_preparation_z
+		local underground_preparation_z, lazy_target_certificate
 		if source_bootstrap then
 			expected_ux, expected_uy = plan.source_x, plan.source_y
 			post_underground_q, post_underground_r = plan.source_q, plan.source_r
@@ -9658,18 +9747,43 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 			expected_ux, expected_uy = plan.final_x, plan.final_y
 			post_underground_q, post_underground_r = plan.final_q, plan.final_r
 			local source_level_reason, source_q, source_r
-			underground_preparation_z, source_level_reason, source_q, source_r =
-				passage_pad_level(underground_anchor, underground_map)
+			local lazy_capsule_index = tonumber(
+				surface_anchor.SuperBigMapLazyUndergroundCapsuleIndex)
+			if lazy_capsule_index then
+				underground_preparation_z, source_level_reason, lazy_target_certificate =
+					certified_lazy_underground_target_level(surface_anchor, underground_map,
+						expected_ux, expected_uy, post_underground_q, post_underground_r)
+				source_q, source_r = post_underground_q, post_underground_r
+				if lazy_target_certificate then
+					if lazy_target_certificates[lazy_target_certificate.index] then
+						return false, { error = "duplicate lazy passage target-level certificate",
+							pairs = stats.pairs, reason = lazy_target_certificate.index }
+					end
+					lazy_target_certificates[lazy_target_certificate.index] = lazy_target_certificate
+				end
+			else
+				underground_preparation_z, source_level_reason, source_q, source_r =
+					passage_pad_level(underground_anchor, underground_map)
+			end
 			append_preparation_debug(preparation_debug, {
-				pair = i, stage = "source-level-captured", valid = underground_preparation_z ~= nil,
+				pair = i, stage = lazy_capsule_index and "target-level-certified"
+					or "source-level-captured", valid = underground_preparation_z ~= nil,
 				reason = tostring(source_level_reason or ""), q = source_q, r = source_r,
 				x = ux, y = uy, target_x = expected_ux, target_y = expected_uy,
 				target_z = underground_preparation_z,
+				capsule_index = lazy_target_certificate and lazy_target_certificate.index or nil,
+				capsule_validation_z = lazy_target_certificate
+					and lazy_target_certificate.surface_validation_z or nil,
+				capsule_validation_z_digest = lazy_target_certificate
+					and lazy_target_certificate.validation_z_digest or nil,
+				target_level_digest = lazy_target_certificate and lazy_target_certificate.digest or nil,
 				footprint = source_q and describe_footprint(underground_map, source_q, source_r,
 					underground_angle, underground_anchor) or "",
 			})
 			if underground_preparation_z == nil then
-				return false, { error = "true underground passage source level unavailable",
+				return false, { error = lazy_capsule_index
+						and "true underground passage target level unavailable"
+						or "true underground passage source level unavailable",
 					pairs = stats.pairs, reason = source_level_reason }
 			end
 			if sx ~= surface_x or sy ~= surface_y then
@@ -9787,7 +9901,7 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 		end
 		if prepare_underground then
 			if preparation_debug and i <= preparation_debug.maximum_pairs then
-				local valid_before, reason_before = footprint_buildable(
+				local valid_before, reason_before, level_before = footprint_buildable(
 					underground_map, post_underground_q, post_underground_r,
 					underground_angle, underground_anchor)
 				preparation_debug.records[#preparation_debug.records + 1] = {
@@ -9795,6 +9909,7 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 					reason = tostring(reason_before or ""), q = post_underground_q,
 					r = post_underground_r, x = expected_ux, y = expected_uy,
 					angle = underground_angle,
+					level = level_before,
 					footprint = describe_footprint(underground_map, post_underground_q,
 						post_underground_r, underground_angle, underground_anchor),
 				}
@@ -9806,7 +9921,7 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 					reason = reason }
 			end
 			if preparation_debug and i <= preparation_debug.maximum_pairs then
-				local valid_after, reason_after = footprint_buildable(
+				local valid_after, reason_after, level_after = footprint_buildable(
 					underground_map, post_underground_q, post_underground_r,
 					underground_angle, underground_anchor)
 				preparation_debug.records[#preparation_debug.records + 1] = {
@@ -9814,13 +9929,15 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 					reason = tostring(reason_after or ""), q = post_underground_q,
 					r = post_underground_r, x = expected_ux, y = expected_uy,
 					angle = underground_angle,
+					level = level_after, target_level_exact = level_after == underground_preparation_z,
 					footprint = describe_footprint(underground_map, post_underground_q,
 						post_underground_r, underground_angle, underground_anchor),
 				}
 			end
 		end
 		if prepare_surface or prepare_underground then
-			local prepared_underground_valid, prepared_underground_reason = footprint_buildable(
+			local prepared_underground_valid, prepared_underground_reason,
+				prepared_underground_level = footprint_buildable(
 				underground_map, post_underground_q, post_underground_r,
 				underground_angle, underground_anchor)
 			local prepared_surface_valid, prepared_surface_reason
@@ -9845,11 +9962,17 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 				underground_q = plan.final_q, underground_r = plan.final_r,
 				surface_q = surface_q, surface_r = surface_r,
 			}, underground_map)
-			if not prepared_underground_valid or not prepared_surface_valid then
+			if not prepared_underground_valid
+				or (prepare_underground and prepared_underground_level ~= underground_preparation_z)
+				or not prepared_surface_valid then
 				return false, {
 					error = "linked passage post-preparation terrain validation failed",
 					pairs = stats.pairs,
-					underground_reason = prepared_underground_reason,
+					underground_reason = not prepared_underground_valid
+						and prepared_underground_reason
+						or (prepare_underground
+							and prepared_underground_level ~= underground_preparation_z
+							and "explicit target level mismatch" or nil),
 					surface_reason = prepared_surface_reason,
 				}
 			end
@@ -9858,6 +9981,7 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 					pair = i, map = underground_map, q = post_underground_q,
 					r = post_underground_r, angle = underground_angle,
 					anchor = underground_anchor, target_z = underground_preparation_z,
+					lazy_target_certificate = lazy_target_certificate,
 				}
 			end
 		end
@@ -9889,20 +10013,61 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 	-- immediate check. Re-run the same complete validator after every pair and dependant move.
 	for i = 1, #final_prepared_validations do
 		local item = final_prepared_validations[i]
-		local final_valid, final_reason = footprint_buildable(
+		local final_valid, final_reason, final_level = footprint_buildable(
 			item.map, item.q, item.r, item.angle, item.anchor)
 		append_preparation_debug(preparation_debug, {
 			pair = item.pair, stage = "transaction-final", valid = final_valid == true,
 			reason = tostring(final_reason or ""), q = item.q, r = item.r,
-			target_z = item.target_z,
+			target_z = item.target_z, level = final_level,
+			target_level_exact = final_level == item.target_z,
 			footprint = describe_footprint(item.map, item.q, item.r, item.angle, item.anchor),
 		})
-		if not final_valid then
+		if not final_valid or final_level ~= item.target_z then
 			return false, {
 				error = "linked passage transaction-final terrain validation failed",
-				pairs = stats.pairs, pair = item.pair, underground_reason = final_reason,
+				pairs = stats.pairs, pair = item.pair,
+				underground_reason = final_valid and "explicit target level mismatch" or final_reason,
 			}
 		end
+	end
+	local lazy_certificate_count = 0
+	for index = 1, 2 do
+		if lazy_target_certificates[index] then lazy_certificate_count = lazy_certificate_count + 1 end
+	end
+	if lazy_certificate_count > 0 then
+		if lazy_certificate_count ~= 2 or #final_prepared_validations ~= 2 then
+			return false, { error = "lazy passage target-level certificate count is not exact",
+				pairs = stats.pairs, certificates = lazy_certificate_count }
+		end
+		local first = lazy_target_certificates[1]
+		local descriptor, report = first.descriptor, first.report
+		local aggregate = tonumber(descriptor and descriptor.plan_digest) or 0
+		for index = 1, 2 do
+			local certificate = lazy_target_certificates[index]
+			if certificate.descriptor ~= descriptor or certificate.report ~= report
+				or certificate.capsule ~= descriptor.capsules[index]
+				or certificate.plan_digest ~= descriptor.plan_digest
+				or certificate.validation_z_digest ~= descriptor.validation_z_digest
+				or type(certificate.digest) ~= "number" or certificate.digest <= 0 then
+				return false, { error = "lazy passage target-level certificate identity drifted",
+					pairs = stats.pairs, pair = index }
+			end
+			aggregate = (aggregate * 48271 + certificate.digest + index) % 2147483647
+		end
+		if aggregate == 0 then aggregate = 1 end
+		for index = 1, 2 do
+			local certificate = lazy_target_certificates[index]
+			certificate.capsule.underground_preparation_z = certificate.target_z
+			certificate.capsule.underground_preparation_z_digest = certificate.digest
+		end
+		descriptor.materialization_passage_pad_z_certificates = 2
+		descriptor.materialization_passage_pad_z_digest = aggregate
+		report.materialization_passage_pad_z_certificates = 2
+		report.materialization_passage_pad_z_digest = aggregate
+		underground_map.SuperBigMapUndergroundPassagePadZCertificates = 2
+		underground_map.SuperBigMapUndergroundPassagePadZDigest = aggregate
+		stats.lazy_target_z_certificates = 2
+		stats.lazy_target_z_digest = aggregate
 	end
 	stats.dependant_map_scans = dependant_scan_stats.scans
 	stats.dependant_objects_scanned = dependant_scan_stats.objects

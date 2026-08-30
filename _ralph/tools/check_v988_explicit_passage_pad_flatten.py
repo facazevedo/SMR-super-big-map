@@ -29,8 +29,8 @@ def main() -> None:
     metadata = (ROOT / "metadata.lua").read_text(encoding="utf-8")
     version = (ROOT / "Code/sbm_version.lua").read_text(encoding="utf-8")
 
-    require(metadata, "'version', 988", "metadata version")
-    require(version, "GENERATOR_PATCH_VERSION = 294", "generator identity")
+    require(metadata, "'version', 989", "metadata version")
+    require(version, "GENERATOR_PATCH_VERSION = 295", "generator identity")
     require(rocket, "LANDING_FLATTEN_PATCH_VERSION = 3", "flatten wrapper identity")
     require(rocket, 'local native = Global("FlattenTerrainInShape")', "official native overload")
     require(rocket, "map.buildable.z_grid, map.object_hex_grid, inner, outer, -1, explicit_z",
@@ -40,8 +40,9 @@ def main() -> None:
     require(rocket, 'error("invalid scoped passage-pad explicit-level capability")',
             "invalid capability rejection")
     require(terrain, "underground_preparation_z, source_level_reason, source_q, source_r =",
-            "pre-move source level capture")
-    require(terrain, 'stage = "source-level-captured"', "source debug")
+            "ordinary pre-move source level fallback")
+    require(terrain, 'or "source-level-captured"', "ordinary source debug")
+    require(terrain, '"target-level-certified"', "lazy committed-target debug")
     require(terrain, 'stage = "native-explicit-level"', "native debug")
     require(terrain, 'stage = "before"', "before footprint debug")
     require(terrain, 'stage = "after"', "after footprint debug")
@@ -50,7 +51,7 @@ def main() -> None:
     require(terrain, 'error = "linked passage transaction-final terrain validation failed"',
             "later mutation rejection")
     ordered(terrain, [
-        "passage_pad_level(underground_anchor, underground_map)",
+        "certified_lazy_underground_target_level(surface_anchor, underground_map,",
         "clear_passage_obstructions(underground_anchor,",
         "move_object(underground_anchor, underground_map, expected_ux, expected_uy)",
         "prepare_passage_pad(underground_anchor, underground_map,",
@@ -65,7 +66,7 @@ def main() -> None:
     ], "capability>native>cleanup>certificate>resnap")
 
     print("ok=true")
-    print("version=988")
+    print("version=989")
     print("native_signature=shape,obj,z_grid,object_grid,inner,outer,-1,explicit_z")
     print("validation_order=immediate>transaction-final")
     print("diagnostic_bound=pairs2,records24")

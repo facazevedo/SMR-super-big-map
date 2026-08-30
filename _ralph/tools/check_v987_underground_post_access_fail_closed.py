@@ -60,15 +60,20 @@ def main() -> None:
     require(generation, "descriptor.materialization_passage_pair_ok", "descriptor pair evidence")
     require(generation, "descriptor.materialization_enrichment_reachability_ok",
             "descriptor enrichment evidence")
+    require(generation, "passage_pad_z_certificate_exact",
+            "lazy passage target-Z completion certificate")
+    require(generation,
+            "deferred underground completion omitted the exact passage-pad target-Z certificate",
+            "missing target-Z certificate rejection")
     if re.search(r'if pair_ok ~= true then\s+error\(', generation):
         raise SystemExit("pair false path still relies on error()")
     if re.search(r'if audit_ok ~= true then\s+error\(', generation):
         raise SystemExit("enrichment false path still relies on error()")
-    require(metadata, "'version', 988", "metadata v988")
-    require(version, "GENERATOR_PATCH_VERSION = 294", "generator patch 294")
+    require(metadata, "'version', 989", "metadata v989")
+    require(version, "GENERATOR_PATCH_VERSION = 295", "generator patch 295")
 
     print("ok=true")
-    print("version=988")
+    print("version=989")
     print("explicit_false_boundaries=2")
     print("persisted_debug_channels=2")
     print("relocation_order=precheck>SetPos>exact-terrain-certificate")
