@@ -13,6 +13,7 @@
   "surface_t1_file": "surface_t1_stable.txt",
   "deferred_t1_file": "passage_deferred_t1.txt",
   "scheduler_census_file": "surface_scheduler_census.txt",
+  "post_t1_scalar_file": "capture_final.txt",
   "expected_disabled_config_sha256": "<64-UPPERCASE-HEX>",
   "expected_enabled_config_sha256": "<64-UPPERCASE-HEX>",
   "expected_deploy_file_count": 36,

@@ -377,13 +377,98 @@ def benchmark_block(
 \t\t\t\trawset(_G, "AsyncRand", original_async_rand)
 \t\t\t\tstate.async_rand_dispatcher_restored = rawget(_G, "AsyncRand") == original_async_rand
 \t\t\t\tif state.async_rand_dispatcher_restored ~= true then error("AsyncRand restore failed") end
-\t\t\t\tlocal text = table.concat({{
-\t\t\t\t\t"schema=smr.ralph.surface_only_post_t1_scalar.v1",
+\t\t\t\t-- Scalar-only and deliberately post-T1: no capture, tracing, or scan can
+\t\t\t\t-- perturb the acceptance timing window.
+\t\t\t\tlocal surface = state.surface_at_t1
+\t\t\t\tlocal report = type(surface) == "table" and surface.SuperBigMapLazyUndergroundFeasibilityReport or nil
+\t\t\t\tlocal helper = type(surface) == "table" and surface.SuperBigMapSurfaceSingleFlushReport or nil
+\t\t\t\tif type(report) ~= "table" or type(helper) ~= "table" then
+\t\t\t\t\terror("surface-only single-flush report/helper unavailable after T1")
+\t\t\t\tend
+\t\t\t\tlocal function scalar(rows, name, value)
+\t\t\t\t\tlocal kind = type(value)
+\t\t\t\t\tif value == nil or (kind ~= "string" and kind ~= "number" and kind ~= "boolean") then
+\t\t\t\t\t\terror("surface-only scalar missing/unknown field: " .. tostring(name))
+\t\t\t\t\tend
+\t\t\t\t\tlocal text_value = tostring(value)
+\t\t\t\t\tif string.find(text_value, "[\\r\\n]") then
+\t\t\t\t\t\terror("surface-only scalar field contains newline: " .. tostring(name))
+\t\t\t\t\tend
+\t\t\t\t\trows[#rows + 1] = tostring(name) .. "=" .. text_value
+\t\t\t\t\treturn value
+\t\t\t\tend
+\t\t\t\tlocal rows = {{
+\t\t\t\t\t"schema=smr.ralph.surface_only_single_flush_scalar.v1",
 \t\t\t\t\t"surface_stable_published=true", "post_t1_only=true",
 \t\t\t\t\t"pre_t1_capture_bytes=0", "capture_status=surface-only-none",
 \t\t\t\t\t"async_rand_draw_count=" .. tostring(state.async_rand_draw_count),
 \t\t\t\t\t"async_rand_dispatcher_restored=true",
-\t\t\t\t}}, "\\n") .. "\\n"
+\t\t\t\t}}
+\t\t\t\tlocal main_fields = {{
+\t\t\t\t\t"surface_single_flush_requested", "surface_single_flush_used", "surface_single_flush_fallback", "surface_single_flush_fallback_reason",
+\t\t\t\t\t"surface_single_flush_local_passability_calls", "surface_single_flush_buildable_calls", "surface_single_flush_height_snapshots", "surface_single_flush_height_mismatches",
+\t\t\t\t\t"surface_single_flush_object_family_count", "surface_single_flush_object_association_failures", "surface_single_flush_provenance_exact", "surface_single_flush_dirty_digest",
+\t\t\t\t\t"surface_single_flush_dirty_regions", "surface_single_flush_coverage_permille", "surface_single_flush_closing_complete", "surface_single_flush_cleanup_complete",
+\t\t\t\t\t"outer_passage_pad_finalization_dirty_digest", "canonical_rebuilds_during_capsule_prepare", "canonical_rebuild_fallbacks_during_capsule_prepare",
+\t\t\t\t\t"fresh_grid_first_rebuild_ms", "fresh_grid_main_plan_ms", "fresh_grid_replay_ms", "fresh_grid_publication_ms", "fresh_grid_plan_replay_publication_ms",
+\t\t\t\t\t"fresh_grid_closing_rebuild_ms", "fresh_grid_orchestration_total_ms", "fresh_grid_phase_order", "fresh_grid_expected_rebuilds",
+\t\t\t\t\t"fresh_grid_rebuild_shape_exact", "fresh_grid_first_rebuild_complete", "fresh_grid_closing_rebuild_complete",
+\t\t\t\t}}
+\t\t\t\tfor i = 1, #main_fields do
+\t\t\t\t\tlocal name = main_fields[i]
+\t\t\t\t\tscalar(rows, name, report[name])
+\t\t\t\tend
+\t\t\t\tlocal helper_fields = {{
+\t\t\t\t\t"schema", "requested", "used", "phase", "error", "fallback", "provenance_exact", "dirty_digest", "regions", "terrain_cells",
+\t\t\t\t\t"coverage_permille", "dependency_margin", "height_snapshots", "height_mismatches", "object_family_count", "object_association_failures",
+\t\t\t\t\t"object_containment_failures", "passability_calls", "buildable_calls", "preplan_complete", "closing_complete", "cleanup_complete",
+\t\t\t\t}}
+\t\t\t\tfor i = 1, #helper_fields do
+\t\t\t\t\tlocal name = helper_fields[i]
+\t\t\t\t\tscalar(rows, "helper_" .. name, helper[name])
+\t\t\t\tend
+\t\t\t\tif tonumber(helper.schema) ~= 1
+\t\t\t\t\tor (helper.phase ~= "preplan" and helper.phase ~= "closing") then
+\t\t\t\t\terror("surface-only helper schema/phase is unknown")
+\t\t\t\tend
+\t\t\t\tlocal optimized = report.surface_single_flush_requested == true
+\t\t\t\t\tand report.surface_single_flush_used == true and report.surface_single_flush_fallback ~= true
+\t\t\t\t\tand report.surface_single_flush_provenance_exact == true
+\t\t\t\t\tand tonumber(report.surface_single_flush_local_passability_calls) == 4
+\t\t\t\t\tand tonumber(report.surface_single_flush_buildable_calls) == 2
+\t\t\t\t\tand tonumber(report.surface_single_flush_height_snapshots) == 2
+\t\t\t\t\tand tonumber(report.surface_single_flush_height_mismatches) == 0
+\t\t\t\t\tand tonumber(report.surface_single_flush_object_family_count) == 6
+\t\t\t\t\tand tonumber(report.surface_single_flush_object_association_failures) == 0
+\t\t\t\t\tand tonumber(helper.object_containment_failures) == 0
+\t\t\t\t\tand tonumber(report.surface_single_flush_dirty_digest) == tonumber(report.outer_passage_pad_finalization_dirty_digest)
+\t\t\t\t\tand tonumber(report.surface_single_flush_dirty_regions) == 2
+\t\t\t\t\tand (tonumber(report.surface_single_flush_coverage_permille) or 0) > 0
+\t\t\t\t\tand (tonumber(report.surface_single_flush_coverage_permille) or 151) <= 150
+\t\t\t\t\tand report.surface_single_flush_closing_complete == true and report.surface_single_flush_cleanup_complete == true
+\t\t\t\t\tand tonumber(report.canonical_rebuilds_during_capsule_prepare) == 0
+\t\t\t\t\tand tonumber(report.canonical_rebuild_fallbacks_during_capsule_prepare) == 0
+\t\t\t\t\tand tonumber(report.fresh_grid_expected_rebuilds) == 0 and report.fresh_grid_rebuild_shape_exact == true
+\t\t\t\t\tand report.fresh_grid_first_rebuild_complete == true and report.fresh_grid_closing_rebuild_complete == true
+\t\t\t\t\tand report.fresh_grid_phase_order == "local-dirty-grid-publication>fresh-plan-replay>capsule-publication>local-dirty-closing"
+\t\t\t\tlocal canonical = report.surface_single_flush_requested == true
+\t\t\t\t\tand report.surface_single_flush_used ~= true and report.surface_single_flush_fallback == true
+\t\t\t\t\tand tostring(report.surface_single_flush_fallback_reason or "") ~= ""
+\t\t\t\t\tand tonumber(report.canonical_rebuilds_during_capsule_prepare) >= 1
+\t\t\t\t\tand tonumber(report.canonical_rebuilds_during_capsule_prepare) <= 2
+\t\t\t\t\tand tonumber(report.canonical_rebuild_fallbacks_during_capsule_prepare) == 0
+\t\t\t\t\tand tonumber(report.fresh_grid_expected_rebuilds) == tonumber(report.canonical_rebuilds_during_capsule_prepare)
+\t\t\t\t\tand report.fresh_grid_rebuild_shape_exact == true and report.fresh_grid_first_rebuild_complete == true
+\t\t\t\t\tand report.fresh_grid_closing_rebuild_complete == true
+\t\t\t\t\tand report.fresh_grid_phase_order == "canonical-grid-publication>fresh-plan-replay>capsule-publication>closing-rebuild"
+\t\t\t\tif not optimized and not canonical then
+\t\t\t\t\terror("surface-only single-flush tuple is neither exact optimized nor canonical fallback")
+\t\t\t\tend
+\t\t\t\tscalar(rows, "tuple", optimized and "optimized" or "canonical-fallback")
+\t\t\t\tscalar(rows, "caller_fallback_reason", report.surface_single_flush_fallback_reason)
+\t\t\t\tscalar(rows, "comparison_ms", report.fresh_grid_plan_replay_publication_ms)
+\t\t\t\tscalar(rows, "proof_ms", report.fresh_grid_orchestration_total_ms)
+\t\t\t\tlocal text = table.concat(rows, "\\n") .. "\\n"
 \t\t\t\tlocal write_error = AsyncStringToFile("{lua_path(final_sentinel)}", text)
 \t\t\t\tif write_error then error("surface-only scalar write failed: " .. tostring(write_error)) end
 \t\t\t\treturn true
@@ -522,6 +607,7 @@ def benchmark_block(
 \t\t\t\t\tor loading_visible then
 \t\t\t\t\terror("surface stable predicate failed")
 \t\t\t\tend
+\t\t\t\tstate.surface_at_t1 = surface
 \t\t\t\tlocal text = table.concat({{
 \t\t\t\t\t"schema=" .. state.schema,
 \t\t\t\t\t"coordinate=" .. state.coordinate,

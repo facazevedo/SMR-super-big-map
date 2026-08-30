@@ -44,6 +44,141 @@ function Get-UniqueInteger([string]$Text, [string]$Name) {
     [Int64]$m[0].Groups['v'].Value
 }
 
+function Get-ScalarReceipt([string]$Text) {
+    $values = @{}
+    foreach ($line in ($Text -split "`r?`n")) {
+        if ($line.Length -eq 0) { continue }
+        $separator = $line.IndexOf('=')
+        if ($separator -le 0) { throw "malformed scalar receipt line: $line" }
+        $name = $line.Substring(0, $separator)
+        $value = $line.Substring($separator + 1)
+        if ($values.ContainsKey($name)) { throw "scalar receipt duplicate field: $name" }
+        $values[$name] = $value
+    }
+    $values
+}
+
+function Get-ScalarText($Values, [string]$Name) {
+    if (-not $Values.ContainsKey($Name)) { throw "scalar receipt missing/unknown field: $Name" }
+    [string]$Values[$Name]
+}
+
+function Get-ScalarInteger($Values, [string]$Name) {
+    $value = Get-ScalarText $Values $Name
+    if ($value -notmatch '^-?\d+$') { throw "scalar receipt non-integer field: $Name" }
+    [Int64]$value
+}
+
+function Get-ScalarBoolean($Values, [string]$Name) {
+    $value = Get-ScalarText $Values $Name
+    if ($value -ceq 'true') { return $true }
+    if ($value -ceq 'false') { return $false }
+    throw "scalar receipt non-boolean field: $Name"
+}
+
+function Assert-SurfaceSingleFlushScalar([string]$Text) {
+    $values = Get-ScalarReceipt $Text
+    $main = @(
+        'surface_single_flush_requested', 'surface_single_flush_used', 'surface_single_flush_fallback', 'surface_single_flush_fallback_reason',
+        'surface_single_flush_local_passability_calls', 'surface_single_flush_buildable_calls', 'surface_single_flush_height_snapshots',
+        'surface_single_flush_height_mismatches', 'surface_single_flush_object_family_count', 'surface_single_flush_object_association_failures',
+        'surface_single_flush_provenance_exact', 'surface_single_flush_dirty_digest', 'surface_single_flush_dirty_regions',
+        'surface_single_flush_coverage_permille', 'surface_single_flush_closing_complete', 'surface_single_flush_cleanup_complete',
+        'outer_passage_pad_finalization_dirty_digest', 'canonical_rebuilds_during_capsule_prepare',
+        'canonical_rebuild_fallbacks_during_capsule_prepare', 'fresh_grid_first_rebuild_ms', 'fresh_grid_main_plan_ms', 'fresh_grid_replay_ms',
+        'fresh_grid_publication_ms', 'fresh_grid_plan_replay_publication_ms', 'fresh_grid_closing_rebuild_ms',
+        'fresh_grid_orchestration_total_ms', 'fresh_grid_phase_order', 'fresh_grid_expected_rebuilds',
+        'fresh_grid_rebuild_shape_exact', 'fresh_grid_first_rebuild_complete', 'fresh_grid_closing_rebuild_complete'
+    )
+    $helper = @(
+        'helper_schema', 'helper_requested', 'helper_used', 'helper_phase', 'helper_error', 'helper_fallback',
+        'helper_provenance_exact', 'helper_dirty_digest', 'helper_regions', 'helper_terrain_cells', 'helper_coverage_permille',
+        'helper_dependency_margin', 'helper_height_snapshots', 'helper_height_mismatches', 'helper_object_family_count',
+        'helper_object_association_failures', 'helper_object_containment_failures', 'helper_passability_calls',
+        'helper_buildable_calls', 'helper_preplan_complete', 'helper_closing_complete', 'helper_cleanup_complete'
+    )
+    $header = @(
+        'schema', 'surface_stable_published', 'post_t1_only', 'pre_t1_capture_bytes', 'capture_status',
+        'async_rand_draw_count', 'async_rand_dispatcher_restored', 'tuple', 'caller_fallback_reason', 'comparison_ms', 'proof_ms'
+    )
+    $allowed = @($header + $main + $helper | Select-Object -Unique)
+    foreach ($name in $allowed) { [void](Get-ScalarText $values $name) }
+    foreach ($name in $values.Keys) {
+        if ($allowed -notcontains $name) { throw "scalar receipt unknown field: $name" }
+    }
+    if ((Get-ScalarText $values 'schema') -cne 'smr.ralph.surface_only_single_flush_scalar.v1' -or
+        -not (Get-ScalarBoolean $values 'surface_stable_published') -or
+        -not (Get-ScalarBoolean $values 'post_t1_only') -or
+        (Get-ScalarInteger $values 'pre_t1_capture_bytes') -ne 0 -or
+        (Get-ScalarText $values 'capture_status') -cne 'surface-only-none' -or
+        -not (Get-ScalarBoolean $values 'async_rand_dispatcher_restored') -or
+        (Get-ScalarInteger $values 'async_rand_draw_count') -le 0) {
+        throw 'scalar receipt fixed post-T1 header is invalid'
+    }
+    if ((Get-ScalarInteger $values 'helper_schema') -ne 1 -or
+        @('preplan', 'closing') -notcontains (Get-ScalarText $values 'helper_phase')) {
+        throw 'scalar receipt helper schema/phase is unknown'
+    }
+    foreach ($name in @('surface_single_flush_requested', 'surface_single_flush_used', 'surface_single_flush_fallback',
+            'surface_single_flush_provenance_exact', 'surface_single_flush_closing_complete', 'surface_single_flush_cleanup_complete',
+            'fresh_grid_rebuild_shape_exact', 'fresh_grid_first_rebuild_complete', 'fresh_grid_closing_rebuild_complete',
+            'helper_requested', 'helper_used', 'helper_fallback', 'helper_provenance_exact', 'helper_preplan_complete',
+            'helper_closing_complete', 'helper_cleanup_complete')) { [void](Get-ScalarBoolean $values $name) }
+    foreach ($name in @('surface_single_flush_local_passability_calls', 'surface_single_flush_buildable_calls',
+            'surface_single_flush_height_snapshots', 'surface_single_flush_height_mismatches', 'surface_single_flush_object_family_count',
+            'surface_single_flush_object_association_failures', 'surface_single_flush_dirty_digest', 'surface_single_flush_dirty_regions',
+            'surface_single_flush_coverage_permille', 'outer_passage_pad_finalization_dirty_digest',
+            'canonical_rebuilds_during_capsule_prepare', 'canonical_rebuild_fallbacks_during_capsule_prepare',
+            'fresh_grid_first_rebuild_ms', 'fresh_grid_main_plan_ms', 'fresh_grid_replay_ms', 'fresh_grid_publication_ms',
+            'fresh_grid_plan_replay_publication_ms', 'fresh_grid_closing_rebuild_ms', 'fresh_grid_orchestration_total_ms',
+            'fresh_grid_expected_rebuilds', 'helper_schema', 'helper_dirty_digest', 'helper_regions', 'helper_terrain_cells',
+            'helper_coverage_permille', 'helper_dependency_margin', 'helper_height_snapshots', 'helper_height_mismatches',
+            'helper_object_family_count', 'helper_object_association_failures', 'helper_object_containment_failures',
+            'helper_passability_calls', 'helper_buildable_calls', 'comparison_ms', 'proof_ms')) {
+        if ((Get-ScalarInteger $values $name) -lt 0) { throw "scalar receipt negative field: $name" }
+    }
+    $optimized = (Get-ScalarBoolean $values 'surface_single_flush_requested') -and
+        (Get-ScalarBoolean $values 'surface_single_flush_used') -and -not (Get-ScalarBoolean $values 'surface_single_flush_fallback') -and
+        (Get-ScalarBoolean $values 'surface_single_flush_provenance_exact') -and
+        (Get-ScalarInteger $values 'surface_single_flush_local_passability_calls') -eq 4 -and
+        (Get-ScalarInteger $values 'surface_single_flush_buildable_calls') -eq 2 -and
+        (Get-ScalarInteger $values 'surface_single_flush_height_snapshots') -eq 2 -and
+        (Get-ScalarInteger $values 'surface_single_flush_height_mismatches') -eq 0 -and
+        (Get-ScalarInteger $values 'surface_single_flush_object_family_count') -eq 6 -and
+        (Get-ScalarInteger $values 'surface_single_flush_object_association_failures') -eq 0 -and
+        (Get-ScalarInteger $values 'helper_object_containment_failures') -eq 0 -and
+        (Get-ScalarInteger $values 'surface_single_flush_dirty_digest') -eq (Get-ScalarInteger $values 'outer_passage_pad_finalization_dirty_digest') -and
+        (Get-ScalarInteger $values 'surface_single_flush_dirty_regions') -eq 2 -and
+        (Get-ScalarInteger $values 'surface_single_flush_coverage_permille') -ge 1 -and
+        (Get-ScalarInteger $values 'surface_single_flush_coverage_permille') -le 150 -and
+        (Get-ScalarBoolean $values 'surface_single_flush_closing_complete') -and (Get-ScalarBoolean $values 'surface_single_flush_cleanup_complete') -and
+        (Get-ScalarInteger $values 'canonical_rebuilds_during_capsule_prepare') -eq 0 -and
+        (Get-ScalarInteger $values 'canonical_rebuild_fallbacks_during_capsule_prepare') -eq 0 -and
+        (Get-ScalarInteger $values 'fresh_grid_expected_rebuilds') -eq 0 -and
+        (Get-ScalarBoolean $values 'fresh_grid_rebuild_shape_exact') -and (Get-ScalarBoolean $values 'fresh_grid_first_rebuild_complete') -and
+        (Get-ScalarBoolean $values 'fresh_grid_closing_rebuild_complete') -and
+        (Get-ScalarText $values 'fresh_grid_phase_order') -ceq 'local-dirty-grid-publication>fresh-plan-replay>capsule-publication>local-dirty-closing'
+    $canonical = (Get-ScalarBoolean $values 'surface_single_flush_requested') -and
+        -not (Get-ScalarBoolean $values 'surface_single_flush_used') -and (Get-ScalarBoolean $values 'surface_single_flush_fallback') -and
+        -not [string]::IsNullOrEmpty((Get-ScalarText $values 'surface_single_flush_fallback_reason')) -and
+        (Get-ScalarInteger $values 'canonical_rebuilds_during_capsule_prepare') -ge 1 -and
+        (Get-ScalarInteger $values 'canonical_rebuilds_during_capsule_prepare') -le 2 -and
+        (Get-ScalarInteger $values 'canonical_rebuild_fallbacks_during_capsule_prepare') -eq 0 -and
+        (Get-ScalarInteger $values 'fresh_grid_expected_rebuilds') -eq (Get-ScalarInteger $values 'canonical_rebuilds_during_capsule_prepare') -and
+        (Get-ScalarBoolean $values 'fresh_grid_rebuild_shape_exact') -and (Get-ScalarBoolean $values 'fresh_grid_first_rebuild_complete') -and
+        (Get-ScalarBoolean $values 'fresh_grid_closing_rebuild_complete') -and
+        (Get-ScalarText $values 'fresh_grid_phase_order') -ceq 'canonical-grid-publication>fresh-plan-replay>capsule-publication>closing-rebuild'
+    if ($optimized -eq $canonical) { throw 'scalar receipt tuple is missing, ambiguous, or invalid' }
+    $tuple = if ($optimized) { 'optimized' } else { 'canonical-fallback' }
+    if ((Get-ScalarText $values 'tuple') -cne $tuple) { throw 'scalar receipt declared tuple does not match exact validator' }
+    if ((Get-ScalarText $values 'caller_fallback_reason') -ne (Get-ScalarText $values 'surface_single_flush_fallback_reason') -or
+        (Get-ScalarInteger $values 'comparison_ms') -ne (Get-ScalarInteger $values 'fresh_grid_plan_replay_publication_ms') -or
+        (Get-ScalarInteger $values 'proof_ms') -ne (Get-ScalarInteger $values 'fresh_grid_orchestration_total_ms')) {
+        throw 'scalar receipt helper/caller/comparison proof aliases are inconsistent'
+    }
+    [ordered]@{ tuple = $tuple; comparison_ms = Get-ScalarInteger $values 'comparison_ms'; proof_ms = Get-ScalarInteger $values 'proof_ms' }
+}
+
 function Wait-NonEmptyFile([string]$Path, [DateTime]$DeadlineUtc) {
     while ([DateTime]::UtcNow -lt $DeadlineUtc) {
         if (Test-Path -LiteralPath $Path -PathType Leaf) {
@@ -138,7 +273,7 @@ if ((Get-Sha256 $ContractPath) -cne $ContractSha256.ToUpperInvariant()) { throw 
 $script:Contract = Get-Content -LiteralPath $ContractPath -Raw | ConvertFrom-Json
 if ($script:Contract.schema -cne 'smr.ralph.surface-only-acceptance-contract.v1') { throw 'unsupported surface-only contract schema' }
 foreach ($name in @('repo', 'stage', 'run', 'harness', 'source_config', 'deployed_config', 'deployed_config_repo_relative', 'enabled_config',
-        'generator_script', 'surface_t1_file', 'deferred_t1_file', 'scheduler_census_file',
+        'generator_script', 'surface_t1_file', 'deferred_t1_file', 'scheduler_census_file', 'post_t1_scalar_file',
         'expected_disabled_config_sha256', 'expected_enabled_config_sha256', 'expected_deploy_file_count',
         't1_timeout_seconds', 'maximum_t0_to_t1_ms', 'stage_files', 'required_surface_t1_tokens',
         'required_deferred_t1_tokens', 'required_scheduler_census_tokens', 'allowed_initial_run_files',
@@ -157,6 +292,7 @@ $Generator = Join-Path $script:Stage ([string]$script:Contract.generator_script)
 $SurfaceT1 = Join-Path $script:Run ([string]$script:Contract.surface_t1_file)
 $DeferredT1 = Join-Path $script:Run ([string]$script:Contract.deferred_t1_file)
 $Census = Join-Path $script:Run ([string]$script:Contract.scheduler_census_file)
+$PostT1Scalar = Join-Path $script:Run ([string]$script:Contract.post_t1_scalar_file)
 $Receipt = Join-Path $script:Run 'surface_only_acceptance_receipt.json'
 $Timing = Join-Path $script:Run 'external_timing.json'
 $TrackedReceipt = Join-Path $script:Run 'tracked_mars_process_identity.json'
@@ -176,7 +312,7 @@ $actualInitial = @(Get-ChildItem -LiteralPath $script:Run -File | ForEach-Object
 $allowedInitial = @($script:Contract.allowed_initial_run_files | ForEach-Object { [string]$_ } | Sort-Object)
 $topologyDifference = @(Compare-Object $actualInitial $allowedInitial -CaseSensitive)
 if ($topologyDifference.Count -ne 0) { throw 'run directory is not the exact fresh content-addressed topology' }
-foreach ($path in @($SurfaceT1, $DeferredT1, $Census, $Timing, $Receipt, $TrackedReceipt)) {
+foreach ($path in @($SurfaceT1, $DeferredT1, $Census, $PostT1Scalar, $Timing, $Receipt, $TrackedReceipt)) {
     if (Test-Path -LiteralPath $path) { throw "stale surface-only output exists: $path" }
 }
 
@@ -305,6 +441,9 @@ try {
     $surfaceText = Assert-ExactTokens $SurfaceT1 @($baselineSurfaceTokens + @($script:Contract.required_surface_t1_tokens))
     $deferredText = Assert-ExactTokens $DeferredT1 @($baselineDeferredTokens + @($script:Contract.required_deferred_t1_tokens))
     $censusText = Assert-ExactTokens $Census @($script:Contract.required_scheduler_census_tokens)
+    Wait-NonEmptyFile $PostT1Scalar ([DateTime]::UtcNow.AddSeconds(120))
+    $postT1ScalarText = Get-Content -LiteralPath $PostT1Scalar -Raw
+    $singleFlush = Assert-SurfaceSingleFlushScalar $postT1ScalarText
     foreach ($mustBeZero in @('generation_count', 'materialization_attempts')) {
         if ((Get-UniqueInteger $deferredText $mustBeZero) -ne 0) { throw "$mustBeZero is nonzero before surface-only quit" }
     }
@@ -355,6 +494,7 @@ try {
             surface_t1 = Get-Sha256 $SurfaceT1
             deferred_t1 = Get-Sha256 $DeferredT1
             scheduler_census = Get-Sha256 $Census
+            post_t1_single_flush_scalar = Get-Sha256 $PostT1Scalar
         }
         planner = [ordered]@{
             attempts = Get-UniqueInteger $deferredText 'planner_attempts'
@@ -362,6 +502,9 @@ try {
             outer_passage_plan_ms = Get-UniqueInteger $deferredText 'planner_outer_passage_plan_ms'
             total_ms = Get-UniqueInteger $deferredText 'planner_total_ms'
             fresh_grid_orchestration_total_ms = Get-UniqueInteger $deferredText 'planner_fresh_grid_orchestration_total_ms'
+            single_flush_tuple = $singleFlush.tuple
+            single_flush_comparison_ms = $singleFlush.comparison_ms
+            single_flush_proof_ms = $singleFlush.proof_ms
         }
     }
     Write-Json $Receipt $receipt
