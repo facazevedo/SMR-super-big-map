@@ -180,14 +180,28 @@ function Assert-SurfaceSingleFlushScalar([string]$Text) {
 }
 
 function Wait-NonEmptyFile([string]$Path, [DateTime]$DeadlineUtc) {
-    while ([DateTime]::UtcNow -lt $DeadlineUtc) {
-        if (Test-Path -LiteralPath $Path -PathType Leaf) {
-            try {
-                $stream = [IO.File]::Open($Path, 'Open', 'Read', 'None')
-                try { if ($stream.Length -gt 0) { return } } finally { $stream.Dispose() }
-            } catch [IO.IOException] {}
+    $directory = Split-Path -Parent $Path
+    $leaf = Split-Path -Leaf $Path
+    if (-not (Test-Path -LiteralPath $directory -PathType Container)) { throw "watch directory missing: $directory" }
+    $watcher = New-Object IO.FileSystemWatcher $directory, $leaf
+    $watcher.NotifyFilter = [IO.NotifyFilters]::FileName -bor [IO.NotifyFilters]::LastWrite -bor [IO.NotifyFilters]::Size
+    $watcher.EnableRaisingEvents = $true
+    try {
+        while ([DateTime]::UtcNow -lt $DeadlineUtc) {
+            # Atomic sentinel writes may arrive as Changed, Created, or Renamed.  The
+            # next wait is driven by that filesystem event, never a fixed poll.
+            if (Test-Path -LiteralPath $Path -PathType Leaf) {
+                try {
+                    $stream = [IO.File]::Open($Path, 'Open', 'Read', 'None')
+                    try { if ($stream.Length -gt 0) { return } } finally { $stream.Dispose() }
+                } catch [IO.IOException] {}
+            }
+            $remaining = [Math]::Max(1, [Math]::Ceiling(($DeadlineUtc - [DateTime]::UtcNow).TotalMilliseconds))
+            [void]$watcher.WaitForChanged([IO.WatcherChangeTypes]::Changed -bor [IO.WatcherChangeTypes]::Created -bor [IO.WatcherChangeTypes]::Renamed,
+                [Math]::Min([int]$remaining, 60000))
         }
-        Start-Sleep -Milliseconds 20
+    } finally {
+        $watcher.Dispose()
     }
     throw "timeout waiting for $Path"
 }

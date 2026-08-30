@@ -16,6 +16,7 @@ from surface_loading_reference import (
 
 ROOT = Path(__file__).resolve().parents[2]
 EXECUTOR = ROOT / "_ralph" / "tools" / "execute_surface_only_acceptance.ps1"
+LOOP = ROOT / "_ralph" / "tools" / "invoke_surface_only_loop.ps1"
 FORBIDDEN = (
     "ChangeCurrentMapSlot",
     "find_underground",
@@ -164,6 +165,7 @@ def scalar_fixture(canonical: bool = False) -> dict[str, str]:
 
 def main() -> int:
     executor = EXECUTOR.read_text(encoding="utf-8")
+    loop = LOOP.read_text(encoding="utf-8")
     with tempfile.TemporaryDirectory(prefix="surface_only_acceptance_static_") as raw:
         root = Path(raw)
         generated = render_generation(
@@ -203,6 +205,7 @@ def main() -> int:
             "Invoke-Harness @("
         ) == 2,
         "executor_has_no_ug_route_token": not any(token in executor for token in FORBIDDEN),
+        "loop_has_no_ug_route_token": not any(token in loop for token in FORBIDDEN),
         "generated_surface_only_static_green": generated_verdict["ok"],
         "generated_surface_only_has_no_ug_route": not any(
             token in generated for token in FORBIDDEN[:4]
@@ -220,6 +223,17 @@ def main() -> int:
             and "state.surface_at_t1 = surface" in generated
             and "pre_t1_capture_bytes=0" in generated
             and generated.index("state.surface_at_t1 = surface") < generated.index("surface_only_single_flush_scalar.v1")
+        ),
+        "executor_waits_for_sentinels_by_filesystem_event": (
+            "FileSystemWatcher" in executor
+            and "WaitForChanged" in executor
+            and "Start-Sleep -Milliseconds 20" not in executor
+        ),
+        "loop_has_one_live_executor_and_content_addressed_cache": (
+            loop.count("-File $executor") == 1
+            and "surface-loop-static-cache.v1" in loop
+            and "cache_key" in loop
+            and "-Launch" in loop
         ),
         "optimized_scalar_tuple_accepted": scalar_tuple(optimized) == "optimized",
         "canonical_fallback_scalar_tuple_accepted": scalar_tuple(canonical) == "canonical-fallback",
