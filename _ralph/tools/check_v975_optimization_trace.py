@@ -126,7 +126,7 @@ def main() -> int:
     trace_end = generation.index("function Lazy.ValidatePersistedState(surface)", trace_start)
     trace = generation[trace_start:trace_end]
     noop_start = generation.index("-- Default-off optimization-trace API.")
-    noop_end = generation.index("local function PointXY", noop_start)
+    noop_end = generation.index("-- Post-T1 diagnostic heartbeat.", noop_start)
     noop = generation[noop_start:noop_end]
     lazy_gate = generation.index(
         "if SuperBigMap.State.lazy_underground_reload_restore_ok ~= false")
@@ -149,11 +149,11 @@ def main() -> int:
         capture_output=True, text=True, timeout=30, check=False)
 
     checks = {
-        "metadata_and_generator_identity_v991_v297": (
-			"'version', 991," in metadata
-            and "materialization capability" in metadata
-            and "target-domain passage-pad certification" in metadata
-			and "SuperBigMap.GENERATOR_PATCH_VERSION = 297" in version
+		"metadata_and_generator_identity_v992_v298": (
+			"'version', 992," in metadata
+			and "monotonic deadline" in metadata
+			and "atomic phase heartbeats" in metadata
+			and "SuperBigMap.GENERATOR_PATCH_VERSION = 298" in version
         ),
         "pinned_lua53_compiles_touched_production": all(compile_results.values()),
         "default_off_api_is_outside_lazy_gate_and_precedes_ordinary_calls": (

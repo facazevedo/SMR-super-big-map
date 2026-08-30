@@ -35,8 +35,8 @@ def main() -> None:
 
     require(deposits, "SuperBigMapUndergroundEnrichmentRelocationDebug",
             "persisted relocation debug")
-    require(deposits, "maximum_markers = 8", "relocation marker bound")
-    require(deposits, "maximum_attempts_per_marker = 64", "relocation attempt bound")
+    require(deposits, "MAX_INVALID_MARKERS = 8", "relocation marker bound")
+    require(deposits, "MAX_COMMIT_ATTEMPTS_PER_MARKER = 64", "relocation attempt bound")
     require(deposits, "describe_candidate_neighborhood", "bounded neighborhood reasons")
     require(deposits, "local actual_exact = actual_pos and ax == nx and ay == ny",
             "exact post-move coordinate")
@@ -69,11 +69,11 @@ def main() -> None:
         raise SystemExit("pair false path still relies on error()")
     if re.search(r'if audit_ok ~= true then\s+error\(', generation):
         raise SystemExit("enrichment false path still relies on error()")
-    require(metadata, "'version', 991", "metadata v991")
-    require(version, "GENERATOR_PATCH_VERSION = 297", "generator patch 297")
+    require(metadata, "'version', 992", "metadata v992")
+    require(version, "GENERATOR_PATCH_VERSION = 298", "generator patch 298")
 
     print("ok=true")
-    print("version=991")
+    print("version=992")
     print("explicit_false_boundaries=2")
     print("persisted_debug_channels=2")
     print("relocation_order=precheck>SetPos>exact-terrain-certificate")

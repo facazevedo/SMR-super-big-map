@@ -14,7 +14,7 @@ local generation = read("Code/sbm_map_generation.lua")
 local terrain = read("Code/sbm_terrain_copy.lua")
 local noop_marker = "-- Default-off optimization-trace API."
 local noop_start = assert(generation:find(noop_marker, 1, true))
-local noop_end = assert(generation:find("local function PointXY", noop_start, true))
+local noop_end = assert(generation:find("-- Post-T1 diagnostic heartbeat.", noop_start, true))
 local first_ordinary_call = assert(generation:find(
 	"SuperBigMap.OptimizationTrace.Start(destination,", 1, true))
 local lazy_gate = assert(generation:find(

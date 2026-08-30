@@ -42,8 +42,8 @@ if "return nil, \"not a lazy underground capsule\"" not in TERRAIN:
     raise SystemExit("ordinary/eager passage branch separation is missing")
 if "underground_preparation_z, source_level_reason, source_q, source_r =\n\t\t\t\t\tpassage_pad_level" not in TERRAIN:
     raise SystemExit("ordinary source-level fallback was not retained")
-if "SuperBigMap.GENERATOR_PATCH_VERSION = 297" not in VERSION or "'version', 991" not in METADATA:
-    raise SystemExit("v991 forward production version is missing")
+if "SuperBigMap.GENERATOR_PATCH_VERSION = 298" not in VERSION or "'version', 992" not in METADATA:
+    raise SystemExit("v992 forward production version is missing")
 
 for source in (ROOT / "Code" / "sbm_terrain_copy.lua", ROOT / "Code" / "sbm_map_generation.lua"):
     parsed = subprocess.run(
@@ -59,7 +59,7 @@ if oracle.returncode or "ok=true" not in oracle.stdout:
     raise SystemExit("v989 target-Z oracle failed")
 
 print("ok=true")
-print("version=991")
+print("version=992")
 print("lazy_level_source=committed-target-terrain")
 print("surface_validation_z_role=integrity-only")
 print("target_certificate=owner+capsule+plan+validation-digest+coordinate+height")

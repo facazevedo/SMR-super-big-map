@@ -43,7 +43,7 @@ end
 local maps = rawget(_G, "Maps")
 local underground = type(maps) == "table" and maps[2] or nil
 local debug = underground and underground.SuperBigMapUndergroundEnrichmentRelocationDebug
-if type(debug) ~= "table" or debug.schema ~= 2 or debug.bounded ~= true
+if type(debug) ~= "table" or debug.schema ~= 3 or debug.bounded ~= true
 	or type(debug.candidate_corpus) ~= "table" or #debug.candidate_corpus > 256
 	or type(debug.records) ~= "table" or #debug.records > 8 then
 	error("persisted enrichment diagnostic corpus is unavailable or unbounded")

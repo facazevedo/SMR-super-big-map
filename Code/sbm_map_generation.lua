@@ -83,6 +83,94 @@ SuperBigMap.OptimizationTrace.Finish = SuperBigMap.OptimizationTrace.Noop
 SuperBigMap.OptimizationTrace.Emit = SuperBigMap.OptimizationTrace.Noop
 SuperBigMap.OptimizationTrace.Publish = SuperBigMap.OptimizationTrace.Noop
 
+-- Post-T1 diagnostic heartbeat.  This API lives outside every feature/config gate because a
+-- deferred GenerateRandomMap reload can replace the lazy helper while its old synchronous call
+-- stack is still running.  Ordinary production performs one raw global lookup and returns: no
+-- clock, formatting, allocation, file/console I/O, protected call, or RNG is touched without the
+-- explicitly staged process-local sink.  Each active record has a unique name and ends with the
+-- completion marker; the external watchdog ignores a torn last write.
+function SuperBigMap.DiagnosticPhaseHeartbeat(map, phase, edge, fields)
+	local sink = rawget(_G, "g_SmrRalphDiagnosticFailureSink")
+	if type(sink) ~= "table"
+		or sink.schema ~= "smr.ralph.lazy-terminal-failure-sink.v1"
+		or sink.diagnostic_only ~= true
+		or sink.acceptance_timing_eligible ~= false
+		or type(sink.nonce) ~= "string" or sink.nonce == "" or #sink.nonce > 128
+		or type(sink.manifest_sha256) ~= "string"
+		or not sink.manifest_sha256:match("^[0-9a-fA-F]+$")
+		or #sink.manifest_sha256 ~= 64
+		or type(sink.heartbeat_prefix) ~= "string" or sink.heartbeat_prefix == ""
+		or #sink.heartbeat_prefix > 1000 then
+		return false
+	end
+	local write = Global("AsyncStringToFile")
+	local clock = Global("GetPreciseTicks") or Global("RealTime")
+	if type(write) ~= "function" or type(clock) ~= "function" then return false end
+	local now_ok, now = pcall(clock)
+	if not now_ok or type(now) ~= "number" then return false end
+	local function bounded(value, limit)
+		value = tostring(value == nil and "" or value):gsub("[\r\n\t=]+", " ")
+		limit = tonumber(limit) or 160
+		return #value <= limit and value or value:sub(1, limit)
+	end
+	local sequence = (tonumber(sink.heartbeat_sequence) or 0) + 1
+	if sequence > 512 then return false end
+	sink.heartbeat_sequence = sequence
+	if type(sink.heartbeat_started_ms) ~= "number" then sink.heartbeat_started_ms = now end
+	local descriptor
+	local report
+	local surface = map
+	if map and type(map.mapdata) == "table" and map.mapdata.Environment == "Underground" then
+		surface = Global("MainMap")
+	end
+	if surface then
+		descriptor = surface.SuperBigMapLazyUndergroundDescriptor
+		report = surface.SuperBigMapLazyUndergroundFeasibilityReport
+	end
+	local rows = {
+		"schema=smr.sbm.lazy-phase-heartbeat.v1",
+		"sequence=" .. tostring(sequence),
+		"nonce=" .. bounded(sink.nonce, 128),
+		"command_manifest_sha256=" .. sink.manifest_sha256:lower(),
+		"edge=" .. bounded(edge, 16),
+		"phase=" .. bounded(phase, 128),
+		"elapsed_ms=" .. tostring(math.max(0, now - sink.heartbeat_started_ms)),
+		"map_slot=" .. bounded(map and map.slot, 32),
+		"environment=" .. bounded(map and map.mapdata and map.mapdata.Environment, 32),
+		"descriptor_state=" .. bounded(descriptor and descriptor.state, 64),
+		"materialization_attempts=" .. tostring(descriptor and descriptor.materialization_attempts),
+		"generation_count=" .. tostring(descriptor and descriptor.generation_count),
+		"target_z_digest=" .. tostring(descriptor and descriptor.materialization_passage_pad_z_digest),
+		"validation_z_digest=" .. tostring(descriptor and descriptor.validation_z_digest),
+		"reentry_phase=" .. bounded(report and report.persisted_state_materialization_reentry_phase, 96),
+		"reentry_count=" .. tostring(report and report.persisted_state_materialization_reentry_count),
+	}
+	if type(fields) == "table" then
+		local keys = {}
+		for key, value in pairs(fields) do
+			local value_type = type(value)
+			if value_type == "nil" or value_type == "boolean"
+				or value_type == "number" or value_type == "string" then
+				keys[#keys + 1] = key
+			end
+		end
+		table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+		for index = 1, math.min(#keys, 16) do
+			local key = keys[index]
+			rows[#rows + 1] = "field_" .. bounded(key, 48) .. "="
+				.. bounded(fields[key], 192)
+		end
+		if #keys > 16 then rows[#rows + 1] = "field_omitted=" .. tostring(#keys - 16) end
+	end
+	rows[#rows + 1] = "complete=true"
+	local payload = table.concat(rows, "\n") .. "\n"
+	if #payload > 16384 then return false end
+	local path = sink.heartbeat_prefix .. string.format("%04d.txt", sequence)
+	local protected_write = Global("sprocall") or pcall
+	local call_ok, write_error = protected_write(write, path, payload)
+	return call_ok and not write_error
+end
+
 local function PointXY(pos)
 	if not pos then
 		return false
@@ -10097,6 +10185,13 @@ function Lazy.PublishDiagnosticTerminalFailure(surface, reason)
 			relocation and relocation.neighbourhood_samples),
 		"relocation_neighbourhood_accepted=" .. tostring(
 			relocation and relocation.neighbourhood_accepted),
+		"relocation_deadline_exceeded=" .. tostring(
+			relocation and relocation.deadline_exceeded == true),
+		"relocation_deadline_phase=" .. bounded(
+			relocation and relocation.deadline_phase, 96),
+		"relocation_maximum_candidates=" .. tostring(
+			relocation and relocation.maximum_candidates),
+		"relocation_global_samples=" .. tostring(relocation and relocation.global_samples),
 		"live_before_hash=" .. tostring(relocation and relocation.live_before_hash),
 		"live_after_hash=" .. tostring(relocation and relocation.live_after_hash),
 		"private_clone_before_hash=not-run-production",
@@ -12237,6 +12332,9 @@ function Lazy.ValidateCompletedPairs(surface, underground, descriptor)
 end
 
 function Lazy.MaterializeTransaction(surface, descriptor, route, expected_owner, capability_debug)
+	SuperBigMap.DiagnosticPhaseHeartbeat(surface, "lazy-materialization-transaction", "BEFORE", {
+		route = route,
+	})
 	if type(expected_owner) ~= "table"
 		or Lazy.LIVE_MATERIALIZATION_TRANSACTIONS[surface] ~= expected_owner
 		or expected_owner.descriptor ~= descriptor then
@@ -12251,14 +12349,22 @@ function Lazy.MaterializeTransaction(surface, descriptor, route, expected_owner,
 	})
 	local reconstructed, reconstruct_error = Lazy.ReconstructRecipeValues(descriptor)
 	if not reconstructed then return nil, "recipe reconstruction failed: " .. tostring(reconstruct_error) end
+	SuperBigMap.DiagnosticPhaseHeartbeat(surface, "lazy-recipe-reconstruction", "AFTER")
 	local params = reconstructed.params
+	SuperBigMap.DiagnosticPhaseHeartbeat(surface, "lazy-passage-binding", "BEFORE")
 	local binding, bind_reason = Lazy.InstallPassageBinding(surface, descriptor)
 	if not binding then return nil, "passage binder install failed: " .. tostring(bind_reason) end
+	SuperBigMap.DiagnosticPhaseHeartbeat(surface, "lazy-passage-binding", "AFTER")
 	local callback_count, callback_map = 0, nil
 	params.on_map_generated = function(map)
 		callback_count = callback_count + 1
 		callback_map = map
+		SuperBigMap.DiagnosticPhaseHeartbeat(map, "lazy-native-on-map-generated", "BEFORE", {
+			callback_count = callback_count,
+		})
 		local published, reason = Lazy.PublishGeneratedUnderground(map)
+		SuperBigMap.DiagnosticPhaseHeartbeat(map, "lazy-native-on-map-generated",
+			published and "AFTER" or "ERROR", { reason = reason })
 		if not published then error(reason) end
 	end
 	local State = SuperBigMap.State
@@ -12273,10 +12379,21 @@ function Lazy.MaterializeTransaction(surface, descriptor, route, expected_owner,
 		reserved_seed = reconstructed.generator_seed,
 	}
 	local generate = Global("GenerateRandomMap")
+	SuperBigMap.DiagnosticPhaseHeartbeat(surface, "lazy-native-GenerateRandomMap", "BEFORE", {
+		map_name = descriptor.map_name, map_slot = descriptor.map_slot,
+	})
 	local generated = type(generate) == "function"
 		and PackValues(pcall(generate, descriptor.map_name, descriptor.map_preset, params))
 		or { false, "GenerateRandomMap is unavailable", n = 2 }
+	SuperBigMap.DiagnosticPhaseHeartbeat(callback_map or surface,
+		"lazy-native-GenerateRandomMap", generated[1] and "AFTER" or "ERROR", {
+		callback_count = callback_count, error = generated[1] and "" or generated[2],
+	})
+	SuperBigMap.DiagnosticPhaseHeartbeat(callback_map or surface,
+		"lazy-passage-binding-restore", "BEFORE")
 	local restored = Lazy.RestoreTransientPassageBinding(binding)
+	SuperBigMap.DiagnosticPhaseHeartbeat(callback_map or surface,
+		"lazy-passage-binding-restore", restored and "AFTER" or "ERROR")
 	State.pending_vanilla_underground_seed = nil
 	if not generated[1] then
 		return nil, "deferred GenerateRandomMap failed: " .. tostring(generated[2])
@@ -12333,6 +12450,8 @@ function Lazy.MaterializeTransaction(surface, descriptor, route, expected_owner,
 		debug = capability_debug,
 		owner_identity = true,
 		module_reloaded = SuperBigMap.LazyUndergroundFeasibility ~= Lazy,
+		deadline_started_ms = expected_owner.deadline_started_ms,
+		deadline_ms = expected_owner.deadline_ms,
 	}
 	local authorize_depth, authorize_calls = 0, 0
 	capability.authorize = function(presented, expected_map)
@@ -12356,6 +12475,12 @@ function Lazy.MaterializeTransaction(surface, descriptor, route, expected_owner,
 		end
 		if expected_owner.descriptor ~= descriptor or expected_owner.report ~= report then
 			return reject("capability owner payload identity drifted")
+		end
+		if type(expected_owner.deadline_started_ms) ~= "number"
+			or type(expected_owner.deadline_ms) ~= "number"
+			or expected_owner.deadline_ms - expected_owner.deadline_started_ms ~= 270000
+			or Lazy.Now() >= expected_owner.deadline_ms then
+			return reject("capability monotonic deadline is invalid or expired")
 		end
 		local authorized, phase, reason =
 			Lazy.OwnedMaterializationInFlight(surface, descriptor, report)
@@ -12386,7 +12511,12 @@ function Lazy.MaterializeTransaction(surface, descriptor, route, expected_owner,
 	underground.SuperBigMapLazyMaterializationCapabilityDebug = capability_debug
 	local pipeline = Lazy.RunDeferredPipeline
 	if type(pipeline) ~= "function" then return nil, "deferred underground pipeline is unavailable" end
+	SuperBigMap.DiagnosticPhaseHeartbeat(underground, "lazy-deferred-underground-pipeline", "BEFORE", {
+		deadline_ms = authorized_context.deadline_ms,
+	})
 	local pipeline_ok, pipeline_reason = pipeline(underground, true, capability)
+	SuperBigMap.DiagnosticPhaseHeartbeat(underground, "lazy-deferred-underground-pipeline",
+		pipeline_ok == true and "AFTER" or "ERROR", { reason = pipeline_reason })
 	AppendMaterializationCapabilityDebug(capability_debug, "after-deferred-pipeline", {
 		ok = pipeline_ok == true,
 		reason = tostring(pipeline_reason or ""),
@@ -12502,6 +12632,12 @@ function Lazy.Materialize(surface, route)
 		route = report.materialization_route,
 		attempt = descriptor.materialization_attempts,
 	}
+	owner.deadline_started_ms = Lazy.Now()
+	owner.deadline_ms = owner.deadline_started_ms > 0
+		and owner.deadline_started_ms + 270000 or nil
+	if type(owner.deadline_ms) ~= "number" then
+		return Lazy.MarkBlocked(surface, "lazy materialization monotonic deadline is unavailable")
+	end
 	Lazy.LIVE_MATERIALIZATION_TRANSACTIONS[surface] = owner
 	AppendMaterializationCapabilityDebug(capability_debug, "owner-installed", {
 		owner_table = type(owner),
@@ -12513,8 +12649,15 @@ function Lazy.Materialize(surface, route)
 		route = tostring(route), attempt = descriptor.materialization_attempts,
 		map_name = descriptor.map_name, reserved_seed = tostring(descriptor.reserved_seed),
 	}, surface)
+	SuperBigMap.DiagnosticPhaseHeartbeat(surface, "lazy-first-access-materialization", "BEFORE", {
+		deadline_ms = owner.deadline_ms, route = route,
+	})
 	local call_ok, underground, reason = pcall(
 		Lazy.MaterializeTransaction, surface, descriptor, route, owner, capability_debug)
+	SuperBigMap.DiagnosticPhaseHeartbeat(underground or surface,
+		"lazy-first-access-materialization", call_ok and underground and "AFTER" or "ERROR", {
+		reason = call_ok and reason or underground,
+	})
 	if not call_ok or not underground then
 		local failure = call_ok and reason or underground
 		if descriptor.state ~= "blocked" then
@@ -16677,6 +16820,28 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 		map.SuperBigMapStretchPipelinePending = true
 	end
 	local function run_pipeline()
+		local heartbeat_open_phase
+		local function HeartbeatPhase(phase, fields)
+			if heartbeat_open_phase then
+				SuperBigMap.DiagnosticPhaseHeartbeat(
+					map, heartbeat_open_phase, "AFTER", { next_phase = phase })
+			end
+			heartbeat_open_phase = tostring(phase)
+			SuperBigMap.DiagnosticPhaseHeartbeat(map, heartbeat_open_phase, "BEFORE", fields)
+		end
+		local function FinishHeartbeat(ok, reason)
+			if heartbeat_open_phase then
+				SuperBigMap.DiagnosticPhaseHeartbeat(map, heartbeat_open_phase,
+					ok == true and "AFTER" or "ERROR", { reason = reason })
+				heartbeat_open_phase = nil
+			end
+			SuperBigMap.DiagnosticPhaseHeartbeat(map, "underground-expansion-pipeline",
+				ok == true and "AFTER" or "ERROR", { reason = reason })
+		end
+		SuperBigMap.DiagnosticPhaseHeartbeat(map, "underground-expansion-pipeline", "BEFORE", {
+			force_now = force_now == true,
+			deadline_ms = capability_context and capability_context.deadline_ms,
+		})
 		LoadingStart("underground expansion first access", map, {
 			force_now = tostring(force_now == true),
 		})
@@ -16690,6 +16855,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 		if type(SuperBigMap.ExpansionLoadingBegin) == "function" then
 			pcall(SuperBigMap.ExpansionLoadingBegin, "underground")
 			SetLoadingPhase("Expanding the underground map")
+			HeartbeatPhase("underground-loading-cover")
 		end
 		-- ExpansionLoadingBegin establishes its UI at render boundaries. Do not gate correctness on
 		-- a fixed millisecond delay; the caller's retained cover remains authoritative throughout.
@@ -16726,12 +16892,14 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 				error("deferred Elevator migration helpers are unavailable")
 			end
 			elevator_migrations = BeginDeferredElevatorMigration(map)
+			HeartbeatPhase("underground-deferred-elevator-migration")
 			-- Vanilla constructs, flattens, and clears buried-wonder footprints on the native map.
 			-- Deferred construction must preserve that transaction domain: create and clear now, while
 			-- actual access has begun but before any relief annotation or 6144->8192 transform. The live
 			-- wonder objects remain detached from grids until their markers reach final coordinates.
 			do
 				SetLoadingPhase("Preparing native underground wonder footprints")
+				HeartbeatPhase("underground-native-wonder-footprints")
 				local source_wonder_ok, source_wonder_result =
 					WonderVerticalDiagnostics.MaterializeDeferredUndergroundWondersOnSource(map)
 				if source_wonder_ok ~= true then
@@ -16739,6 +16907,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 						.. tostring(source_wonder_result))
 				end
 			end
+			HeartbeatPhase("underground-sync-mapdata-relief")
 			-- Renderer bounds must cover the full 8192 grid (same fix as the surface).
 			SafeCall( SyncMapDataToGrids, map)
 			-- Relief annotations BEFORE the underground terrain stretch (same as the surface).
@@ -16755,6 +16924,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 				error("underground native enrichment staging API is unavailable")
 			end
 			SetLoadingPhase("Preserving vanilla underground resources and anomalies")
+			HeartbeatPhase("underground-stage-native-enrichments")
 			local staged, stage_stats = position_deposits.StageAndRemoveNativeEnrichmentsForStretch(
 				map, "underground immediately before terrain stretch")
 			if staged ~= true then
@@ -16762,6 +16932,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 					.. tostring(stage_stats and stage_stats.error or "unknown error"))
 			end
 			SetLoadingPhase("Stretching the underground terrain")
+			HeartbeatPhase("underground-StretchSourceToFull")
 			local ok_s, n_grids = true, 0
 			if cfg_bool("EXPANSION_STEP_07_STRETCH_TERRAIN", true) then
 				ok_s, n_grids = StretchSourceToFull(map)
@@ -16778,6 +16949,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 			end
 			if type(ScaleDecorationsToFull) == "function" then
 				SetLoadingPhase("Repositioning underground rocks and decorations")
+				HeartbeatPhase("underground-scale-decorations-features")
 				ScaleDecorationsToFull(map, transform_pass_batch_active)
 			end
 			local feature_ok, feature_stats = RestoreTransferredPrefabFeatureGameLogic(map)
@@ -16786,6 +16958,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 					.. tostring(feature_stats and feature_stats.error or "unknown error"))
 			end
 			SetLoadingPhase("Reserving underground wonder footprints")
+			HeartbeatPhase("underground-reserve-wonder-footprints")
 			local reservation_ok, reservation_stats =
 				WonderVerticalDiagnostics.ReserveDeferredUndergroundWonderFootprints(
 					map, position_deposits)
@@ -16801,6 +16974,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 				error("underground native enrichment recreation API is unavailable")
 			end
 			SetLoadingPhase("Restoring vanilla underground resources and anomalies")
+			HeartbeatPhase("underground-recreate-native-enrichments")
 			local recreated, recreate_stats = position_deposits.RecreateStagedNativeEnrichments(
 				map, "underground after terrain and decoration stretch")
 			if recreated ~= true then
@@ -16809,6 +16983,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 			end
 			if type(ScaleMarkersToFull) == "function" then
 				SetLoadingPhase("Repositioning underground resource deposits")
+				HeartbeatPhase("underground-scale-resource-markers")
 				local n_mark = ScaleMarkersToFull(map, false, transform_pass_batch_active)
 				local position_deposits = SuperBigMap.DepositRules
 				if position_deposits
@@ -16822,6 +16997,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 				end
 			end
 			if transform_pass_batch_active then
+				HeartbeatPhase("underground-resume-combined-pass-edits")
 				local resume_token = LoadingBegin("underground resume combined pass edits", map)
 				local resume_ok, resume_err = ResumeUndergroundTransformPassEdits()
 				LoadingEnd(resume_token, {
@@ -16836,6 +17012,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 			-- seat each retained wonder without replaying clearance on the expanded object population.
 			do
 				SetLoadingPhase("Creating underground wonders")
+				HeartbeatPhase("underground-materialize-wonders")
 				local wonder_ok, wonder_result = MaterializeDeferredUndergroundWonders(map)
 				if wonder_ok ~= true then
 					error("deferred underground wonder materialization failed: " .. tostring(wonder_result))
@@ -16854,6 +17031,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 			-- the real underground entrances before any enrichment is accepted or moved.
 			if cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true) then
 				SetLoadingPhase("Finalizing reachable underground terrain")
+				HeartbeatPhase("underground-first-canonical-grid-rebuild")
 				-- Keep this explicit full-map rebuild even though the object transforms above now share one
 				-- pass-edit transaction. The underground map is not necessarily CurrentMap, and a successful
 				-- RebuildGrids/ResumePassEdits return does not prove that its asynchronous native pass grid is
@@ -16881,6 +17059,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 					error("final passage-pair alignment API is unavailable")
 				end
 				SetLoadingPhase("Aligning surface and underground passage entrances")
+				HeartbeatPhase("underground-align-passage-pairs")
 				local pair_ok, pair_stats = AlignPassagePairsToSharedHex(map, {
 					lazy_materialization_capability = materialization_capability,
 					lazy_materialization_context = capability_context,
@@ -16901,6 +17080,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 				-- true underground coordinate first, then create the deferred markers at that final
 				-- position so they cannot masquerade as blockers or retain a stale source coordinate.
 				SetLoadingPhase("Activating underground passage markers")
+				HeartbeatPhase("underground-activate-passage-markers-visuals")
 				local tunnel_ok, tunnel_result = MaterializeDeferredUndergroundTunnelSpawns(map)
 				if tunnel_ok ~= true then
 					error("deferred underground passage-marker activation failed: "
@@ -16938,6 +17118,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 				-- SpawnsAnomalyOnCityInit action now that its unobstructed-position query can use the
 				-- authoritative underground grids. This covers all present buried-wonder classes.
 				SetLoadingPhase("Restoring buried-wonder positions")
+				HeartbeatPhase("underground-reseat-wonders")
 				local pre_anomaly_reseat_token = LoadingBegin(
 					"underground reseat wonders before rare anomalies", map)
 				local pre_anomaly_reseat_ok, pre_anomaly_reseat_stats =
@@ -16951,6 +17132,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 							and pre_anomaly_reseat_stats.error or "unknown error"))
 				end
 				SetLoadingPhase("Activating underground wonder anomalies")
+				HeartbeatPhase("underground-activate-wonder-anomalies")
 				local wonder_anomaly_token = LoadingBegin(
 					"underground activate buried wonder anomalies", map)
 				local wonder_anomaly_ok, wonder_anomaly_stats =
@@ -16980,6 +17162,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 					error("underground wonder-anomaly reachability repair is unavailable")
 				end
 				SetLoadingPhase("Positioning buried-wonder anomalies on reachable terrain")
+				HeartbeatPhase("underground-wonder-anomaly-reachability")
 				local wonder_reachability_token = LoadingBegin(
 					"underground repair buried wonder anomaly reachability", map)
 				local wonder_reachability_ok, wonder_reachability_stats =
@@ -17013,6 +17196,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 					local suite_ok, suite_err = pcall(function()
 						if type(deposits.TopUpDeposits) == "function" then
 							SetLoadingPhase("Distributing underground resources and anomalies")
+							HeartbeatPhase("underground-enrichment-topups")
 							TimedSafeCall("underground top-up resources", map,
 								deposits.TopUpDeposits, map)
 						end
@@ -17045,9 +17229,16 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 						error("underground enrichment reachability audit is unavailable")
 					end
 				SetLoadingPhase("Moving underground enrichments onto reachable terrain")
+				HeartbeatPhase("underground-enrichment-relocation", {
+					deadline_ms = capability_context and capability_context.deadline_ms,
+				})
 				local reachability_token = LoadingBegin(
 					"underground relocate unreachable enrichments", map)
-				local audit_ok, audit_stats = deposits.RelocateUnreachableUndergroundEnrichments(map)
+				local audit_ok, audit_stats = deposits.RelocateUnreachableUndergroundEnrichments(map, {
+					deadline_ms = capability_context and capability_context.deadline_ms,
+					deadline_started_ms = capability_context
+						and capability_context.deadline_started_ms,
+				})
 				map.SuperBigMapUndergroundEnrichmentReachabilityOK = audit_ok == true
 				LoadingEnd(reachability_token, {
 					moved = audit_stats and audit_stats.moved,
@@ -17214,6 +17405,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 							error("temporary underground enrichment reveal API is unavailable")
 						end
 						SetLoadingPhase("Revealing underground enrichments for verification")
+						HeartbeatPhase("underground-diagnostic-enrichment-reveal")
 						local reveal_ok, reveal_stats =
 							deposits.RevealAllUndergroundEnrichmentsForTesting(map)
 						if reveal_ok ~= true then
@@ -17247,6 +17439,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 			-- prepared, so the finished underground is not missing objects GameInit attaches.
 			do
 				SetLoadingPhase("Completing buried-wonder spawn effects")
+				HeartbeatPhase("underground-wonder-GameInit")
 				local wonder_gameinit_token = LoadingBegin(
 					"underground run buried wonder GameInit", map)
 				local wonder_gameinit_ok, wonder_gameinit_stats =
@@ -17270,6 +17463,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 			-- closed. It is idempotent and whole-map, and both call sites run the same engine sequence.
 			if cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true) then
 				SetLoadingPhase("Finalizing underground gameplay grids")
+				HeartbeatPhase("underground-closing-canonical-grid-rebuild")
 				RebuildFinalUndergroundGameplayGrids("after last object-grid transaction")
 				WonderVerticalDiagnostics.LogAll(map, "after_closing_grid_rebuild")
 			end
@@ -17287,6 +17481,12 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 		else
 			branch_err = branch_result
 		end
+		if heartbeat_open_phase then
+			SuperBigMap.DiagnosticPhaseHeartbeat(map, heartbeat_open_phase,
+				ok_branch and "AFTER" or "ERROR", { reason = branch_err })
+			heartbeat_open_phase = nil
+		end
+		HeartbeatPhase("underground-pipeline-cleanup-publication")
 		-- A failure anywhere between decoration movement and marker verification must still balance
 		-- the caller-owned pass transaction before diagnostics or lifecycle cleanup touch the map.
 		if transform_pass_batch_active then
@@ -17382,6 +17582,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 				error = ok_branch and "" or tostring(branch_err),
 			}, ok_branch)
 		end
+		FinishHeartbeat(ok_branch, branch_err)
 		return ok_branch == true, branch_err
 	end
 	if force_now == true then

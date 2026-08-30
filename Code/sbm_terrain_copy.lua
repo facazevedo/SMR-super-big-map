@@ -8608,12 +8608,20 @@ end
 -- or prepare that footprint, but it is never allowed to move the surface entrance or Elevator.
 local function AlignPassagePairsToSharedHex(underground_map, options)
 	options = type(options) == "table" and options or {}
+	local function heartbeat(phase, edge, fields)
+		local emit = SuperBigMap.DiagnosticPhaseHeartbeat
+		if type(emit) == "function" then emit(underground_map, phase, edge, fields) end
+	end
 	local source_bootstrap = options.source_bootstrap == true
 	local fixed_surface_capsules = source_bootstrap
 		and options.fixed_surface_capsules == true
 	local materialization_capability = options.lazy_materialization_capability
 	local materialization_context = options.lazy_materialization_context
 	local surface_map = Global("MainMap")
+	heartbeat("passage-pair-alignment", "BEFORE", {
+		source_bootstrap = source_bootstrap,
+		lazy_materialization = materialization_capability ~= nil,
+	})
 	if not underground_map or not surface_map or underground_map == surface_map then
 		return false, { error = "surface/underground maps unavailable", pairs = 0 }
 	end
@@ -9171,8 +9179,15 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 		state.passage_pad_preparation_depth = previous_depth + 1
 		state.passage_pad_preparation_target_z = target_z
 		state.passage_pad_preparation_trace_current = trace
+		heartbeat("passage-pad-native-flatten", "BEFORE", {
+			pair = pair_index, x = x, y = y, target_z = target_z,
+		})
 		local ok_flatten, flatten_result = pcall(
 			flatten_build_shape, elevator_shape, anchor, "flatten unbuildable")
+		heartbeat("passage-pad-native-flatten", ok_flatten and "AFTER" or "ERROR", {
+			pair = pair_index, native_called = trace.native_called == true,
+			native_ok = trace.native_ok == true, error = ok_flatten and "" or flatten_result,
+		})
 		state.passage_pad_preparation_depth = previous_depth > 0 and previous_depth or nil
 		state.passage_pad_preparation_target_z = previous_target_z
 		state.passage_pad_preparation_trace_current = previous_trace
@@ -9489,6 +9504,7 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 
 	for i = 1, #linked_pairs do
 		local pair = linked_pairs[i]
+		heartbeat("passage-pair", "BEFORE", { pair = i })
 		local underground_anchor, surface_anchor = pair.underground, pair.surface
 		local underground_pos, surface_pos = ObjectPosition(underground_anchor), ObjectPosition(surface_anchor)
 		local ux, uy = PointXY(underground_pos)
@@ -10040,6 +10056,10 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 			surface_moved_during_deferred_final = false,
 			committed_relocated = false,
 		}, underground_map)
+		heartbeat("passage-pair", "AFTER", {
+			pair = i, prepare_surface = prepare_surface,
+			prepare_underground = prepare_underground,
+		})
 	end
 	-- A later pair's obstruction cleanup/terrain feather must not invalidate a pad that passed its
 	-- immediate check. Re-run the same complete validator after every pair and dependant move.
@@ -10110,6 +10130,10 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 		preparation_debug.records_count = #preparation_debug.records
 		stats.preparation_debug_records = preparation_debug.records_count
 	end
+	heartbeat("passage-pair-alignment", "AFTER", {
+		pairs = stats.pairs, exact = stats.exact, fallback = stats.fallback,
+		lazy_target_z_certificates = stats.lazy_target_z_certificates,
+	})
 	return true, stats
 end
 

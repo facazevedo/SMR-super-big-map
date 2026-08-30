@@ -13,9 +13,9 @@ VERSION = (ROOT / "Code/sbm_version.lua").read_text(encoding="utf-8")
 META = (ROOT / "metadata.lua").read_text(encoding="utf-8")
 
 required_deposits = [
-    "schema = 2", "maximum_candidate_corpus = 256", "candidate_corpus_digest",
+    "schema = 3", "maximum_candidate_corpus = 256", "candidate_corpus_digest",
     "live_before_hash", "live_after_hash", "neighbourhood_samples",
-    "if invalid_i > relocation_debug.maximum_markers", "if #candidates >= 2048 then break end",
+    "if invalid_i > relocation_debug.maximum_markers", "MAX_RELOCATION_CANDIDATES = 512",
     "local fallback_buckets = {}", "for oq = -1, 1 do", "fallback_minimum_hex",
     "local viable_candidates = {}", "remove_committed_candidate(successful_source_candidate)",
     "marker.SuperBigMapUndergroundFallbackSpacingRelaxed = nil",
@@ -59,8 +59,8 @@ for token in ("duplicate key", "bundle byte receipt mismatch", "root_cause_candi
               "diagnostics complete but root cause is unknown", "raw_bounded_fields"):
     assert token in ANALYZER
 
-assert "SuperBigMap.GENERATOR_PATCH_VERSION = 297" in VERSION
-assert re.search(r"'version',\s*991\b", META)
+assert "SuperBigMap.GENERATOR_PATCH_VERSION = 298" in VERSION
+assert re.search(r"'version',\s*992\b", META)
 print("ok=true")
 print("candidate_consumption=commit-only")
 print("fallback_clearance_index=bounded-exact")

@@ -9996,7 +9996,33 @@ end
 -- Final correctness audit for stage-03 additions and the small subset of native markers whose
 -- proportional destination intersected a reserved wonder footprint. A marker that is not on
 -- reachable/buildable/unobstructed terrain is moved to a validated candidate.
-function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
+function DepositRules.RelocateUnreachableUndergroundEnrichments(map, options)
+	local MAX_RELOCATION_CANDIDATES = 512
+	local MAX_NEIGHBOURHOOD_SAMPLES_PER_MARKER = 64
+	local MAX_GLOBAL_SAMPLES = 4096
+	local MAX_INVALID_MARKERS = 8
+	local MAX_COMMIT_ATTEMPTS_PER_MARKER = 64
+	local deadline_ms = type(options) == "table" and options.deadline_ms or nil
+	if deadline_ms ~= nil and (type(deadline_ms) ~= "number"
+		or deadline_ms ~= deadline_ms or deadline_ms <= 0) then
+		return false, { error = "materialization deadline is malformed", deadline_exceeded = true }
+	end
+	local deadline_clock = deadline_ms and Global("GetPreciseTicks") or nil
+	if deadline_ms and type(deadline_clock) ~= "function" then
+		return false, { error = "materialization deadline clock is unavailable", deadline_exceeded = true }
+	end
+	local function heartbeat(phase, edge, fields)
+		local emit = SuperBigMap.DiagnosticPhaseHeartbeat
+		if type(emit) == "function" then emit(map, phase, edge, fields) end
+	end
+	local function deadline_expired()
+		if not deadline_ms then return false end
+		local ok, now = pcall(deadline_clock)
+		return not ok or type(now) ~= "number" or now >= deadline_ms
+	end
+	heartbeat("underground-relocation-reachability-build", "BEFORE", {
+		deadline_ms = deadline_ms,
+	})
 	if not ExpansionStepEnabled(3)
 		or not ExpansionStepEnabled(11)
 		or not ExpansionStepEnabled(14) then
@@ -10008,8 +10034,17 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 		return false, { error = "map/MapForEach/point unavailable" }
 	end
 	local reachable_state = BuildUndergroundReachability(map)
+	heartbeat("underground-relocation-reachability-build",
+		reachable_state and reachable_state.available == true and "AFTER" or "ERROR", {
+		checks = reachable_state and reachable_state.checks,
+		seeds = reachable_state and reachable_state.seeds and #reachable_state.seeds,
+	})
 	if not reachable_state or reachable_state.available ~= true then
 		return false, { error = "entrance connectivity unavailable", seeds = reachable_state and #reachable_state.seeds or 0 }
+	end
+	if deadline_expired() then
+		return false, { error = "materialization deadline exceeded after reachability build",
+			deadline_exceeded = true, deadline_phase = "reachability-build" }
 	end
 	local markers, invalid = {}, {}
 	local invalid_details, invalid_by_class, invalid_by_resource = {}, {}, {}
@@ -10154,11 +10189,38 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 	-- Temporary persisted post-access diagnostic.  Keep only primitive bounded records so an
 	-- unresolved relocation remains attributable after the failure blocks underground access.
 	local relocation_debug = {
-		schema = 2, bounded = true, maximum_markers = 8, maximum_attempts_per_marker = 64,
+		schema = 3, bounded = true, maximum_markers = MAX_INVALID_MARKERS,
+		maximum_attempts_per_marker = MAX_COMMIT_ATTEMPTS_PER_MARKER,
 		maximum_rejection_examples = 24, maximum_candidate_corpus = 256,
+		maximum_candidates = MAX_RELOCATION_CANDIDATES,
+		maximum_neighbourhood_samples_per_marker = MAX_NEIGHBOURHOOD_SAMPLES_PER_MARKER,
+		maximum_global_samples = MAX_GLOBAL_SAMPLES,
 		invalid = #invalid, records = {},
-		rejection_histogram = {}, rejection_examples = {}, truncated = #invalid > 8,
+		rejection_histogram = {}, rejection_examples = {},
+		truncated = #invalid > MAX_INVALID_MARKERS,
 	}
+	local function deadline_abort(phase, fields)
+		if not deadline_expired() then return nil end
+		relocation_debug.deadline_exceeded = true
+		relocation_debug.deadline_phase = tostring(phase)
+		relocation_debug.complete = false
+		if type(fields) == "table" then
+			for key, value in pairs(fields) do
+				if type(value) == "boolean" or type(value) == "number" or type(value) == "string" then
+					relocation_debug["deadline_" .. tostring(key):sub(1, 48)] = value
+				end
+			end
+		end
+		heartbeat("underground-enrichment-relocation", "ERROR", {
+			deadline_exceeded = true, deadline_phase = phase,
+		})
+		return false, {
+			error = "materialization deadline exceeded during enrichment relocation",
+			deadline_exceeded = true, deadline_phase = tostring(phase),
+			checked = #markers, invalid = #invalid,
+			candidates_built = #candidates,
+		}
+	end
 	local function update_state_hash(digest, value)
 		value = tostring(value == nil and "" or value)
 		for i = 1, #value do digest = (digest * 33 + value:byte(i)) % 2147483647 end
@@ -10181,6 +10243,7 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 	local occupied_badges = BuildBadgeOccupancy(map, nil, nil, false)
 	local validation_context = SharedTopUpValidationContext(map)
 	local function append_candidate(x, y, known_q, known_r, source)
+		if #candidates >= MAX_RELOCATION_CANDIDATES then return false end
 		if type(x) ~= "number" or type(y) ~= "number" then return false end
 		local pt = point(x, y)
 		if not CanReceiveDeposit(map, pt, validation_context) then return false end
@@ -10210,6 +10273,7 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 	local cached_candidates = topup_candidate_pool_by_map[map]
 	if type(cached_candidates) == "table" then
 		for _, candidate in ipairs(cached_candidates) do
+			if #candidates >= MAX_RELOCATION_CANDIDATES then break end
 			append_candidate(candidate.x, candidate.y, candidate.q, candidate.r, "cached")
 		end
 	end
@@ -10219,18 +10283,28 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 	-- then fill a larger global corpus. append_candidate applies the complete terrain,
 	-- reachability and live-obstruction conjunction before either corpus can be considered.
 	local neighbourhood_samples, neighbourhood_accepted = 0, 0
+	heartbeat("underground-relocation-candidate-corpus", "BEFORE", {
+		invalid = #invalid, reused = pool_reused,
+	})
 	if type(hex_to_world) == "function" then
 		for invalid_i, item in ipairs(invalid) do
 			if invalid_i > relocation_debug.maximum_markers
-				or #candidates >= 2048 then break end
+				or #candidates >= MAX_RELOCATION_CANDIDATES then break end
 			local pos = item.pos
 			local ok_center, center_q, center_r = false, nil, nil
 			if pos and type(world_to_hex) == "function" then
 				ok_center, center_q, center_r = pcall(world_to_hex, pos)
 			end
 			if ok_center and type(center_q) == "number" and type(center_r) == "number" then
-				for _ = 1, 256 do
-					if #candidates >= 2048 then break end
+				for sample_i = 1, MAX_NEIGHBOURHOOD_SAMPLES_PER_MARKER do
+					if #candidates >= MAX_RELOCATION_CANDIDATES then break end
+					if sample_i % 16 == 1 then
+						local abort_ok, abort_stats = deadline_abort("neighbourhood-corpus", {
+							marker = invalid_i, sample = sample_i,
+							candidates = #candidates,
+						})
+						if abort_ok ~= nil then return abort_ok, abort_stats end
+					end
 					neighbourhood_samples = neighbourhood_samples + 1
 					local radius = 1 + RandInt(192)
 					local dq = RandInt(radius * 2 + 1) - radius
@@ -10247,18 +10321,33 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 			end
 		end
 	end
-	local target_pool = math.min(2048, math.max(pool_reused, #candidates, 256, #invalid * 256))
-	local max_samples = math.max(2048, target_pool * 30)
-	for _ = 1, max_samples do
+	local target_pool = math.min(MAX_RELOCATION_CANDIDATES,
+		math.max(pool_reused, #candidates, 256,
+			#invalid * MAX_NEIGHBOURHOOD_SAMPLES_PER_MARKER))
+	local max_samples = math.min(MAX_GLOBAL_SAMPLES, math.max(2048, target_pool * 8))
+	local global_samples = 0
+	for sample_i = 1, max_samples do
 		if #candidates >= target_pool then break end
+		global_samples = global_samples + 1
+		if sample_i % 16 == 1 then
+			local abort_ok, abort_stats = deadline_abort("global-corpus", {
+				sample = sample_i, candidates = #candidates,
+			})
+			if abort_ok ~= nil then return abort_ok, abort_stats end
+		end
 		local x, y = margin + RandInt(span_x), margin + RandInt(span_y)
 		append_candidate(x, y, nil, nil, "global")
 	end
 	local pool_built = #candidates
+	heartbeat("underground-relocation-candidate-corpus", "AFTER", {
+		built = pool_built, global_samples = global_samples,
+		neighbourhood_samples = neighbourhood_samples,
+	})
 	relocation_debug.neighbourhood_samples = neighbourhood_samples
 	relocation_debug.neighbourhood_accepted = neighbourhood_accepted
 	relocation_debug.candidates_reused = pool_reused
 	relocation_debug.candidates_built = pool_built
+	relocation_debug.global_samples = global_samples
 	-- Preserve a bounded primitive sample for the post-failure diagnostic lab.  It is never read
 	-- by gameplay and cannot retain points, maps, markers, or functions.  The rolling digest binds
 	-- the sample's exact order and values so a controller cannot silently analyze a different
@@ -10465,6 +10554,10 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 		end
 	end
 	for invalid_i, item in ipairs(invalid) do
+		local abort_ok, abort_stats = deadline_abort("marker-start", {
+			marker = invalid_i, candidates = #candidates,
+		})
+		if abort_ok ~= nil then return abort_ok, abort_stats end
 		local marker, old_pos = item.marker, item.pos
 		local class = tostring(marker and marker.class or "?")
 		local resource = tostring(marker and marker.resource or "?")
@@ -10508,7 +10601,21 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 			local item_snapped_rejected, item_repulsion_rejected = 0, 0
 			local item_setpos_failed, item_postmove_rejected = 0, 0
 			local viable_candidates = {}
+			heartbeat("underground-relocation-marker", "BEFORE", {
+				index = invalid_i, class = class, resource = resource,
+				candidates = #candidates,
+			})
 			for candidate_index, c in ipairs(candidates) do
+				if candidate_index % 16 == 1 then
+					local candidate_abort, candidate_abort_stats = deadline_abort(
+						"marker-candidate-scan", {
+							marker = invalid_i, candidate = candidate_index,
+							viable = #viable_candidates,
+						})
+					if candidate_abort ~= nil then
+						return candidate_abort, candidate_abort_stats
+					end
+				end
 				local new_pos = point(c.x, c.y)
 				if type(new_pos.SetTerrainZ) == "function" then
 					local ok_z, snapped = pcall(new_pos.SetTerrainZ, new_pos, map)
@@ -10567,7 +10674,8 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 				if a.distance_sq ~= b.distance_sq then return a.distance_sq < b.distance_sq end
 				return a.candidate_index < b.candidate_index
 			end)
-			local max_attempts = math.min(64, #viable_candidates)
+			local max_attempts = math.min(
+				MAX_COMMIT_ATTEMPTS_PER_MARKER, #viable_candidates)
 			local attempts, success = 0, false
 			local successful_pos, successful_candidate, successful_source_candidate,
 				successful_fallback_clearance
@@ -10577,6 +10685,11 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 			local last_repulsion_detail = ""
 			local candidates_before = #candidates
 			while attempts < max_attempts and not success do
+				local attempt_abort, attempt_abort_stats = deadline_abort("marker-commit", {
+					marker = invalid_i, attempt = attempts + 1,
+					viable = #viable_candidates,
+				})
+				if attempt_abort ~= nil then return attempt_abort, attempt_abort_stats end
 				local candidate = viable_candidates[attempts + 1]
 				attempts = attempts + 1
 				relocation_attempts = relocation_attempts + 1
@@ -10753,6 +10866,10 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 					.. ":postmove_rejected=" .. tostring(item_postmove_rejected)
 					.. ":last_repulsion=" .. tostring(last_repulsion_detail)
 			end
+			heartbeat("underground-relocation-marker", success and "AFTER" or "ERROR", {
+				index = invalid_i, class = class, resource = resource,
+				attempts = attempts, viable = #viable_candidates, success = success,
+			})
 		end
 	end
 	if #concrete_moves > 0 then MoveConcreteImprints(map, concrete_moves) end
@@ -10804,6 +10921,10 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 		after_hash = update_state_hash(after_hash, y)
 	end
 	relocation_debug.live_after_hash = after_hash
+	heartbeat("underground-enrichment-relocation", unresolved == 0 and "AFTER" or "ERROR", {
+		invalid = #invalid, moved = moved, unresolved = unresolved,
+		candidates_built = pool_built, relocation_attempts = relocation_attempts,
+	})
 	AuditEmit("UNDERGROUND_ENRICHMENT_REACHABILITY", stats, map)
 	return unresolved == 0, stats
 end
