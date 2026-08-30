@@ -10014,6 +10014,147 @@ function Lazy.RestorePendingEngineGlobals()
 	return exact
 end
 
+-- Post-T1 Ralph diagnostic failure publication. Ordinary production has no configured sink and
+-- pays nothing outside an already-fatal lazy-underground path. A staged controller may arm the
+-- exact process-local table only after T1. The bounded causal bundle is written first and the
+-- terminal sentinel last, so observing the sentinel is an atomic publication handshake. Neither
+-- object is persisted, and publication failure never changes gameplay failure semantics.
+function Lazy.PublishDiagnosticTerminalFailure(surface, reason)
+	local sink = rawget(_G, "g_SmrRalphDiagnosticFailureSink")
+	if type(sink) ~= "table"
+		or sink.schema ~= "smr.ralph.lazy-terminal-failure-sink.v1"
+		or sink.diagnostic_only ~= true
+		or sink.acceptance_timing_eligible ~= false
+		or type(sink.nonce) ~= "string" or sink.nonce == "" or #sink.nonce > 128
+		or type(sink.manifest_sha256) ~= "string"
+		or not sink.manifest_sha256:match("^[0-9a-fA-F]+$")
+		or #sink.manifest_sha256 ~= 64
+		or type(sink.bundle_path) ~= "string" or sink.bundle_path == ""
+		or #sink.bundle_path > 1024
+		or type(sink.sentinel_path) ~= "string" or sink.sentinel_path == ""
+		or #sink.sentinel_path > 1024 then
+		return false
+	end
+	local write = Global("AsyncStringToFile")
+	if type(write) ~= "function" then return false end
+	local function bounded(value, limit)
+		value = tostring(value == nil and "" or value):gsub("[\r\n\t]+", " ")
+		limit = tonumber(limit) or 512
+		return #value <= limit and value or value:sub(1, limit)
+	end
+	local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
+	local report = surface and surface.SuperBigMapLazyUndergroundFeasibilityReport
+	local maps = Global("Maps")
+	local underground = type(maps) == "table" and maps[2] or nil
+	local relocation = underground and underground.SuperBigMapUndergroundEnrichmentRelocationDebug
+	local capability = type(report) == "table"
+		and type(report.materialization_capability_debug) == "table"
+		and report.materialization_capability_debug or nil
+	local phase_parts = {}
+	local capability_records = capability and capability.records
+	for i = 1, math.min(type(capability_records) == "table" and #capability_records or 0, 8) do
+		local record = capability_records[i]
+		phase_parts[#phase_parts + 1] = tostring(i) .. ":" .. bounded(
+			type(record) == "table" and record.phase or "invalid-record", 64)
+	end
+	local rows = {
+		"schema=smr.sbm.lazy-terminal-causal-bundle.v1",
+		"ok=false", "diagnostic_only=true", "acceptance_timing_eligible=false",
+		"nonce=" .. bounded(sink.nonce, 128),
+		"command_manifest_sha256=" .. sink.manifest_sha256:lower(),
+		"sentinel_reason=" .. bounded(reason, 768),
+		"descriptor_state=" .. bounded(descriptor and descriptor.state, 64),
+		"failure_sticky=" .. tostring(descriptor and descriptor.failure_sticky == true),
+		"report_access_blocked=" .. tostring(report and report.access_blocked == true),
+		"generation_count=" .. tostring(report and report.materialization_generation_count),
+		"target_z_count=" .. tostring(report and report.materialization_passage_pad_z_certificates),
+		"target_z_digest=" .. tostring(report and report.materialization_passage_pad_z_digest),
+		"validation_z_digest=" .. tostring(report and report.validation_z_digest),
+		"materialization_reentry_phase=" .. bounded(
+			report and report.persisted_state_materialization_reentry_phase, 96),
+		"materialization_reentry_sequence=" .. bounded(
+			report and report.persisted_state_materialization_reentry_phase_sequence, 256),
+		"capability_phase_timeline=" .. bounded(table.concat(phase_parts, ">"), 768),
+		"capability_record_count=" .. tostring(#phase_parts),
+		"branch_materialization_state=" .. bounded(descriptor and descriptor.state, 64),
+		"branch_materialization_complete=" .. tostring(
+			report and report.materialization_complete == true),
+		"branch_pair_certificate=" .. tostring(
+			descriptor and descriptor.materialization_passage_pair_ok == true),
+		"branch_enrichment_certificate=" .. tostring(
+			descriptor and descriptor.materialization_enrichment_reachability_ok == true),
+		"relocation_debug_schema=" .. tostring(relocation and relocation.schema),
+		"relocation_invalid=" .. tostring(relocation and relocation.invalid),
+		"relocation_moved=" .. tostring(relocation and relocation.moved),
+		"relocation_unresolved=" .. tostring(relocation and relocation.unresolved),
+		"relocation_candidates_reused=" .. tostring(relocation and relocation.candidates_reused),
+		"relocation_candidates_built=" .. tostring(relocation and relocation.candidates_built),
+		"relocation_candidate_corpus_count=" .. tostring(
+			relocation and relocation.candidate_corpus_count),
+		"relocation_candidate_corpus_digest=" .. tostring(
+			relocation and relocation.candidate_corpus_digest),
+		"relocation_neighbourhood_samples=" .. tostring(
+			relocation and relocation.neighbourhood_samples),
+		"relocation_neighbourhood_accepted=" .. tostring(
+			relocation and relocation.neighbourhood_accepted),
+		"live_before_hash=" .. tostring(relocation and relocation.live_before_hash),
+		"live_after_hash=" .. tostring(relocation and relocation.live_after_hash),
+		"private_clone_before_hash=not-run-production",
+		"private_clone_after_hash=not-run-production",
+		"live_state_mutated_by_diagnostic=false",
+	}
+	local histogram = type(relocation) == "table"
+		and relocation.rejection_histogram or nil
+	if type(histogram) == "table" then
+		local keys = {}
+		for key in pairs(histogram) do keys[#keys + 1] = tostring(key) end
+		table.sort(keys)
+		for i = 1, math.min(#keys, 16) do
+			rows[#rows + 1] = "rejection_" .. bounded(keys[i], 48) .. "="
+				.. tostring(histogram[keys[i]])
+		end
+	end
+	local examples = type(relocation) == "table" and relocation.rejection_examples or nil
+	for i = 1, math.min(type(examples) == "table" and #examples or 0, 24) do
+		rows[#rows + 1] = "rejection_example_" .. tostring(i) .. "="
+			.. bounded(examples[i], 512)
+	end
+	local records = type(relocation) == "table" and relocation.records or nil
+	for i = 1, math.min(type(records) == "table" and #records or 0, 8) do
+		local record = records[i]
+		rows[#rows + 1] = "marker_" .. tostring(i) .. "=" .. table.concat({
+			"class:" .. bounded(record.class, 64), "resource:" .. bounded(record.resource, 64),
+			"original:" .. tostring(record.original_x) .. "," .. tostring(record.original_y),
+			"result:" .. bounded(record.result, 48),
+			"attempts:" .. tostring(record.attempt_count),
+			"failure:" .. bounded(record.failure, 256),
+			"diagnostic:" .. bounded(record.diagnostic, 512),
+		}, ";")
+	end
+	local payload = table.concat(rows, "\n") .. "\n"
+	if #payload > 65536 then return false end
+	local protected_write = Global("sprocall") or pcall
+	local bundle_ok, bundle_error = protected_write(write, sink.bundle_path, payload)
+	if not bundle_ok or bundle_error then return false end
+	local xxhash = Global("xxhash")
+	local digest = #payload
+	if type(xxhash) == "function" then
+		local hash_ok, hash_result = pcall(xxhash, payload)
+		if hash_ok and type(hash_result) == "number" then digest = hash_result end
+	end
+	local sentinel = table.concat({
+		"schema=smr.sbm.lazy-terminal-failure.v1", "ok=false",
+		"diagnostic_only=true", "acceptance_timing_eligible=false",
+		"nonce=" .. bounded(sink.nonce, 128),
+		"command_manifest_sha256=" .. sink.manifest_sha256:lower(),
+		"bundle_path=" .. bounded(sink.bundle_path, 1024),
+		"bundle_bytes=" .. tostring(#payload), "bundle_digest=" .. tostring(digest),
+		"reason=" .. bounded(reason, 768),
+	}, "\n") .. "\n"
+	local sentinel_ok, sentinel_error = protected_write(write, sink.sentinel_path, sentinel)
+	return sentinel_ok and not sentinel_error
+end
+
 function Lazy.MarkBlocked(surface, reason)
 	SuperBigMap.OptimizationTrace.Error("lazy underground fail-closed block", surface, reason)
 	if surface ~= nil then
@@ -10037,6 +10178,7 @@ function Lazy.MarkBlocked(surface, reason)
 		report.error = tostring(reason or "unknown lazy-underground failure")
 	end
 	LoadingStep("lazy underground access blocked", { error = tostring(reason) }, surface)
+	Lazy.PublishDiagnosticTerminalFailure(surface, reason)
 	return false, tostring(reason)
 end
 

@@ -10154,14 +10154,33 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 	-- Temporary persisted post-access diagnostic.  Keep only primitive bounded records so an
 	-- unresolved relocation remains attributable after the failure blocks underground access.
 	local relocation_debug = {
-		schema = 1, bounded = true, maximum_markers = 8, maximum_attempts_per_marker = 64,
-		invalid = #invalid, records = {}, truncated = #invalid > 8,
+		schema = 2, bounded = true, maximum_markers = 8, maximum_attempts_per_marker = 64,
+		maximum_rejection_examples = 24, maximum_candidate_corpus = 256,
+		invalid = #invalid, records = {},
+		rejection_histogram = {}, rejection_examples = {}, truncated = #invalid > 8,
 	}
+	local function update_state_hash(digest, value)
+		value = tostring(value == nil and "" or value)
+		for i = 1, #value do digest = (digest * 33 + value:byte(i)) % 2147483647 end
+		return digest
+	end
+	local before_hash = 5381
+	for i, item in ipairs(invalid) do
+		local x, y
+		if item.pos and type(item.pos.xy) == "function" then x, y = item.pos:xy() end
+		before_hash = update_state_hash(before_hash, i)
+		before_hash = update_state_hash(before_hash, item.marker and item.marker.class)
+		before_hash = update_state_hash(before_hash, item.marker and item.marker.resource)
+		before_hash = update_state_hash(before_hash, x)
+		before_hash = update_state_hash(before_hash, y)
+	end
+	relocation_debug.live_before_hash = before_hash
 	map.SuperBigMapUndergroundEnrichmentRelocationDebug = relocation_debug
 	local world_to_hex = Global("WorldToHex")
+	local hex_to_world = Global("HexToWorld")
 	local occupied_badges = BuildBadgeOccupancy(map, nil, nil, false)
 	local validation_context = SharedTopUpValidationContext(map)
-	local function append_candidate(x, y, known_q, known_r)
+	local function append_candidate(x, y, known_q, known_r, source)
 		if type(x) ~= "number" or type(y) ~= "number" then return false end
 		local pt = point(x, y)
 		if not CanReceiveDeposit(map, pt, validation_context) then return false end
@@ -10179,7 +10198,9 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 			return false
 		end
 		seen[key] = true
-		candidates[#candidates + 1] = { x = x, y = y, q = q, r = r }
+		candidates[#candidates + 1] = {
+			x = x, y = y, q = q, r = r, source = tostring(source or "global"),
+		}
 		return true
 	end
 
@@ -10189,34 +10210,120 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 	local cached_candidates = topup_candidate_pool_by_map[map]
 	if type(cached_candidates) == "table" then
 		for _, candidate in ipairs(cached_candidates) do
-			append_candidate(candidate.x, candidate.y, candidate.q, candidate.r)
+			append_candidate(candidate.x, candidate.y, candidate.q, candidate.r, "cached")
 		end
 	end
 	local pool_reused = #candidates
-	local target_pool = math.min(512, math.max(pool_reused, 64, #invalid * 32))
+	-- v991: rejected candidates are profile-specific and must not be destructively consumed by an
+	-- earlier marker. Add a bounded pseudo-random neighbourhood corpus for every invalid marker,
+	-- then fill a larger global corpus. append_candidate applies the complete terrain,
+	-- reachability and live-obstruction conjunction before either corpus can be considered.
+	local neighbourhood_samples, neighbourhood_accepted = 0, 0
+	if type(hex_to_world) == "function" then
+		for invalid_i, item in ipairs(invalid) do
+			if invalid_i > relocation_debug.maximum_markers
+				or #candidates >= 2048 then break end
+			local pos = item.pos
+			local ok_center, center_q, center_r = false, nil, nil
+			if pos and type(world_to_hex) == "function" then
+				ok_center, center_q, center_r = pcall(world_to_hex, pos)
+			end
+			if ok_center and type(center_q) == "number" and type(center_r) == "number" then
+				for _ = 1, 256 do
+					if #candidates >= 2048 then break end
+					neighbourhood_samples = neighbourhood_samples + 1
+					local radius = 1 + RandInt(192)
+					local dq = RandInt(radius * 2 + 1) - radius
+					local dr_min = math.max(-radius, -dq - radius)
+					local dr_max = math.min(radius, -dq + radius)
+					local dr = dr_min + RandInt(dr_max - dr_min + 1)
+					local ok_world, x, y = pcall(
+						hex_to_world, center_q + dq, center_r + dr)
+					if ok_world and append_candidate(
+						x, y, center_q + dq, center_r + dr, "neighbourhood") then
+						neighbourhood_accepted = neighbourhood_accepted + 1
+					end
+				end
+			end
+		end
+	end
+	local target_pool = math.min(2048, math.max(pool_reused, #candidates, 256, #invalid * 256))
 	local max_samples = math.max(2048, target_pool * 30)
 	for _ = 1, max_samples do
 		if #candidates >= target_pool then break end
 		local x, y = margin + RandInt(span_x), margin + RandInt(span_y)
-		append_candidate(x, y)
+		append_candidate(x, y, nil, nil, "global")
 	end
 	local pool_built = #candidates
+	relocation_debug.neighbourhood_samples = neighbourhood_samples
+	relocation_debug.neighbourhood_accepted = neighbourhood_accepted
+	relocation_debug.candidates_reused = pool_reused
+	relocation_debug.candidates_built = pool_built
+	-- Preserve a bounded primitive sample for the post-failure diagnostic lab.  It is never read
+	-- by gameplay and cannot retain points, maps, markers, or functions.  The rolling digest binds
+	-- the sample's exact order and values so a controller cannot silently analyze a different
+	-- corpus after a failure.
+	local candidate_corpus, corpus_digest = {}, 5381
+	local function digest_text(value)
+		corpus_digest = update_state_hash(corpus_digest, value)
+	end
+	for i = 1, math.min(#candidates, relocation_debug.maximum_candidate_corpus) do
+		local candidate = candidates[i]
+		local record = {
+			index = i, x = candidate.x, y = candidate.y,
+			q = candidate.q, r = candidate.r, source = candidate.source,
+		}
+		candidate_corpus[#candidate_corpus + 1] = record
+		digest_text(record.index); digest_text(record.x); digest_text(record.y)
+		digest_text(record.q); digest_text(record.r); digest_text(record.source)
+	end
+	relocation_debug.candidate_corpus = candidate_corpus
+	relocation_debug.candidate_corpus_count = #candidate_corpus
+	relocation_debug.candidate_corpus_digest = corpus_digest
+	relocation_debug.candidate_corpus_truncated = #candidates > #candidate_corpus
 
-	-- Reachability relocation runs after the density fallbacks were selected. Preserve their
-	-- preferred six-hex clearance while moving another enrichment. When the terrain/repulsion
-	-- constraints make six hexes impossible, rank the entire remaining pool by maximin clearance
-	-- and use the farthest valid candidate instead of dropping the marker.
+	-- Reachability relocation runs after the density fallbacks were selected. Preserve their exact
+	-- six-hex minimum while moving another enrichment.  A candidate below that threshold remains
+	-- invalid; it is never promoted as a relaxed fallback.
 	local fallback_clearance_entries = {}
+	local fallback_minimum_hex = math.max(1, UndergroundFallbackMinimumHexDistance())
+	local fallback_bucket_size = fallback_minimum_hex
+	local fallback_buckets = {}
+	local function fallback_bucket_coordinate(value)
+		return math.floor((value + 0.0) / fallback_bucket_size)
+	end
+	local function fallback_bucket_at(bq, br, create)
+		local column = fallback_buckets[bq]
+		if not column and create then column = {}; fallback_buckets[bq] = column end
+		local bucket = column and column[br]
+		if not bucket and create then bucket = {}; column[br] = bucket end
+		return bucket
+	end
+	local function fallback_index_add(entry)
+		entry.bucket_q = fallback_bucket_coordinate(entry.q)
+		entry.bucket_r = fallback_bucket_coordinate(entry.r)
+		local bucket = fallback_bucket_at(entry.bucket_q, entry.bucket_r, true)
+		bucket[#bucket + 1] = entry
+	end
+	local function fallback_index_remove(entry)
+		local bucket = entry and fallback_bucket_at(entry.bucket_q, entry.bucket_r, false)
+		if not bucket then return end
+		for i = #bucket, 1, -1 do
+			if bucket[i] == entry then table.remove(bucket, i); return end
+		end
+	end
 	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
 		if not IsEnrichmentMarker(marker) then return end
 		local pos = ObjectPos(marker)
 		if not pos then return end
 		local ok_hex, q, r = pcall(world_to_hex, pos)
 		if ok_hex and type(q) == "number" and type(r) == "number" then
-			fallback_clearance_entries[#fallback_clearance_entries + 1] = {
+			local entry = {
 				marker = marker, q = q, r = r,
 				fallback = marker.SuperBigMapUndergroundDensityFallback == true,
 			}
+			fallback_clearance_entries[#fallback_clearance_entries + 1] = entry
+			fallback_index_add(entry)
 		end
 	end)
 	local function fallback_clearance_hex(candidate, moving_marker)
@@ -10231,12 +10338,22 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 		local moving_is_fallback = moving_marker
 			and moving_marker.SuperBigMapUndergroundDensityFallback == true
 		local nearest
-		for _, entry in ipairs(fallback_clearance_entries) do
-			if entry.marker ~= moving_marker and (moving_is_fallback or entry.fallback) then
-				local distance = AxialHexDistance(q, r, entry.q, entry.r)
-				if type(distance) == "number"
-					and (nearest == nil or distance < nearest) then
-					nearest = distance
+		local bq, br = fallback_bucket_coordinate(q), fallback_bucket_coordinate(r)
+		-- The bucket width equals the required clearance, so the exact set of possible blockers is
+		-- contained in the surrounding 3x3 buckets. This replaces the old candidate-by-marker
+		-- all-pairs scan without weakening the axial-distance predicate.
+		for oq = -1, 1 do
+			for orr = -1, 1 do
+				local bucket = fallback_bucket_at(bq + oq, br + orr, false)
+				for _, entry in ipairs(bucket or empty_table) do
+					if entry.marker ~= moving_marker
+						and (moving_is_fallback or entry.fallback) then
+						local distance = AxialHexDistance(q, r, entry.q, entry.r)
+						if type(distance) == "number"
+							and (nearest == nil or distance < nearest) then
+							nearest = distance
+						end
+					end
 				end
 			end
 		end
@@ -10246,34 +10363,44 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 		if type(q) ~= "number" or type(r) ~= "number" then return false end
 		for _, entry in ipairs(fallback_clearance_entries) do
 			if entry.marker == marker then
+				fallback_index_remove(entry)
 				entry.q, entry.r = q, r
+				fallback_index_add(entry)
 				return true
 			end
 		end
-		fallback_clearance_entries[#fallback_clearance_entries + 1] = {
+		local entry = {
 			marker = marker, q = q, r = r,
 			fallback = marker and marker.SuperBigMapUndergroundDensityFallback == true,
 		}
+		fallback_clearance_entries[#fallback_clearance_entries + 1] = entry
+		fallback_index_add(entry)
 		return true
 	end
 	local function describe_candidate_neighborhood(candidate, moving_marker)
 		local q, r = candidate and candidate.q, candidate and candidate.r
 		local nearest = {}
 		if type(q) == "number" and type(r) == "number" then
-			for _, entry in ipairs(fallback_clearance_entries) do
-				if entry.marker ~= moving_marker then
-					local distance = AxialHexDistance(q, r, entry.q, entry.r)
-					if type(distance) == "number" then
-						nearest[#nearest + 1] = {
-							distance = distance,
-							text = tostring(entry.marker and entry.marker.class or "?") .. "/"
-								.. tostring(entry.marker and entry.marker.resource or "?") .. "@"
-								.. tostring(entry.q) .. "," .. tostring(entry.r) .. "#"
-								.. tostring(distance) .. (entry.fallback and ":fallback" or ""),
-						}
+			local bq, br = fallback_bucket_coordinate(q), fallback_bucket_coordinate(r)
+			for oq = -2, 2 do
+				for orr = -2, 2 do
+					for _, entry in ipairs(fallback_bucket_at(bq + oq, br + orr, false)
+						or empty_table) do
+						if entry.marker ~= moving_marker then
+							local distance = AxialHexDistance(q, r, entry.q, entry.r)
+							if type(distance) == "number" then
+								nearest[#nearest + 1] = {
+									distance = distance,
+									text = tostring(entry.marker and entry.marker.class or "?") .. "/"
+										.. tostring(entry.marker and entry.marker.resource or "?") .. "@"
+										.. tostring(entry.q) .. "," .. tostring(entry.r) .. "#"
+										.. tostring(distance) .. (entry.fallback and ":fallback" or ""),
+								}
+							end
+						end
 					end
 				end
-			end
+		end
 		end
 		table.sort(nearest, function(a, b)
 			return a.distance < b.distance or (a.distance == b.distance and a.text < b.text)
@@ -10283,28 +10410,11 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 		return table.concat(parts, "|")
 	end
 
-	local function take_near(pos, moving_marker)
-		if #candidates == 0 then return nil end
-		local ox, oy
-		if pos and type(pos.xy) == "function" then ox, oy = pos:xy() end
-		local best_i, best_clearance, best_d
-		for i = 1, #candidates do
-			local c = candidates[i]
-			local clearance = fallback_clearance_hex(c, moving_marker)
-			clearance = type(clearance) == "number" and clearance or -1
-			local d = 0
-			if type(ox) == "number" then
-				local dx, dy = c.x - ox, c.y - oy
-				d = dx * dx + dy * dy
-			end
-			if best_clearance == nil or clearance > best_clearance
-				or (clearance == best_clearance and (best_d == nil or d < best_d)) then
-				best_i, best_clearance, best_d = i, clearance, d
-			end
+	local function remove_committed_candidate(selected)
+		for i = #candidates, 1, -1 do
+			if candidates[i] == selected then table.remove(candidates, i); return true end
 		end
-		local selected = table.remove(candidates, best_i)
-		if selected then selected._sbm_relocation_fallback_clearance_hex = best_clearance end
-		return selected
+		return false
 	end
 
 	local moved, unresolved = 0, 0
@@ -10345,6 +10455,15 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 	local repulsion_rejected, missing_repulsion_profile = 0, 0
 	local fallback_clearance_relaxed_moves = 0
 	local fallback_clearance_minimum_move
+	local function note_relocation_rejection(category, detail)
+		category = tostring(category or "unknown")
+		local histogram = relocation_debug.rejection_histogram
+		histogram[category] = (histogram[category] or 0) + 1
+		local examples = relocation_debug.rejection_examples
+		if #examples < relocation_debug.maximum_rejection_examples then
+			examples[#examples + 1] = category .. ":" .. tostring(detail or "")
+		end
+	end
 	for invalid_i, item in ipairs(invalid) do
 		local marker, old_pos = item.marker, item.pos
 		local class = tostring(marker and marker.class or "?")
@@ -10378,29 +10497,18 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 			unresolved_details[#unresolved_details + 1] = diagnostic_prefix
 				.. ":failure=missing_repulsion_profile"
 		else
-			-- Leave at least one candidate for every marker still to process. A candidate was
-			-- reachable when sampled, but terrain-Z snapping or SetPos can alter the effective
-			-- point. The old single-attempt path therefore produced a false unresolved result
-			-- despite hundreds of alternatives remaining in the pool.
-			local later_markers = #invalid - invalid_i
-			local max_attempts = math.min(64, math.max(0, #candidates - later_markers))
-			local attempts, success = 0, false
-			local successful_pos, successful_candidate, successful_fallback_clearance
-			local last_reason = max_attempts > 0 and "no candidate attempted" or "candidate pool exhausted"
-			local last_candidate = "none"
-			local last_repulsion_detail = ""
+			-- v991 evaluates the shared corpus through this marker's exact profile without removing
+			-- candidates rejected for a different resource/layer. v990 destructively removed up to
+			-- 64 profile-specific rejections per earlier marker and deterministically starved the
+			-- final four iter233 markers even though their own valid candidates could still exist.
+			-- NewTopUpRepulsionTracker and fallback_buckets are both neighbourhood indexes; this
+			-- bounded scan never performs a marker-by-marker all-pairs distance walk.
+			local active_repulsion = density_fallback and strict_repulsion
+				or marker_is_topup and strict_repulsion or topup_only_repulsion
 			local item_snapped_rejected, item_repulsion_rejected = 0, 0
 			local item_setpos_failed, item_postmove_rejected = 0, 0
-			local candidates_before = #candidates
-			while attempts < max_attempts and not success do
-				local c = take_near(old_pos, marker)
-				if not c then
-					last_reason = "candidate pool exhausted"
-					break
-				end
-				attempts = attempts + 1
-				relocation_attempts = relocation_attempts + 1
-				if attempts > 1 then relocation_retries = relocation_retries + 1 end
+			local viable_candidates = {}
+			for candidate_index, c in ipairs(candidates) do
 				local new_pos = point(c.x, c.y)
 				if type(new_pos.SetTerrainZ) == "function" then
 					local ok_z, snapped = pcall(new_pos.SetTerrainZ, new_pos, map)
@@ -10408,63 +10516,96 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 				end
 				local nx, ny
 				if new_pos and type(new_pos.xy) == "function" then nx, ny = new_pos:xy() end
-				last_candidate = "world=" .. tostring(nx) .. "," .. tostring(ny)
-					.. ":sample_hex=" .. tostring(c.q) .. "," .. tostring(c.r)
 				local candidate_ok, candidate_passable, candidate_flatness,
 					candidate_buildable, candidate_q, candidate_r, candidate_unobstructed =
 					CanReceiveDeposit(map, new_pos, validation_context)
-				c.q, c.r = candidate_q or c.q, candidate_r or c.r
+				local candidate = {
+					x = nx, y = ny, q = candidate_q or c.q, r = candidate_r or c.r,
+					point = new_pos, source_candidate = c, source = c.source,
+					candidate_index = candidate_index,
+					passable = candidate_passable == true, flatness = candidate_flatness,
+					buildable = candidate_buildable == true,
+					unobstructed = candidate_unobstructed == true,
+				}
+				if candidate_ok ~= true then
+					note_relocation_rejection("terrain", tostring(candidate.q) .. ","
+						.. tostring(candidate.r) .. ":source=" .. tostring(candidate.source))
+				else
+					local clearance, clearance_q, clearance_r =
+						fallback_clearance_hex(candidate, marker)
+					candidate.q, candidate.r = clearance_q or candidate.q, clearance_r or candidate.r
+					candidate.fallback_clearance = clearance
+					if type(clearance) ~= "number" or clearance < fallback_minimum_hex then
+						note_relocation_rejection("fallback_minimum", tostring(candidate.q) .. ","
+							.. tostring(candidate.r) .. ":actual=" .. tostring(clearance)
+							.. ":required=" .. tostring(fallback_minimum_hex))
+					else
+						local spacing_ok
+						if density_fallback then
+							spacing_ok = active_repulsion.CanPlaceUnique(candidate)
+						else
+							spacing_ok = active_repulsion.CanPlace(candidate, profile)
+						end
+						if spacing_ok then
+							local dx, dy = type(ox) == "number" and nx - ox or 0,
+								type(oy) == "number" and ny - oy or 0
+							candidate.distance_sq = dx * dx + dy * dy
+							viable_candidates[#viable_candidates + 1] = candidate
+						else
+							repulsion_rejected = repulsion_rejected + 1
+							item_repulsion_rejected = item_repulsion_rejected + 1
+							local detail = tostring(active_repulsion.Stats().last_rejection or "")
+							note_relocation_rejection("repulsion", detail)
+						end
+					end
+				end
+			end
+			table.sort(viable_candidates, function(a, b)
+				local priority = { neighbourhood = 0, cached = 1, global = 2 }
+				local ap, bp = priority[a.source] or 3, priority[b.source] or 3
+				if ap ~= bp then return ap < bp end
+				if a.distance_sq ~= b.distance_sq then return a.distance_sq < b.distance_sq end
+				return a.candidate_index < b.candidate_index
+			end)
+			local max_attempts = math.min(64, #viable_candidates)
+			local attempts, success = 0, false
+			local successful_pos, successful_candidate, successful_source_candidate,
+				successful_fallback_clearance
+			local last_reason = max_attempts > 0 and "no viable candidate attempted"
+				or "no candidate satisfies terrain/spacing/fallback intersection"
+			local last_candidate = "none"
+			local last_repulsion_detail = ""
+			local candidates_before = #candidates
+			while attempts < max_attempts and not success do
+				local candidate = viable_candidates[attempts + 1]
+				attempts = attempts + 1
+				relocation_attempts = relocation_attempts + 1
+				if attempts > 1 then relocation_retries = relocation_retries + 1 end
+				local new_pos, nx, ny = candidate.point, candidate.x, candidate.y
+				last_candidate = "world=" .. tostring(nx) .. "," .. tostring(ny)
+					.. ":sample_hex=" .. tostring(candidate.q) .. "," .. tostring(candidate.r)
 				local attempt_debug
 				if debug_record and #debug_record.attempts
 					< relocation_debug.maximum_attempts_per_marker then
 					attempt_debug = {
-						attempt = attempts, sample_q = c.q, sample_r = c.r, x = nx, y = ny,
-						pre_ok = candidate_ok == true, passable = candidate_passable == true,
-						flatness = candidate_flatness, buildable = candidate_buildable == true,
-						unobstructed = candidate_unobstructed == true,
-						neighborhood = describe_candidate_neighborhood(c, marker),
+						attempt = attempts, sample_q = candidate.q, sample_r = candidate.r,
+						x = nx, y = ny, source = candidate.source, pre_ok = true,
+						passable = candidate.passable, flatness = candidate.flatness,
+						buildable = candidate.buildable, unobstructed = candidate.unobstructed,
+						fallback_clearance = candidate.fallback_clearance,
+						neighborhood = describe_candidate_neighborhood(candidate, marker),
 					}
 					debug_record.attempts[#debug_record.attempts + 1] = attempt_debug
 				end
-				if not candidate_ok then
-					snapped_rejected = snapped_rejected + 1
-					item_snapped_rejected = item_snapped_rejected + 1
-					last_reason = "terrain-snapped candidate not reachable/buildable/unobstructed"
+				local before_move = ObjectPos(marker)
+				local ok_move, move_error = pcall(marker.SetPos, marker, new_pos)
+				if not ok_move then
+					setpos_failed = setpos_failed + 1
+					item_setpos_failed = item_setpos_failed + 1
+					last_reason = "SetPos failed: " .. tostring(move_error)
+					note_relocation_rejection("setpos", last_reason)
 					if attempt_debug then attempt_debug.rejection = last_reason end
 				else
-					local candidate = { x = nx, y = ny }
-					local _, candidate_q, candidate_r =
-						fallback_clearance_hex(candidate, marker)
-					candidate.q, candidate.r = candidate_q, candidate_r
-					local spacing_ok, active_repulsion
-					if density_fallback then
-						active_repulsion = strict_repulsion
-						spacing_ok = strict_repulsion.CanPlaceUnique(candidate)
-					elseif marker_is_topup then
-						active_repulsion = strict_repulsion
-						spacing_ok = strict_repulsion.CanPlace(candidate, profile)
-					else
-						active_repulsion = topup_only_repulsion
-						spacing_ok = topup_only_repulsion.CanPlace(candidate, profile)
-					end
-					if not spacing_ok then
-						repulsion_rejected = repulsion_rejected + 1
-						item_repulsion_rejected = item_repulsion_rejected + 1
-						last_repulsion_detail = tostring(
-							active_repulsion and active_repulsion.Stats().last_rejection or "")
-						last_reason = "candidate violates enrichment repulsion"
-						if attempt_debug then
-							attempt_debug.rejection = last_reason
-							attempt_debug.repulsion = last_repulsion_detail
-						end
-					else
-						local ok_move, move_error = pcall(marker.SetPos, marker, new_pos)
-						if not ok_move then
-							setpos_failed = setpos_failed + 1
-							item_setpos_failed = item_setpos_failed + 1
-							last_reason = "SetPos failed: " .. tostring(move_error)
-							if attempt_debug then attempt_debug.rejection = last_reason end
-						else
 							local actual_pos = ObjectPos(marker)
 							local ax, ay
 							if actual_pos and type(actual_pos.xy) == "function" then
@@ -10475,6 +10616,8 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 								fallback_clearance_hex(actual_candidate, marker)
 							actual_candidate.q, actual_candidate.r = actual_q, actual_r
 							local actual_spacing_ok = ax == nx and ay == ny
+								and type(actual_fallback_clearance) == "number"
+								and actual_fallback_clearance >= fallback_minimum_hex
 							if not actual_spacing_ok and type(ax) == "number" then
 								if density_fallback then
 									actual_spacing_ok = strict_repulsion.CanPlaceUnique(actual_candidate)
@@ -10485,6 +10628,9 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 									actual_spacing_ok = topup_only_repulsion.CanPlace(
 										actual_candidate, profile)
 								end
+								actual_spacing_ok = actual_spacing_ok == true
+									and type(actual_fallback_clearance) == "number"
+									and actual_fallback_clearance >= fallback_minimum_hex
 							end
 							-- The exact destination was fully obstruction-checked immediately before SetPos.
 							-- Moving the marker is the only intervening object-grid mutation, so rerunning
@@ -10498,6 +10644,7 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 								success = true
 								successful_pos = actual_pos
 								successful_candidate = actual_candidate
+								successful_source_candidate = candidate.source_candidate
 								successful_fallback_clearance = actual_fallback_clearance
 								if attempt_debug then
 									attempt_debug.result = "accepted"
@@ -10527,12 +10674,17 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 									attempt_debug.terrain_ok = actual_terrain_ok == true
 									attempt_debug.repulsion = last_repulsion_detail
 								end
+								local rollback_ok = before_move and pcall(marker.SetPos, marker, before_move)
+								if not rollback_ok then
+									last_reason = last_reason .. ":rollback_failed"
+									note_relocation_rejection("rollback", last_reason)
+									break
+								end
 							end
-						end
-					end
 				end
 			end
 			if success then
+				remove_committed_candidate(successful_source_candidate)
 				if debug_record then
 					debug_record.result = "moved"
 					debug_record.attempt_count = attempts
@@ -10544,15 +10696,12 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 					end
 				end
 				moved = moved + 1
+				marker.SuperBigMapUndergroundFallbackSpacingRelaxed = nil
 				if type(successful_fallback_clearance) == "number"
 					and successful_fallback_clearance < math.huge then
 					fallback_clearance_minimum_move = fallback_clearance_minimum_move == nil
 						and successful_fallback_clearance
 						or math.min(fallback_clearance_minimum_move, successful_fallback_clearance)
-					if successful_fallback_clearance < UndergroundFallbackMinimumHexDistance() then
-						fallback_clearance_relaxed_moves = fallback_clearance_relaxed_moves + 1
-						marker.SuperBigMapUndergroundFallbackSpacingRelaxed = true
-					end
 					marker.SuperBigMapReachabilityRelocationFallbackClearanceHex =
 						successful_fallback_clearance
 				end
@@ -10643,6 +10792,18 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 	relocation_debug.unresolved = unresolved
 	relocation_debug.unresolved_details = stats.unresolved_details
 	relocation_debug.records_count = #relocation_debug.records
+	local after_hash = 5381
+	for i, item in ipairs(invalid) do
+		local pos = item.marker and ObjectPos(item.marker)
+		local x, y
+		if pos and type(pos.xy) == "function" then x, y = pos:xy() end
+		after_hash = update_state_hash(after_hash, i)
+		after_hash = update_state_hash(after_hash, item.marker and item.marker.class)
+		after_hash = update_state_hash(after_hash, item.marker and item.marker.resource)
+		after_hash = update_state_hash(after_hash, x)
+		after_hash = update_state_hash(after_hash, y)
+	end
+	relocation_debug.live_after_hash = after_hash
 	AuditEmit("UNDERGROUND_ENRICHMENT_REACHABILITY", stats, map)
 	return unresolved == 0, stats
 end
