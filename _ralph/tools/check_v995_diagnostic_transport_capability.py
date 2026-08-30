@@ -46,14 +46,14 @@ if 'local write = DiagnosticHeartbeat.write_capability' not in publish_block:
 if 'Global("AsyncStringToFile")' in publish_block:
     raise SystemExit("terminal bundle returned to ambient mod-environment file lookup")
 
-if not re.search(r"GENERATOR_PATCH_VERSION\s*=\s*301\b", VERSION):
-    raise SystemExit("generator patch 301 missing")
-if not re.search(r"'version',\s*995\b", META):
-    raise SystemExit("metadata v995 missing")
+if not re.search(r"GENERATOR_PATCH_VERSION\s*=\s*302\b", VERSION):
+    raise SystemExit("generator patch 302 missing")
+if not re.search(r"'version',\s*996\b", META):
+    raise SystemExit("metadata v996 missing")
 
 print("ok=true")
-print("version=995")
-print("generator_patch=301")
+print("version=996")
+print("generator_patch=302")
 print("transport=explicit-private-writer+monotonic-clock")
 print("ambient_mod_global_lookups=0")
 print("terminal_writer_identity_retained=true")

@@ -117,8 +117,8 @@ for token in ("default_off_calls=3", "global_calls=0", "clock_calls=0", "file_ca
               "rng_calls=0", "console_calls=0"):
     assert token in DEFAULT_OFF_ORACLE
 
-assert "SuperBigMap.GENERATOR_PATCH_VERSION = 301" in VERSION
-assert re.search(r"'version',\s*995\b", META)
+assert "SuperBigMap.GENERATOR_PATCH_VERSION = 302" in VERSION
+assert re.search(r"'version',\s*996\b", META)
 print("ok=true")
 print("heartbeat_default_off_guard=private-nil-closure-return")
 print("heartbeat_phase_pairs=materialization+pipeline+flatten+relocation")

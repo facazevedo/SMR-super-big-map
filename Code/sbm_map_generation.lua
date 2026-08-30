@@ -8904,7 +8904,7 @@ if SuperBigMap.State.lazy_underground_reload_restore_ok ~= false
 	and (cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY", false)
 		or cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION", false)) then
 	local Lazy = {
-		SCHEMA = 1,
+		SCHEMA = 2,
 		DOMAIN = "SuperBigMap/v965/lazy-underground-surface-passage-capsules",
 		CALLBACK_TAG = "publish-generated-map-to-UndergroundMap",
 		CALLBACK_VERSION = 1,
@@ -8917,10 +8917,12 @@ if SuperBigMap.State.lazy_underground_reload_restore_ok ~= false
 			"LAZY_UNDERGROUND_POST_CANONICAL_STOCK_CAPSULE_SEARCH", true),
 		OUTER_PASSAGE_PADS = cfg_bool("LAZY_UNDERGROUND_OUTER_PASSAGE_PADS", true),
 		CAPSULE_PLANNER_VERSION = 7,
+		ENRICHMENT_SCHEMA = 1,
 		-- Process-local ownership, never saved state. Weak map keys disappear across reloads, letting
 		-- validation distinguish lifecycle re-entry from a genuinely interrupted saved game.
 		LIVE_SURFACE_GENERATION_TRANSACTIONS = setmetatable({}, { __mode = "k" }),
 		LIVE_MATERIALIZATION_TRANSACTIONS = setmetatable({}, { __mode = "k" }),
+		LIVE_ENRICHMENT_TRANSACTIONS = setmetatable({}, { __mode = "k" }),
 	}
 	local MATERIALIZATION_CAPABILITY_SCHEMA =
 		"SuperBigMap/v990/lazy-materialization-private-capability"
@@ -10350,6 +10352,7 @@ function Lazy.MarkBlocked(surface, reason)
 	if surface ~= nil then
 		Lazy.LIVE_SURFACE_GENERATION_TRANSACTIONS[surface] = nil
 		Lazy.LIVE_MATERIALIZATION_TRANSACTIONS[surface] = nil
+		Lazy.LIVE_ENRICHMENT_TRANSACTIONS[surface] = nil
 	end
 	local ready_target = SuperBigMap.State.lazy_diagnostic_ready_target
 	if type(ready_target) == "table" and ready_target.surface == surface then
@@ -10358,9 +10361,23 @@ function Lazy.MarkBlocked(surface, reason)
 	local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
 	local report = surface and surface.SuperBigMapLazyUndergroundFeasibilityReport
 	if type(descriptor) == "table" then
-		descriptor.state = "blocked"
-		descriptor.failure = tostring(reason or "unknown lazy-underground failure")
-		descriptor.failure_sticky = true
+		if descriptor.state == "blocked" and descriptor.failure_sticky == true
+			and tostring(descriptor.failure or "") ~= "" then
+			reason = descriptor.failure
+		else
+			descriptor.state = "blocked"
+			descriptor.failure = tostring(reason or "unknown lazy-underground failure")
+			descriptor.failure_sticky = true
+		end
+		if descriptor.enrichment_state == "pending" then
+			descriptor.enrichment_failure = descriptor.failure
+			descriptor.enrichment_state = "failed"
+			local maps = Global("Maps")
+			local underground = type(maps) == "table" and maps[descriptor.map_slot] or nil
+			if underground then
+				underground.SuperBigMapUndergroundEnrichmentState = "failed"
+			end
+		end
 	end
 	if type(report) == "table" then
 		report.enablement_ready = false
@@ -10369,6 +10386,7 @@ function Lazy.MarkBlocked(surface, reason)
 		report.materialization_running = false
 		report.persisted_state_live_reentry_allowed = false
 		report.persisted_state_materialization_reentry_allowed = false
+		report.persisted_state_enrichment_reentry_allowed = false
 		report.error = tostring(reason or "unknown lazy-underground failure")
 	end
 	LoadingStep("lazy underground access blocked", { error = tostring(reason) }, surface)
@@ -11408,6 +11426,9 @@ function Lazy.Capture(surface, pending, next_map)
 	report.persisted_state_materialization_reentry_phase = ""
 	report.persisted_state_materialization_reentry_count = 0
 	report.persisted_state_materialization_reentry_phase_sequence = ""
+	report.persisted_state_enrichment_reentry_allowed = false
+	report.persisted_state_enrichment_reentry_phase = ""
+	report.persisted_state_enrichment_reentry_count = 0
 	report.materialization_passage_pair_ok = false
 	report.materialization_enrichment_reachability_ok = false
 
@@ -11467,6 +11488,15 @@ function Lazy.Capture(surface, pending, next_map)
 		suppression_committed = false,
 		materialization_attempts = 0,
 		generation_count = 0,
+		enrichment_schema = Lazy.ENRICHMENT_SCHEMA,
+		enrichment_state = "not-materialized",
+		enrichment_plan_id = "",
+		enrichment_private_seed = 0,
+		enrichment_first_trigger_kind = "",
+		enrichment_trigger_calls = 0,
+		enrichment_transaction_attempts = 0,
+		enrichment_completion_count = 0,
+		enrichment_failure = "",
 		failure = "",
 		failure_sticky = false,
 	}
@@ -11748,6 +11778,9 @@ function Lazy.PendingForSlot(map_slot)
 		or descriptor.state == "suppressed-awaiting-surface-capsules" then
 		return true, surface
 	end
+	if descriptor.state == "complete" and descriptor.enrichment_state ~= "complete" then
+		return true, surface
+	end
 	return false, surface
 end
 
@@ -11759,7 +11792,7 @@ function Lazy.PendingForElevator(elevator)
 	local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
 	if type(descriptor) ~= "table" or type(descriptor.capsules) ~= "table"
 		or not descriptor.capsules[index] then return false, nil end
-	return descriptor.state ~= "complete", surface
+	return descriptor.state ~= "complete" or descriptor.enrichment_state ~= "complete", surface
 end
 
 function Lazy.OwnedSurfaceGenerationInFlight(surface, descriptor, report)
@@ -12292,6 +12325,9 @@ function Lazy.ValidatePersistedState(surface)
 	if Lazy.IMPLEMENTATION ~= true then return true end
 	local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
 	if type(descriptor) ~= "table" or descriptor.implementation ~= true then return true end
+	if descriptor.schema ~= Lazy.SCHEMA then
+		return Lazy.MarkBlocked(surface, "lazy descriptor schema is not current")
+	end
 	local report = surface and surface.SuperBigMapLazyUndergroundFeasibilityReport
 	local maps = Global("Maps")
 	local underground = type(maps) == "table" and maps[descriptor.map_slot] or nil
@@ -12337,6 +12373,57 @@ function Lazy.ValidatePersistedState(surface)
 			or underground.SuperBigMapUndergroundPrepared ~= true
 			or underground.SuperBigMapUndergroundStretchDone ~= true then
 			return Lazy.MarkBlocked(surface, "completed descriptor lost its prepared underground map")
+		end
+		local enrichment_state = descriptor.enrichment_state
+		local enrichment_exact = descriptor.schema == Lazy.SCHEMA
+			and descriptor.enrichment_schema == Lazy.ENRICHMENT_SCHEMA
+			and (enrichment_state == "pending" or enrichment_state == "complete")
+			and type(descriptor.enrichment_plan_id) == "string"
+			and descriptor.enrichment_plan_id ~= ""
+			and #descriptor.enrichment_plan_id <= 192
+			and type(descriptor.enrichment_private_seed) == "number"
+			and descriptor.enrichment_private_seed == math.floor(descriptor.enrichment_private_seed)
+			and descriptor.enrichment_private_seed > 0
+			and descriptor.enrichment_private_seed < 2147483647
+			and underground.SuperBigMapUndergroundEnrichmentSchema == Lazy.ENRICHMENT_SCHEMA
+			and underground.SuperBigMapUndergroundEnrichmentPlanId
+				== descriptor.enrichment_plan_id
+			and underground.SuperBigMapUndergroundEnrichmentPrivateSeed
+				== descriptor.enrichment_private_seed
+			and underground.SuperBigMapUndergroundEnrichmentState == enrichment_state
+			and tostring(descriptor.enrichment_failure or "") == ""
+		if enrichment_state == "pending" then
+			local enrichment_owner = Lazy.LIVE_ENRICHMENT_TRANSACTIONS[surface]
+			local owned_enrichment = type(enrichment_owner) == "table"
+				and enrichment_owner.descriptor == descriptor
+				and enrichment_owner.report == report
+				and enrichment_owner.underground == underground
+				and enrichment_owner.plan_id == descriptor.enrichment_plan_id
+				and enrichment_owner.attempt == descriptor.enrichment_transaction_attempts
+			local attempts = tonumber(descriptor.enrichment_transaction_attempts)
+			enrichment_exact = enrichment_exact
+				and tonumber(descriptor.enrichment_completion_count) == 0
+				and underground.SuperBigMapUndergroundWonderGameInitDeferredForEnrichment
+					== true
+				and ((attempts ~= nil and attempts <= 1)
+					or (owned_enrichment and attempts == 2))
+			if enrichment_exact and owned_enrichment then
+				report.persisted_state_enrichment_reentry_allowed = true
+				report.persisted_state_enrichment_reentry_count =
+					(tonumber(report.persisted_state_enrichment_reentry_count) or 0) + 1
+				report.persisted_state_enrichment_reentry_phase =
+					"owned-deferred-enrichment"
+			end
+		elseif enrichment_state == "complete" then
+			enrichment_exact = enrichment_exact
+				and tonumber(descriptor.enrichment_completion_count) == 1
+				and underground.SuperBigMapUndergroundEnrichmentReachabilityOK == true
+				and underground.SuperBigMapUndergroundWonderGameInitDeferredForEnrichment
+					~= true
+		end
+		if not enrichment_exact then
+			return Lazy.MarkBlocked(surface,
+				"completed descriptor has an invalid persisted enrichment transaction")
 		end
 		return true
 	end
@@ -12636,12 +12723,10 @@ function Lazy.MaterializeTransaction(surface, descriptor, route, expected_owner,
 	})
 	descriptor.materialization_passage_pair_ok =
 		underground.SuperBigMapUndergroundPassagePairOK == true
-	descriptor.materialization_enrichment_reachability_ok =
-		underground.SuperBigMapUndergroundEnrichmentReachabilityOK == true
+	descriptor.materialization_enrichment_reachability_ok = nil
 	if type(report) == "table" then
 		report.materialization_passage_pair_ok = descriptor.materialization_passage_pair_ok
-		report.materialization_enrichment_reachability_ok =
-			descriptor.materialization_enrichment_reachability_ok
+		report.materialization_enrichment_reachability_ok = nil
 	end
 	if pipeline_ok ~= true then
 		return nil, "deferred underground completion failed: " .. tostring(pipeline_reason)
@@ -12663,9 +12748,8 @@ function Lazy.MaterializeTransaction(surface, descriptor, route, expected_owner,
 	if not passage_pad_z_certificate_exact then
 		return nil, "deferred underground completion omitted the exact passage-pad target-Z certificate"
 	end
-	if descriptor.materialization_passage_pair_ok ~= true
-		or descriptor.materialization_enrichment_reachability_ok ~= true then
-		return nil, "deferred underground completion omitted a mandatory passage/enrichment audit"
+	if descriptor.materialization_passage_pair_ok ~= true then
+		return nil, "deferred underground core completion omitted its mandatory passage audit"
 	end
 	if underground.SuperBigMapUndergroundPrepared ~= true
 		or underground.SuperBigMapUndergroundStretchDone ~= true
@@ -12675,6 +12759,59 @@ function Lazy.MaterializeTransaction(surface, descriptor, route, expected_owner,
 	end
 	local pairs_ok, pairs_reason = Lazy.ValidateCompletedPairs(surface, underground, descriptor)
 	if not pairs_ok then return nil, pairs_reason end
+	-- The physical map, paired entrances, and canonical gameplay grids are now complete while still
+	-- off-screen.  Publish a primitive, digest-bound enrichment plan, but do
+	-- not run it from native callbacks or module reloads.  The first external slot-2 request owns
+	-- that transaction under its loading/interaction cover.
+	local enrichment_required = cfg_bool(
+		"EXPANSION_STEP_13_CALCULATE_ENRICHMENT_ADDITIONS", false)
+	local modulus = 2147483647
+	local reserved_seed = tonumber(descriptor.reserved_seed)
+	local plan_digest = tonumber(descriptor.plan_digest)
+	local validation_z_digest = tonumber(descriptor.validation_z_digest)
+	if type(reserved_seed) ~= "number" or reserved_seed ~= reserved_seed
+		or reserved_seed ~= math.floor(reserved_seed)
+		or type(plan_digest) ~= "number" or plan_digest ~= plan_digest
+		or plan_digest ~= math.floor(plan_digest) or plan_digest <= 0
+		or type(validation_z_digest) ~= "number"
+		or validation_z_digest ~= validation_z_digest
+		or validation_z_digest ~= math.floor(validation_z_digest)
+		or validation_z_digest <= 0 then
+		return nil, "deferred underground enrichment plan inputs are invalid"
+	end
+	local enrichment_seed = (reserved_seed + plan_digest * 17
+		+ validation_z_digest * 31) % (modulus - 1) + 1
+	local enrichment_plan_id = table.concat({
+		"v" .. tostring(Lazy.ENRICHMENT_SCHEMA), tostring(descriptor.map_slot),
+		tostring(descriptor.reserved_seed), tostring(descriptor.plan_digest),
+		tostring(descriptor.validation_z_digest), tostring(enrichment_seed),
+	}, ":")
+	descriptor.enrichment_schema = Lazy.ENRICHMENT_SCHEMA
+	descriptor.enrichment_state = enrichment_required and "pending" or "complete"
+	descriptor.enrichment_plan_id = enrichment_plan_id
+	descriptor.enrichment_private_seed = enrichment_seed
+	descriptor.enrichment_first_trigger_kind = ""
+	descriptor.enrichment_trigger_calls = 0
+	descriptor.enrichment_transaction_attempts = 0
+	descriptor.enrichment_completion_count = enrichment_required and 0 or 1
+	descriptor.enrichment_failure = ""
+	underground.SuperBigMapUndergroundEnrichmentSchema = Lazy.ENRICHMENT_SCHEMA
+	underground.SuperBigMapUndergroundEnrichmentState = descriptor.enrichment_state
+	underground.SuperBigMapUndergroundEnrichmentPlanId = enrichment_plan_id
+	underground.SuperBigMapUndergroundEnrichmentPrivateSeed = enrichment_seed
+	underground.SuperBigMapUndergroundEnrichmentReachabilityOK =
+		enrichment_required and nil or true
+	if type(report) == "table" then
+		report.enrichment_schema = Lazy.ENRICHMENT_SCHEMA
+		report.enrichment_state = descriptor.enrichment_state
+		report.enrichment_plan_id = enrichment_plan_id
+		report.enrichment_private_seed = enrichment_seed
+		report.enrichment_pending_after_core = enrichment_required == true
+		report.enrichment_first_trigger_kind = ""
+		report.enrichment_trigger_calls = 0
+		report.enrichment_transaction_attempts = 0
+		report.enrichment_completion_count = descriptor.enrichment_completion_count
+	end
 	return underground, nil
 end
 
@@ -12838,6 +12975,196 @@ function Lazy.Materialize(surface, route, diagnostic_heartbeat)
 	return underground, nil
 end
 
+function Lazy.EnsureUndergroundFirstLoadReady(trigger_kind, surface, underground,
+	diagnostic_heartbeat)
+	if Lazy.IMPLEMENTATION ~= true then return false, "functional implementation is disabled" end
+	local allowed_trigger = trigger_kind == "view-switch"
+		or trigger_kind == "elevator-transfer"
+		or trigger_kind == "authorized-map-load"
+	if not allowed_trigger then return false, "unauthorized underground first-load trigger" end
+	surface = surface or Lazy.StateSurface()
+	local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
+	local report = surface and surface.SuperBigMapLazyUndergroundFeasibilityReport
+	local maps = Global("Maps")
+	underground = underground or (type(maps) == "table" and maps[2] or nil)
+	if type(descriptor) ~= "table" or type(report) ~= "table"
+		or descriptor.state == "blocked" then
+		return false, type(descriptor) == "table" and descriptor.failure
+			or "lazy underground first-load state is unavailable"
+	end
+	if descriptor.state ~= "complete" or not underground
+		or underground ~= (type(maps) == "table" and maps[descriptor.map_slot] or nil)
+		or underground.SuperBigMapUndergroundPrepared ~= true
+		or underground.SuperBigMapUndergroundStretchDone ~= true
+		or descriptor.materialization_passage_pair_ok ~= true then
+		return Lazy.MarkBlocked(surface,
+			"underground enrichment trigger observed an incomplete core transaction")
+	end
+	if descriptor.enrichment_state == "complete" then
+		if underground.SuperBigMapUndergroundEnrichmentState == "complete"
+			and underground.SuperBigMapUndergroundEnrichmentReachabilityOK == true
+			and tonumber(descriptor.enrichment_completion_count) == 1 then
+			return true, "underground enrichment was already complete"
+		end
+		return Lazy.MarkBlocked(surface,
+			"completed underground enrichment certificate drifted")
+	end
+	if descriptor.enrichment_state ~= "pending" then
+		return Lazy.MarkBlocked(surface,
+			"underground enrichment trigger observed state "
+				.. tostring(descriptor.enrichment_state))
+	end
+	local plan_exact = descriptor.enrichment_schema == Lazy.ENRICHMENT_SCHEMA
+		and type(descriptor.enrichment_plan_id) == "string"
+		and descriptor.enrichment_plan_id ~= ""
+		and descriptor.enrichment_plan_id
+			== underground.SuperBigMapUndergroundEnrichmentPlanId
+		and descriptor.enrichment_private_seed
+			== underground.SuperBigMapUndergroundEnrichmentPrivateSeed
+		and type(descriptor.enrichment_private_seed) == "number"
+		and descriptor.enrichment_private_seed == math.floor(descriptor.enrichment_private_seed)
+		and descriptor.enrichment_private_seed > 0
+		and descriptor.enrichment_private_seed < 2147483647
+		and underground.SuperBigMapUndergroundEnrichmentState == "pending"
+		and underground.SuperBigMapUndergroundWonderGameInitDeferredForEnrichment == true
+		and tonumber(descriptor.enrichment_completion_count) == 0
+		and tostring(descriptor.enrichment_failure or "") == ""
+	if not plan_exact then
+		return Lazy.MarkBlocked(surface,
+			"underground enrichment plan identity/certificate is invalid")
+	end
+	descriptor.enrichment_trigger_calls =
+		(tonumber(descriptor.enrichment_trigger_calls) or 0) + 1
+	report.enrichment_trigger_calls = descriptor.enrichment_trigger_calls
+	if descriptor.enrichment_first_trigger_kind == "" then
+		descriptor.enrichment_first_trigger_kind = trigger_kind
+		report.enrichment_first_trigger_kind = trigger_kind
+		report.enrichment_first_trigger_sequence = descriptor.enrichment_trigger_calls
+	elseif descriptor.enrichment_first_trigger_kind ~= trigger_kind
+		and Lazy.LIVE_ENRICHMENT_TRANSACTIONS[surface] == nil then
+		-- A later route is a normal no-op after completion, but a fresh owner must never rewrite the
+		-- exact persisted first-trigger identity while work is still pending.
+		report.enrichment_join_trigger_kind = trigger_kind
+	end
+	local live_owner = Lazy.LIVE_ENRICHMENT_TRANSACTIONS[surface]
+	if type(live_owner) == "table" then
+		if live_owner.descriptor ~= descriptor or live_owner.underground ~= underground
+			or live_owner.plan_id ~= descriptor.enrichment_plan_id then
+			return Lazy.MarkBlocked(surface, "live enrichment owner identity drifted")
+		end
+		local wait_msg = Global("WaitMsg")
+		if type(wait_msg) ~= "function" then
+			return Lazy.MarkBlocked(surface, "concurrent enrichment cannot join without WaitMsg")
+		end
+		wait_msg("SuperBigMapLazyUndergroundEnrichmentDone", 300000)
+		if descriptor.enrichment_state == "complete"
+			and underground.SuperBigMapUndergroundEnrichmentState == "complete" then
+			return true, "joined completed underground enrichment"
+		end
+		return false, descriptor.failure ~= "" and descriptor.failure
+			or "concurrent underground enrichment did not complete"
+	end
+	local attempts = (tonumber(descriptor.enrichment_transaction_attempts) or 0) + 1
+	if attempts > 2 then
+		return Lazy.MarkBlocked(surface,
+			"underground enrichment exceeded its one save/load resume")
+	end
+	descriptor.enrichment_transaction_attempts = attempts
+	report.enrichment_transaction_attempts = attempts
+	report.enrichment_running = true
+	report.enrichment_state = "pending"
+	local owner = {
+		descriptor = descriptor, report = report, underground = underground,
+		plan_id = descriptor.enrichment_plan_id, attempt = attempts,
+		trigger_kind = descriptor.enrichment_first_trigger_kind,
+	}
+	local enrichment_capability = {
+		schema = "smr.sbm.lazy-underground-enrichment-capability.v1",
+	}
+	enrichment_capability.authorize = function(presented, expected_map, expected_plan)
+		if presented ~= enrichment_capability
+			or Lazy.LIVE_ENRICHMENT_TRANSACTIONS[surface] ~= owner
+			or owner.descriptor ~= descriptor or owner.report ~= report
+			or expected_map ~= underground or owner.underground ~= underground
+			or expected_plan ~= descriptor.enrichment_plan_id
+			or owner.plan_id ~= descriptor.enrichment_plan_id
+			or descriptor.enrichment_state ~= "pending" then
+			return false
+		end
+		return true, owner
+	end
+	owner.capability = enrichment_capability
+	Lazy.LIVE_ENRICHMENT_TRANSACTIONS[surface] = owner
+	local runner = Lazy.RunDeferredEnrichment
+	local call_ok, completed, result
+	if type(runner) == "function" then
+		call_ok, completed, result = pcall(runner, underground, {
+			capability = enrichment_capability,
+			plan_id = descriptor.enrichment_plan_id,
+			private_seed = descriptor.enrichment_private_seed,
+			trigger_kind = descriptor.enrichment_first_trigger_kind,
+			attempt = attempts, duration_ms = 240000,
+			maximum_candidates = 16384, maximum_validations = 32768,
+			diagnostic_heartbeat = diagnostic_heartbeat,
+		})
+	else
+		call_ok, completed, result = false,
+			"deferred enrichment runner is unavailable", nil
+	end
+	if Lazy.LIVE_ENRICHMENT_TRANSACTIONS[surface] ~= owner then
+		if descriptor.state == "blocked" and descriptor.failure_sticky == true then
+			return false, descriptor.failure
+		end
+		return Lazy.MarkBlocked(surface, "underground enrichment owner was lost before publication")
+	end
+	Lazy.LIVE_ENRICHMENT_TRANSACTIONS[surface] = nil
+	local success = call_ok and completed == true and type(result) == "table"
+		and result.plan_id == descriptor.enrichment_plan_id
+		and result.final_audit_ok == true
+		and underground.SuperBigMapUndergroundEnrichmentReachabilityOK == true
+	if not success then
+		local reason = call_ok and (type(result) == "table" and result.error or result)
+			or completed
+		underground.SuperBigMapUndergroundEnrichmentState = "failed"
+		if type(result) == "table" then
+			underground.SuperBigMapUndergroundEnrichmentBoundedStats = result
+			report.enrichment_result = result
+		end
+		report.enrichment_running = false
+		report.enrichment_failure = tostring(reason or "deferred enrichment failed")
+		local blocked, blocked_reason = Lazy.MarkBlocked(surface,
+			"deferred underground enrichment failed: " .. report.enrichment_failure)
+		local msg = Global("Msg")
+		if type(msg) == "function" then
+			pcall(msg, "SuperBigMapLazyUndergroundEnrichmentDone", surface)
+		end
+		return blocked, blocked_reason
+	end
+	descriptor.enrichment_state = "complete"
+	descriptor.enrichment_completion_count = 1
+	descriptor.enrichment_failure = ""
+	descriptor.materialization_enrichment_reachability_ok = true
+	underground.SuperBigMapUndergroundEnrichmentState = "complete"
+	underground.SuperBigMapUndergroundEnrichmentReachabilityOK = true
+	report.enrichment_state = "complete"
+	report.enrichment_running = false
+	report.enrichment_complete = true
+	report.enrichment_completion_count = 1
+	report.enrichment_failure = ""
+	report.enrichment_result = result
+	report.materialization_enrichment_reachability_ok = true
+	report.descriptor_primitive = Lazy.PrimitiveTree(descriptor)
+	if report.descriptor_primitive ~= true then
+		return Lazy.MarkBlocked(surface,
+			"completed underground enrichment descriptor is not primitive")
+	end
+	local msg = Global("Msg")
+	if type(msg) == "function" then
+		pcall(msg, "SuperBigMapLazyUndergroundEnrichmentDone", surface)
+	end
+	return true, result
+end
+
 function Lazy.ShowAccessFailure(reason)
 	local create_box = Global("CreateMessageBox")
 	if type(create_box) ~= "function" then return end
@@ -12866,6 +13193,13 @@ function Lazy.MaterializeWithForegroundCover(route)
 	end
 	SetLoadingPhase("Generating the underground map for first access")
 	local underground, reason = Lazy.Materialize(surface, route)
+	if underground then
+		local ready, enrichment_result = Lazy.EnsureUndergroundFirstLoadReady(
+			"authorized-map-load", surface, underground)
+		if ready ~= true then
+			underground, reason = nil, enrichment_result
+		end
+	end
 	if fallback_open and type(close_screen) == "function" then
 		pcall(close_screen, fallback_id, 2)
 	end
@@ -17312,7 +17646,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 			-- created extra enrichments and could relocate native underground markers.
 			do
 				local deposits = SuperBigMap.DepositRules
-				if deposits
+				if deposits and capability_context == nil
 					and cfg_bool("EXPANSION_STEP_13_CALCULATE_ENRICHMENT_ADDITIONS", false) then
 					if type(deposits.BeginUndergroundTopUpWallIgnore) ~= "function"
 						or type(deposits.EndUndergroundTopUpWallIgnore) ~= "function" then
@@ -17562,6 +17896,14 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 					if type(deposits.ClearTopUpPlacementPool) == "function" then
 						deposits.ClearTopUpPlacementPool(map)
 					end
+				elseif deposits and capability_context ~= nil
+					and cfg_bool("EXPANSION_STEP_13_CALCULATE_ENRICHMENT_ADDITIONS", false) then
+					-- Lazy first access publishes only the off-screen physical/core transaction here.
+					-- Density additions and every dependent audit are owned by the first EXTERNAL
+					-- slot-2 request.  That request retains its loading/interaction cover and runs the
+					-- same idempotent deferred transaction before the request is released.
+					map.SuperBigMapUndergroundEnrichmentState = "pending"
+					map.SuperBigMapUndergroundEnrichmentReachabilityOK = nil
 				end
 			end
 			end
@@ -17569,9 +17911,10 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 			-- buildable-floor-only pools need the live grid.)
 			-- Every buried wonder now sits at its final pose on the final grids and carries its
 			-- rare anomaly, which is the lifecycle point at which vanilla has already run the
-			-- wonder's GameInit. Complete that same spawn lifecycle before the map is reported
-			-- prepared, so the finished underground is not missing objects GameInit attaches.
-			do
+			-- wonder's GameInit. Eager preparation completes it here; lazy preparation preserves the
+			-- same topups-before-GameInit order inside the covered first-external-load transaction.
+			if capability_context == nil
+				or not cfg_bool("EXPANSION_STEP_13_CALCULATE_ENRICHMENT_ADDITIONS", false) then
 				SetLoadingPhase("Completing buried-wonder spawn effects")
 				HeartbeatPhase("underground-wonder-GameInit")
 				local wonder_gameinit_token = LoadingBegin(
@@ -17586,6 +17929,8 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 						.. tostring(wonder_gameinit_stats and wonder_gameinit_stats.error
 							or "unknown error"))
 				end
+			else
+				map.SuperBigMapUndergroundWonderGameInitDeferredForEnrichment = true
 			end
 			-- LAST WORD ON THE GAMEPLAY GRIDS. Everything above -- the pre-anomaly buried-wonder
 			-- reseat, anomaly activation, enrichment relocation and this GameInit pass -- runs inside
@@ -17726,6 +18071,241 @@ local function RunUndergroundStretchIfEnabled(map, force_now, materialization_ca
 	return true
 end
 
+-- Runs only from Lazy.EnsureUndergroundFirstLoadReady after the physical/core map transaction is
+-- complete and while the authoritative external slot-2 request still owns its loading and
+-- interaction cover.  No native generation, terrain stretch, passage placement, or shared RNG is
+-- reachable here.  Every mutating enrichment family is idempotent by exact current-vs-target
+-- deficit, and every selected coordinate is revalidated against the live grids immediately before
+-- commit by DepositRules.
+function SuperBigMap.RunDeferredUndergroundEnrichment(map, options)
+	options = type(options) == "table" and options or {}
+	local capability = options.capability
+	local capability_ok, authorized, owner = false, false, nil
+	if type(capability) == "table"
+		and capability.schema == "smr.sbm.lazy-underground-enrichment-capability.v1"
+		and type(capability.authorize) == "function" then
+		capability_ok, authorized, owner = pcall(
+			capability.authorize, capability, map, options.plan_id)
+	end
+	if capability_ok ~= true or authorized ~= true or type(owner) ~= "table"
+		or owner.underground ~= map or owner.plan_id ~= options.plan_id
+		or owner.capability ~= capability then
+		return false, {
+			schema = "smr.sbm.lazy-underground-enrichment-result.v1",
+			plan_id = tostring(options.plan_id or ""), final_audit_ok = false,
+			error = "private deferred enrichment capability was rejected",
+			candidate_samples = 0, validation_calls = 0, private_final_state = 0,
+		}
+	end
+	local deposits = SuperBigMap.DepositRules
+	local heartbeat = type(options.diagnostic_heartbeat) == "function"
+		and options.diagnostic_heartbeat or SuperBigMap.DiagnosticPhaseHeartbeat
+	local function emit(phase, boundary, fields)
+		if type(heartbeat) == "function" then pcall(heartbeat, map, phase, boundary, fields) end
+	end
+	local function result_failure(reason, budget_stats)
+		return false, {
+			schema = "smr.sbm.lazy-underground-enrichment-result.v1",
+			plan_id = tostring(options.plan_id or ""), final_audit_ok = false,
+			error = tostring(reason or "unknown deferred enrichment failure"):sub(1, 768),
+			candidate_samples = budget_stats and budget_stats.candidate_samples or 0,
+			validation_calls = budget_stats and budget_stats.validation_calls or 0,
+			commits = budget_stats and budget_stats.commits or 0,
+			private_final_state = budget_stats and budget_stats.private_final_state or 0,
+			rejection_histogram = budget_stats and budget_stats.rejection_histogram or "",
+			first_rejections = budget_stats and budget_stats.first_rejections or "",
+		}
+	end
+	if not map or not map.mapdata or map.mapdata.Environment ~= "Underground"
+		or map.SuperBigMapUndergroundPrepared ~= true
+		or map.SuperBigMapUndergroundStretchDone ~= true then
+		return result_failure("deferred enrichment target/core state is invalid")
+	end
+	local required = {
+		"BeginBoundedUndergroundEnrichment", "SetBoundedUndergroundEnrichmentPhase",
+		"EndBoundedUndergroundEnrichment", "BeginUndergroundTopUpWallIgnore",
+		"EndUndergroundTopUpWallIgnore", "TopUpDeposits", "TopUpAnomalies",
+		"TopUpEffectDeposits", "RegisterClonedMarkers",
+		"RelocateUnreachableUndergroundEnrichments", "ResolveBadgeMarkerOverlaps",
+		"VerifyUndergroundWonderEnrichmentExclusion",
+		"EnsureDeferredUndergroundWonderAnomaliesReachable", "AuditTopUpVanillaRepulsion",
+	}
+	if type(deposits) ~= "table" then return result_failure("deposit rules are unavailable") end
+	for _, name in ipairs(required) do
+		if type(deposits[name]) ~= "function" then
+			return result_failure("deferred enrichment API is unavailable: " .. name)
+		end
+	end
+	local budget, budget_reason = deposits.BeginBoundedUndergroundEnrichment(
+		map, options.plan_id, options.private_seed, {
+			duration_ms = options.duration_ms,
+			maximum_candidates = options.maximum_candidates,
+			maximum_validations = options.maximum_validations,
+		})
+	if not budget then return result_failure(budget_reason) end
+	local wall_owned, wall_stats = false, nil
+	local function set_phase(name)
+		local ok, reason = deposits.SetBoundedUndergroundEnrichmentPhase(budget, name)
+		if ok ~= true then error(reason) end
+		emit("underground-deferred-enrichment-" .. name, "BEFORE", {
+			plan_id = options.plan_id, trigger = options.trigger_kind,
+			attempt = options.attempt,
+		})
+	end
+	local call_ok, call_result = pcall(function()
+		set_phase("wall-suspension")
+		local ok, stats = deposits.BeginUndergroundTopUpWallIgnore(map)
+		if ok ~= true then
+			error("underground rubble-wall suspension failed: "
+				.. tostring(stats and stats.error or "unknown"))
+		end
+		wall_owned, wall_stats = true, stats
+		set_phase("resource-topups")
+		deposits.TopUpDeposits(map)
+		set_phase("anomaly-topups")
+		deposits.TopUpAnomalies(map)
+		set_phase("effect-topups")
+		deposits.TopUpEffectDeposits(map)
+		set_phase("wall-restoration")
+		local wall_restore_ok, wall_restore = deposits.EndUndergroundTopUpWallIgnore(map)
+		if wall_restore_ok ~= true then
+			error("underground rubble-wall restoration failed: "
+				.. tostring(wall_restore and wall_restore.error or "unknown"))
+		end
+		wall_owned = false
+		set_phase("register-markers")
+		deposits.RegisterClonedMarkers(map)
+		set_phase("reachability-relocation")
+		local relocation_ok, relocation = deposits.RelocateUnreachableUndergroundEnrichments(
+			map, {
+				deadline_ms = budget.deadline_ms,
+				deadline_started_ms = budget.started_ms,
+				diagnostic_heartbeat = heartbeat,
+			})
+		if relocation_ok ~= true then
+			error("reachability relocation left "
+				.. tostring(relocation and relocation.unresolved or "unknown")
+				.. " unresolved markers")
+		end
+		map.SuperBigMapUndergroundEnrichmentReachabilityOK = true
+		set_phase("overlap-resolution")
+		deposits.ResolveBadgeMarkerOverlaps(map, "deferred underground enrichment")
+		set_phase("wonder-exclusion-audit")
+		local exclusion_ok, exclusion = deposits.VerifyUndergroundWonderEnrichmentExclusion(
+			map, "deferred underground enrichment final")
+		if exclusion_ok ~= true then
+			error("wonder/enrichment exclusion failed: "
+				.. tostring(exclusion and exclusion.error or "unknown"))
+		end
+		local wonder_reach_ok, wonder_reach =
+			deposits.EnsureDeferredUndergroundWonderAnomaliesReachable(map, false)
+		if wonder_reach_ok ~= true then
+			error("wonder anomaly reachability audit failed: "
+				.. tostring(wonder_reach and wonder_reach.unresolved or "unknown"))
+		end
+		set_phase("repulsion-density-audit")
+		local repulsion_ok, repulsion = deposits.AuditTopUpVanillaRepulsion(
+			map, "deferred underground enrichment final")
+		if repulsion_ok ~= true then
+			error("final density/repulsion audit failed: density="
+				.. tostring(repulsion and repulsion.density_failures or "unknown")
+				.. " duplicate="
+				.. tostring(repulsion and repulsion.duplicate_hex_pairs or "unknown")
+				.. " spacing="
+				.. tostring(repulsion and repulsion.enrichment_spacing_violations or "unknown"))
+		end
+		local status = map.SuperBigMapEnrichmentTopUpStatus
+		for _, kind in ipairs({ "resources", "anomalies", "effects" }) do
+			local entry = type(status) == "table" and status[kind] or nil
+			if type(entry) ~= "table" or entry.complete ~= true
+				or tonumber(entry.remaining_shortfall) ~= 0 then
+				error("final " .. kind .. " top-up census is incomplete")
+			end
+		end
+		set_phase("closing-gameplay-grid-rebuild")
+		if map.SuperBigMapUndergroundWonderGameInitDeferredForEnrichment == true then
+			local wonder_gameinit_ok, wonder_gameinit_stats =
+				WonderVerticalDiagnostics.RunDeferredUndergroundWonderGameInit(
+					map, "after deferred enrichment placement")
+			if wonder_gameinit_ok ~= true then
+				error("deferred underground wonder GameInit failed: "
+					.. tostring(wonder_gameinit_stats and wonder_gameinit_stats.error
+						or "unknown"))
+			end
+			map.SuperBigMapUndergroundWonderGameInitDeferredForEnrichment = nil
+		end
+		local grids = SuperBigMap.GenerationGrids
+		if type(grids) ~= "table" or type(grids.RebuildFinal) ~= "function" then
+			error("final gameplay-grid rebuild API is unavailable")
+		end
+		grids.RebuildFinal(map, "after deferred underground enrichment transaction")
+		set_phase("post-rebuild-revalidation")
+		local final_relocation_ok, final_relocation =
+			deposits.RelocateUnreachableUndergroundEnrichments(map, {
+				deadline_ms = budget.deadline_ms,
+				deadline_started_ms = budget.started_ms,
+				diagnostic_heartbeat = heartbeat,
+			})
+		if final_relocation_ok ~= true
+			or tonumber(final_relocation and final_relocation.unresolved) ~= 0 then
+			error("post-rebuild enrichment reachability revalidation failed")
+		end
+		local final_repulsion_ok, final_repulsion = deposits.AuditTopUpVanillaRepulsion(
+			map, "deferred underground enrichment post-rebuild")
+		if final_repulsion_ok ~= true then
+			error("post-rebuild density/repulsion revalidation failed: "
+				.. tostring(final_repulsion and final_repulsion.first_repulsion_violation
+					or "unknown"))
+		end
+		return true
+	end)
+	local cleanup_errors = {}
+	if wall_owned then
+		local wall_ok, wall_result = deposits.EndUndergroundTopUpWallIgnore(map)
+		if wall_ok ~= true then
+			cleanup_errors[#cleanup_errors + 1] = "rubble-wall restoration failed: "
+				.. tostring(wall_result and wall_result.error or "unknown")
+		end
+		wall_owned = false
+	end
+	if type(deposits.ClearTopUpPlacementPool) == "function" then
+		local clear_ok, clear_error = pcall(deposits.ClearTopUpPlacementPool, map)
+		if not clear_ok then cleanup_errors[#cleanup_errors + 1] = tostring(clear_error) end
+	end
+	local budget_ok, budget_stats = deposits.EndBoundedUndergroundEnrichment(budget)
+	if budget_ok ~= true then cleanup_errors[#cleanup_errors + 1] = tostring(budget_stats) end
+	local failure = not call_ok and call_result or nil
+	if #cleanup_errors > 0 then
+		failure = tostring(failure or "") .. (#tostring(failure or "") > 0 and " | " or "")
+			.. table.concat(cleanup_errors, " | ")
+	end
+	if failure then
+		emit("underground-deferred-enrichment", "ERROR", { reason = failure })
+		return result_failure(failure, budget_stats)
+	end
+	local final = {
+		schema = "smr.sbm.lazy-underground-enrichment-result.v1",
+		plan_id = tostring(options.plan_id), trigger_kind = tostring(options.trigger_kind),
+		attempt = tonumber(options.attempt) or 0, final_audit_ok = true,
+		wall_ignore_owned = wall_stats ~= nil,
+		candidate_samples = budget_stats.candidate_samples,
+		validation_calls = budget_stats.validation_calls,
+		rng_calls = budget_stats.rng_calls,
+		commits = budget_stats.commits,
+		private_final_state = budget_stats.private_final_state,
+		elapsed_ms = budget_stats.elapsed_ms,
+		phase_sequence = budget_stats.phase_sequence,
+		phase_candidate_samples = budget_stats.phase_candidate_samples,
+		phase_validation_calls = budget_stats.phase_validation_calls,
+		rejection_histogram = budget_stats.rejection_histogram,
+		first_rejections = budget_stats.first_rejections,
+		error = "",
+	}
+	map.SuperBigMapUndergroundEnrichmentBoundedStats = final
+	emit("underground-deferred-enrichment", "AFTER", final)
+	return true, final
+end
+
 -- Persistent readiness handoff used by lifecycle completion events. PostNewMapLoaded may run
 -- while the random generator is still filling terrain and objects, so it may only register a
 -- deferred request. Both milestones are required: MapGenerated proves native terrain/object
@@ -17777,6 +18357,8 @@ end
 
 if type(SuperBigMap.LazyUndergroundFeasibility) == "table" then
 	SuperBigMap.LazyUndergroundFeasibility.RunDeferredPipeline = RunUndergroundStretchIfEnabled
+	SuperBigMap.LazyUndergroundFeasibility.RunDeferredEnrichment =
+		SuperBigMap.RunDeferredUndergroundEnrichment
 end
 
 local function NeedsDeferredUndergroundPreparation(map)
@@ -18771,6 +19353,30 @@ local function PatchDeferredUndergroundAccess(source)
 			ok = target ~= nil
 		else
 			ok, err = RunUndergroundStretchIfEnabled(target, true)
+		end
+		if ok == true and lazy_pending then
+			-- This wrapper is the authoritative first EXTERNAL slot-2 request. Generate/stretch may
+			-- internally reload modules or publish Maps[2], but those callbacks never reach this
+			-- trigger. Elevator preparation marks its hidden round trip before invoking this same
+			-- wrapper; all other authorized map-view/load routes share the view-switch identity.
+			local trigger_kind = State.deferred_elevator_hidden_roundtrip_active
+				and "elevator-transfer" or "view-switch"
+			local enrichment_heartbeat = State.lazy_diagnostic_heartbeat_emitter
+			local enrichment_authorize = State.lazy_diagnostic_heartbeat_authorize
+			if type(enrichment_heartbeat) ~= "function"
+				or type(enrichment_authorize) ~= "function"
+				or enrichment_authorize(enrichment_heartbeat) ~= true then
+				enrichment_heartbeat = nil
+			end
+			local enrichment_ok, enrichment_result =
+				lazy.EnsureUndergroundFirstLoadReady(
+					trigger_kind, lazy_surface, target,
+					enrichment_heartbeat)
+			if enrichment_ok ~= true then
+				ok = false
+				err = type(enrichment_result) == "table" and enrichment_result.error
+					or enrichment_result
+			end
 		end
 		if ok ~= true then
 			if screen_open then

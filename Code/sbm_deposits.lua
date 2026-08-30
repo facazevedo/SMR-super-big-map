@@ -226,7 +226,150 @@ end
 
 local MapWorldSize = Engine.MapWorldSize
 
-local RandInt = Engine.RandInt
+local DepositRules = {}
+local SharedRandInt = Engine.RandInt
+
+-- The deferred underground enrichment transaction must not consume the simulation's shared RNG.
+-- Keep the active stream process-local and scoped to one synchronous, fail-closed transaction.
+-- Its persisted plan carries only primitive identity/seed fields; this mutable table is never
+-- copied onto a map or save.  The Park-Miller stream matches the private capsule-planner family
+-- and stays exact in Lua 5.3 integer arithmetic.
+local active_underground_enrichment_budget
+
+local function EnrichmentBudgetNow()
+	local clock = Global("GetPreciseTicks")
+	if type(clock) ~= "function" then return nil end
+	local ok, value = pcall(clock)
+	return ok and type(value) == "number" and value or nil
+end
+
+local function CheckUndergroundEnrichmentBudget(map, kind)
+	local budget = active_underground_enrichment_budget
+	if type(budget) ~= "table" or budget.map ~= map then return true end
+	local now = EnrichmentBudgetNow()
+	if type(now) ~= "number" or now >= budget.deadline_ms then
+		error("bounded underground enrichment deadline expired in " .. tostring(kind))
+	end
+	if kind == "candidate" then
+		budget.candidate_samples = budget.candidate_samples + 1
+		budget.phase_candidate_samples[budget.phase] =
+			(budget.phase_candidate_samples[budget.phase] or 0) + 1
+		if budget.candidate_samples > budget.maximum_candidates then
+			error("bounded underground enrichment candidate cap exceeded")
+		end
+	elseif kind == "validation" then
+		budget.validation_calls = budget.validation_calls + 1
+		budget.phase_validation_calls[budget.phase] =
+			(budget.phase_validation_calls[budget.phase] or 0) + 1
+		if budget.validation_calls > budget.maximum_validations then
+			error("bounded underground enrichment validation cap exceeded")
+		end
+	end
+	return true
+end
+
+local function NoteUndergroundEnrichmentDecision(map, kind, reason, pt)
+	local budget = active_underground_enrichment_budget
+	if type(budget) ~= "table" or budget.map ~= map then return end
+	reason = tostring(reason or "unknown"):sub(1, 64)
+	if kind == "commit" then
+		budget.commits = budget.commits + 1
+		return
+	end
+	budget.rejection_histogram[reason] =
+		(budget.rejection_histogram[reason] or 0) + 1
+	if #budget.first_rejections >= 16 then return end
+	local x, y
+	if pt and type(pt.xy) == "function" then
+		local ok, px, py = pcall(pt.xy, pt)
+		if ok then x, y = px, py end
+	end
+	budget.first_rejections[#budget.first_rejections + 1] = table.concat({
+		tostring(budget.phase), reason, tostring(x), tostring(y),
+	}, "@"):sub(1, 192)
+end
+
+local function RandInt(limit)
+	local budget = active_underground_enrichment_budget
+	if type(budget) ~= "table" then return SharedRandInt(limit) end
+	limit = math.floor(tonumber(limit) or 0)
+	if limit <= 0 then return 0 end
+	budget.rng_calls = budget.rng_calls + 1
+	budget.rng_state = (budget.rng_state * 48271) % 2147483647
+	return budget.rng_state % limit
+end
+
+function DepositRules.BeginBoundedUndergroundEnrichment(map, plan_id, seed, options)
+	if not IsUndergroundMap(map) then
+		return nil, "bounded enrichment target is not Underground"
+	end
+	if active_underground_enrichment_budget ~= nil then
+		return nil, "another bounded enrichment transaction is already active"
+	end
+	if type(plan_id) ~= "string" or plan_id == "" or #plan_id > 192 then
+		return nil, "bounded enrichment plan identity is invalid"
+	end
+	seed = math.floor(tonumber(seed) or 0) % 2147483647
+	if seed <= 0 then return nil, "bounded enrichment private seed is invalid" end
+	options = type(options) == "table" and options or {}
+	local started = EnrichmentBudgetNow()
+	local duration = math.floor(tonumber(options.duration_ms) or 240000)
+	local maximum_candidates = math.floor(tonumber(options.maximum_candidates) or 16384)
+	local maximum_validations = math.floor(tonumber(options.maximum_validations) or 32768)
+	if type(started) ~= "number" or duration < 1000 or duration > 240000
+		or maximum_candidates < 1 or maximum_candidates > 16384
+		or maximum_validations < maximum_candidates or maximum_validations > 65536 then
+		return nil, "bounded enrichment limits/clock are invalid"
+	end
+	local token = {
+		schema = "smr.sbm.underground-enrichment-budget.v1",
+		map = map, plan_id = plan_id, rng_seed = seed, rng_state = seed,
+		started_ms = started, deadline_ms = started + duration,
+		maximum_candidates = maximum_candidates,
+		maximum_validations = maximum_validations,
+		candidate_samples = 0, validation_calls = 0, rng_calls = 0,
+		commits = 0, rejection_histogram = {}, first_rejections = {},
+		phase = "initialization", phase_candidate_samples = {},
+		phase_validation_calls = {}, phase_sequence = "initialization",
+	}
+	active_underground_enrichment_budget = token
+	return token
+end
+
+function DepositRules.SetBoundedUndergroundEnrichmentPhase(token, phase)
+	if token ~= active_underground_enrichment_budget then
+		return false, "bounded enrichment token identity mismatch"
+	end
+	phase = tostring(phase or "")
+	if phase == "" or #phase > 64 then return false, "bounded enrichment phase is invalid" end
+	CheckUndergroundEnrichmentBudget(token.map, "phase")
+	token.phase = phase
+	token.phase_sequence = token.phase_sequence .. ">" .. phase
+	return true
+end
+
+function DepositRules.EndBoundedUndergroundEnrichment(token)
+	if token ~= active_underground_enrichment_budget then
+		return false, "bounded enrichment token identity mismatch"
+	end
+	local finished = EnrichmentBudgetNow()
+	active_underground_enrichment_budget = nil
+	if type(finished) ~= "number" then
+		return false, "bounded enrichment completion clock is unavailable"
+	end
+	return true, {
+		schema = token.schema, plan_id = token.plan_id,
+		elapsed_ms = math.max(0, finished - token.started_ms),
+		candidate_samples = token.candidate_samples,
+		validation_calls = token.validation_calls, rng_calls = token.rng_calls,
+		commits = token.commits,
+		private_final_state = token.rng_state, phase_sequence = token.phase_sequence,
+		phase_candidate_samples = CountMapString(token.phase_candidate_samples),
+		phase_validation_calls = CountMapString(token.phase_validation_calls),
+		rejection_histogram = CountMapString(token.rejection_histogram),
+		first_rejections = table.concat(token.first_rejections, "|"),
+	}
+end
 
 local function RunPaused(reason, fn)
 	local pause = Global("PauseInfiniteLoopDetection")
@@ -528,6 +671,7 @@ local function CanReceiveDepositTerrain(map, pt, context)
 end
 
 local function CanReceiveDeposit(map, pt, context, defer_reachability)
+	CheckUndergroundEnrichmentBudget(map, "validation")
 	context = type(context) == "table" and context.map == map and context or nil
 	-- Vanilla DepositMarker placement does not accept an obstructed coordinate: it searches for a
 	-- replacement through FindUnobstructedDepositPos. Top-up candidates are final coordinates, so
@@ -535,16 +679,19 @@ local function CanReceiveDeposit(map, pt, context, defer_reachability)
 	local terrain_ok, passable, flatness, buildable, q, r =
 		EvaluateDepositTerrain(map, pt, context, true)
 	if not terrain_ok then
+		NoteUndergroundEnrichmentDecision(map, "reject", "terrain", pt)
 		return false, passable, flatness, buildable, q, r, nil
 	end
 	local unobstructed = IsUnobstructedAt(map, pt, true, context, q, r)
 	if not unobstructed then
+		NoteUndergroundEnrichmentDecision(map, "reject", "obstruction", pt)
 		return false, passable, flatness, buildable, q, r, false
 	end
 	local underground = (context and context.underground == true)
 		or (not context and IsUndergroundMap(map))
 	if underground and defer_reachability ~= true
 		and not IsReachableFromUndergroundEntrance(map, pt, q, r) then
+		NoteUndergroundEnrichmentDecision(map, "reject", "reachability", pt)
 		return false, passable, flatness, buildable, q, r, unobstructed
 	end
 	return true, passable, flatness, buildable, q, r, unobstructed
@@ -563,6 +710,7 @@ local function UndergroundCandidateReachable(map, candidate, context)
 	if candidate._sbm_underground_reachable ~= nil then
 		return candidate._sbm_underground_reachable == true, false
 	end
+	CheckUndergroundEnrichmentBudget(map, "validation")
 	local point_fn = Global("point")
 	if type(point_fn) ~= "function" or type(candidate.x) ~= "number"
 		or type(candidate.y) ~= "number" then
@@ -571,6 +719,10 @@ local function UndergroundCandidateReachable(map, candidate, context)
 	end
 	local reachable = IsReachableFromUndergroundEntrance(
 		map, point_fn(candidate.x, candidate.y), candidate.q, candidate.r) == true
+	if not reachable then
+		NoteUndergroundEnrichmentDecision(
+			map, "reject", "deferred-reachability", point_fn(candidate.x, candidate.y))
+	end
 	candidate._sbm_underground_reachable = reachable
 	return reachable, true
 end
@@ -1154,7 +1306,8 @@ local function ValleyScore(map, pt)
 	return score, maximum_rise, higher_samples
 end
 
-local DepositRules = {}
+-- Declared before the private enrichment RNG coordinator so its bounded transaction API can be
+-- installed without exporting any temporary state through _G.
 
 -- ---------------------------------------------------------------------------------------
 -- Badge collision prevention.
@@ -3720,6 +3873,7 @@ local function BuildUndergroundTopUpSectorCache(map)
 end
 
 local function SampleUndergroundTopUpPosition(map, lo_x, lo_y, span_x, span_y)
+	CheckUndergroundEnrichmentBudget(map, "candidate")
 	if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS ~= true then
 		return lo_x + RandInt(span_x), lo_y + RandInt(span_y), nil, nil
 	end
@@ -3741,6 +3895,24 @@ local function SampleUndergroundTopUpPosition(map, lo_x, lo_y, span_x, span_y)
 	end
 	state.whole_map_samples = state.whole_map_samples + 1
 	return lo_x + RandInt(span_x), lo_y + RandInt(span_y), nil, nil
+end
+
+local function RevalidateBoundedUndergroundCandidateAtCommit(map, candidate, context)
+	local budget = active_underground_enrichment_budget
+	if type(budget) ~= "table" or budget.map ~= map then return true end
+	if type(candidate) ~= "table" or type(candidate.x) ~= "number"
+		or type(candidate.y) ~= "number" then return false end
+	local point_fn = Global("point")
+	if type(point_fn) ~= "function" then return false end
+	local ok, _, _, _, q, r = CanReceiveDeposit(
+		map, point_fn(candidate.x, candidate.y), context, false)
+	local exact = ok == true and type(q) == "number" and type(r) == "number"
+		and q == candidate.q and r == candidate.r
+	if not exact then
+		NoteUndergroundEnrichmentDecision(
+			map, "reject", "commit-revalidation", point_fn(candidate.x, candidate.y))
+	end
+	return exact
 end
 
 local function ReserveUndergroundTopUpHex(map, q, r)
@@ -5151,10 +5323,13 @@ function DepositRules.TopUpDeposits(map)
 					select_needed_placement(allow_any_terrain, require_extractor,
 						forbid_extractor, template_policy)
 				if not c then break end
-				if tpos and type(tpos.xy) == "function" then
+				if tpos and type(tpos.xy) == "function"
+					and RevalidateBoundedUndergroundCandidateAtCommit(
+						map, c, validation_context) then
 					local tx, ty = tpos:xy()
 					local clone = clone_fn(map, template, point(c.x - tx, c.y - ty, 0))
 					if clone and type(clone) == "table" then
+						NoteUndergroundEnrichmentDecision(map, "commit", "resource", nil)
 						active_selector.Commit(c)
 						added = added + 1
 						placed_this_pass = placed_this_pass + 1
@@ -5720,7 +5895,7 @@ function DepositRules.TopUpDeposits(map)
 			-- A strict candidate is now consumed as soon as it satisfies the same terrain and vanilla
 			-- repulsion rules. After a bounded strict search for that marker, retain a small random choice
 			-- set for the existing any-terrain completion rule and the underground maximin fallback.
-			local STRICT_SAMPLES_PER_PLACEMENT = 128
+			local STRICT_SAMPLES_PER_PLACEMENT = 32
 			local FALLBACK_CHOICES_PER_PLACEMENT = 8
 			while added < shortfall and pool < MAX_POOL and candidate_samples < MAX_SAMPLES do
 				local added_before = added
@@ -6818,7 +6993,7 @@ function DepositRules.TopUpAnomalies(map)
 				if not c and sequential_underground then
 					-- Search only for the underground anomaly currently being placed. Stop
 					-- validating as soon as one strict candidate succeeds.
-					local strict_sample_limit = math.min(MAX_SAMPLES, candidate_samples + 128)
+					local strict_sample_limit = math.min(MAX_SAMPLES, candidate_samples + 32)
 					while not c and candidate_samples < strict_sample_limit do
 						local before = #candidates
 						grow_candidate_pool(before + 1, strict_sample_limit)
@@ -6875,10 +7050,13 @@ function DepositRules.TopUpAnomalies(map)
 			end
 			local tpos = ObjectPos(template)
 			local placement_succeeded = false
-			if tpos and type(tpos.xy) == "function" then
+			if tpos and type(tpos.xy) == "function"
+				and RevalidateBoundedUndergroundCandidateAtCommit(
+					map, c, validation_context) then
 				local tx, ty = tpos:xy()
 				local clone = clone_fn(map, template, point(c.x - tx, c.y - ty, 0))
 				if clone and type(clone) == "table" then
+					NoteUndergroundEnrichmentDecision(map, "commit", "anomaly", nil)
 					placement_succeeded = true
 					if selected_whole_map_selector then selected_whole_map_selector.Commit(c) end
 					added = added + 1
@@ -8226,7 +8404,7 @@ function DepositRules.TopUpEffectDeposits(map)
 				end
 				local density_fallback = false
 				if not c and sequential_underground then
-					local strict_sample_limit = math.min(MAX_SAMPLES, candidate_samples + 128)
+					local strict_sample_limit = math.min(MAX_SAMPLES, candidate_samples + 32)
 					while not c and candidate_samples < strict_sample_limit do
 						local before = #candidates
 						sample_fresh_candidate()
@@ -8268,10 +8446,13 @@ function DepositRules.TopUpEffectDeposits(map)
 				if not c then break end
 				local template = templates[RandInt(#templates) + 1]
 				local tpos = ObjectPos(template)
-				if tpos and type(tpos.xy) == "function" then
+				if tpos and type(tpos.xy) == "function"
+					and RevalidateBoundedUndergroundCandidateAtCommit(
+						map, c, validation_context) then
 					local tx, ty = tpos:xy()
 					local clone = clone_fn(map, template, point(c.x - tx, c.y - ty, 0))
 					if clone and type(clone) == "table" then
+						NoteUndergroundEnrichmentDecision(map, "commit", "effect", nil)
 						active_selector.Commit(c)
 						clone.SuperBigMapEffectTopUp = true
 						clone.SuperBigMapEffectTopUpType = deposit_type

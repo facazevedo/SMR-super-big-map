@@ -24,10 +24,10 @@ required = (
 missing = [token for token in required if token not in MAP]
 if missing:
     raise SystemExit("missing ready-target contract: " + repr(missing))
-if "SuperBigMap.GENERATOR_PATCH_VERSION = 301" not in VERSION:
-    raise SystemExit("generator patch 301 missing")
-if not re.search(r"'version',\s*995\b", META):
-    raise SystemExit("metadata v995 missing")
+if "SuperBigMap.GENERATOR_PATCH_VERSION = 302" not in VERSION:
+    raise SystemExit("generator patch 302 missing")
+if not re.search(r"'version',\s*996\b", META):
+    raise SystemExit("metadata v996 missing")
 installer = MAP[MAP.index("function SuperBigMap.InstallDiagnosticPhaseHeartbeatSink"):
                 MAP.index("local function PointXY")]
 for forbidden in ('rawget(_G, "g_SmrRalphSurfaceReferenceState")', "AsyncRand"):
@@ -35,8 +35,8 @@ for forbidden in ('rawget(_G, "g_SmrRalphSurfaceReferenceState")', "AsyncRand"):
         raise SystemExit("installer trusts forbidden identity/RNG: " + forbidden)
 
 print("ok=true")
-print("version=995")
-print("generator_patch=301")
+print("version=996")
+print("generator_patch=302")
 print("ready_target=process-local-surface+descriptor+report")
 print("loaded_ready_diagnostic_arm=false")
 print("ordinary_loaded_ready_materialization_unchanged=true")
