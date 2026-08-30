@@ -99,10 +99,10 @@ def main() -> int:
                                 capture_output=True, text=True, timeout=30, check=False)
         compile_results[path.relative_to(ROOT).as_posix()] = result.returncode == 0
     checks = {
-        "metadata_v987_truthfully_retains_v972": "'version', 987," in metadata
-            and "underground passage preparation" in metadata
-            and "self-safe Metals relocation" in metadata,
-        "generator_identity_v293": "SuperBigMap.GENERATOR_PATCH_VERSION = 293" in version,
+        "metadata_v988_truthfully_retains_v972": "'version', 988," in metadata
+            and "lazy underground passage pads" in metadata
+            and "transaction-final vanilla terrain validation" in metadata,
+        "generator_identity_v294": "SuperBigMap.GENERATOR_PATCH_VERSION = 294" in version,
         "v987_default_off_safe_optimization_trace_gate_green": (
             optimization_trace_run.returncode == 0
             and '"ok": true' in optimization_trace_run.stdout),

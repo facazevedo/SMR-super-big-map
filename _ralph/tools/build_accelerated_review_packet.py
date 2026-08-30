@@ -22,6 +22,7 @@ from typing import Any
 SCHEMA = "smr.ralph.accelerated-review-packet.v1"
 SPEC_SCHEMA = "smr.ralph.accelerated-review-spec.v1"
 TOOL = Path(__file__).resolve()
+CORE_REVIEW_GROUPS = ("production", "task", "rules", "references", "tool_contract")
 
 
 class PacketError(RuntimeError):
@@ -132,8 +133,13 @@ def gate_key(spec: dict[str, Any], gate: dict[str, Any], base: Path,
         "tool": exact_path_receipt(TOOL),
         "interpreter": interpreter or interpreter_identity(),
         "command_tool": command_tool_identity(gate["command"], cwd),
-        "spec_sha256": sha_bytes(canonical(spec)),
-        "spec_task": spec.get("task"),
+        # Bind the shared semantic contract, not unrelated stage-only gate declarations. This
+        # lets an unchanged core gate remain reusable when only a staged schema/oracle changes.
+        "spec_contract_sha256": sha_bytes(canonical({
+            "schema": spec.get("schema"), "task": spec.get("task"),
+            "task_inputs": spec.get("task_inputs"), "references": spec.get("references"),
+            "context": spec.get("context"),
+        })),
         "gate": gate,
         "declared_inputs": collect_declared_inputs(spec, gate, base),
     }
@@ -336,6 +342,113 @@ def semantic_view(packet: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def receipt_group(values: Any, base: Path, label: str) -> dict[str, Any]:
+    if not isinstance(values, list):
+        raise PacketError(f"review_tiering.{label} must be an array")
+    receipts = [exact_path_receipt(resolve_path(str(value), base)) for value in values]
+    return {"paths": receipts, "sha256": sha_bytes(canonical(receipts))}
+
+
+def review_contract(spec: dict[str, Any], base: Path, packet: dict[str, Any]) -> dict[str, Any]:
+    configured = spec.get("review_tiering")
+    if not isinstance(configured, dict):
+        raise PacketError("review_tiering contract is mandatory")
+    groups = {name: receipt_group(configured.get(name), base, name)
+              for name in (*CORE_REVIEW_GROUPS, "stage_only")}
+    groups["task"]["task_identity_sha256"] = sha_bytes(canonical(spec.get("task")))
+    groups["task"]["sha256"] = sha_bytes(canonical({
+        "paths": groups["task"]["paths"], "task": spec.get("task")}))
+    groups["interpreter"] = {
+        "identity": packet["interpreter"],
+        "sha256": sha_bytes(canonical(packet["interpreter"])),
+    }
+    return {"schema": "smr.ralph.review-tier-contract.v1", "groups": groups}
+
+
+def classify_review(packet: dict[str, Any], approved_packet: dict[str, Any] | None) -> dict[str, Any]:
+    full_reasons: list[str] = []
+    short_reasons: list[str] = ["mandatory_short_independent_delta_review"]
+    contract = packet.get("review_contract", {})
+    groups = contract.get("groups", {}) if isinstance(contract, dict) else {}
+    approved_groups: dict[str, Any] = {}
+    if approved_packet is None:
+        full_reasons.append("no_approved_review_baseline")
+    else:
+        approved_contract = approved_packet.get("review_contract", {})
+        approved_groups = approved_contract.get("groups", {}) \
+            if isinstance(approved_contract, dict) else {}
+        if not approved_groups:
+            full_reasons.append("approved_review_contract_absent")
+    for name in (*CORE_REVIEW_GROUPS, "interpreter"):
+        if approved_groups and groups.get(name, {}).get("sha256") \
+                != approved_groups.get(name, {}).get("sha256"):
+            full_reasons.append(f"{name}_contract_changed")
+    if approved_groups and groups.get("stage_only", {}).get("sha256") \
+            != approved_groups.get("stage_only", {}).get("sha256"):
+        short_reasons.append("stage_only_schema_or_oracle_delta")
+
+    core_misses = [gate.get("id") for gate in packet.get("gates", [])
+                   if not gate.get("cache_hit") and gate.get("review_scope", "core") != "stage-only"]
+    stage_misses = [gate.get("id") for gate in packet.get("gates", [])
+                    if not gate.get("cache_hit") and gate.get("review_scope") == "stage-only"]
+    if core_misses:
+        full_reasons.append("core_cache_miss")
+    if stage_misses:
+        short_reasons.append("changed_stage_only_gate_rerun")
+
+    receipts = packet.get("receipts", {})
+    if not receipts.get("ok", False):
+        full_reasons.append("evidence_or_topology_drift")
+    logs = packet.get("causal_logs", {})
+    for item in logs.get("logs", []):
+        if item.get("unknown_severity_lines"):
+            full_reasons.append("unknown_log_severity")
+        if item.get("disallowed"):
+            full_reasons.append("severe_or_disallowed_log")
+        if any(row.get("severity") in {"error", "critical", "fatal"}
+               for row in item.get("lines", [])):
+            full_reasons.append("severe_or_disallowed_log")
+        if not item.get("ok") and not item.get("unknown_severity_lines") \
+                and not item.get("disallowed"):
+            full_reasons.append("unexplained_log_failure")
+    if any(not gate.get("ok", False) for gate in packet.get("gates", [])):
+        full_reasons.append("unexplained_gate_failure")
+    delta = packet.get("semantic_delta", {})
+    if approved_packet is not None and delta.get("changed") is True:
+        approved_semantic = approved_packet.get("approved_semantic") \
+            or semantic_view(approved_packet)
+        current_semantic = semantic_view(packet)
+        if current_semantic.get("receipts_sha256") != approved_semantic.get("receipts_sha256"):
+            full_reasons.append("evidence_receipt_changed")
+        if current_semantic.get("causal_logs_sha256") \
+                != approved_semantic.get("causal_logs_sha256"):
+            full_reasons.append("causal_evidence_changed")
+
+    full_reasons = list(dict.fromkeys(full_reasons))
+    short_reasons = list(dict.fromkeys(short_reasons))
+    return {
+        "schema": "smr.ralph.review-tier-decision.v1",
+        "ok": bool(groups),
+        "minimum_review": "short-independent-delta",
+        "independent_reviewer_required": True,
+        "full_review_required": bool(full_reasons),
+        "full_review_reasons": full_reasons,
+        "short_review_reasons": short_reasons,
+        "core_cache_misses": core_misses,
+        "stage_only_cache_misses": stage_misses,
+        "stage_only_delta_never_waives_short_review": True,
+    }
+
+
+def failure_review_decision(reason: str = "packet_or_cache_integrity_failure") -> dict[str, Any]:
+    return {
+        "schema": "smr.ralph.review-tier-decision.v1", "ok": False,
+        "minimum_review": "short-independent-delta",
+        "independent_reviewer_required": True, "full_review_required": True,
+        "full_review_reasons": [reason],
+    }
+
+
 def build(spec_path: Path, output: Path, cache: Path, approved: Path | None) -> dict[str, Any]:
     raw_spec = spec_path.read_bytes()
     spec = json.loads(raw_spec)
@@ -355,8 +468,15 @@ def build(spec_path: Path, output: Path, cache: Path, approved: Path | None) -> 
         "cache_misses": sum(not gate["cache_hit"] for gate in gates),
         "final_cold_acceptance_unchanged": True,
     }
+    for gate, configured in zip(packet["gates"], spec.get("gates", [])):
+        scope = configured.get("review_scope", "core")
+        if scope not in ("core", "stage-only"):
+            raise PacketError(f"gate {gate.get('id')} review_scope is invalid")
+        gate["review_scope"] = scope
+    packet["review_contract"] = review_contract(spec, base, packet)
     semantic = semantic_view(packet)
     packet["semantic_sha256"] = sha_bytes(canonical(semantic))
+    approved_packet = None
     if approved:
         approved_packet = json.loads(approved.read_text(encoding="utf-8"))
         approved_semantic = approved_packet.get("approved_semantic") or semantic_view(approved_packet)
@@ -370,7 +490,9 @@ def build(spec_path: Path, output: Path, cache: Path, approved: Path | None) -> 
     else:
         packet["semantic_delta"] = {"approved_path": None, "changed": None,
                                      "reason": "no approved snapshot supplied"}
-    packet["ok"] = all(gate["ok"] for gate in gates) and receipts["ok"] and logs["ok"]
+    packet["review_tier"] = classify_review(packet, approved_packet)
+    packet["ok"] = (all(gate["ok"] for gate in gates) and receipts["ok"] and logs["ok"]
+                    and packet["review_tier"]["ok"])
     atomic_json(output, packet)
     return packet
 
@@ -386,7 +508,8 @@ def main() -> int:
         packet = build(args.spec.resolve(), args.out.resolve(), args.cache.resolve(),
                        args.approved.resolve() if args.approved else None)
     except Exception as exc:
-        failure = {"schema": SCHEMA, "ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        failure = {"schema": SCHEMA, "ok": False, "error": f"{type(exc).__name__}: {exc}",
+                   "review_tier": failure_review_decision()}
         atomic_json(args.out.resolve(), failure)
         print(failure["error"], file=sys.stderr)
         return 2

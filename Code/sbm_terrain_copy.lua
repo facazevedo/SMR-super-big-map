@@ -8994,13 +8994,46 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 	-- Vanilla prepares the surface passage with this exact Elevator shape after it has selected a
 	-- naturally valid footprint. Our two-phase planner can move that passage after vanilla's call,
 	-- so the preparation must follow the committed move instead of remaining at the discarded hex.
-	-- This is deliberately not a placement fallback: footprint_buildable must accept the untouched
-	-- terrain first, and a failed native preparation aborts the transaction.
-	local function prepare_passage_pad(anchor, map, x, y)
+	-- A lazy final-domain capsule may map onto wholly unbuildable underground backing; preserve the
+	-- valid generated passage's source-domain level explicitly, exactly as the stock wonder flattener
+	-- does. A failed native preparation or complete vanilla revalidation aborts the transaction.
+	local function append_preparation_debug(debug, record)
+		if type(debug) ~= "table" or type(debug.records) ~= "table" then return end
+		local maximum = tonumber(debug.maximum_records) or 24
+		if #debug.records < maximum then debug.records[#debug.records + 1] = record end
+	end
+
+	local function passage_pad_level(anchor, map)
+		local buildable = map and map.buildable
+		local pos = anchor and ObjectPosition(anchor)
+		if not buildable or type(buildable.GetZ) ~= "function" or not pos then
+			return nil, "passage source buildable level unavailable"
+		end
+		local ok_hex, q, r = pcall(world_to_hex, pos)
+		if not ok_hex or type(q) ~= "number" or type(r) ~= "number" then
+			return nil, "passage source hex unavailable"
+		end
+		local ok_z, z = pcall(buildable.GetZ, buildable, q, r)
+		if not ok_z or type(z) ~= "number" or z ~= math.floor(z)
+			or z < 0 or z == unbuildable_z or z >= 65535 then
+			return nil, "passage source buildable level invalid"
+		end
+		return z, nil, q, r
+	end
+
+	local function prepare_passage_pad(anchor, map, x, y, target_z, pair_index, preparation_debug)
 		if not elevator_shape or type(flatten_build_shape) ~= "function" then
 			return false, "vanilla passage-pad preparation unavailable"
 		end
 		if map_of(anchor) ~= map then return false, "passage anchor belongs to another map" end
+		if type(target_z) ~= "number" or target_z ~= math.floor(target_z)
+			or target_z < 0 or target_z == unbuildable_z or target_z >= 65535 then
+			return false, "passage-pad explicit buildable level invalid"
+		end
+		local before_x, before_y = PointXY(ObjectPosition(anchor))
+		if before_x ~= x or before_y ~= y then
+			return false, "passage anchor is not at explicit-level target"
+		end
 		-- PREVENT_ELEVATOR_FLATTEN intentionally protects expanded terrain from ambient stock calls.
 		-- Grant the wrapper a process-local capability only around this committed final-pad call; the
 		-- depth is restored synchronously even when the native function raises.
@@ -9009,12 +9042,37 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 			return false, "passage-pad preparation owner state unavailable"
 		end
 		local previous_depth = tonumber(state.passage_pad_preparation_depth) or 0
+		local previous_target_z = state.passage_pad_preparation_target_z
+		local previous_trace = state.passage_pad_preparation_trace_current
+		local trace = {
+			anchor = anchor, map = map, target_z = target_z,
+			wrapper_entered = false, wrapper_owner_exact = false,
+			wrapper_inputs_exact = false, native_called = false, native_ok = false,
+		}
 		state.passage_pad_preparation_depth = previous_depth + 1
+		state.passage_pad_preparation_target_z = target_z
+		state.passage_pad_preparation_trace_current = trace
 		local ok_flatten, flatten_result = pcall(
 			flatten_build_shape, elevator_shape, anchor, "flatten unbuildable")
 		state.passage_pad_preparation_depth = previous_depth > 0 and previous_depth or nil
+		state.passage_pad_preparation_target_z = previous_target_z
+		state.passage_pad_preparation_trace_current = previous_trace
+		append_preparation_debug(preparation_debug, {
+			pair = pair_index, stage = "native-explicit-level", x = x, y = y,
+			target_z = target_z, wrapper_entered = trace.wrapper_entered == true,
+			wrapper_owner_exact = trace.wrapper_owner_exact == true,
+			wrapper_inputs_exact = trace.wrapper_inputs_exact == true,
+			native_called = trace.native_called == true, native_ok = trace.native_ok == true,
+			native_result_type = tostring(trace.native_result_type or type(flatten_result)),
+			pcall_ok = ok_flatten == true,
+		})
 		if not ok_flatten then
 			return false, "vanilla passage-pad preparation failed: " .. tostring(flatten_result)
+		end
+		if trace.wrapper_entered ~= true or trace.wrapper_owner_exact ~= true
+			or trace.wrapper_inputs_exact ~= true or trace.native_called ~= true
+			or trace.native_ok ~= true then
+			return false, "scoped explicit-level passage-pad preparation was not certified"
 		end
 		-- FlattenTerrainInBuildShape changes the ground, not the object's stored Z. Re-snap and
 		-- re-register the passage at the same committed hex so visuals, collision, and the object
@@ -9119,6 +9177,7 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 	}
 	local seen = {}
 	local linked_pairs = {}
+	local final_prepared_validations = {}
 	if type(underground_map.MapForEach) == "function" then
 		pcall(underground_map.MapForEach, underground_map, "map", "ElevatorPassage", function(anchor)
 			local surface_anchor = anchor and anchor.other
@@ -9139,7 +9198,8 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 	local preparation_debug
 	if not source_bootstrap then
 		preparation_debug = {
-			schema = 1, bounded = true, maximum_pairs = 2, pair_count = #linked_pairs,
+			schema = 2, bounded = true, maximum_pairs = 2, maximum_records = 24,
+			pair_count = #linked_pairs,
 			records = {},
 		}
 		underground_map.SuperBigMapUndergroundPassagePreparationDebug = preparation_debug
@@ -9572,6 +9632,7 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 
 		local expected_ux, expected_uy
 		local post_underground_q, post_underground_r
+		local underground_preparation_z
 		if source_bootstrap then
 			expected_ux, expected_uy = plan.source_x, plan.source_y
 			post_underground_q, post_underground_r = plan.source_q, plan.source_r
@@ -9596,6 +9657,21 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 		else
 			expected_ux, expected_uy = plan.final_x, plan.final_y
 			post_underground_q, post_underground_r = plan.final_q, plan.final_r
+			local source_level_reason, source_q, source_r
+			underground_preparation_z, source_level_reason, source_q, source_r =
+				passage_pad_level(underground_anchor, underground_map)
+			append_preparation_debug(preparation_debug, {
+				pair = i, stage = "source-level-captured", valid = underground_preparation_z ~= nil,
+				reason = tostring(source_level_reason or ""), q = source_q, r = source_r,
+				x = ux, y = uy, target_x = expected_ux, target_y = expected_uy,
+				target_z = underground_preparation_z,
+				footprint = source_q and describe_footprint(underground_map, source_q, source_r,
+					underground_angle, underground_anchor) or "",
+			})
+			if underground_preparation_z == nil then
+				return false, { error = "true underground passage source level unavailable",
+					pairs = stats.pairs, reason = source_level_reason }
+			end
 			if sx ~= surface_x or sy ~= surface_y then
 				return false, {
 					error = "visible surface entrance drifted from its immutable commitment",
@@ -9697,7 +9773,13 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 		local prepare_underground = not source_bootstrap
 			and options.prepare_underground_pad ~= false
 		if prepare_surface then
-			local prepared, reason = prepare_passage_pad(surface_anchor, surface_map, surface_x, surface_y)
+			local surface_level, surface_level_reason = passage_pad_level(surface_anchor, surface_map)
+			if not surface_level then
+				return false, { error = "surface passage pad level unavailable", pairs = stats.pairs,
+					reason = surface_level_reason }
+			end
+			local prepared, reason = prepare_passage_pad(surface_anchor, surface_map,
+				surface_x, surface_y, surface_level, i, preparation_debug)
 			if not prepared then
 				return false, { error = "surface passage pad preparation failed", pairs = stats.pairs,
 					reason = reason }
@@ -9717,8 +9799,8 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 						post_underground_r, underground_angle, underground_anchor),
 				}
 			end
-			local prepared, reason = prepare_passage_pad(
-				underground_anchor, underground_map, expected_ux, expected_uy)
+			local prepared, reason = prepare_passage_pad(underground_anchor, underground_map,
+				expected_ux, expected_uy, underground_preparation_z, i, preparation_debug)
 			if not prepared then
 				return false, { error = "underground passage pad preparation failed", pairs = stats.pairs,
 					reason = reason }
@@ -9771,6 +9853,13 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 					surface_reason = prepared_surface_reason,
 				}
 			end
+			if prepare_underground then
+				final_prepared_validations[#final_prepared_validations + 1] = {
+					pair = i, map = underground_map, q = post_underground_q,
+					r = post_underground_r, angle = underground_angle,
+					anchor = underground_anchor, target_z = underground_preparation_z,
+				}
+			end
 		end
 		stats.moved_dependants = stats.moved_dependants
 			+ move_dependants(underground_map, underground_anchor, ux, uy, expected_ux, expected_uy)
@@ -9795,6 +9884,25 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 			surface_moved_during_deferred_final = false,
 			committed_relocated = false,
 		}, underground_map)
+	end
+	-- A later pair's obstruction cleanup/terrain feather must not invalidate a pad that passed its
+	-- immediate check. Re-run the same complete validator after every pair and dependant move.
+	for i = 1, #final_prepared_validations do
+		local item = final_prepared_validations[i]
+		local final_valid, final_reason = footprint_buildable(
+			item.map, item.q, item.r, item.angle, item.anchor)
+		append_preparation_debug(preparation_debug, {
+			pair = item.pair, stage = "transaction-final", valid = final_valid == true,
+			reason = tostring(final_reason or ""), q = item.q, r = item.r,
+			target_z = item.target_z,
+			footprint = describe_footprint(item.map, item.q, item.r, item.angle, item.anchor),
+		})
+		if not final_valid then
+			return false, {
+				error = "linked passage transaction-final terrain validation failed",
+				pairs = stats.pairs, pair = item.pair, underground_reason = final_reason,
+			}
+		end
 	end
 	stats.dependant_map_scans = dependant_scan_stats.scans
 	stats.dependant_objects_scanned = dependant_scan_stats.objects

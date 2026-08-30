@@ -27,9 +27,14 @@ def make_spec(root: Path) -> Path:
     write(run / "reference.json", "{\"reference\":true}\n")
     write(root / "input.txt", "alpha\n")
     write(root / "context.txt", "task-context\n")
+    write(root / "rules.txt", "rules-v1\n")
+    write(root / "tool-contract.txt", "tool-contract-v1\n")
+    write(root / "stage-schema.txt", "stage-schema-v1\n")
     write(root / "reference.txt", "reference-bytes\n")
     write(root / "gate.py",
           "from pathlib import Path\nprint(Path('input.txt').read_text().strip())\n")
+    write(root / "stage_gate.py",
+          "from pathlib import Path\nprint(Path('stage-schema.txt').read_text().strip())\n")
     write(root / "causal.log", "[INFO] causal ready\nneutral context\n")
     spec = {
         "schema": packet.SPEC_SCHEMA,
@@ -37,10 +42,24 @@ def make_spec(root: Path) -> Path:
         "task_inputs": ["input.txt"],
         "references": ["reference.txt"],
         "context": ["context.txt"],
+        "review_tiering": {
+            "production": ["input.txt"],
+            "task": ["context.txt"],
+            "rules": ["rules.txt"],
+            "references": ["reference.txt"],
+            "tool_contract": ["tool-contract.txt"],
+            "stage_only": ["stage-schema.txt"],
+        },
         "gates": [{
             "id": "pure-gate", "pure": True,
             "command": [sys.executable, "gate.py"], "cwd": ".",
             "inputs": ["input.txt", "gate.py"], "timeout_seconds": 30,
+            "review_scope": "core",
+        }, {
+            "id": "stage-only-gate", "pure": True,
+            "command": [sys.executable, "stage_gate.py"], "cwd": ".",
+            "inputs": ["stage-schema.txt", "stage_gate.py"], "timeout_seconds": 30,
+            "review_scope": "stage-only",
         }],
         "receipts": {
             "topologies": [{
@@ -71,16 +90,37 @@ def main() -> None:
         output = root / "packet.json"
 
         first = packet.build(spec_path, output, cache, None)
-        assert first["ok"] and first["cache_hits"] == 0 and first["cache_misses"] == 1
+        assert first["ok"] and first["cache_hits"] == 0 and first["cache_misses"] == 2
+        assert first["review_tier"]["full_review_required"] is True
+        assert "no_approved_review_baseline" in first["review_tier"]["full_review_reasons"]
+        assert first["review_tier"]["minimum_review"] == "short-independent-delta"
         first_key = first["gates"][0]["cache_key"]
         second = packet.build(spec_path, output, cache, None)
-        assert second["ok"] and second["cache_hits"] == 1
+        assert second["ok"] and second["cache_hits"] == 2
+
+        approved_baseline = root / "approved-baseline.json"
+        packet.atomic_json(approved_baseline, second)
+        baseline = packet.build(spec_path, output, cache, approved_baseline)
+        assert baseline["review_tier"]["full_review_required"] is False
+        assert baseline["review_tier"]["independent_reviewer_required"] is True
+
+        write(root / "stage-schema.txt", "stage-schema-v2\n")
+        stage_only = packet.build(spec_path, output, cache, approved_baseline)
+        assert stage_only["review_tier"]["full_review_required"] is False
+        assert "stage_only_schema_or_oracle_delta" in stage_only["review_tier"]["short_review_reasons"]
+        assert stage_only["review_tier"]["core_cache_misses"] == []
+        assert stage_only["review_tier"]["stage_only_cache_misses"] == ["stage-only-gate"]
+        assert "changed_stage_only_gate_rerun" in stage_only["review_tier"]["short_review_reasons"]
+        write(root / "stage-schema.txt", "stage-schema-v1\n")
 
         write(root / "input.txt", "beta\n")
         input_mutated = packet.build(spec_path, output, cache, None)
-        assert input_mutated["ok"] and input_mutated["cache_misses"] == 1
+        assert input_mutated["ok"] and input_mutated["cache_misses"] == 2
         input_key = input_mutated["gates"][0]["cache_key"]
         assert input_key != first_key
+        assert "core_cache_miss" in input_mutated["review_tier"]["full_review_reasons"]
+        promoted = packet.build(spec_path, output, cache, approved_baseline)
+        assert "production_contract_changed" in promoted["review_tier"]["full_review_reasons"]
 
         write(root / "gate.py",
               "from pathlib import Path\nprint('tool-v2:' + Path('input.txt').read_text().strip())\n")
@@ -105,6 +145,9 @@ def main() -> None:
             assert "cache" in str(exc).lower()
         else:
             raise AssertionError("corrupt cache did not fail closed")
+        cache_failure = packet.failure_review_decision()
+        assert cache_failure["full_review_required"] is True
+        assert cache_failure["full_review_reasons"] == ["packet_or_cache_integrity_failure"]
         corrupt.unlink()
 
         clean = packet.build(spec_path, output, cache, None)
@@ -124,6 +167,30 @@ def main() -> None:
         unknown = packet.build(spec_path, output, cache, None)
         assert unknown["ok"] is False
         assert unknown["causal_logs"]["logs"][0]["unknown_severity_lines"] == [1]
+        assert "unknown_log_severity" in unknown["review_tier"]["full_review_reasons"]
+
+        # Direct tier classification covers each byte-contract trigger without conflating it with
+        # the cache key, plus severe logs and unexplained gate failures.
+        clean_for_tiers = packet.build(spec_path, output, cache, None)
+        clean_for_tiers["causal_logs"] = baseline["causal_logs"]
+        clean_for_tiers["receipts"] = baseline["receipts"]
+        clean_for_tiers["gates"] = [dict(baseline["gates"][0], cache_hit=True, ok=True)]
+        clean_for_tiers["semantic_delta"] = {"changed": False}
+        for group in ("task", "rules", "references", "tool_contract", "interpreter"):
+            candidate = json.loads(json.dumps(clean_for_tiers))
+            candidate["review_contract"]["groups"][group]["sha256"] = "0" * 64
+            decision = packet.classify_review(candidate, baseline)
+            assert f"{group}_contract_changed" in decision["full_review_reasons"]
+        severe_candidate = json.loads(json.dumps(clean_for_tiers))
+        severe_candidate["causal_logs"]["logs"][0]["ok"] = False
+        severe_candidate["causal_logs"]["logs"][0]["disallowed"] = [
+            {"line": 1, "severity": "error"}]
+        severe = packet.classify_review(severe_candidate, baseline)
+        assert "severe_or_disallowed_log" in severe["full_review_reasons"]
+        failed_candidate = json.loads(json.dumps(clean_for_tiers))
+        failed_candidate["gates"][0]["ok"] = False
+        unexplained = packet.classify_review(failed_candidate, baseline)
+        assert "unexplained_gate_failure" in unexplained["full_review_reasons"]
 
     print("ok=true")
     print("cache_hit_paths=1")
@@ -134,6 +201,9 @@ def main() -> None:
     print("semantic_delta_detections=1")
     print("topology_drift_rejections=1")
     print("unknown_severity_rejections=1")
+    print("mandatory_short_reviews=1")
+    print("stage_only_non_promotions=1")
+    print("full_review_trigger_classes=12")
 
 
 if __name__ == "__main__":

@@ -15,6 +15,20 @@ log records without a configured severity are rejected, as are known severities 
 explicit allow-list. The packet's normalized gate, receipt, and causal-log result is compared to the
 last approved semantic snapshot when `--approved` is supplied.
 
+Every live run requires a short independent delta review. The packet emits that minimum explicitly
+as `review_tier.minimum_review=short-independent-delta`; a cache hit never waives it. It promotes the
+run to `full_review_required=true` when production, task, rule, reference, interpreter, or review-tool
+contract bytes change; when an unchanged core gate misses or cache integrity fails; when evidence or
+topology drifts; when a causal window contains unknown/severe records; or when a gate/log failure is
+unexplained. The decision includes machine-readable reasons and fails closed if its tier contract is
+absent.
+
+Specs classify complete byte inputs under `review_tiering.production`, `task`, `rules`, `references`,
+`tool_contract`, and `stage_only`. Gates likewise use `review_scope: core` or `stage-only`. A change
+confined to a staged schema/oracle reruns that gate and still requires the short independent delta
+review, but does not by itself force a full production reread. All production/rule/reference/tool
+gates remain core. The final cold acceptance is never cached in either tier.
+
 Typical command:
 
 ```powershell
@@ -37,5 +51,5 @@ Run the adversarial executable test with:
 python _ralph/tools/test_accelerated_review_packet.py
 ```
 
-It proves cache hits and fail-closed handling of corruption, input/tool/interpreter-version mutation,
-semantic drift, topology drift, and unknown log severity.
+It proves each full-review trigger plus the stage-only non-trigger, mandatory short review, cache hits,
+and fail-closed handling of corruption, mutations, semantic/topology drift, and log severity.

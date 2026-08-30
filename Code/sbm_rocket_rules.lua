@@ -594,7 +594,7 @@ end
 
 -- Construction.lua can redefine this global during a new-game Lua reload, so installation is
 -- state-verified on every module load rather than guarded by a module-local flag.
-local LANDING_FLATTEN_PATCH_VERSION = 2
+local LANDING_FLATTEN_PATCH_VERSION = 3
 local function PatchLandingFlatten()
 	local State = SuperBigMap.State or {}
 	local current = Global("FlattenTerrainInBuildShape")
@@ -630,6 +630,8 @@ local function PatchLandingFlatten()
 		-- authority because stock passage creation also supplies "flatten unbuildable".
 		local passage_pad_preparation = flatten_unbuildable
 			and (tonumber(State.passage_pad_preparation_depth) or 0) > 0
+		local passage_trace = passage_pad_preparation
+			and State.passage_pad_preparation_trace_current or nil
 		local runtime_config = RuntimeConfig()
 		if elevator and mod_map and runtime_config.PREVENT_ELEVATOR_FLATTEN == true
 			and not passage_pad_preparation then
@@ -646,6 +648,43 @@ local function PatchLandingFlatten()
 			and runtime_config.FLATTEN_SKIP_WHEN_UNBUILDABLE ~= false
 			and IsFlattenAnchorUnbuildable(map, obj) then
 			return
+		end
+		-- A deferred underground capsule can commit to a final-domain hex whose source-domain
+		-- backing is wholly unbuildable.  The stock helper derives its level from the destination
+		-- BuildableGrid and therefore has no level to apply in that exact case.  The game's own
+		-- underground-wonder path supplies an explicit certified level to FlattenTerrainInShape.
+		-- Grant that overload only to the synchronous, object/map-bound passage-pad capability.
+		if passage_pad_preparation then
+			local explicit_z = tonumber(State.passage_pad_preparation_target_z)
+			local native = Global("FlattenTerrainInShape")
+			local inner = Global("g_NCF_FlatInner")
+			local outer = Global("g_NCF_FlatOuter")
+			local exact_owner = type(passage_trace) == "table"
+				and passage_trace.anchor == obj and passage_trace.map == map
+				and passage_trace.target_z == explicit_z
+			local exact_z = type(explicit_z) == "number" and explicit_z == math.floor(explicit_z)
+				and explicit_z >= 0 and explicit_z < 65535
+			local exact_inputs = exact_owner and exact_z and type(native) == "function"
+				and map and map.buildable and map.buildable.z_grid and map.object_hex_grid
+				and type(inner) == "number" and type(outer) == "number"
+			if passage_trace then
+				passage_trace.wrapper_entered = true
+				passage_trace.wrapper_owner_exact = exact_owner == true
+				passage_trace.wrapper_inputs_exact = exact_inputs == true
+				passage_trace.native_called = false
+			end
+			if not exact_inputs then
+				error("invalid scoped passage-pad explicit-level capability")
+			end
+			if passage_trace then passage_trace.native_called = true end
+			local ok_native, result = pcall(native, shape_data, obj,
+				map.buildable.z_grid, map.object_hex_grid, inner, outer, -1, explicit_z)
+			if passage_trace then
+				passage_trace.native_ok = ok_native == true
+				passage_trace.native_result_type = type(result)
+			end
+			if not ok_native then error(result) end
+			return result
 		end
 		return original(shape_data, obj, flatten_unbuildable)
 	end

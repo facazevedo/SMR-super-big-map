@@ -20,7 +20,7 @@ def main() -> None:
     metadata = (ROOT / "metadata.lua").read_text(encoding="utf-8")
     version = (ROOT / "Code/sbm_version.lua").read_text(encoding="utf-8")
 
-    require(rocket, "LANDING_FLATTEN_PATCH_VERSION = 2", "flatten wrapper patch bump")
+    require(rocket, "LANDING_FLATTEN_PATCH_VERSION = 3", "flatten wrapper patch bump")
     require(rocket, "State.passage_pad_preparation_depth", "process-local flatten owner")
     require(rocket, "and not passage_pad_preparation", "ambient Elevator flatten guard")
     require(terrain, "state.passage_pad_preparation_depth = previous_depth + 1",
@@ -64,11 +64,11 @@ def main() -> None:
         raise SystemExit("pair false path still relies on error()")
     if re.search(r'if audit_ok ~= true then\s+error\(', generation):
         raise SystemExit("enrichment false path still relies on error()")
-    require(metadata, "'version', 987", "metadata v987")
-    require(version, "GENERATOR_PATCH_VERSION = 293", "generator patch 293")
+    require(metadata, "'version', 988", "metadata v988")
+    require(version, "GENERATOR_PATCH_VERSION = 294", "generator patch 294")
 
     print("ok=true")
-    print("version=987")
+    print("version=988")
     print("explicit_false_boundaries=2")
     print("persisted_debug_channels=2")
     print("relocation_order=precheck>SetPos>exact-terrain-certificate")
