@@ -12,8 +12,8 @@ ORACLE = ROOT / "_ralph" / "tools" / "v996_lazy_enrichment_state_oracle.lua"
 MICROBENCH = ROOT / "_ralph" / "tools" / "v996_bounded_topup_microbenchmark.py"
 
 checks = {
-    "metadata_v997": "'version', 997" in META,
-    "generator_patch_303": "SuperBigMap.GENERATOR_PATCH_VERSION = 303" in VER,
+    "metadata_forward_v999": "'version', 999" in META,
+    "generator_patch_forward_305": "SuperBigMap.GENERATOR_PATCH_VERSION = 305" in VER,
     "descriptor_schema_bumped": "SCHEMA = 2" in GEN,
     "primitive_pending_plan": all(token in GEN for token in (
         'enrichment_state = "not-materialized"',

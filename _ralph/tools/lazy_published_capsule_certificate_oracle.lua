@@ -117,7 +117,7 @@ local function certificate(descriptor, report)
 		and report.surface_single_flush_fallback ~= true
 		and report.surface_single_flush_provenance_exact == true
 		and report.surface_single_flush_local_passability_calls == 4
-		and report.surface_single_flush_buildable_calls == 1
+		and report.surface_single_flush_buildable_calls == 2
 		and report.surface_single_flush_height_snapshots == 2
 		and report.surface_single_flush_height_mismatches == 0
 		and report.surface_single_flush_object_family_count == 6
@@ -127,6 +127,7 @@ local function certificate(descriptor, report)
 		and report.surface_single_flush_dirty_regions == 2
 		and report.surface_single_flush_coverage_permille > 0
 		and report.surface_single_flush_coverage_permille <= 150
+		and report.surface_single_flush_closing_complete == true
 		and report.surface_single_flush_cleanup_complete == true
 		and report.canonical_rebuilds_during_capsule_prepare == 0
 	local canonical_exact = report.surface_single_flush_used ~= true
@@ -193,7 +194,7 @@ local_final.report.surface_single_flush_used = true
 local_final.report.surface_single_flush_fallback = false
 local_final.report.surface_single_flush_provenance_exact = true
 local_final.report.surface_single_flush_local_passability_calls = 4
-local_final.report.surface_single_flush_buildable_calls = 1
+local_final.report.surface_single_flush_buildable_calls = 2
 local_final.report.surface_single_flush_height_snapshots = 2
 local_final.report.surface_single_flush_height_mismatches = 0
 local_final.report.surface_single_flush_object_family_count = 6
@@ -202,6 +203,7 @@ local_final.report.surface_single_flush_dirty_digest = 782361
 local_final.report.outer_passage_pad_finalization_dirty_digest = 782361
 local_final.report.surface_single_flush_dirty_regions = 2
 local_final.report.surface_single_flush_coverage_permille = 14
+local_final.report.surface_single_flush_closing_complete = true
 local_final.report.surface_single_flush_cleanup_complete = true
 local_final.report.canonical_rebuilds_during_capsule_prepare = 0
 local local_final_ok = validate(local_final)
@@ -214,6 +216,12 @@ local_final_bad_association.report.surface_single_flush_object_association_failu
 local local_final_bad_digest = fixture()
 for key, value in pairs(local_final.report) do local_final_bad_digest.report[key] = value end
 local_final_bad_digest.report.surface_single_flush_dirty_digest = 782362
+local local_final_missing_closing = fixture()
+for key, value in pairs(local_final.report) do local_final_missing_closing.report[key] = value end
+local_final_missing_closing.report.surface_single_flush_closing_complete = false
+local local_final_one_buildable = fixture()
+for key, value in pairs(local_final.report) do local_final_one_buildable.report[key] = value end
+local_final_one_buildable.report.surface_single_flush_buildable_calls = 1
 
 local moved = fixture(); moved.passages[1].x = moved.passages[1].x + 1
 local duplicate = fixture(); duplicate.passages[#duplicate.passages + 1] = {
@@ -244,6 +252,8 @@ local checks = {
 	local_single_flush_height_drift_rejected = validate(local_final_height_drift) == false,
 	local_single_flush_bad_association_rejected = validate(local_final_bad_association) == false,
 	local_single_flush_bad_digest_rejected = validate(local_final_bad_digest) == false,
+	local_single_flush_missing_closing_rejected = validate(local_final_missing_closing) == false,
+	local_single_flush_one_buildable_rejected = validate(local_final_one_buildable) == false,
 	self_obstructed_is_valid_placement_not_called = healthy.placement_calls() == 0,
 	moved_passage_rejected = validate(moved) == false,
 	duplicate_passage_rejected = validate(duplicate) == false,
@@ -271,6 +281,8 @@ for _, key in ipairs({
 	"local_single_flush_height_drift_rejected",
 	"local_single_flush_bad_association_rejected",
 	"local_single_flush_bad_digest_rejected",
+	"local_single_flush_missing_closing_rejected",
+	"local_single_flush_one_buildable_rejected",
 	"self_obstructed_is_valid_placement_not_called",
 	"moved_passage_rejected",
 	"duplicate_passage_rejected",

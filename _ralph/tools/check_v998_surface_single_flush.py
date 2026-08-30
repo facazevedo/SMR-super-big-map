@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed static contract for v998 Surface single-flush finalization."""
+"""Fail-closed static contract for the forward v999 Surface single-flush finalization."""
 
 from pathlib import Path
 import sys
@@ -8,6 +8,8 @@ ROOT = Path(__file__).resolve().parents[2]
 MAP = (ROOT / "Code/sbm_map_generation.lua").read_text(encoding="utf-8")
 TERRAIN = (ROOT / "Code/sbm_terrain_copy.lua").read_text(encoding="utf-8")
 CONFIG = (ROOT / "Code/sbm_config.lua").read_text(encoding="utf-8")
+VERSION = (ROOT / "Code/sbm_version.lua").read_text(encoding="utf-8")
+METADATA = (ROOT / "metadata.lua").read_text(encoding="utf-8")
 
 required_map = (
     'local surface_single_flush_transactions = setmetatable({}, { __mode = "k" })',
@@ -27,12 +29,14 @@ required_map = (
     'reason .. " after fresh-grid capsule publication")',
 	"report.outer_passage_pad_finalization_dirty_provenance_exact =",
     "report.surface_single_flush_local_passability_calls == 4",
-    "report.surface_single_flush_buildable_calls == 1",
+    "report.surface_single_flush_buildable_calls == 2",
     "report.surface_single_flush_height_mismatches == 0",
     "report.surface_single_flush_object_family_count == 6",
 	"report.surface_single_flush_object_association_failures == 0",
 	"report.surface_single_flush_dirty_digest",
 	"report.surface_single_flush_coverage_permille <= 150",
+	"report.surface_single_flush_closing_complete == true",
+	"report.buildable_calls = report.buildable_calls + 1",
     "report.surface_single_flush_cleanup_complete == true",
     'OptimizationTrace.Before(\n\t\t\t\t"surface single-flush preplan local rebuild"',
     'OptimizationTrace.Before(\n\t\t\t\t"surface single-flush closing local rebuild"',
@@ -49,6 +53,10 @@ required_config = (
 )
 
 errors = []
+if "'version', 999," not in METADATA:
+    errors.append("metadata forward identity is not v999")
+if "SuperBigMap.GENERATOR_PATCH_VERSION = 305" not in VERSION:
+    errors.append("generator forward identity is not patch 305")
 for token in required_map:
     if token not in MAP:
         errors.append(f"map contract missing: {token!r}")
@@ -70,6 +78,12 @@ if "SuperBigMap.OptimizationTrace.Step = SuperBigMap.OptimizationTrace.Noop" not
 if MAP.count("function SuperBigMap.GenerationGrids.RebuildSurfaceSingleFlush") != 1:
     errors.append("single-flush helper definition is not unique")
 
+closing = helper[helper.index("local rebuild_ok, rebuild_error = pcall(function()") :]
+if not (closing.index("rebuild_regions()")
+        < closing.index("report.buildable_calls = report.buildable_calls + 1")
+        < closing.index("rebuild_buildable(map)")):
+    errors.append("closing buildable rebuild is not after both local passability regions")
+
 # Dirty provenance selects the optimization; it must not become a new gameplay/planner
 # prerequisite because the former canonical path is the explicit fail-closed fallback.
 planner_gate = MAP[MAP.index("function Lazy.BuildCapsulePlanMode") :
@@ -78,8 +92,8 @@ if "terrain_report.passage_pad_finalization_dirty_provenance_exact ~= true" in p
     errors.append("dirty provenance incorrectly blocks the canonical planner fallback")
 
 if errors:
-    print("v998 surface single-flush static contract: FAIL", file=sys.stderr)
+    print("v999 surface single-flush static contract: FAIL", file=sys.stderr)
     for error in errors:
         print(f"- {error}", file=sys.stderr)
     raise SystemExit(1)
-print("v998 surface single-flush static contract: ok")
+print("v999 surface single-flush static contract: ok")

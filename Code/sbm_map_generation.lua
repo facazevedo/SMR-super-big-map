@@ -11102,6 +11102,7 @@ function Lazy.PrepareImplementationCapsulesAroundRebuild(surface, rebuild, reaso
 		report.surface_single_flush_dirty_digest = 0
 		report.surface_single_flush_dirty_regions = 0
 		report.surface_single_flush_coverage_permille = 0
+		report.surface_single_flush_closing_complete = false
 		report.surface_single_flush_provenance_exact = false
 		report.surface_single_flush_cleanup_complete = false
 		report.fresh_grid_expected_rebuilds = single_flush_requested and 0 or 2
@@ -11223,6 +11224,8 @@ function Lazy.PrepareImplementationCapsulesAroundRebuild(surface, rebuild, reaso
 					tonumber(local_report and local_report.object_association_failures) or -1
 				report.surface_single_flush_cleanup_complete =
 					local_report and local_report.cleanup_complete == true or false
+				report.surface_single_flush_closing_complete =
+					local_report and local_report.closing_complete == true or false
 				SuperBigMap.OptimizationTrace.After(
 					"surface single-flush closing local rebuild", surface, local_report)
 			else
@@ -11262,7 +11265,7 @@ function Lazy.PrepareImplementationCapsulesAroundRebuild(surface, rebuild, reaso
 				and rebuild_count == 0 and fallback_count == 0
 				and report.surface_single_flush_provenance_exact == true
 				and report.surface_single_flush_local_passability_calls == 4
-				and report.surface_single_flush_buildable_calls == 1
+				and report.surface_single_flush_buildable_calls == 2
 				and report.surface_single_flush_height_snapshots == 2
 				and report.surface_single_flush_height_mismatches == 0
 				and report.surface_single_flush_object_family_count == 6
@@ -11272,6 +11275,7 @@ function Lazy.PrepareImplementationCapsulesAroundRebuild(surface, rebuild, reaso
 				and report.surface_single_flush_dirty_regions == 2
 				and report.surface_single_flush_coverage_permille > 0
 				and report.surface_single_flush_coverage_permille <= 150
+				and report.surface_single_flush_closing_complete == true
 				and report.surface_single_flush_cleanup_complete == true
 			or report.surface_single_flush_used ~= true
 				and rebuild_count >= 1 and fallback_count == 0)
@@ -11301,6 +11305,7 @@ function Lazy.PrepareImplementationCapsulesAroundRebuild(surface, rebuild, reaso
 			dirty_digest = report.surface_single_flush_dirty_digest,
 			dirty_regions = report.surface_single_flush_dirty_regions,
 			coverage_permille = report.surface_single_flush_coverage_permille,
+			closing_complete = tostring(report.surface_single_flush_closing_complete == true),
 			marker_index_used = tostring(report.marker_index_used == true),
 			marker_stream_mismatches = report.marker_index_stream_mismatches,
 			repeat_marker_stream_mismatches = report.repeat_marker_index_stream_mismatches,
@@ -11408,7 +11413,7 @@ function Lazy.ValidatePublishedCapsuleCertificate(surface, descriptor, report)
 		and report.surface_single_flush_fallback ~= true
 		and report.surface_single_flush_provenance_exact == true
 		and tonumber(report.surface_single_flush_local_passability_calls) == 4
-		and tonumber(report.surface_single_flush_buildable_calls) == 1
+		and tonumber(report.surface_single_flush_buildable_calls) == 2
 		and tonumber(report.surface_single_flush_height_snapshots) == 2
 		and tonumber(report.surface_single_flush_height_mismatches) == 0
 		and tonumber(report.surface_single_flush_object_family_count) == 6
@@ -11418,6 +11423,7 @@ function Lazy.ValidatePublishedCapsuleCertificate(surface, descriptor, report)
 		and tonumber(report.surface_single_flush_dirty_regions) == 2
 		and (tonumber(report.surface_single_flush_coverage_permille) or 0) > 0
 		and (tonumber(report.surface_single_flush_coverage_permille) or 151) <= 150
+		and report.surface_single_flush_closing_complete == true
 		and report.surface_single_flush_cleanup_complete == true
 		and tonumber(report.canonical_rebuilds_during_capsule_prepare) == 0
 	local canonical_rebuild_count = tonumber(
@@ -16188,7 +16194,15 @@ function SuperBigMap.GenerationGrids.RebuildSurfaceSingleFlush(map, phase, trans
 	end
 	report.height_snapshots = #transaction.snapshots
 	report.height_mismatches = 0
-	local rebuild_ok, rebuild_error = pcall(rebuild_regions)
+	local rebuild_ok, rebuild_error = pcall(function()
+		rebuild_regions()
+		-- Publication calls PlaceBuildingIn/FlattenTerrainInBuildShape/ClearObstructions.
+		-- Even with exact zero height drift, those operations can mutate the live buildable
+		-- grid. Rebuild it once after both closing passability regions so T1 observes the
+		-- authoritative post-publication terrain/build-shape state.
+		report.buildable_calls = report.buildable_calls + 1
+		rebuild_buildable(map)
+	end)
 	local cleanup_ok = ReleaseSurfaceSingleFlushTransaction(transaction)
 	report.cleanup_complete = cleanup_ok == true
 	if not rebuild_ok or not cleanup_ok then

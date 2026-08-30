@@ -9,8 +9,8 @@ VER = (ROOT / "Code/sbm_version.lua").read_text(encoding="utf-8")
 META = (ROOT / "metadata.lua").read_text(encoding="utf-8")
 
 checks = {
-    "metadata_v997": "'version', 997" in META,
-    "generator_patch_303": "SuperBigMap.GENERATOR_PATCH_VERSION = 303" in VER,
+    "metadata_forward_v999": "'version', 999" in META,
+    "generator_patch_forward_305": "SuperBigMap.GENERATOR_PATCH_VERSION = 305" in VER,
     "absolute_budget_lt_240s": "duration_ms = 180000" in GEN,
     "phase_budget_60s": "phase_duration_ms = 60000" in GEN and "phase_duration > 60000" in DEP,
     "candidate_cap_256": "maximum_candidates = 256" in GEN and "maximum_candidates > 256" in DEP,

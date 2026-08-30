@@ -99,10 +99,10 @@ def main() -> int:
                                 capture_output=True, text=True, timeout=30, check=False)
         compile_results[path.relative_to(ROOT).as_posix()] = result.returncode == 0
     checks = {
-        "metadata_v998_truthfully_retains_v972": "'version', 998," in metadata
+        "metadata_v999_truthfully_retains_v972": "'version', 999," in metadata
             and "two certified Surface passage-pad footprints" in metadata
-            and "full canonical rebuild path as fallback" in metadata,
-        "generator_identity_v304": "SuperBigMap.GENERATOR_PATCH_VERSION = 304" in version,
+            and "retaining full canonical fallback" in metadata,
+        "generator_identity_v305": "SuperBigMap.GENERATOR_PATCH_VERSION = 305" in version,
         "v987_default_off_safe_optimization_trace_gate_green": (
             optimization_trace_run.returncode == 0
             and '"ok": true' in optimization_trace_run.stdout),

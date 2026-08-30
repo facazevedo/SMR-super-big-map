@@ -1,10 +1,11 @@
--- Pure executable oracle for the v998 Surface single-flush finalization transaction.
+-- Pure executable oracle for the forward v999 Surface single-flush finalization transaction.
 -- It models ownership and certification only; it never loads a map or calls an engine API.
 
 local function decide(input)
 	local out = {
 		canonical = 0, local_pass = 0, buildable = 0, snapshots = 0,
 		cleanup = false, optimized = false, published = false, blocked = false,
+		closing_complete = false,
 	}
 	local exact = input.enabled == true and input.surface == true
 		and input.pads == 2 and input.dirty_regions == 2
@@ -28,11 +29,14 @@ local function decide(input)
 		local closing = input.owner == true and input.object_family == 6
 			and input.associations_exact == true and input.objects_contained == true
 			and input.height_mismatches == 0
-			and input.closing_apis == true and input.cleanup_ok == true
+			and input.closing_apis == true and input.closing_buildable_ok == true
+			and input.cleanup_ok == true
 		if closing then
 			out.local_pass = 4
+			out.buildable = 2
 			out.cleanup = true
 			out.optimized = true
+			out.closing_complete = true
 		else
 			-- A full canonical closing rebuild is authoritative after a proven local preplan.
 			out.canonical = out.canonical + 1
@@ -50,7 +54,7 @@ local base = {
 	coverage_permille = 37, preplan_apis = true, planner = true, owner = true,
 	object_family = 6, associations_exact = true, objects_contained = true,
 	height_mismatches = 0,
-	closing_apis = true, cleanup_ok = true,
+	closing_apis = true, closing_buildable_ok = true, cleanup_ok = true,
 }
 
 local function copy(changes)
@@ -69,8 +73,9 @@ local function require_case(name, input, expected)
 end
 
 require_case("exact local transaction", copy(), {
-	optimized = true, canonical = 0, local_pass = 4, buildable = 1,
+	optimized = true, canonical = 0, local_pass = 4, buildable = 2,
 	snapshots = 2, cleanup = true, published = true, blocked = false,
+	closing_complete = true,
 })
 for _, mutation in ipairs({
 	{ enabled = false }, { surface = false }, { pads = 1 }, { dirty_regions = 3 },
@@ -85,10 +90,11 @@ end
 for _, mutation in ipairs({
 	{ owner = false }, { object_family = 5 }, { object_family = 7 },
 	{ associations_exact = false }, { objects_contained = false }, { height_mismatches = 1 },
-	{ closing_apis = false }, { cleanup_ok = false },
+	{ closing_apis = false }, { closing_buildable_ok = false }, { cleanup_ok = false },
 }) do
 	require_case("closing adversary fallback", copy(mutation), {
 		optimized = false, canonical = 1, local_pass = 2, published = true,
+		closing_complete = false,
 	})
 end
 require_case("planner failure cleans private preimages", copy({ planner = false }), {
@@ -102,4 +108,4 @@ require_case("canonical planner failure remains blocked", copy({
 	published = false, blocked = true,
 })
 
-print("v998 surface single-flush transaction oracle: ok")
+print("v999 surface single-flush transaction oracle: ok")
