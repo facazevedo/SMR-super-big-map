@@ -149,12 +149,11 @@ def main() -> int:
         capture_output=True, text=True, timeout=30, check=False)
 
     checks = {
-        "metadata_and_generator_identity_v989_v295": (
-            "'version', 989," in metadata
-            and "lazy underground passage pads" in metadata
-            and "committed target-domain terrain level" in metadata
-            and "revalidated transactionally" in metadata
-            and "SuperBigMap.GENERATOR_PATCH_VERSION = 295" in version
+        "metadata_and_generator_identity_v990_v296": (
+            "'version', 990," in metadata
+            and "materialization capability" in metadata
+            and "target-domain passage-pad certification" in metadata
+            and "SuperBigMap.GENERATOR_PATCH_VERSION = 296" in version
         ),
         "pinned_lua53_compiles_touched_production": all(compile_results.values()),
         "default_off_api_is_outside_lazy_gate_and_precedes_ordinary_calls": (

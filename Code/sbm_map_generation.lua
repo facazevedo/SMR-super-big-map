@@ -8739,6 +8739,29 @@ if SuperBigMap.State.lazy_underground_reload_restore_ok ~= false
 		LIVE_SURFACE_GENERATION_TRANSACTIONS = setmetatable({}, { __mode = "k" }),
 		LIVE_MATERIALIZATION_TRANSACTIONS = setmetatable({}, { __mode = "k" }),
 	}
+	local MATERIALIZATION_CAPABILITY_SCHEMA =
+		"SuperBigMap/v990/lazy-materialization-private-capability"
+
+	local function AppendMaterializationCapabilityDebug(debug, stage, fields)
+		if type(debug) ~= "table" or type(debug.records) ~= "table" then return end
+		local maximum = tonumber(debug.maximum_records) or 8
+		if #debug.records >= maximum then return end
+		local record = {
+			stage = tostring(stage or "unknown"),
+			sequence = #debug.records + 1,
+		}
+		if type(fields) == "table" then
+			for key, value in pairs(fields) do
+				local value_type = type(value)
+				if value_type == "nil" or value_type == "boolean"
+					or value_type == "number" or value_type == "string" then
+					local bounded_key = tostring(key):sub(1, 64)
+					record[bounded_key] = value_type == "string" and value:sub(1, 160) or value
+				end
+			end
+		end
+		debug.records[#debug.records + 1] = record
+	end
 
 function Lazy.Now()
 	local precise_ticks = Global("GetPreciseTicks")
@@ -12071,7 +12094,19 @@ function Lazy.ValidateCompletedPairs(surface, underground, descriptor)
 	return count == 2, count == 2 and nil or "completed passage count is not two"
 end
 
-function Lazy.MaterializeTransaction(surface, descriptor, route)
+function Lazy.MaterializeTransaction(surface, descriptor, route, expected_owner, capability_debug)
+	if type(expected_owner) ~= "table"
+		or Lazy.LIVE_MATERIALIZATION_TRANSACTIONS[surface] ~= expected_owner
+		or expected_owner.descriptor ~= descriptor then
+		return nil, "materialization transaction entered without its private owner"
+	end
+	AppendMaterializationCapabilityDebug(capability_debug, "transaction-entry", {
+		owner_table = type(expected_owner),
+		owner_weak_identity = Lazy.LIVE_MATERIALIZATION_TRANSACTIONS[surface]
+			== expected_owner,
+		lazy_table_current = SuperBigMap.LazyUndergroundFeasibility == Lazy,
+		descriptor_identity = expected_owner.descriptor == descriptor,
+	})
 	local reconstructed, reconstruct_error = Lazy.ReconstructRecipeValues(descriptor)
 	if not reconstructed then return nil, "recipe reconstruction failed: " .. tostring(reconstruct_error) end
 	local params = reconstructed.params
@@ -12129,9 +12164,94 @@ function Lazy.MaterializeTransaction(surface, descriptor, route)
 		or underground.SuperBigMapCityInitializationComplete ~= true then
 		return nil, "generated underground did not complete native/City lifecycle"
 	end
+	local owned_live, owned_phase, owned_reason =
+		Lazy.OwnedMaterializationInFlight(surface, descriptor, report)
+	if owned_live ~= true or owned_phase ~= "materialization-deferred-pipeline"
+		or Lazy.LIVE_MATERIALIZATION_TRANSACTIONS[surface] ~= expected_owner then
+		return nil, "materialization capability issuance failed: "
+			.. tostring(owned_reason or owned_phase or "owner identity drift")
+	end
+	-- GenerateRandomMap reloads mod modules while this old transaction closure is still active.
+	-- Never make the terrain helper rediscover ownership through the newly published module table:
+	-- issue a direct, unpersisted capability whose authorizer remains closed over this exact weak
+	-- owner.  The capability travels only down this synchronous call stack and is never copied onto
+	-- a map, report, descriptor, save, or global.
+	local capability = {
+		schema = MATERIALIZATION_CAPABILITY_SCHEMA,
+		phase = owned_phase,
+		attempt = descriptor.materialization_attempts,
+	}
+	local authorized_context = {
+		schema = MATERIALIZATION_CAPABILITY_SCHEMA,
+		phase = owned_phase,
+		surface = surface,
+		descriptor = descriptor,
+		report = report,
+		underground = underground,
+		debug = capability_debug,
+		owner_identity = true,
+		module_reloaded = SuperBigMap.LazyUndergroundFeasibility ~= Lazy,
+	}
+	local authorize_depth, authorize_calls = 0, 0
+	capability.authorize = function(presented, expected_map)
+		if authorize_depth ~= 0 then
+			return false, nil, "capability authorizer re-entered"
+		end
+		authorize_depth = 1
+		authorize_calls = authorize_calls + 1
+		local function reject(reason)
+			authorize_depth = 0
+			return false, nil, reason
+		end
+		if presented ~= capability then
+			return reject("capability identity mismatch")
+		end
+		if expected_map ~= underground then
+			return reject("capability underground-map identity mismatch")
+		end
+		if Lazy.LIVE_MATERIALIZATION_TRANSACTIONS[surface] ~= expected_owner then
+			return reject("capability weak-owner identity lost")
+		end
+		if expected_owner.descriptor ~= descriptor or expected_owner.report ~= report then
+			return reject("capability owner payload identity drifted")
+		end
+		local authorized, phase, reason =
+			Lazy.OwnedMaterializationInFlight(surface, descriptor, report)
+		if authorized ~= true or phase ~= "materialization-deferred-pipeline" then
+			return reject(tostring(reason or phase or "owner rejected"))
+		end
+		local maps = Global("Maps")
+		if type(maps) ~= "table" or maps[descriptor.map_slot] ~= underground then
+			return reject("capability published-map identity drifted")
+		end
+		authorized_context.authorization_calls = authorize_calls
+		authorized_context.authorization_depth = authorize_depth
+		authorize_depth = 0
+		return true, authorized_context
+	end
+	AppendMaterializationCapabilityDebug(capability_debug, "before-deferred-pipeline", {
+		capability_type = type(capability),
+		authorize_type = type(capability.authorize),
+		phase = owned_phase,
+		owner_weak_identity = Lazy.LIVE_MATERIALIZATION_TRANSACTIONS[surface]
+			== expected_owner,
+		lazy_table_current = SuperBigMap.LazyUndergroundFeasibility == Lazy,
+		current_owned_function_same = type(SuperBigMap.LazyUndergroundFeasibility) == "table"
+			and SuperBigMap.LazyUndergroundFeasibility.OwnedMaterializationInFlight
+				== Lazy.OwnedMaterializationInFlight,
+		generation_count = descriptor.generation_count,
+	})
+	underground.SuperBigMapLazyMaterializationCapabilityDebug = capability_debug
 	local pipeline = Lazy.RunDeferredPipeline
 	if type(pipeline) ~= "function" then return nil, "deferred underground pipeline is unavailable" end
-	local pipeline_ok, pipeline_reason = pipeline(underground, true)
+	local pipeline_ok, pipeline_reason = pipeline(underground, true, capability)
+	AppendMaterializationCapabilityDebug(capability_debug, "after-deferred-pipeline", {
+		ok = pipeline_ok == true,
+		reason = tostring(pipeline_reason or ""),
+		owner_weak_identity = Lazy.LIVE_MATERIALIZATION_TRANSACTIONS[surface]
+			== expected_owner,
+		descriptor_state = tostring(descriptor.state),
+	})
 	descriptor.materialization_passage_pair_ok =
 		underground.SuperBigMapUndergroundPassagePairOK == true
 	descriptor.materialization_enrichment_reachability_ok =
@@ -12217,9 +12337,22 @@ function Lazy.Materialize(surface, route)
 	if type(report) ~= "table" then
 		return Lazy.MarkBlocked(surface, "lazy underground feasibility report is unavailable")
 	end
+	local capability_debug = {
+		schema = "smr.sbm.lazy-materialization-capability-debug.v1",
+		maximum_records = 8,
+		records = {},
+	}
+	report.materialization_capability_debug = capability_debug
+	AppendMaterializationCapabilityDebug(capability_debug, "before-owner-install", {
+		lazy_table_current = SuperBigMap.LazyUndergroundFeasibility == Lazy,
+		weak_owner_present = Lazy.LIVE_MATERIALIZATION_TRANSACTIONS[surface] ~= nil,
+		descriptor_state = tostring(descriptor.state),
+		attempt = descriptor.materialization_attempts,
+		route = report.materialization_route,
+	})
 	-- Process-local only: never copy this identity into a map/save. A reloaded `generating`
 	-- descriptor therefore remains indistinguishable from an interrupted transaction and blocks.
-	Lazy.LIVE_MATERIALIZATION_TRANSACTIONS[surface] = {
+	local owner = {
 		descriptor = descriptor,
 		report = report,
 		map_slot = descriptor.map_slot,
@@ -12227,12 +12360,19 @@ function Lazy.Materialize(surface, route)
 		route = report.materialization_route,
 		attempt = descriptor.materialization_attempts,
 	}
+	Lazy.LIVE_MATERIALIZATION_TRANSACTIONS[surface] = owner
+	AppendMaterializationCapabilityDebug(capability_debug, "owner-installed", {
+		owner_table = type(owner),
+		weak_owner_identity = Lazy.LIVE_MATERIALIZATION_TRANSACTIONS[surface] == owner,
+		descriptor_identity = owner.descriptor == descriptor,
+		report_identity = owner.report == report,
+	})
 	LoadingStep("lazy underground first-access materialization started", {
 		route = tostring(route), attempt = descriptor.materialization_attempts,
 		map_name = descriptor.map_name, reserved_seed = tostring(descriptor.reserved_seed),
 	}, surface)
 	local call_ok, underground, reason = pcall(
-		Lazy.MaterializeTransaction, surface, descriptor, route)
+		Lazy.MaterializeTransaction, surface, descriptor, route, owner, capability_debug)
 	if not call_ok or not underground then
 		local failure = call_ok and reason or underground
 		if descriptor.state ~= "blocked" then
@@ -16291,13 +16431,47 @@ function SuperBigMap.GenerationReadiness.RevokeDeferredUndergroundFalseCompletio
 	return true, "exact deferred source-live/final-stamped false completion revoked"
 end
 
-local function RunUndergroundStretchIfEnabled(map, force_now)
+local function RunUndergroundStretchIfEnabled(map, force_now, materialization_capability)
 	if not cfg_bool("STRETCH_UNDERGROUND", false) then
 		return false, "underground stretch is disabled"
 	end
 	map = map or Global("CurrentMap")
 	if not map then
 		return false, "underground target map is missing"
+	end
+	local capability_context
+	if materialization_capability ~= nil then
+		if force_now ~= true or type(materialization_capability) ~= "table"
+			or materialization_capability.schema
+				~= "SuperBigMap/v990/lazy-materialization-private-capability"
+			or type(materialization_capability.authorize) ~= "function" then
+			return false, "deferred pipeline materialization capability is malformed"
+		end
+		local call_ok, authorized, context, reason = pcall(
+			materialization_capability.authorize, materialization_capability, map)
+		if not call_ok or authorized ~= true or type(context) ~= "table"
+			or context.schema ~= "SuperBigMap/v990/lazy-materialization-private-capability"
+			or context.underground ~= map
+			or context.phase ~= "materialization-deferred-pipeline"
+			or type(context.descriptor) ~= "table" or type(context.report) ~= "table" then
+			return false, "deferred pipeline materialization capability was rejected: "
+				.. tostring(call_ok and (reason or context) or authorized)
+		end
+		capability_context = context
+		local debug = context.debug
+		if type(debug) == "table" and type(debug.records) == "table"
+			and #debug.records < (tonumber(debug.maximum_records) or 8) then
+			debug.records[#debug.records + 1] = {
+				stage = "pipeline-entry", sequence = #debug.records + 1,
+				capability_identity = true,
+				owner_identity = context.owner_identity == true,
+				module_reloaded = context.module_reloaded == true,
+				phase = context.phase,
+				map_identity = context.underground == map,
+				authorization_calls = context.authorization_calls,
+				authorization_depth = context.authorization_depth,
+			}
+		end
 	end
 	RestoreDeferredUndergroundGeometry(map)
 	SuperBigMap.GenerationReadiness.RevokeDeferredUndergroundFalseCompletion(map)
@@ -16565,7 +16739,10 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 					error("final passage-pair alignment API is unavailable")
 				end
 				SetLoadingPhase("Aligning surface and underground passage entrances")
-				local pair_ok, pair_stats = AlignPassagePairsToSharedHex(map)
+				local pair_ok, pair_stats = AlignPassagePairsToSharedHex(map, {
+					lazy_materialization_capability = materialization_capability,
+					lazy_materialization_context = capability_context,
+				})
 				map.SuperBigMapUndergroundPassagePairOK = pair_ok == true
 				if pair_ok ~= true then
 					return false, "final passage-pair alignment failed: "

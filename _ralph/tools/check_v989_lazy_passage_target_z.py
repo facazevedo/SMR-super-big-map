@@ -16,8 +16,8 @@ ORACLE = ROOT / "_ralph" / "tools" / "v989_lazy_passage_target_z_oracle.lua"
 
 required_terrain = (
     "certified_lazy_underground_target_level",
-    'phase ~= "materialization-deferred-pipeline"',
-    "lazy.OwnedMaterializationInFlight(surface_map, descriptor, report)",
+    'phase == "materialization-deferred-pipeline"',
+    "pcall(authorize, materialization_capability, map)",
     "validation_digest ~= descriptor.validation_z_digest",
     'stage = lazy_capsule_index and "target-level-certified"',
     "terrain_api.GetHeight, map, point_fn(x, y)",
@@ -42,8 +42,8 @@ if "return nil, \"not a lazy underground capsule\"" not in TERRAIN:
     raise SystemExit("ordinary/eager passage branch separation is missing")
 if "underground_preparation_z, source_level_reason, source_q, source_r =\n\t\t\t\t\tpassage_pad_level" not in TERRAIN:
     raise SystemExit("ordinary source-level fallback was not retained")
-if "SuperBigMap.GENERATOR_PATCH_VERSION = 295" not in VERSION or "'version', 989" not in METADATA:
-    raise SystemExit("v989 production version is missing")
+if "SuperBigMap.GENERATOR_PATCH_VERSION = 296" not in VERSION or "'version', 990" not in METADATA:
+    raise SystemExit("v990 forward production version is missing")
 
 for source in (ROOT / "Code" / "sbm_terrain_copy.lua", ROOT / "Code" / "sbm_map_generation.lua"):
     parsed = subprocess.run(
@@ -59,7 +59,7 @@ if oracle.returncode or "ok=true" not in oracle.stdout:
     raise SystemExit("v989 target-Z oracle failed")
 
 print("ok=true")
-print("version=989")
+print("version=990")
 print("lazy_level_source=committed-target-terrain")
 print("surface_validation_z_role=integrity-only")
 print("target_certificate=owner+capsule+plan+validation-digest+coordinate+height")

@@ -8611,6 +8611,8 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 	local source_bootstrap = options.source_bootstrap == true
 	local fixed_surface_capsules = source_bootstrap
 		and options.fixed_surface_capsules == true
+	local materialization_capability = options.lazy_materialization_capability
+	local materialization_context = options.lazy_materialization_context
 	local surface_map = Global("MainMap")
 	if not underground_map or not surface_map or underground_map == surface_map then
 		return false, { error = "surface/underground maps unavailable", pairs = 0 }
@@ -9030,24 +9032,53 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 	-- sample the untouched underground terrain at that exact final coordinate.  Surface validation_z
 	-- remains an integrity input only; it is a Surface elevation and must never become the underground
 	-- target elevation.
-	local function certified_lazy_underground_target_level(surface_anchor, map, x, y, q, r)
+	local function certified_lazy_underground_target_level(
+		surface_anchor, map, x, y, q, r, preparation_debug)
 		local index = tonumber(surface_anchor and surface_anchor.SuperBigMapLazyUndergroundCapsuleIndex)
 		if not index then return nil, "not a lazy underground capsule" end
 		if index ~= math.floor(index) or index < 1 or index > 2 then
 			return nil, "lazy capsule index is invalid"
 		end
-		local descriptor = surface_map and surface_map.SuperBigMapLazyUndergroundDescriptor
-		local report = surface_map and surface_map.SuperBigMapLazyUndergroundFeasibilityReport
-		local lazy = SuperBigMap.LazyUndergroundFeasibility
-		local owned, phase, owner_reason = type(lazy) == "table"
-			and type(lazy.OwnedMaterializationInFlight) == "function"
-			and lazy.OwnedMaterializationInFlight(surface_map, descriptor, report)
-		if owned ~= true or phase ~= "materialization-deferred-pipeline" then
-			return nil, "lazy target-level owner/certificate is invalid: "
-				.. tostring(owner_reason or phase)
+		local authorize = type(materialization_capability) == "table"
+			and materialization_capability.authorize or nil
+		local call_ok, owned, context, owner_reason =
+			false, false, nil, "capability authorizer unavailable"
+		if type(authorize) == "function" then
+			call_ok, owned, context, owner_reason =
+				pcall(authorize, materialization_capability, map)
 		end
-		if type(descriptor.capsules) ~= "table" or #descriptor.capsules ~= 2
-			or tonumber(descriptor.capsule_planner_version) ~= tonumber(lazy.CAPSULE_PLANNER_VERSION)
+		local phase = type(context) == "table" and context.phase or nil
+		local context_exact = call_ok and owned == true and type(context) == "table"
+			and context == materialization_context
+			and context.schema == "SuperBigMap/v990/lazy-materialization-private-capability"
+			and context.surface == surface_map and context.underground == map
+			and context.owner_identity == true
+			and phase == "materialization-deferred-pipeline"
+		local debug = type(context) == "table" and context.debug or nil
+		append_preparation_debug(preparation_debug, {
+			pair = index, stage = "target-level-capability", valid = context_exact,
+			capability_type = type(materialization_capability),
+			authorize_type = type(authorize), call_ok = call_ok == true,
+			context_type = type(context), context_identity = context == materialization_context,
+			owner_identity = type(context) == "table" and context.owner_identity == true,
+			module_reloaded = type(context) == "table" and context.module_reloaded == true,
+			phase = tostring(phase or ""), reason = tostring(owner_reason or ""),
+			authorization_calls = type(context) == "table"
+				and context.authorization_calls or nil,
+			authorization_depth = type(context) == "table"
+				and context.authorization_depth or nil,
+			debug_identity = debug ~= nil and type(materialization_context) == "table"
+				and debug == materialization_context.debug,
+		})
+		if not context_exact then
+			return nil, "lazy target-level owner/certificate is invalid: "
+				.. tostring(owner_reason or phase or (call_ok and "context identity" or owned))
+		end
+		local descriptor = context.descriptor
+		local report = context.report
+		if type(descriptor) ~= "table" or type(report) ~= "table"
+			or type(descriptor.capsules) ~= "table" or #descriptor.capsules ~= 2
+			or tonumber(descriptor.capsule_planner_version) ~= 7
 			or (tonumber(descriptor.plan_digest) or 0) <= 0
 			or (tonumber(descriptor.validation_z_digest) or 0) <= 0
 			or tonumber(report.plan_digest) ~= tonumber(descriptor.plan_digest)
@@ -9752,7 +9783,8 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 			if lazy_capsule_index then
 				underground_preparation_z, source_level_reason, lazy_target_certificate =
 					certified_lazy_underground_target_level(surface_anchor, underground_map,
-						expected_ux, expected_uy, post_underground_q, post_underground_r)
+						expected_ux, expected_uy, post_underground_q, post_underground_r,
+						preparation_debug)
 				source_q, source_r = post_underground_q, post_underground_r
 				if lazy_target_certificate then
 					if lazy_target_certificates[lazy_target_certificate.index] then
