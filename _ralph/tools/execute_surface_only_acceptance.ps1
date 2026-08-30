@@ -174,7 +174,8 @@ foreach ($entry in $script:Contract.stage_files.psobject.Properties) {
 }
 $actualInitial = @(Get-ChildItem -LiteralPath $script:Run -File | ForEach-Object Name | Sort-Object)
 $allowedInitial = @($script:Contract.allowed_initial_run_files | ForEach-Object { [string]$_ } | Sort-Object)
-if ((Compare-Object $actualInitial $allowedInitial -CaseSensitive).Count -ne 0) { throw 'run directory is not the exact fresh content-addressed topology' }
+$topologyDifference = @(Compare-Object $actualInitial $allowedInitial -CaseSensitive)
+if ($topologyDifference.Count -ne 0) { throw 'run directory is not the exact fresh content-addressed topology' }
 foreach ($path in @($SurfaceT1, $DeferredT1, $Census, $Timing, $Receipt, $TrackedReceipt)) {
     if (Test-Path -LiteralPath $path) { throw "stale surface-only output exists: $path" }
 }
