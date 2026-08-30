@@ -137,6 +137,36 @@ function Assert-SurfaceSingleFlushScalar([string]$Text) {
             'helper_passability_calls', 'helper_buildable_calls', 'comparison_ms', 'proof_ms')) {
         if ((Get-ScalarInteger $values $name) -lt 0) { throw "scalar receipt negative field: $name" }
     }
+    # Mandatory f+h safety facts precede branch selection.  A fallback may choose
+    # canonical grids, but it must never turn an incomplete local certificate into
+    # an acceptable receipt or conceal contradictory helper telemetry.
+    $commonSafety = (Get-ScalarBoolean $values 'surface_single_flush_requested') -and
+        (Get-ScalarBoolean $values 'surface_single_flush_provenance_exact') -and
+        (Get-ScalarInteger $values 'surface_single_flush_height_snapshots') -eq 2 -and
+        (Get-ScalarInteger $values 'surface_single_flush_height_mismatches') -eq 0 -and
+        (Get-ScalarInteger $values 'surface_single_flush_object_family_count') -eq 6 -and
+        (Get-ScalarInteger $values 'surface_single_flush_object_association_failures') -eq 0 -and
+        (Get-ScalarInteger $values 'surface_single_flush_dirty_digest') -eq (Get-ScalarInteger $values 'outer_passage_pad_finalization_dirty_digest') -and
+        (Get-ScalarInteger $values 'surface_single_flush_dirty_regions') -eq 2 -and
+        (Get-ScalarInteger $values 'surface_single_flush_coverage_permille') -ge 1 -and
+        (Get-ScalarInteger $values 'surface_single_flush_coverage_permille') -le 150 -and
+        (Get-ScalarBoolean $values 'surface_single_flush_closing_complete') -and
+        (Get-ScalarBoolean $values 'surface_single_flush_cleanup_complete') -and
+        (Get-ScalarBoolean $values 'helper_requested') -and
+        (Get-ScalarBoolean $values 'helper_provenance_exact') -and
+        (Get-ScalarInteger $values 'helper_regions') -eq 2 -and
+        (Get-ScalarInteger $values 'helper_dirty_digest') -eq (Get-ScalarInteger $values 'surface_single_flush_dirty_digest') -and
+        (Get-ScalarInteger $values 'helper_coverage_permille') -ge 1 -and
+        (Get-ScalarInteger $values 'helper_coverage_permille') -le 150 -and
+        (Get-ScalarInteger $values 'helper_height_snapshots') -eq 2 -and
+        (Get-ScalarInteger $values 'helper_height_mismatches') -eq 0 -and
+        (Get-ScalarInteger $values 'helper_object_family_count') -eq 6 -and
+        (Get-ScalarInteger $values 'helper_object_association_failures') -eq 0 -and
+        (Get-ScalarInteger $values 'helper_object_containment_failures') -eq 0 -and
+        (Get-ScalarInteger $values 'helper_passability_calls') -eq 2 -and
+        (Get-ScalarInteger $values 'helper_buildable_calls') -eq 1 -and
+        (Get-ScalarBoolean $values 'helper_cleanup_complete')
+    if (-not $commonSafety) { throw 'scalar receipt common f+h safety invariant failed' }
     $optimized = (Get-ScalarBoolean $values 'surface_single_flush_requested') -and
         (Get-ScalarBoolean $values 'surface_single_flush_used') -and -not (Get-ScalarBoolean $values 'surface_single_flush_fallback') -and
         (Get-ScalarBoolean $values 'surface_single_flush_provenance_exact') -and
@@ -157,6 +187,10 @@ function Assert-SurfaceSingleFlushScalar([string]$Text) {
         (Get-ScalarInteger $values 'fresh_grid_expected_rebuilds') -eq 0 -and
         (Get-ScalarBoolean $values 'fresh_grid_rebuild_shape_exact') -and (Get-ScalarBoolean $values 'fresh_grid_first_rebuild_complete') -and
         (Get-ScalarBoolean $values 'fresh_grid_closing_rebuild_complete') -and
+        (Get-ScalarBoolean $values 'helper_used') -and -not (Get-ScalarBoolean $values 'helper_fallback') -and
+        (Get-ScalarText $values 'helper_error') -ceq '' -and (Get-ScalarText $values 'helper_phase') -ceq 'closing' -and
+        (Get-ScalarBoolean $values 'helper_preplan_complete') -and (Get-ScalarBoolean $values 'helper_closing_complete') -and
+        (Get-ScalarText $values 'surface_single_flush_fallback_reason') -ceq '' -and
         (Get-ScalarText $values 'fresh_grid_phase_order') -ceq 'local-dirty-grid-publication>fresh-plan-replay>capsule-publication>local-dirty-closing'
     $canonical = (Get-ScalarBoolean $values 'surface_single_flush_requested') -and
         -not (Get-ScalarBoolean $values 'surface_single_flush_used') -and (Get-ScalarBoolean $values 'surface_single_flush_fallback') -and
@@ -167,6 +201,13 @@ function Assert-SurfaceSingleFlushScalar([string]$Text) {
         (Get-ScalarInteger $values 'fresh_grid_expected_rebuilds') -eq (Get-ScalarInteger $values 'canonical_rebuilds_during_capsule_prepare') -and
         (Get-ScalarBoolean $values 'fresh_grid_rebuild_shape_exact') -and (Get-ScalarBoolean $values 'fresh_grid_first_rebuild_complete') -and
         (Get-ScalarBoolean $values 'fresh_grid_closing_rebuild_complete') -and
+        -not (Get-ScalarBoolean $values 'helper_used') -and -not (Get-ScalarBoolean $values 'helper_fallback') -and
+        -not [string]::IsNullOrEmpty((Get-ScalarText $values 'helper_error')) -and
+        (Get-ScalarText $values 'helper_error').Length -le 512 -and
+        (Get-ScalarText $values 'helper_error') -ceq (Get-ScalarText $values 'surface_single_flush_fallback_reason') -and
+        -not (Get-ScalarBoolean $values 'helper_closing_complete') -and
+        (((Get-ScalarText $values 'helper_phase') -ceq 'preplan' -and -not (Get-ScalarBoolean $values 'helper_preplan_complete')) -or
+         ((Get-ScalarText $values 'helper_phase') -ceq 'closing' -and (Get-ScalarBoolean $values 'helper_preplan_complete'))) -and
         (Get-ScalarText $values 'fresh_grid_phase_order') -ceq 'canonical-grid-publication>fresh-plan-replay>capsule-publication>closing-rebuild'
     if ($optimized -eq $canonical) { throw 'scalar receipt tuple is missing, ambiguous, or invalid' }
     $tuple = if ($optimized) { 'optimized' } else { 'canonical-fallback' }
@@ -179,31 +220,80 @@ function Assert-SurfaceSingleFlushScalar([string]$Text) {
     [ordered]@{ tuple = $tuple; comparison_ms = Get-ScalarInteger $values 'comparison_ms'; proof_ms = Get-ScalarInteger $values 'proof_ms' }
 }
 
-function Wait-NonEmptyFile([string]$Path, [DateTime]$DeadlineUtc) {
+function Wait-NonEmptyFile([string]$Path, [DateTime]$DeadlineUtc, [Diagnostics.Process]$TrackedProcess) {
     $directory = Split-Path -Parent $Path
     $leaf = Split-Path -Leaf $Path
     if (-not (Test-Path -LiteralPath $directory -PathType Container)) { throw "watch directory missing: $directory" }
     $watcher = New-Object IO.FileSystemWatcher $directory, $leaf
     $watcher.NotifyFilter = [IO.NotifyFilters]::FileName -bor [IO.NotifyFilters]::LastWrite -bor [IO.NotifyFilters]::Size
     $watcher.EnableRaisingEvents = $true
+    $TrackedProcess.EnableRaisingEvents = $true
+    $fileSubscription = Register-ObjectEvent -InputObject $watcher -EventName Changed
+    $createdSubscription = Register-ObjectEvent -InputObject $watcher -EventName Created
+    $renamedSubscription = Register-ObjectEvent -InputObject $watcher -EventName Renamed
+    $exitSubscription = Register-ObjectEvent -InputObject $TrackedProcess -EventName Exited
     try {
         while ([DateTime]::UtcNow -lt $DeadlineUtc) {
-            # Atomic sentinel writes may arrive as Changed, Created, or Renamed.  The
-            # next wait is driven by that filesystem event, never a fixed poll.
+            # The only wait races filesystem sentinel events with the exact tracked
+            # process Exited event.  There is no fixed polling interval.
             if (Test-Path -LiteralPath $Path -PathType Leaf) {
                 try {
                     $stream = [IO.File]::Open($Path, 'Open', 'Read', 'None')
                     try { if ($stream.Length -gt 0) { return } } finally { $stream.Dispose() }
                 } catch [IO.IOException] {}
             }
-            $remaining = [Math]::Max(1, [Math]::Ceiling(($DeadlineUtc - [DateTime]::UtcNow).TotalMilliseconds))
-            [void]$watcher.WaitForChanged([IO.WatcherChangeTypes]::Changed -bor [IO.WatcherChangeTypes]::Created -bor [IO.WatcherChangeTypes]::Renamed,
-                [Math]::Min([int]$remaining, 60000))
+            if ($TrackedProcess.HasExited) { throw "tracked MarsDebug exited before sentinel: $Path" }
+            $remaining = [Math]::Max(1, [Math]::Ceiling(($DeadlineUtc - [DateTime]::UtcNow).TotalSeconds))
+            $event = Wait-Event -Timeout ([int]$remaining)
+            if ($event) {
+                if ($event.SourceIdentifier -eq $exitSubscription.Name) {
+                    Remove-Event -EventIdentifier $event.EventIdentifier -ErrorAction SilentlyContinue
+                    throw "tracked MarsDebug exited before sentinel: $Path"
+                }
+                Remove-Event -EventIdentifier $event.EventIdentifier -ErrorAction SilentlyContinue
+            }
         }
     } finally {
+        foreach ($subscription in @($fileSubscription, $createdSubscription, $renamedSubscription, $exitSubscription)) {
+            if ($subscription) { Unregister-Event -SubscriptionId $subscription.Id -ErrorAction SilentlyContinue }
+        }
         $watcher.Dispose()
     }
     throw "timeout waiting for $Path"
+}
+
+function New-MarsDebugStartWatcher() {
+    try {
+        $watcher = New-Object Management.ManagementEventWatcher(
+            "SELECT * FROM Win32_ProcessStartTrace WHERE ProcessName = 'MarsDebug.exe'")
+        $watcher.Start()
+        $watcher
+    } catch {
+        throw "MarsDebug start watcher unavailable: $($_.Exception.Message)"
+    }
+}
+
+function Wait-NewMarsDebugProcess($Watcher, [DateTime]$StartedUtc, [DateTime]$DeadlineUtc) {
+    # A single post-start snapshot closes the watcher-registration race; all later
+    # waiting is WMI process-start event driven, never interval polling.
+    $existing = @(Get-Process -Name MarsDebug -ErrorAction SilentlyContinue |
+        Where-Object { $_.StartTime.ToUniversalTime() -ge $StartedUtc })
+    if ($existing.Count -eq 1) { return $existing[0] }
+    if ($existing.Count -gt 1) { throw 'more than one newly-created MarsDebug process observed' }
+    while ([DateTime]::UtcNow -lt $DeadlineUtc) {
+        $remaining = [Math]::Max(1, [Math]::Ceiling(($DeadlineUtc - [DateTime]::UtcNow).TotalSeconds))
+        try { $event = $Watcher.WaitForNextEvent([TimeSpan]::FromSeconds([int]$remaining)) }
+        catch [Management.ManagementException] { break }
+        if ($null -eq $event) { break }
+        $pid = [int]$event.NewEvent.ProcessID
+        try {
+            $candidate = Get-Process -Id $pid -ErrorAction Stop
+            if ($candidate.ProcessName -ceq 'MarsDebug' -and $candidate.StartTime.ToUniversalTime() -ge $StartedUtc) {
+                return $candidate
+            }
+        } catch [System.ArgumentException] {}
+    }
+    throw 'new MarsDebug process identity was not captured by bounded process-start wait'
 }
 
 function Test-TcpPortClosed([int]$Port) {
@@ -346,6 +436,7 @@ if ($LASTEXITCODE -eq 0) { throw 'game already running; cold-run precondition fa
 if (@(Get-Process -Name MarsDebug -ErrorAction SilentlyContinue).Count -ne 0) { throw 'MarsDebug already exists; exact cold ownership unavailable' }
 
 $script:TrackedIdentity = $null
+$script:TrackedProcess = $null
 $script:trackedQuitAttempted = $false
 $script:trackedQuitSucceeded = $false
 $daemonStartAttempted = $false
@@ -355,16 +446,17 @@ try {
     Assert-DeployAudit $true
     if ((Get-Sha256 $DeployedConfig) -cne ([string]$script:Contract.expected_enabled_config_sha256).ToUpperInvariant()) { throw 'enabled deployed config hash mismatch' }
 
-    $daemonStartAttempted = $true
-    $startedUtc = [DateTime]::UtcNow
-    Invoke-Harness @('daemon', 'start', '--json', '--hidden', '--timeout', '300')
-    $deadline = [DateTime]::UtcNow.AddSeconds(30)
-    do {
-        $new = @(Get-Process -Name MarsDebug -ErrorAction SilentlyContinue | Where-Object { $_.StartTime.ToUniversalTime() -ge $startedUtc })
-        if ($new.Count -eq 1) { $script:TrackedIdentity = Get-ProcessIdentity $new[0]; break }
-        Start-Sleep -Milliseconds 25
-    } while ([DateTime]::UtcNow -lt $deadline)
-    if (-not $script:TrackedIdentity) { throw 'new MarsDebug process identity was not captured' }
+    $processStartWatcher = New-MarsDebugStartWatcher
+    try {
+        $daemonStartAttempted = $true
+        $startedUtc = [DateTime]::UtcNow
+        Invoke-Harness @('daemon', 'start', '--json', '--hidden', '--timeout', '300')
+        $script:TrackedProcess = Wait-NewMarsDebugProcess $processStartWatcher $startedUtc ([DateTime]::UtcNow.AddSeconds(30))
+        $script:TrackedIdentity = Get-ProcessIdentity $script:TrackedProcess
+    } finally {
+        $processStartWatcher.Stop()
+        $processStartWatcher.Dispose()
+    }
     Write-Json $TrackedReceipt ([ordered]@{ schema = 'smr.ralph.surface-only-tracked-process.v1'; identity = $script:TrackedIdentity })
 
     # T0 is immediately before the only harness run-file. No operation after this line
@@ -377,7 +469,7 @@ try {
     [Int64]$t0Timestamp = [Diagnostics.Stopwatch]::GetTimestamp()
     Invoke-Harness @('run-file', '--json', '--timeout', '30', $Generator)
     $t1Deadline = $t0Utc.AddSeconds([int]$script:Contract.t1_timeout_seconds)
-    Wait-NonEmptyFile $SurfaceT1 $t1Deadline
+    Wait-NonEmptyFile $SurfaceT1 $t1Deadline $script:TrackedProcess
     [Int64]$t1Timestamp = [Diagnostics.Stopwatch]::GetTimestamp()
     $t1Utc = [DateTime]::UtcNow
     $elapsedMs = [Math]::Round((([double]($t1Timestamp - $t0Timestamp) * 1000.0) / [double]$timingFrequency), 4)
@@ -461,7 +553,7 @@ try {
     $surfaceText = Assert-ExactTokens $SurfaceT1 @($baselineSurfaceTokens + @($script:Contract.required_surface_t1_tokens))
     $deferredText = Assert-ExactTokens $DeferredT1 @($baselineDeferredTokens + @($script:Contract.required_deferred_t1_tokens))
     $censusText = Assert-ExactTokens $Census @($script:Contract.required_scheduler_census_tokens)
-    Wait-NonEmptyFile $PostT1Scalar ([DateTime]::UtcNow.AddSeconds(120))
+    Wait-NonEmptyFile $PostT1Scalar ([DateTime]::UtcNow.AddSeconds(120)) $script:TrackedProcess
     $postT1ScalarText = Get-Content -LiteralPath $PostT1Scalar -Raw
     $singleFlush = Assert-SurfaceSingleFlushScalar $postT1ScalarText
     foreach ($mustBeZero in @('generation_count', 'materialization_attempts')) {

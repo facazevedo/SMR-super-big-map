@@ -434,6 +434,25 @@ def benchmark_block(
 \t\t\t\t\tor (helper.phase ~= "preplan" and helper.phase ~= "closing") then
 \t\t\t\t\terror("surface-only helper schema/phase is unknown")
 \t\t\t\tend
+\t\t\t\tlocal common_safety = report.surface_single_flush_requested == true
+\t\t\t\t\tand report.surface_single_flush_provenance_exact == true
+\t\t\t\t\tand tonumber(report.surface_single_flush_height_snapshots) == 2
+\t\t\t\t\tand tonumber(report.surface_single_flush_height_mismatches) == 0
+\t\t\t\t\tand tonumber(report.surface_single_flush_object_family_count) == 6
+\t\t\t\t\tand tonumber(report.surface_single_flush_object_association_failures) == 0
+\t\t\t\t\tand tonumber(report.surface_single_flush_dirty_digest) == tonumber(report.outer_passage_pad_finalization_dirty_digest)
+\t\t\t\t\tand tonumber(report.surface_single_flush_dirty_regions) == 2
+\t\t\t\t\tand (tonumber(report.surface_single_flush_coverage_permille) or 0) > 0
+\t\t\t\t\tand (tonumber(report.surface_single_flush_coverage_permille) or 151) <= 150
+\t\t\t\t\tand report.surface_single_flush_closing_complete == true and report.surface_single_flush_cleanup_complete == true
+\t\t\t\t\tand helper.requested == true and helper.provenance_exact == true and helper.cleanup_complete == true
+\t\t\t\t\tand tonumber(helper.regions) == 2 and tonumber(helper.dirty_digest) == tonumber(report.surface_single_flush_dirty_digest)
+\t\t\t\t\tand (tonumber(helper.coverage_permille) or 0) > 0 and (tonumber(helper.coverage_permille) or 151) <= 150
+\t\t\t\t\tand tonumber(helper.height_snapshots) == 2 and tonumber(helper.height_mismatches) == 0
+\t\t\t\t\tand tonumber(helper.object_family_count) == 6 and tonumber(helper.object_association_failures) == 0
+\t\t\t\t\tand tonumber(helper.object_containment_failures) == 0
+\t\t\t\t\tand tonumber(helper.passability_calls) == 2 and tonumber(helper.buildable_calls) == 1
+\t\t\t\tif not common_safety then error("surface-only common f+h safety invariant failed") end
 \t\t\t\tlocal optimized = report.surface_single_flush_requested == true
 \t\t\t\t\tand report.surface_single_flush_used == true and report.surface_single_flush_fallback ~= true
 \t\t\t\t\tand report.surface_single_flush_provenance_exact == true
@@ -453,6 +472,9 @@ def benchmark_block(
 \t\t\t\t\tand tonumber(report.canonical_rebuild_fallbacks_during_capsule_prepare) == 0
 \t\t\t\t\tand tonumber(report.fresh_grid_expected_rebuilds) == 0 and report.fresh_grid_rebuild_shape_exact == true
 \t\t\t\t\tand report.fresh_grid_first_rebuild_complete == true and report.fresh_grid_closing_rebuild_complete == true
+\t\t\t\t\tand tostring(report.surface_single_flush_fallback_reason or "") == ""
+\t\t\t\t\tand helper.used == true and helper.fallback ~= true and tostring(helper.error or "") == ""
+\t\t\t\t\tand helper.phase == "closing" and helper.preplan_complete == true and helper.closing_complete == true
 \t\t\t\t\tand report.fresh_grid_phase_order == "local-dirty-grid-publication>fresh-plan-replay>capsule-publication>local-dirty-closing"
 \t\t\t\tlocal canonical = report.surface_single_flush_requested == true
 \t\t\t\t\tand report.surface_single_flush_used ~= true and report.surface_single_flush_fallback == true
@@ -463,6 +485,12 @@ def benchmark_block(
 \t\t\t\t\tand tonumber(report.fresh_grid_expected_rebuilds) == tonumber(report.canonical_rebuilds_during_capsule_prepare)
 \t\t\t\t\tand report.fresh_grid_rebuild_shape_exact == true and report.fresh_grid_first_rebuild_complete == true
 \t\t\t\t\tand report.fresh_grid_closing_rebuild_complete == true
+\t\t\t\t\tand helper.used ~= true and helper.fallback ~= true
+\t\t\t\t\tand tostring(helper.error or "") ~= "" and #tostring(helper.error or "") <= 512
+\t\t\t\t\tand tostring(helper.error or "") == tostring(report.surface_single_flush_fallback_reason or "")
+\t\t\t\t\tand helper.closing_complete ~= true
+\t\t\t\t\tand ((helper.phase == "preplan" and helper.preplan_complete ~= true)
+\t\t\t\t\t\tor (helper.phase == "closing" and helper.preplan_complete == true))
 \t\t\t\t\tand report.fresh_grid_phase_order == "canonical-grid-publication>fresh-plan-replay>capsule-publication>closing-rebuild"
 \t\t\t\tif not optimized and not canonical then
 \t\t\t\t\terror("surface-only single-flush tuple is neither exact optimized nor canonical fallback")

@@ -73,6 +73,11 @@ foreach ($path in @($executor, $checker, $reference, $runParity, $deployTool, $s
     }
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "required loop tool missing: $path" }
 }
+$pythonCommand = Get-Command python -CommandType Application -ErrorAction Stop
+$pythonExecutable = [IO.Path]::GetFullPath($pythonCommand.Source)
+$pythonVersion = ((& $pythonExecutable --version 2>&1) -join ' ').Trim()
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($pythonVersion)) { throw 'unable to resolve Python version' }
+$harnessDependencyManifest = Get-TreeManifest (Split-Path -Parent $harness) @('.')
 
 # These are every tracked parity input that the static checker can render or parse.
 # Hashing them is inexpensive and makes a cache hit fail closed if any affected
@@ -81,7 +86,7 @@ $parityFiles = @(& git -C $repo ls-files -- _ralph/tools/parity)
 if ($LASTEXITCODE -ne 0 -or $parityFiles.Count -eq 0) { throw 'unable to enumerate static parity inputs' }
 $headCommit = Require-GitValue @('-C', $repo, 'rev-parse', 'HEAD') 'HEAD commit'
 $headTree = Require-GitValue @('-C', $repo, 'rev-parse', 'HEAD^{tree}') 'HEAD tree'
-$auditOutput = & python $deployTool audit 2>&1
+$auditOutput = & $pythonExecutable $deployTool audit 2>&1
 $auditExit = $LASTEXITCODE
 try { $audit = ($auditOutput -join "`n") | ConvertFrom-Json } catch { throw 'external deploy audit emitted invalid JSON' }
 if ($auditExit -ne 0 -or $audit.ok -ne $true -or $audit.source_files -ne $contract.expected_deploy_file_count -or
@@ -108,7 +113,10 @@ $material = [ordered]@{
     run_parity = Get-Sha256 $runParity
     deploy_tool = Get-Sha256 $deployTool
     harness = Get-Sha256 $harness
+    harness_dependency_tree = $harnessDependencyManifest
     game_executable = Get-Sha256 $gameExecutable
+    python_executable = Get-Sha256 $pythonExecutable
+    python_version = $pythonVersion
     interpreter = Get-Sha256 $interpreterPath
     lua_compiler = Get-Sha256 $luaCompiler
     interpreter_command = [string]$contract.interpreter_command
@@ -143,7 +151,7 @@ if (Test-Path -LiteralPath $cachePath -PathType Leaf) {
     } catch { $cacheHit = $false }
 }
 if (-not $cacheHit) {
-    $checkerOutput = & python $checker 2>&1
+    $checkerOutput = & $pythonExecutable $checker 2>&1
     if ($LASTEXITCODE -ne 0) { throw "offline Surface checker failed: $($checkerOutput -join "`n")" }
     try { $checkerReceipt = ($checkerOutput -join "`n") | ConvertFrom-Json } catch { throw 'offline Surface checker emitted invalid JSON' }
     if ($checkerReceipt.ok -ne $true) { throw 'offline Surface checker returned non-accepting receipt' }

@@ -92,6 +92,23 @@ def scalar_tuple(fields: dict[str, str]) -> str:
         raise ValueError("scalar post-T1 header")
     if number["async_rand_draw_count"] <= 0:
         raise ValueError("scalar RNG")
+    common_safety = (
+        fields["surface_single_flush_requested"] == fields["surface_single_flush_provenance_exact"] == "true"
+        and (number["surface_single_flush_height_snapshots"], number["surface_single_flush_height_mismatches"],
+             number["surface_single_flush_object_family_count"], number["surface_single_flush_object_association_failures"],
+             number["surface_single_flush_dirty_regions"]) == (2, 0, 6, 0, 2)
+        and number["surface_single_flush_dirty_digest"] == number["outer_passage_pad_finalization_dirty_digest"]
+        and 1 <= number["surface_single_flush_coverage_permille"] <= 150
+        and fields["surface_single_flush_closing_complete"] == fields["surface_single_flush_cleanup_complete"] == "true"
+        and fields["helper_requested"] == fields["helper_provenance_exact"] == fields["helper_cleanup_complete"] == "true"
+        and (number["helper_regions"], number["helper_height_snapshots"], number["helper_height_mismatches"],
+             number["helper_object_family_count"], number["helper_object_association_failures"],
+             number["helper_object_containment_failures"], number["helper_passability_calls"], number["helper_buildable_calls"]) == (2, 2, 0, 6, 0, 0, 2, 1)
+        and number["helper_dirty_digest"] == number["surface_single_flush_dirty_digest"]
+        and 1 <= number["helper_coverage_permille"] <= 150
+    )
+    if not common_safety:
+        raise ValueError("scalar common f+h safety")
     optimized = (
         fields["surface_single_flush_requested"] == fields["surface_single_flush_used"] == "true"
         and fields["surface_single_flush_fallback"] == "false"
@@ -106,6 +123,9 @@ def scalar_tuple(fields: dict[str, str]) -> str:
         and 1 <= number["surface_single_flush_coverage_permille"] <= 150
         and fields["surface_single_flush_closing_complete"] == fields["surface_single_flush_cleanup_complete"] == "true"
         and fields["fresh_grid_rebuild_shape_exact"] == fields["fresh_grid_first_rebuild_complete"] == fields["fresh_grid_closing_rebuild_complete"] == "true"
+        and fields["surface_single_flush_fallback_reason"] == fields["helper_error"] == ""
+        and fields["helper_used"] == "true" and fields["helper_fallback"] == "false"
+        and fields["helper_phase"] == "closing" and fields["helper_preplan_complete"] == fields["helper_closing_complete"] == "true"
         and fields["fresh_grid_phase_order"] == "local-dirty-grid-publication>fresh-plan-replay>capsule-publication>local-dirty-closing"
     )
     canonical = (
@@ -115,6 +135,11 @@ def scalar_tuple(fields: dict[str, str]) -> str:
         and number["canonical_rebuild_fallbacks_during_capsule_prepare"] == 0
         and number["fresh_grid_expected_rebuilds"] == number["canonical_rebuilds_during_capsule_prepare"]
         and fields["fresh_grid_rebuild_shape_exact"] == fields["fresh_grid_first_rebuild_complete"] == fields["fresh_grid_closing_rebuild_complete"] == "true"
+        and fields["helper_used"] == fields["helper_fallback"] == "false"
+        and fields["helper_error"] == fields["surface_single_flush_fallback_reason"]
+        and 1 <= len(fields["helper_error"]) <= 512 and fields["helper_closing_complete"] == "false"
+        and ((fields["helper_phase"] == "preplan" and fields["helper_preplan_complete"] == "false")
+             or (fields["helper_phase"] == "closing" and fields["helper_preplan_complete"] == "true"))
         and fields["fresh_grid_phase_order"] == "canonical-grid-publication>fresh-plan-replay>capsule-publication>closing-rebuild"
     )
     if optimized == canonical:
@@ -160,6 +185,8 @@ def scalar_fixture(canonical: bool = False) -> dict[str, str]:
             "tuple": "canonical-fallback", "caller_fallback_reason": "closing certificate rejected",
             "surface_single_flush_used": "false", "surface_single_flush_fallback": "true",
             "surface_single_flush_fallback_reason": "closing certificate rejected",
+            "helper_used": "false", "helper_error": "closing certificate rejected",
+            "helper_closing_complete": "false",
             "canonical_rebuilds_during_capsule_prepare": "2", "fresh_grid_expected_rebuilds": "2",
             "fresh_grid_phase_order": "canonical-grid-publication>fresh-plan-replay>capsule-publication>closing-rebuild",
         })
@@ -179,6 +206,8 @@ def loop_material_ok(text: str) -> bool:
         and "source_payload_manifest" in text and "deployed_payload_manifest" in text
         and "stage_manifest" in text and "game_executable" in text
         and "interpreter" in text and "live_executor_command" in text
+        and "python_executable" in text and "python_version" in text
+        and "harness_dependency_tree" in text
     )
 
 
@@ -213,6 +242,21 @@ def main() -> int:
     bad_fallback["canonical_rebuilds_during_capsule_prepare"] = "3"
     extra = dict(optimized)
     extra["unmapped_runtime_field"] = "1"
+    contradictory_main = dict(optimized)
+    contradictory_main["surface_single_flush_object_association_failures"] = "1"
+    bad_dirty_lineage = dict(optimized)
+    bad_dirty_lineage["helper_dirty_digest"] = "78"
+    helper_unrequested = dict(optimized)
+    helper_unrequested["helper_requested"] = "false"
+    optimized_helper_error = dict(optimized)
+    optimized_helper_error["helper_error"] = "unexpected local error"
+    canonical_blank_error = dict(canonical)
+    canonical_blank_error["helper_error"] = ""
+    canonical_blank_error["surface_single_flush_fallback_reason"] = ""
+    helper_containment = dict(optimized)
+    helper_containment["helper_object_containment_failures"] = "1"
+    helper_closing_contradiction = dict(canonical)
+    helper_closing_contradiction["helper_closing_complete"] = "true"
     old_parity_loop = loop.replace("_ralph/tools/parity", "_ralph/parity", 1)
     stale_baseline_executor = executor + "\nplanner_canonical_rebuilds=2\n"
     utc_timing_executor = executor.replace(
@@ -249,10 +293,17 @@ def main() -> int:
             and "pre_t1_capture_bytes=0" in generated
             and generated.index("state.surface_at_t1 = surface") < generated.index("surface_only_single_flush_scalar.v1")
         ),
+        "generated_scalar_requires_common_fh_safety_before_tuple": (
+            "local common_safety" in generated
+            and "common f+h safety invariant failed" in generated
+            and generated.index("local common_safety") < generated.index("local optimized")
+        ),
         "executor_waits_for_sentinels_by_filesystem_event": (
             "FileSystemWatcher" in executor
-            and "WaitForChanged" in executor
+            and "-EventName Exited" in executor
+            and "Wait-Event -Timeout" in executor
             and "Start-Sleep -Milliseconds 20" not in executor
+            and "\n    Start-Sleep -Milliseconds 25\n" not in executor
         ),
         "executor_has_no_stale_canonical2_t1_baseline": (
             "planner_canonical_rebuilds=2" not in executor
@@ -287,6 +338,13 @@ def main() -> int:
         "height_mismatch_scalar_rejected": rejected(bad_height),
         "out_of_range_canonical_fallback_rejected": rejected(bad_fallback),
         "unknown_scalar_field_rejected": rejected(extra),
+        "contradictory_main_association_rejected": rejected(contradictory_main),
+        "helper_dirty_lineage_rejected": rejected(bad_dirty_lineage),
+        "helper_unrequested_rejected": rejected(helper_unrequested),
+        "optimized_helper_error_rejected": rejected(optimized_helper_error),
+        "canonical_blank_causal_error_rejected": rejected(canonical_blank_error),
+        "helper_containment_failure_rejected": rejected(helper_containment),
+        "canonical_closing_contradiction_rejected": rejected(helper_closing_contradiction),
         "injected_ug_route_rejected": not injected["ok"],
     }
     failed = sorted(name for name, ok in checks.items() if not ok)
