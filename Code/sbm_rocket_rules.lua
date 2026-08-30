@@ -594,7 +594,7 @@ end
 
 -- Construction.lua can redefine this global during a new-game Lua reload, so installation is
 -- state-verified on every module load rather than guarded by a module-local flag.
-local LANDING_FLATTEN_PATCH_VERSION = 1
+local LANDING_FLATTEN_PATCH_VERSION = 2
 local function PatchLandingFlatten()
 	local State = SuperBigMap.State or {}
 	local current = Global("FlattenTerrainInBuildShape")
@@ -624,8 +624,15 @@ local function PatchLandingFlatten()
 		local landing = site_obj or landing_mode or context_depth > 0
 		local elevator_mode = ActiveElevatorConstruction()
 		local elevator = IsElevatorObject(obj) or elevator_mode
+		-- The final linked-passage transaction is the sole owner allowed to sculpt an Elevator
+		-- footprint after the expanded terrain has been published.  PREVENT_ELEVATOR_FLATTEN must
+		-- continue to suppress every ambient/vanilla call; a truthy third argument alone is not
+		-- authority because stock passage creation also supplies "flatten unbuildable".
+		local passage_pad_preparation = flatten_unbuildable
+			and (tonumber(State.passage_pad_preparation_depth) or 0) > 0
 		local runtime_config = RuntimeConfig()
-		if elevator and mod_map and runtime_config.PREVENT_ELEVATOR_FLATTEN == true then
+		if elevator and mod_map and runtime_config.PREVENT_ELEVATOR_FLATTEN == true
+			and not passage_pad_preparation then
 			return
 		end
 		if landing and mod_map and runtime_config.PREVENT_LANDING_PAD_FLATTEN == true then

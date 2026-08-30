@@ -2144,6 +2144,10 @@ function SuperBigMap.GenerationReadiness.InitializeFreshUndergroundExpansionStat
 	map.SuperBigMapUndergroundStretchRunning = false
 	map.SuperBigMapUndergroundStretchFailed = nil
 	map.SuperBigMapUndergroundPreparationFailed = false
+	map.SuperBigMapUndergroundPassagePairOK = nil
+	map.SuperBigMapUndergroundEnrichmentReachabilityOK = nil
+	map.SuperBigMapUndergroundPassagePreparationDebug = nil
+	map.SuperBigMapUndergroundEnrichmentRelocationDebug = nil
 	map.SuperBigMapUndergroundDeferredGeometry = false
 	map.SuperBigMapPassageSurfaceFinalCommitted = nil
 	map.SuperBigMapOneToOneGenerationVersion = nil
@@ -2185,6 +2189,10 @@ local function ClearPreparedMapInstance(map)
 		map.SuperBigMapUndergroundStretchRunning = nil
 		map.SuperBigMapUndergroundStretchFailed = nil
 		map.SuperBigMapUndergroundPreparationFailed = nil
+		map.SuperBigMapUndergroundPassagePairOK = nil
+		map.SuperBigMapUndergroundEnrichmentReachabilityOK = nil
+		map.SuperBigMapUndergroundPassagePreparationDebug = nil
+		map.SuperBigMapUndergroundEnrichmentRelocationDebug = nil
 		map.SuperBigMapUndergroundDeferredGeometry = nil
 		map.SuperBigMapPassageSurfaceFinalCommitted = nil
 		map.SuperBigMapOneToOneGenerationVersion = nil
@@ -11041,6 +11049,8 @@ function Lazy.Capture(surface, pending, next_map)
 	report.persisted_state_materialization_reentry_phase = ""
 	report.persisted_state_materialization_reentry_count = 0
 	report.persisted_state_materialization_reentry_phase_sequence = ""
+	report.materialization_passage_pair_ok = false
+	report.materialization_enrichment_reachability_ok = false
 
 	local descriptor = {
 		schema = Lazy.SCHEMA,
@@ -12122,8 +12132,21 @@ function Lazy.MaterializeTransaction(surface, descriptor, route)
 	local pipeline = Lazy.RunDeferredPipeline
 	if type(pipeline) ~= "function" then return nil, "deferred underground pipeline is unavailable" end
 	local pipeline_ok, pipeline_reason = pipeline(underground, true)
+	descriptor.materialization_passage_pair_ok =
+		underground.SuperBigMapUndergroundPassagePairOK == true
+	descriptor.materialization_enrichment_reachability_ok =
+		underground.SuperBigMapUndergroundEnrichmentReachabilityOK == true
+	if type(report) == "table" then
+		report.materialization_passage_pair_ok = descriptor.materialization_passage_pair_ok
+		report.materialization_enrichment_reachability_ok =
+			descriptor.materialization_enrichment_reachability_ok
+	end
 	if pipeline_ok ~= true then
 		return nil, "deferred underground completion failed: " .. tostring(pipeline_reason)
+	end
+	if descriptor.materialization_passage_pair_ok ~= true
+		or descriptor.materialization_enrichment_reachability_ok ~= true then
+		return nil, "deferred underground completion omitted a mandatory passage/enrichment audit"
 	end
 	if underground.SuperBigMapUndergroundPrepared ~= true
 		or underground.SuperBigMapUndergroundStretchDone ~= true
@@ -16315,6 +16338,8 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 	map.SuperBigMapUndergroundStretchPending = true
 	map.SuperBigMapUndergroundStretchRunning = true
 	map.SuperBigMapUndergroundStretchFailed = nil
+	map.SuperBigMapUndergroundPassagePairOK = nil
+	map.SuperBigMapUndergroundEnrichmentReachabilityOK = nil
 	if cfg_bool("OPTIMIZE_STRETCH_DEFERRED_REBUILDS", true) then
 		map.SuperBigMapStretchPipelinePending = true
 	end
@@ -16359,7 +16384,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 		local function RebuildFinalUndergroundGameplayGrids(stage)
 			return SuperBigMap.GenerationGrids.RebuildFinal(map, stage)
 		end
-		local ok_branch, branch_err = pcall(function()
+		local ok_branch, branch_result, branch_err = pcall(function()
 			-- A surface Elevator may already be finished while its paired underground half is a
 			-- pending site with a destroyed linked_obj. Snapshot/remove only that underground half
 			-- before any position sweep; rebuild it after the final buildable grid exists.
@@ -16524,15 +16549,16 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				end
 				SetLoadingPhase("Aligning surface and underground passage entrances")
 				local pair_ok, pair_stats = AlignPassagePairsToSharedHex(map)
+				map.SuperBigMapUndergroundPassagePairOK = pair_ok == true
 				if pair_ok ~= true then
-					error("final passage-pair alignment failed: "
+					return false, "final passage-pair alignment failed: "
 						.. tostring(pair_stats and pair_stats.error or "unknown error")
 						.. (pair_stats and pair_stats.reason
 							and (": " .. tostring(pair_stats.reason)) or "")
 						.. (pair_stats and pair_stats.underground_reason
 							and ("; underground=" .. tostring(pair_stats.underground_reason)) or "")
 						.. (pair_stats and pair_stats.surface_reason
-							and ("; surface=" .. tostring(pair_stats.surface_reason)) or ""))
+							and ("; surface=" .. tostring(pair_stats.surface_reason)) or "")
 				end
 				-- CityInitialized deliberately skipped SurfacePassage:Spawn while the source-sized
 				-- buildable grid disagreed with the expanded object grid. Align and prepare the immutable
@@ -16686,6 +16712,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				local reachability_token = LoadingBegin(
 					"underground relocate unreachable enrichments", map)
 				local audit_ok, audit_stats = deposits.RelocateUnreachableUndergroundEnrichments(map)
+				map.SuperBigMapUndergroundEnrichmentReachabilityOK = audit_ok == true
 				LoadingEnd(reachability_token, {
 					moved = audit_stats and audit_stats.moved,
 					unresolved = audit_stats and audit_stats.unresolved,
@@ -16715,13 +16742,13 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 						and audit_stats.topup_only_last_rejection,
 				}, audit_ok == true)
 					if audit_ok ~= true then
-						error("underground enrichment reachability audit left "
+						return false, "underground enrichment reachability audit left "
 							.. tostring(audit_stats and audit_stats.unresolved or "unknown")
 							.. " unresolved markers: classes="
 							.. tostring(audit_stats and audit_stats.unresolved_by_class or "unknown")
 							.. " resources="
 							.. tostring(audit_stats and audit_stats.unresolved_by_resource or "unknown")
-							.. " (see unresolved_details in LoadingTiming log)")
+							.. " (see unresolved_details in persisted relocation debug)"
 					end
 					if type(deposits.ResolveBadgeMarkerOverlaps) == "function" then
 						TimedSafeCall("underground resolve marker overlaps", map,
@@ -16911,6 +16938,19 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				WonderVerticalDiagnostics.LogAll(map, "after_closing_grid_rebuild")
 			end
 		end)
+		-- Exact audit failures return a boolean sentinel instead of relying on error().  The engine
+		-- debugger can log and continue a Lua error; a pcall would then appear successful and could
+		-- publish a half-correct underground.  Normalize both ordinary exceptions and explicit false
+		-- returns into the single sticky pipeline failure path below.
+		if ok_branch then
+			if branch_result == false then
+				ok_branch = false
+			else
+				branch_err = nil
+			end
+		else
+			branch_err = branch_result
+		end
 		-- A failure anywhere between decoration movement and marker verification must still balance
 		-- the caller-owned pass transaction before diagnostics or lifecycle cleanup touch the map.
 		if transform_pass_batch_active then

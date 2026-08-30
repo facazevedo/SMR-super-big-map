@@ -99,11 +99,11 @@ def main() -> int:
                                 capture_output=True, text=True, timeout=30, check=False)
         compile_results[path.relative_to(ROOT).as_posix()] = result.returncode == 0
     checks = {
-        "metadata_v986_truthfully_retains_v972": "'version', 986," in metadata
-            and "materialization re-entry fail-closed" in metadata
-            and "interrupted save/load transaction" in metadata,
-        "generator_identity_v292": "SuperBigMap.GENERATOR_PATCH_VERSION = 292" in version,
-        "v986_default_off_safe_optimization_trace_gate_green": (
+        "metadata_v987_truthfully_retains_v972": "'version', 987," in metadata
+            and "underground passage preparation" in metadata
+            and "self-safe Metals relocation" in metadata,
+        "generator_identity_v293": "SuperBigMap.GENERATOR_PATCH_VERSION = 293" in version,
+        "v987_default_off_safe_optimization_trace_gate_green": (
             optimization_trace_run.returncode == 0
             and '"ok": true' in optimization_trace_run.stdout),
         "lazy_architecture_default_off_direct_pad_subflag_on": all(token in config for token in (

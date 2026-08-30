@@ -77,6 +77,12 @@ are never cached. Deployment audits may be cached only when both the source payl
 and external Mods directory are declared tree inputs, so any file change invalidates
 the key.
 
+For a reusable multi-gate review bundle, exact topology/deploy/cold-state receipts,
+semantic comparison with the last approved snapshot, and bounded severity-classified
+causal log windows, use `build_accelerated_review_packet.py` as documented in
+`ACCELERATED_REVIEW_PACKET.md`. It retains this same diagnostic-only boundary: the
+ordinary final cold acceptance remains uncached and unchanged.
+
 ## Ordered checkpoint reference and watcher
 
 Build the compact frozen reference once from the accepted 36-file capture:

@@ -10151,6 +10151,13 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 		return false, { error = "placeable span unavailable", checked = #markers, invalid = #invalid }
 	end
 	local candidates, seen = {}, {}
+	-- Temporary persisted post-access diagnostic.  Keep only primitive bounded records so an
+	-- unresolved relocation remains attributable after the failure blocks underground access.
+	local relocation_debug = {
+		schema = 1, bounded = true, maximum_markers = 8, maximum_attempts_per_marker = 64,
+		invalid = #invalid, records = {}, truncated = #invalid > 8,
+	}
+	map.SuperBigMapUndergroundEnrichmentRelocationDebug = relocation_debug
 	local world_to_hex = Global("WorldToHex")
 	local occupied_badges = BuildBadgeOccupancy(map, nil, nil, false)
 	local validation_context = SharedTopUpValidationContext(map)
@@ -10249,6 +10256,32 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 		}
 		return true
 	end
+	local function describe_candidate_neighborhood(candidate, moving_marker)
+		local q, r = candidate and candidate.q, candidate and candidate.r
+		local nearest = {}
+		if type(q) == "number" and type(r) == "number" then
+			for _, entry in ipairs(fallback_clearance_entries) do
+				if entry.marker ~= moving_marker then
+					local distance = AxialHexDistance(q, r, entry.q, entry.r)
+					if type(distance) == "number" then
+						nearest[#nearest + 1] = {
+							distance = distance,
+							text = tostring(entry.marker and entry.marker.class or "?") .. "/"
+								.. tostring(entry.marker and entry.marker.resource or "?") .. "@"
+								.. tostring(entry.q) .. "," .. tostring(entry.r) .. "#"
+								.. tostring(distance) .. (entry.fallback and ":fallback" or ""),
+						}
+					end
+				end
+			end
+		end
+		table.sort(nearest, function(a, b)
+			return a.distance < b.distance or (a.distance == b.distance and a.text < b.text)
+		end)
+		local parts = {}
+		for i = 1, math.min(8, #nearest) do parts[#parts + 1] = nearest[i].text end
+		return table.concat(parts, "|")
+	end
 
 	local function take_near(pos, moving_marker)
 		if #candidates == 0 then return nil end
@@ -10323,6 +10356,14 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 		local ox, oy
 		if old_pos and type(old_pos.xy) == "function" then ox, oy = old_pos:xy() end
 		local diagnostic_prefix = tostring(item.diagnostic or (class .. "/" .. resource))
+		local debug_record
+		if invalid_i <= relocation_debug.maximum_markers then
+			debug_record = {
+				index = invalid_i, class = class, resource = resource,
+				original_x = ox, original_y = oy, diagnostic = diagnostic_prefix, attempts = {},
+			}
+			relocation_debug.records[#relocation_debug.records + 1] = debug_record
+		end
 		if not marker or type(marker.SetPos) ~= "function" then
 			unresolved = unresolved + 1
 			unresolved_by_class[class] = (unresolved_by_class[class] or 0) + 1
@@ -10369,10 +10410,27 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 				if new_pos and type(new_pos.xy) == "function" then nx, ny = new_pos:xy() end
 				last_candidate = "world=" .. tostring(nx) .. "," .. tostring(ny)
 					.. ":sample_hex=" .. tostring(c.q) .. "," .. tostring(c.r)
-				if not CanReceiveDeposit(map, new_pos, validation_context) then
+				local candidate_ok, candidate_passable, candidate_flatness,
+					candidate_buildable, candidate_q, candidate_r, candidate_unobstructed =
+					CanReceiveDeposit(map, new_pos, validation_context)
+				c.q, c.r = candidate_q or c.q, candidate_r or c.r
+				local attempt_debug
+				if debug_record and #debug_record.attempts
+					< relocation_debug.maximum_attempts_per_marker then
+					attempt_debug = {
+						attempt = attempts, sample_q = c.q, sample_r = c.r, x = nx, y = ny,
+						pre_ok = candidate_ok == true, passable = candidate_passable == true,
+						flatness = candidate_flatness, buildable = candidate_buildable == true,
+						unobstructed = candidate_unobstructed == true,
+						neighborhood = describe_candidate_neighborhood(c, marker),
+					}
+					debug_record.attempts[#debug_record.attempts + 1] = attempt_debug
+				end
+				if not candidate_ok then
 					snapped_rejected = snapped_rejected + 1
 					item_snapped_rejected = item_snapped_rejected + 1
 					last_reason = "terrain-snapped candidate not reachable/buildable/unobstructed"
+					if attempt_debug then attempt_debug.rejection = last_reason end
 				else
 					local candidate = { x = nx, y = ny }
 					local _, candidate_q, candidate_r =
@@ -10395,12 +10453,17 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 						last_repulsion_detail = tostring(
 							active_repulsion and active_repulsion.Stats().last_rejection or "")
 						last_reason = "candidate violates enrichment repulsion"
+						if attempt_debug then
+							attempt_debug.rejection = last_reason
+							attempt_debug.repulsion = last_repulsion_detail
+						end
 					else
 						local ok_move, move_error = pcall(marker.SetPos, marker, new_pos)
 						if not ok_move then
 							setpos_failed = setpos_failed + 1
 							item_setpos_failed = item_setpos_failed + 1
 							last_reason = "SetPos failed: " .. tostring(move_error)
+							if attempt_debug then attempt_debug.rejection = last_reason end
 						else
 							local actual_pos = ObjectPos(marker)
 							local ax, ay
@@ -10423,13 +10486,24 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 										actual_candidate, profile)
 								end
 							end
-							if actual_pos and CanReceiveDeposit(
-								map, actual_pos, validation_context)
-								and actual_spacing_ok then
+							-- The exact destination was fully obstruction-checked immediately before SetPos.
+							-- Moving the marker is the only intervening object-grid mutation, so rerunning
+							-- IsDepositObstructed here can see the marker itself and falsely reject Metals.
+							-- Require exact coordinate identity and recheck the complete terrain/reachability
+							-- conjunction; any snap/drift remains a hard rejection.
+							local actual_exact = actual_pos and ax == nx and ay == ny
+							local actual_terrain_ok = actual_exact
+								and CanReceiveDepositTerrain(map, actual_pos, validation_context) == true
+							if actual_terrain_ok and actual_spacing_ok then
 								success = true
 								successful_pos = actual_pos
 								successful_candidate = actual_candidate
 								successful_fallback_clearance = actual_fallback_clearance
+								if attempt_debug then
+									attempt_debug.result = "accepted"
+									attempt_debug.actual_q = actual_q
+									attempt_debug.actual_r = actual_r
+								end
 							else
 								postmove_rejected = postmove_rejected + 1
 								item_postmove_rejected = item_postmove_rejected + 1
@@ -10445,12 +10519,24 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 								last_reason = actual_pos
 									and "actual marker position failed terrain/repulsion validation"
 									or "actual marker position unavailable"
+								if attempt_debug then
+									attempt_debug.rejection = last_reason
+									attempt_debug.actual_x = ax
+									attempt_debug.actual_y = ay
+									attempt_debug.actual_exact = actual_exact == true
+									attempt_debug.terrain_ok = actual_terrain_ok == true
+									attempt_debug.repulsion = last_repulsion_detail
+								end
 							end
 						end
 					end
 				end
 			end
 			if success then
+				if debug_record then
+					debug_record.result = "moved"
+					debug_record.attempt_count = attempts
+				end
 				if not density_fallback then
 					strict_repulsion.Commit(successful_candidate, profile, marker)
 					if marker_is_topup then
@@ -10495,6 +10581,13 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 					marker.SuperBigMapWonderConflictRelocated = true
 				end
 			else
+				if debug_record then
+					debug_record.result = "unresolved"
+					debug_record.attempt_count = attempts
+					debug_record.failure = tostring(last_reason)
+					debug_record.last_candidate = tostring(last_candidate)
+					debug_record.last_repulsion = tostring(last_repulsion_detail)
+				end
 				unresolved = unresolved + 1
 				unresolved_by_class[class] = (unresolved_by_class[class] or 0) + 1
 				unresolved_by_resource[resource] = (unresolved_by_resource[resource] or 0) + 1
@@ -10545,6 +10638,11 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 		topup_only_first_rejection = topup_only_repulsion.Stats().first_rejection,
 		topup_only_last_rejection = topup_only_repulsion.Stats().last_rejection,
 	}
+	relocation_debug.complete = true
+	relocation_debug.moved = moved
+	relocation_debug.unresolved = unresolved
+	relocation_debug.unresolved_details = stats.unresolved_details
+	relocation_debug.records_count = #relocation_debug.records
 	AuditEmit("UNDERGROUND_ENRICHMENT_REACHABILITY", stats, map)
 	return unresolved == 0, stats
 end

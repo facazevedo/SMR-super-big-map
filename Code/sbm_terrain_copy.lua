@@ -8795,6 +8795,13 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 					and SafeCall(normal.z, normal) or nil
 				if type(normal_z) == "number" then normal_text = tostring(normal_z) end
 			end
+			local terrain_z_text = "?"
+			if type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" then
+				local ok_height, terrain_z = pcall(terrain_api.GetHeight, map, hex_point)
+				if ok_height and type(terrain_z) == "number" then
+					terrain_z_text = tostring(terrain_z)
+				end
+			end
 			local blockers, first_blocker = 0, nil
 			local object_grid = map.object_hex_grid
 			if object_grid and type(object_grid.GetBuildObstructions) == "function" then
@@ -8815,7 +8822,8 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 					end
 				end
 			end
-			parts[#parts + 1] = entry .. "=z" .. z_text .. ",pass" .. passable_text
+			parts[#parts + 1] = entry .. "=bz" .. z_text .. ",tz" .. terrain_z_text
+				.. ",pass" .. passable_text
 				.. ",nz" .. normal_text .. ",blk" .. tostring(blockers)
 				.. (first_blocker and ("(" .. first_blocker .. ")") or "")
 			return true
@@ -8993,8 +9001,18 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 			return false, "vanilla passage-pad preparation unavailable"
 		end
 		if map_of(anchor) ~= map then return false, "passage anchor belongs to another map" end
+		-- PREVENT_ELEVATOR_FLATTEN intentionally protects expanded terrain from ambient stock calls.
+		-- Grant the wrapper a process-local capability only around this committed final-pad call; the
+		-- depth is restored synchronously even when the native function raises.
+		local state = SuperBigMap.State
+		if type(state) ~= "table" then
+			return false, "passage-pad preparation owner state unavailable"
+		end
+		local previous_depth = tonumber(state.passage_pad_preparation_depth) or 0
+		state.passage_pad_preparation_depth = previous_depth + 1
 		local ok_flatten, flatten_result = pcall(
 			flatten_build_shape, elevator_shape, anchor, "flatten unbuildable")
+		state.passage_pad_preparation_depth = previous_depth > 0 and previous_depth or nil
 		if not ok_flatten then
 			return false, "vanilla passage-pad preparation failed: " .. tostring(flatten_result)
 		end
@@ -9114,6 +9132,17 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 	end
 	if #linked_pairs == 0 then
 		return false, { error = "no linked ElevatorPassage pairs found", pairs = 0 }
+	end
+	-- Temporary, persisted and bounded post-access diagnostic.  It records the exact authoritative
+	-- Elevator shape cells immediately before/after the two deferred underground pad operations.
+	-- Only primitive values are retained; this does not read RNG or mutate terrain/object state.
+	local preparation_debug
+	if not source_bootstrap then
+		preparation_debug = {
+			schema = 1, bounded = true, maximum_pairs = 2, pair_count = #linked_pairs,
+			records = {},
+		}
+		underground_map.SuperBigMapUndergroundPassagePreparationDebug = preparation_debug
 	end
 	for i = 1, #linked_pairs do
 		local pair = linked_pairs[i]
@@ -9675,11 +9704,37 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 			end
 		end
 		if prepare_underground then
+			if preparation_debug and i <= preparation_debug.maximum_pairs then
+				local valid_before, reason_before = footprint_buildable(
+					underground_map, post_underground_q, post_underground_r,
+					underground_angle, underground_anchor)
+				preparation_debug.records[#preparation_debug.records + 1] = {
+					pair = i, stage = "before", valid = valid_before == true,
+					reason = tostring(reason_before or ""), q = post_underground_q,
+					r = post_underground_r, x = expected_ux, y = expected_uy,
+					angle = underground_angle,
+					footprint = describe_footprint(underground_map, post_underground_q,
+						post_underground_r, underground_angle, underground_anchor),
+				}
+			end
 			local prepared, reason = prepare_passage_pad(
 				underground_anchor, underground_map, expected_ux, expected_uy)
 			if not prepared then
 				return false, { error = "underground passage pad preparation failed", pairs = stats.pairs,
 					reason = reason }
+			end
+			if preparation_debug and i <= preparation_debug.maximum_pairs then
+				local valid_after, reason_after = footprint_buildable(
+					underground_map, post_underground_q, post_underground_r,
+					underground_angle, underground_anchor)
+				preparation_debug.records[#preparation_debug.records + 1] = {
+					pair = i, stage = "after", valid = valid_after == true,
+					reason = tostring(reason_after or ""), q = post_underground_q,
+					r = post_underground_r, x = expected_ux, y = expected_uy,
+					angle = underground_angle,
+					footprint = describe_footprint(underground_map, post_underground_q,
+						post_underground_r, underground_angle, underground_anchor),
+				}
 			end
 		end
 		if prepare_surface or prepare_underground then
@@ -9745,6 +9800,11 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 	stats.dependant_objects_scanned = dependant_scan_stats.objects
 	stats.dependant_matches = dependant_scan_stats.matches
 	stats.moved_fx_carriers = fx_carriers_moved
+	if preparation_debug then
+		preparation_debug.complete = true
+		preparation_debug.records_count = #preparation_debug.records
+		stats.preparation_debug_records = preparation_debug.records_count
+	end
 	return true, stats
 end
 
