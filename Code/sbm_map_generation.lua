@@ -183,16 +183,26 @@ function SuperBigMap.DiagnosticPhaseHeartbeat(map, phase, edge, fields)
 	return DiagnosticHeartbeat.Emit(DiagnosticHeartbeat.sink, map, phase, edge, fields)
 end
 
-function SuperBigMap.InstallDiagnosticPhaseHeartbeatSink(sink, surface)
+function SuperBigMap.InstallDiagnosticPhaseHeartbeatSink(sink, surface, expected_descriptor)
 	local valid, reason = DiagnosticHeartbeat.ValidateSink(sink)
 	if not valid then return false, reason end
 	if DiagnosticHeartbeat.sink ~= nil then
 		return false, "diagnostic heartbeat sink is already installed"
 	end
+	local State = SuperBigMap.State
+	local ready_target = State.lazy_diagnostic_ready_target
 	local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
 	local report = surface and surface.SuperBigMapLazyUndergroundFeasibilityReport
+	local lazy = SuperBigMap.LazyUndergroundFeasibility
 	local maps = Global("Maps")
-	if type(descriptor) ~= "table" or type(report) ~= "table"
+	if type(ready_target) ~= "table"
+		or ready_target.surface ~= surface
+		or ready_target.descriptor ~= expected_descriptor
+		or ready_target.descriptor ~= descriptor
+		or ready_target.report ~= report
+		or type(lazy) ~= "table" or type(lazy.StateSurface) ~= "function"
+		or lazy.StateSurface() ~= surface
+		or type(descriptor) ~= "table" or type(report) ~= "table"
 		or descriptor.state ~= "ready-for-first-access"
 		or tonumber(descriptor.materialization_attempts) ~= 0
 		or tonumber(descriptor.generation_count) ~= 0
@@ -223,7 +233,6 @@ function SuperBigMap.InstallDiagnosticPhaseHeartbeatSink(sink, surface)
 		return false, "diagnostic heartbeat handshake publication failed"
 	end
 	DiagnosticHeartbeat.sink = private
-	local State = SuperBigMap.State
 	State.lazy_diagnostic_heartbeat_emitter = emitter
 	State.lazy_diagnostic_heartbeat_required = true
 	State.lazy_diagnostic_heartbeat_authorize = function(candidate)
@@ -10324,6 +10333,10 @@ function Lazy.MarkBlocked(surface, reason)
 		Lazy.LIVE_SURFACE_GENERATION_TRANSACTIONS[surface] = nil
 		Lazy.LIVE_MATERIALIZATION_TRANSACTIONS[surface] = nil
 	end
+	local ready_target = SuperBigMap.State.lazy_diagnostic_ready_target
+	if type(ready_target) == "table" and ready_target.surface == surface then
+		SuperBigMap.State.lazy_diagnostic_ready_target = nil
+	end
 	local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
 	local report = surface and surface.SuperBigMapLazyUndergroundFeasibilityReport
 	if type(descriptor) == "table" then
@@ -11544,6 +11557,14 @@ function Lazy.FinalizeImplementation(surface)
 	if not report.descriptor_primitive then
 		return Lazy.MarkBlocked(surface, "ready descriptor is not primitive")
 	end
+	-- Process-local, non-persistent identity bridge for an explicitly staged post-T1 diagnostic
+	-- installer. A loaded ready descriptor cannot recreate this record and therefore cannot arm a
+	-- same-session heartbeat. The record is consumed when materialization starts or any block wins.
+	SuperBigMap.State.lazy_diagnostic_ready_target = {
+		surface = surface,
+		descriptor = descriptor,
+		report = report,
+	}
 	LoadingStep("lazy underground surface capsules ready for first access", {
 		ready = tostring(report.enablement_ready == true), capsules = report.capsules_published,
 		digest = descriptor.plan_digest, final_grid_revalidation = "true",
@@ -12673,6 +12694,16 @@ function Lazy.Materialize(surface, route, diagnostic_heartbeat)
 		"lazy-materialize-entry", "BEFORE", { route = route }) then
 		return Lazy.MarkBlocked(surface,
 			"required diagnostic materialize-entry heartbeat publication failed")
+	end
+	local ready_target = SuperBigMap.State.lazy_diagnostic_ready_target
+	if diagnostic_heartbeat and (type(ready_target) ~= "table"
+		or ready_target.surface ~= surface or ready_target.descriptor ~= descriptor
+		or ready_target.report ~= surface.SuperBigMapLazyUndergroundFeasibilityReport) then
+		return Lazy.MarkBlocked(surface,
+			"process-local ready target identity was lost before materialization")
+	end
+	if type(ready_target) == "table" and ready_target.surface == surface then
+		SuperBigMap.State.lazy_diagnostic_ready_target = nil
 	end
 	descriptor.materialization_attempts = (tonumber(descriptor.materialization_attempts) or 0) + 1
 	if descriptor.materialization_attempts ~= 1 then
@@ -19125,6 +19156,7 @@ function MapGeneration.RestoreVanillaBehavior()
 	State.lazy_diagnostic_heartbeat_emitter = nil
 	State.lazy_diagnostic_heartbeat_authorize = nil
 	State.lazy_diagnostic_heartbeat_required = nil
+	State.lazy_diagnostic_ready_target = nil
 	local hud_class = Engine.ClassTable and Engine.ClassTable("HUDButtonMapSwitch")
 	if type(hud_class) == "table" and State.underground_hud_init_wrapper
 		and hud_class.Init == State.underground_hud_init_wrapper

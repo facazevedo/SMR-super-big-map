@@ -31,7 +31,7 @@ for token in ("GetPreciseTicks", "RealTime", "AsyncStringToFile", "string.format
     assert token not in guard, f"default-off heartbeat guard performs work: {token}"
 for token in (
     "return DiagnosticHeartbeat.Emit(DiagnosticHeartbeat.sink, map, phase, edge, fields)",
-    "function SuperBigMap.InstallDiagnosticPhaseHeartbeatSink(sink, surface)",
+    "function SuperBigMap.InstallDiagnosticPhaseHeartbeatSink(sink, surface, expected_descriptor)",
     "DiagnosticHeartbeat.sink = private",
     'sink.diagnostic_only ~= true',
     'sink.acceptance_timing_eligible ~= false',
@@ -117,8 +117,8 @@ for token in ("default_off_calls=3", "global_calls=0", "clock_calls=0", "file_ca
               "rng_calls=0", "console_calls=0"):
     assert token in DEFAULT_OFF_ORACLE
 
-assert "SuperBigMap.GENERATOR_PATCH_VERSION = 299" in VERSION
-assert re.search(r"'version',\s*993\b", META)
+assert "SuperBigMap.GENERATOR_PATCH_VERSION = 300" in VERSION
+assert re.search(r"'version',\s*994\b", META)
 print("ok=true")
 print("heartbeat_default_off_guard=private-nil-closure-return")
 print("heartbeat_phase_pairs=materialization+pipeline+flatten+relocation")

@@ -29,8 +29,8 @@ def main() -> None:
     metadata = (ROOT / "metadata.lua").read_text(encoding="utf-8")
     version = (ROOT / "Code/sbm_version.lua").read_text(encoding="utf-8")
 
-    require(metadata, "'version', 993", "metadata version")
-    require(version, "GENERATOR_PATCH_VERSION = 299", "generator identity")
+    require(metadata, "'version', 994", "metadata version")
+    require(version, "GENERATOR_PATCH_VERSION = 300", "generator identity")
     require(rocket, "LANDING_FLATTEN_PATCH_VERSION = 3", "flatten wrapper identity")
     require(rocket, 'local native = Global("FlattenTerrainInShape")', "official native overload")
     require(rocket, "map.buildable.z_grid, map.object_hex_grid, inner, outer, -1, explicit_z",
@@ -66,7 +66,7 @@ def main() -> None:
     ], "capability>native>cleanup>certificate>resnap")
 
     print("ok=true")
-    print("version=993")
+    print("version=994")
     print("native_signature=shape,obj,z_grid,object_grid,inner,outer,-1,explicit_z")
     print("validation_order=immediate>transaction-final")
     print("diagnostic_bound=pairs2,records24")

@@ -7,7 +7,7 @@ DEPOSITS = (ROOT / "Code/sbm_deposits.lua").read_text(encoding="utf-8")
 
 required = [
     "local DiagnosticHeartbeat = {}",
-    "function SuperBigMap.InstallDiagnosticPhaseHeartbeatSink(sink, surface)",
+    "function SuperBigMap.InstallDiagnosticPhaseHeartbeatSink(sink, surface, expected_descriptor)",
     "function DiagnosticHeartbeat.Emit(sink, map, phase, edge, fields)",
     'emitter(surface, "diagnostic-heartbeat-handshake", "BEFORE"',
     'emitter(surface, "diagnostic-heartbeat-handshake", "AFTER"',
