@@ -45,6 +45,22 @@ delta. The first review after a production/stage/tool/context/reference change i
 cache miss; routine unchanged re-review should finish in roughly 2–5 minutes. A reviewer still runs
 the normal cold generator acceptance afterward.
 
+For repeated failure diagnosis, `materialize_fast_diagnostic.py` adds a narrower immutable-base
+loop. The pre-reviewed base stays in place behind an exact topology/content manifest; a candidate
+stage contains only one canonical, SHA-256-bound command manifest and changed production identities.
+The single `create` command verifies the base, Git tree, all declared production bytes, exact
+Windows PowerShell 5.1 runtime contract, fresh run topology, and (when supplied) this accelerated
+review packet. It emits `mechanical_overhead.json` and fails if mechanical generation, preflight,
+and packet readiness reach five minutes (normally they should remain below one minute). Diagnosis,
+implementation, and live T0-to-T1 time are explicitly outside that receipt.
+
+Fast diagnostics are limited to a post-T1 heartbeat handshake while underground access remains
+closed. Their manifest must set diagnostic-only true and acceptance, promotion, underground
+release/materialization, and live mutation false. A green two-record BEFORE/AFTER handshake may
+nominate the build for a separate full cold acceptance stage; it can never itself produce accepted
+timing. Run `python _ralph/tools/test_fast_diagnostic_stage.py` for stale-manifest, changed-base,
+signature, forbidden-access/promotion/mutation, timeout, and cache-corruption adversarial coverage.
+
 Run the adversarial executable test with:
 
 ```powershell
