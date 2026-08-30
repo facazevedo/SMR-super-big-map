@@ -286,8 +286,8 @@ def scheduler_census_lua(census_path: Path | None) -> tuple[str, str]:
 
     This is deliberately independent of the RNG trace modes: surface-only
     acceptance needs a scheduler receipt while keeping trace collection off.
-    It observes just the surface scheduler's thread dispatch, restores both
-    temporary dispatchers before the spawned thread runs, and never alters RNG.
+    It chains the production-proven MapGenerated/CityInitialized callbacks,
+    observes only their delivery, and never changes dispatchers or RNG.
     """
     if census_path is None:
         return "", ""
@@ -295,74 +295,38 @@ def scheduler_census_lua(census_path: Path | None) -> tuple[str, str]:
     setup = f'''
 \t\t\tlocal surface_scheduler_census_path = "{lua_path(census_path)}"
 \t\t\tlocal surface_scheduler_census_nonce = "{nonce}"
-\t\t\tlocal surface_scheduler = type(SBM) == "table" and type(SBM.Generation) == "table"
-\t\t\t\tand SBM.Generation.RunSurfaceStretchIfEnabled or nil
-\t\t\tlocal census_current_thread = rawget(_G, "CurrentThread")
-\t\t\tlocal census_original_thread = rawget(_G, "CreateRealTimeThread")
-\t\t\tlocal census_original_global = rawget(_G, "Global")
-\t\t\tif type(surface_scheduler) ~= "function" or type(census_current_thread) ~= "function"
-\t\t\t\tor type(census_original_thread) ~= "function" or type(census_original_global) ~= "function" then
-\t\t\t\terror("surface scheduler census capabilities unavailable")
+\t\t\tlocal census_chain = type(SBM) == "table" and type(SBM.Engine) == "table"
+\t\t\t\tand SBM.Engine.ChainOnMsg or nil
+\t\t\tif type(census_chain) ~= "function" or type(rawget(_G, "OnMsg")) ~= "table" then
+\t\t\t\terror("surface scheduler census callback capabilities unavailable")
 \t\t\tend
 \t\t\tlocal census_rows = {{
 \t\t\t\t"schema=smr.ralph.surface_scheduler_census.v1",
 \t\t\t\t"nonce=" .. surface_scheduler_census_nonce,
 \t\t\t\t"setup_executed=true",
+\t\t\t\t"mechanism=Engine.ChainOnMsg",
 \t\t\t}}
-\t\t\tlocal census_lookups = 0
 \t\t\tlocal function write_scheduler_census(stage)
 \t\t\t\tcensus_rows[#census_rows + 1] = "stage=" .. tostring(stage)
-\t\t\t\tcensus_rows[#census_rows + 1] = "lookup_count=" .. tostring(census_lookups)
+\t\t\t\tcensus_rows[#census_rows + 1] = "map_generated_callbacks=" .. tostring(state.surface_scheduler_census_map_generated or 0)
+\t\t\t\tcensus_rows[#census_rows + 1] = "city_initialized_callbacks=" .. tostring(state.surface_scheduler_census_city_initialized or 0)
 \t\t\t\tlocal err = AsyncStringToFile(surface_scheduler_census_path, table.concat(census_rows, "\\n") .. "\\n")
 \t\t\t\tif err then error("surface scheduler census write failed: " .. tostring(err)) end
 \t\t\tend
-\t\t\tlocal function called_by_surface_scheduler()
-\t\t\t\tfor level = 2, 12 do
-\t\t\t\t\tlocal ok, info = pcall(debug.getinfo, level, "f")
-\t\t\t\t\tif not ok or type(info) ~= "table" then break end
-\t\t\t\t\tif info.func == surface_scheduler then return true end
-\t\t\t\tend
-\t\t\t\treturn false
-\t\t\tend
-\t\t\tlocal scoped_thread
-\t\t\tlocal scoped_global
-\t\t\tscoped_global = function(name, ...)
-\t\t\t\tlocal value = census_original_global(name, ...)
-\t\t\t\tif name == "CreateRealTimeThread" then
-\t\t\t\t\tcensus_lookups = census_lookups + 1
-\t\t\t\t\tcensus_rows[#census_rows + 1] = "lookup=" .. tostring(census_lookups)
-\t\t\t\t\tcensus_rows[#census_rows + 1] = "lookup_returned_scoped=" .. tostring(value == scoped_thread)
-\t\t\t\t\twrite_scheduler_census("global_lookup")
-\t\t\t\tend
-\t\t\t\treturn value
-\t\t\tend
-\t\t\tscoped_thread = function(fn, ...)
-\t\t\t\tif not called_by_surface_scheduler() then return census_original_thread(fn, ...) end
-\t\t\t\tif state.surface_scheduler_census_intercepted == true then
-\t\t\t\t\terror("surface scheduler census intercepted more than once")
-\t\t\t\tend
-\t\t\t\tstate.surface_scheduler_census_intercepted = true
-\t\t\t\trawset(_G, "CreateRealTimeThread", census_original_thread)
-\t\t\t\tif rawget(_G, "Global") == scoped_global then rawset(_G, "Global", census_original_global) end
-\t\t\t\tstate.surface_scheduler_census_dispatchers_restored =
-\t\t\t\t\trawget(_G, "CreateRealTimeThread") == census_original_thread and rawget(_G, "Global") == census_original_global
-\t\t\t\tif state.surface_scheduler_census_dispatchers_restored ~= true then
-\t\t\t\t\terror("surface scheduler census dispatchers did not restore")
-\t\t\t\tend
-\t\t\t\twrite_scheduler_census("scheduler_intercepted")
-\t\t\t\treturn census_original_thread(fn, ...)
-\t\t\tend
-\t\t\trawset(_G, "Global", scoped_global)
-\t\t\trawset(_G, "CreateRealTimeThread", scoped_thread)
-\t\t\tif rawget(_G, "Global") ~= scoped_global or rawget(_G, "CreateRealTimeThread") ~= scoped_thread then
-\t\t\t\terror("surface scheduler census dispatchers did not install")
-\t\t\tend
+\t\t\tcensus_chain("MapGenerated", function()
+\t\t\t\tstate.surface_scheduler_census_map_generated = (state.surface_scheduler_census_map_generated or 0) + 1
+\t\t\t\tif state.surface_scheduler_census_map_generated > 1 then error("surface scheduler census duplicate MapGenerated") end
+\t\t\tend)
+\t\t\tcensus_chain("CityInitialized", function()
+\t\t\t\tstate.surface_scheduler_census_city_initialized = (state.surface_scheduler_census_city_initialized or 0) + 1
+\t\t\t\tif state.surface_scheduler_census_city_initialized > 1 then error("surface scheduler census duplicate CityInitialized") end
+\t\t\tend)
 \t\t\tstate.surface_scheduler_census_nonce = surface_scheduler_census_nonce
-\t\t\twrite_scheduler_census("setup")'''
+\t\t\tstate.surface_scheduler_census_setup = true'''
     finalize = '''
-\t\t\twrite_scheduler_census("finalizer_entry")
-\t\t\tif state.surface_scheduler_census_intercepted ~= true
-\t\t\t\tor state.surface_scheduler_census_dispatchers_restored ~= true then
+\t\t\twrite_scheduler_census("post_t1_finalizer")
+\t\t\tif state.surface_scheduler_census_map_generated ~= 1
+\t\t\t\tor state.surface_scheduler_census_city_initialized ~= 1 then
 \t\t\t\terror("surface scheduler census did not complete")
 \t\t\tend'''
     return setup, finalize
@@ -393,12 +357,39 @@ def benchmark_block(
     surface_thread_rng_mode: str = "forward",
     surface_thread_rng_trace: Path | None = None,
     scheduler_census_path: Path | None = None,
+    surface_only: bool = False,
 ) -> str:
     probe = PARITY / "determinism_capture_probe.lua"
     thread_setup, thread_dispatch, thread_finalize = surface_thread_rng_lua(
         surface_thread_rng_mode, surface_thread_rng_trace
     )
     census_setup, census_finalize = scheduler_census_lua(scheduler_census_path)
+    capture_arm = "" if surface_only else f'''
+\t\t\trawset(_G, "g_FzpDeterminismCaptureOutBase", "{lua_path(capture_base)}")
+\t\t\tlocal probe_result = dofile("{lua_path(probe)}")
+\t\t\tif probe_result ~= "fzp_determinism_capture_armed" then
+\t\t\t\terror("determinism capture producer did not arm: " .. tostring(probe_result))
+\t\t\tend'''
+    surface_only_finalize = "" if not surface_only else f'''
+\t\t\t\tif true then
+\t\t\t\tif rawget(_G, "AsyncRand") ~= scoped_async_rand then error("AsyncRand changed before surface-only finalizer") end
+\t\t\t\tif state.async_rand_draw_count <= 0 then error("private mod RNG stream consumed no draws") end{thread_finalize}{census_finalize}
+\t\t\t\trawset(_G, "AsyncRand", original_async_rand)
+\t\t\t\tstate.async_rand_dispatcher_restored = rawget(_G, "AsyncRand") == original_async_rand
+\t\t\t\tif state.async_rand_dispatcher_restored ~= true then error("AsyncRand restore failed") end
+\t\t\t\tlocal text = table.concat({{
+\t\t\t\t\t"schema=smr.ralph.surface_only_post_t1_scalar.v1",
+\t\t\t\t\t"surface_stable_published=true", "post_t1_only=true",
+\t\t\t\t\t"pre_t1_capture_bytes=0", "capture_status=surface-only-none",
+\t\t\t\t\t"async_rand_draw_count=" .. tostring(state.async_rand_draw_count),
+\t\t\t\t\t"async_rand_dispatcher_restored=true",
+\t\t\t\t}}, "\\n") .. "\\n"
+\t\t\t\tlocal write_error = AsyncStringToFile("{lua_path(final_sentinel)}", text)
+\t\t\t\tif write_error then error("surface-only scalar write failed: " .. tostring(write_error)) end
+\t\t\t\treturn true
+\t\t\t\telse'''
+    surface_only_finalize_close = "" if not surface_only else '''
+\t\t\t\tend'''
     thread_state = "" if surface_thread_rng_mode == "forward" else f'''
 \t\t\t\tsurface_thread_rng_mode = "{surface_thread_rng_mode}",
 \t\t\t\tsurface_thread_async_rand_draw_count = 0,'''
@@ -485,11 +476,7 @@ def benchmark_block(
 \t\t\t\treturn original_generate_random_map(map_name, preset_name, params)
 \t\t\tend
 \t\t\trawset(_G, "g_SmrRalphSurfaceReferenceState", state)
-\t\t\trawset(_G, "g_FzpDeterminismCaptureOutBase", "{lua_path(capture_base)}")
-\t\t\tlocal probe_result = dofile("{lua_path(probe)}")
-\t\t\tif probe_result ~= "fzp_determinism_capture_armed" then
-\t\t\t\terror("determinism capture producer did not arm: " .. tostring(probe_result))
-\t\t\tend
+{capture_arm}
 \t\t\trawset(_G, "g_SmrRalphPublishSurfaceStable", function(surface)
 \t\t\t\tif rawget(_G, "AsyncRand") ~= scoped_async_rand then
 \t\t\t\t\terror("scoped AsyncRand capture dispatcher was replaced before T1")
@@ -565,6 +552,7 @@ def benchmark_block(
 \t\t\t\tif state.surface_stable_published ~= true then
 \t\t\t\t\terror("determinism finalizer cannot precede stable T1 publication")
 \t\t\t\tend
+{surface_only_finalize}
 \t\t\t\tlocal finalizer = rawget(_G, "g_FzpDeterminismCaptureFinalize")
 \t\t\t\tif type(finalizer) ~= "function" then
 \t\t\t\t\terror("determinism capture finalizer is unavailable")
@@ -608,6 +596,7 @@ def benchmark_block(
 \t\t\t\tif write_error then error("final sentinel write failed: " .. tostring(write_error)) end
 \t\t\t\tstate.capture_finalized = true
 \t\t\t\treturn true
+{surface_only_finalize_close}
 \t\t\tend)
 \t\tend'''
 
@@ -620,6 +609,7 @@ def render_generation(
     surface_thread_rng_mode: str = "forward",
     surface_thread_rng_trace: Path | None = None,
     scheduler_census_path: Path | None = None,
+    surface_only: bool = False,
 ) -> str:
     text = run_parity.GEN_TEMPLATE.read_text(encoding="utf-8")
     text = text.replace(
@@ -635,7 +625,7 @@ def render_generation(
     text = text.replace("__UNDERGROUND_PIN_BLOCK__", "")
     extra = run_parity.ROUGH_TERRAIN_BLOCK + "\n\n" + benchmark_block(
         capture_base, stable_sentinel, final_sentinel, async_rand_seed,
-        surface_thread_rng_mode, surface_thread_rng_trace, scheduler_census_path,
+        surface_thread_rng_mode, surface_thread_rng_trace, scheduler_census_path, surface_only,
     )
     text = text.replace("__EXTRA_SETUP__", extra)
     publish_marker = '''\t\tif __EXPAND__ then
@@ -660,6 +650,32 @@ def render_generation(
 \t\t-- Capture the generator holders BEFORE any game time is allowed to advance:''',
         1,
     )
+    if surface_only:
+        # The reference template normally settles and enters the underground after
+        # Surface T1.  A surface-only acceptance must retain the same Surface
+        # publisher/finalizer but remove the entire inherited post-T1 tail,
+        # including even dormant lookup/switch helpers.
+        find_start = '''\t\tlocal function find_underground()
+'''
+        find_end = '''\t\tlocal surface = Maps and Maps[1]
+'''
+        if find_start not in text or find_end not in text:
+            raise ReferenceError("underground helper boundaries changed")
+        find_at = text.index(find_start)
+        find_end_at = text.index(find_end, find_at)
+        text = (text[:find_at]
+                + '''\t\t-- Surface-only contract: no underground lookup helper is installed.
+
+'''
+                + text[find_end_at:])
+        tail_start = '''\t\t-- Capture the generator holders BEFORE any game time is allowed to advance:'''
+        parity_complete = '''\t\tg_ParityStatus = "complete"
+\tend, debug.traceback)'''
+        if tail_start not in text or parity_complete not in text:
+            raise ReferenceError("surface-only tail boundaries changed")
+        start = text.index(tail_start)
+        end = text.index(parity_complete, start)
+        text = text[:start] + text[end:]
     parity_complete = '''\t\tg_ParityStatus = "complete"
 \tend, debug.traceback)'''
     if text.count(parity_complete) != 1:
@@ -752,7 +768,7 @@ io.write("scoped_dispatch_ok")
     }
 
 
-def static_verdict(text: str) -> dict[str, object]:
+def static_verdict(text: str, surface_only: bool = False) -> dict[str, object]:
     positions = {
         "new_game": text.find('NewGame({ seed_text = "LOZL3FQr" })'),
         "rough_rule": text.find('Game:AddGameRule("RoughTerrain")'),
@@ -797,6 +813,7 @@ def static_verdict(text: str) -> dict[str, object]:
             and text.count('"async_rand_final_seed="') == 2
             and text.count('"async_rand_draw_count="') == 2
             and text.count('"foreign_async_rand_draw_count="') == 2
+            if not surface_only else True
         ),
         "dispatcher_restored_after_verified_finalization": (
             'rawset(_G, "AsyncRand", original_async_rand)' in text
@@ -828,6 +845,8 @@ def static_verdict(text: str) -> dict[str, object]:
         "stable_published_before_underground_visit": (
             0 <= positions["generation"] < positions["stable_publish"]
             < positions["underground_visit"]
+            if not surface_only
+            else 0 <= positions["generation"] < positions["stable_publish"]
         ),
         "determinism_capture_armed_before_generation": (
             text.find("g_FzpDeterminismCaptureOutBase") < positions["generation"]
@@ -836,6 +855,9 @@ def static_verdict(text: str) -> dict[str, object]:
         "finalizer_follows_stable_t1_and_underground": (
             0 <= positions["stable_publish"] < positions["underground_visit"]
             < positions["finalizer_invoke"] < positions["parity_complete"]
+            if not surface_only
+            else 0 <= positions["stable_publish"] < positions["finalizer_invoke"]
+            < positions["parity_complete"]
         ),
         "finalizer_fail_closed_and_single_invocation": (
             text.count("\n\t\tfinalize_reference_capture()") == 1
@@ -850,6 +872,13 @@ def static_verdict(text: str) -> dict[str, object]:
         ),
         "no_unresolved_placeholders": not unresolved(text),
         "no_direct_game_launcher": "MarsDebug.exe" not in text and "taskkill" not in text.lower(),
+        "surface_only_has_no_underground_route": (
+            "ChangeCurrentMapSlot" not in text
+            and "find_underground" not in text
+            and "entering_underground" not in text
+            and "no underground map was generated" not in text
+            if surface_only else True
+        ),
     }
     failed = sorted(name for name, passed in checks.items() if not passed)
     return {
@@ -859,6 +888,7 @@ def static_verdict(text: str) -> dict[str, object]:
         "latitude": LAT,
         "longitude": LON,
         "expected_preset": EXPECTED_PRESET,
+        "surface_only": surface_only,
         "checks": checks,
         "passed": sum(checks.values()),
         "total": len(checks),
@@ -972,11 +1002,11 @@ def command_prepare(args: argparse.Namespace) -> int:
     )
     text = render_generation(
         capture_base, stable_sentinel, final_sentinel, args.async_rand_seed,
-        args.surface_thread_rng_mode, thread_trace, scheduler_census,
+        args.surface_thread_rng_mode, thread_trace, scheduler_census, args.surface_only,
     )
     generation.write_text(text, encoding="utf-8")
     compile_lua(args.luac.resolve(), generation)
-    verdict = static_verdict(text)
+    verdict = static_verdict(text, args.surface_only)
     thread_verdict = None
     if args.surface_thread_rng_mode != "forward":
         thread_verdict = surface_thread_rng_static_verdict(
@@ -1015,6 +1045,7 @@ def command_prepare(args: argparse.Namespace) -> int:
             if args.surface_thread_rng_mode == "replay" and thread_trace
             else None
         ),
+        "surface_only": args.surface_only,
         "scheduler_census": str(scheduler_census) if scheduler_census else None,
         "scheduler_census_nonce": (
             hashlib.sha256(str(scheduler_census).encode("utf-8")).hexdigest()[:16]
@@ -1328,6 +1359,7 @@ def parser() -> argparse.ArgumentParser:
     )
     prepare.add_argument("--surface-thread-rng-trace", type=Path)
     prepare.add_argument("--scheduler-census", type=Path)
+    prepare.add_argument("--surface-only", action="store_true")
     prepare.add_argument("--source-head", required=True)
     prepare.add_argument("--out", type=Path, required=True)
     prepare.add_argument("--luac", type=Path, default=DEFAULT_LUAC)
