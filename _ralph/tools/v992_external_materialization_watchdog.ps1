@@ -22,6 +22,18 @@ function Write-SbmUtf8NoBomAtomic {
     }
 }
 
+function Get-SbmFileSha256 {
+    param([Parameter(Mandatory=$true)][string]$Path)
+    $stream = [System.IO.File]::OpenRead([System.IO.Path]::GetFullPath($Path))
+    $algorithm = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($algorithm.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $algorithm.Dispose()
+        $stream.Dispose()
+    }
+}
+
 function Get-SbmTrackedProcessIdentity {
     param([Parameter(Mandatory=$true)][System.Diagnostics.Process]$Process)
     $Process.Refresh()
@@ -187,7 +199,7 @@ function Publish-SbmExternalWatchdogTimeout {
     }
     $bundleJson = $bundle | ConvertTo-Json -Depth 12 -Compress
     Write-SbmUtf8NoBomAtomic -Path $BundlePath -Text ($bundleJson + "`n")
-    $bundleHash = (Get-FileHash -LiteralPath $BundlePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $bundleHash = Get-SbmFileSha256 -Path $BundlePath
     $terminal = [ordered]@{
         schema = 'smr.ralph.external-materialization-terminal.v1'
         ok = $false
