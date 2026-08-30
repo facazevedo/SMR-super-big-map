@@ -46,8 +46,8 @@ missing = [token for token in required_map if token not in MAP]
 missing += [token for token in required_terrain if token not in TERRAIN]
 assert not missing, "missing v990 capability contracts: " + ", ".join(missing)
 
-assert "SuperBigMap.GENERATOR_PATCH_VERSION = 302" in VERSION
-assert re.search(r"'version',\s*996\b", META)
+assert "SuperBigMap.GENERATOR_PATCH_VERSION = 303" in VERSION
+assert re.search(r"'version',\s*997\b", META)
 assert "Lazy.OwnedMaterializationInFlight(surface_map, descriptor, report)" not in TERRAIN
 assert "materialization_capability = capability" not in MAP
 assert "descriptor.materialization_capability" not in MAP

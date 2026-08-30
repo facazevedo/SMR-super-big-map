@@ -236,6 +236,28 @@ local SharedRandInt = Engine.RandInt
 -- and stays exact in Lua 5.3 integer arithmetic.
 local active_underground_enrichment_budget
 
+local function PublishUndergroundEnrichmentBudgetProgress(budget, reason, extra)
+	if type(budget) ~= "table" or type(budget.progress_callback) ~= "function" then return end
+	local fields = {
+		reason = tostring(reason or "progress"),
+		phase = tostring(budget.phase or "unknown"),
+		candidate_samples = budget.candidate_samples or 0,
+		validation_calls = budget.validation_calls or 0,
+		expensive_calls = budget.expensive_validation_calls or 0,
+		commits = budget.commits or 0,
+		rejection_histogram = CountMapString(budget.rejection_histogram or {}),
+	}
+	if type(extra) == "table" then
+		for key, value in pairs(extra) do
+			if type(value) == "boolean" or type(value) == "number" or type(value) == "string" then
+				fields[tostring(key):sub(1, 48)] = value
+			end
+		end
+	end
+	pcall(budget.progress_callback, budget.map,
+		"underground-enrichment-bounded-progress", "AFTER", fields)
+end
+
 local function EnrichmentBudgetNow()
 	local clock = Global("GetPreciseTicks")
 	if type(clock) ~= "function" then return nil end
@@ -243,11 +265,12 @@ local function EnrichmentBudgetNow()
 	return ok and type(value) == "number" and value or nil
 end
 
-local function CheckUndergroundEnrichmentBudget(map, kind)
+local function CheckUndergroundEnrichmentBudget(map, kind, detail)
 	local budget = active_underground_enrichment_budget
 	if type(budget) ~= "table" or budget.map ~= map then return true end
 	local now = EnrichmentBudgetNow()
-	if type(now) ~= "number" or now >= budget.deadline_ms then
+	if type(now) ~= "number" or now >= budget.deadline_ms
+		or (type(budget.phase_deadline_ms) == "number" and now >= budget.phase_deadline_ms) then
 		error("bounded underground enrichment deadline expired in " .. tostring(kind))
 	end
 	if kind == "candidate" then
@@ -264,8 +287,36 @@ local function CheckUndergroundEnrichmentBudget(map, kind)
 		if budget.validation_calls > budget.maximum_validations then
 			error("bounded underground enrichment validation cap exceeded")
 		end
+	elseif kind == "expensive" then
+		budget.expensive_validation_calls = budget.expensive_validation_calls + 1
+		local deficit = tostring(detail or "unclassified"):sub(1, 64)
+		budget.expensive_validation_by_deficit[deficit] =
+			(budget.expensive_validation_by_deficit[deficit] or 0) + 1
+		if budget.expensive_validation_by_deficit[deficit]
+			> budget.maximum_expensive_validations_per_deficit then
+			error("bounded underground enrichment expensive validation cap exceeded for "
+				.. deficit)
+		end
+		if budget.expensive_validation_calls % budget.progress_batch == 0 then
+			PublishUndergroundEnrichmentBudgetProgress(budget, "expensive-validation-batch", {
+				deficit = deficit,
+				deficit_expensive_calls = budget.expensive_validation_by_deficit[deficit],
+			})
+		end
 	end
 	return true
+end
+
+local function NoteUndergroundEnrichmentCandidatePoint(map, x, y)
+	local budget = active_underground_enrichment_budget
+	if type(budget) ~= "table" or budget.map ~= map then return end
+	budget.last_candidate_x, budget.last_candidate_y = x, y
+	if budget.candidate_samples % budget.progress_batch == 0 then
+		PublishUndergroundEnrichmentBudgetProgress(budget, "candidate-batch", {
+			last_candidate = budget.candidate_samples,
+			last_candidate_x = x, last_candidate_y = y,
+		})
+	end
 end
 
 local function NoteUndergroundEnrichmentDecision(map, kind, reason, pt)
@@ -299,6 +350,43 @@ local function RandInt(limit)
 	return budget.rng_state % limit
 end
 
+-- The first external Underground load is bounded by interaction-cover latency, not map area.
+-- Preserve the exact source-derived deficit proportions with deterministic largest-remainder
+-- allocation, while limiting how many new objects one synchronous transaction can require.
+-- Surface generation and non-lazy callers retain their historical area-scaled targets.
+local function BoundDeferredUndergroundDeficits(map, current, target, maximum_additions)
+	local budget = active_underground_enrichment_budget
+	if type(budget) ~= "table" or budget.map ~= map then return 0, false end
+	local keys, raw_total = {}, 0
+	for key, wanted in pairs(target or {}) do
+		keys[#keys + 1] = key
+		raw_total = raw_total + math.max(0,
+			math.floor(tonumber(wanted) or 0) - math.floor(tonumber(current[key]) or 0))
+	end
+	table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+	local bounded_total = math.min(raw_total, math.max(0, math.floor(maximum_additions or 0)))
+	if raw_total <= bounded_total then return raw_total, false end
+	local residual, allocated = {}, 0
+	for _, key in ipairs(keys) do
+		local present = math.floor(tonumber(current[key]) or 0)
+		local deficit = math.max(0, math.floor(tonumber(target[key]) or 0) - present)
+		local scaled = bounded_total * deficit
+		local whole = math.floor(scaled / raw_total)
+		target[key] = present + whole
+		allocated = allocated + whole
+		residual[#residual + 1] = { key = key, remainder = scaled % raw_total }
+	end
+	table.sort(residual, function(a, b)
+		if a.remainder == b.remainder then return tostring(a.key) < tostring(b.key) end
+		return a.remainder > b.remainder
+	end)
+	for index = 1, bounded_total - allocated do
+		local entry = residual[index]
+		if entry then target[entry.key] = (target[entry.key] or 0) + 1 end
+	end
+	return bounded_total, true
+end
+
 function DepositRules.BeginBoundedUndergroundEnrichment(map, plan_id, seed, options)
 	if not IsUndergroundMap(map) then
 		return nil, "bounded enrichment target is not Underground"
@@ -313,24 +401,37 @@ function DepositRules.BeginBoundedUndergroundEnrichment(map, plan_id, seed, opti
 	if seed <= 0 then return nil, "bounded enrichment private seed is invalid" end
 	options = type(options) == "table" and options or {}
 	local started = EnrichmentBudgetNow()
-	local duration = math.floor(tonumber(options.duration_ms) or 240000)
-	local maximum_candidates = math.floor(tonumber(options.maximum_candidates) or 16384)
-	local maximum_validations = math.floor(tonumber(options.maximum_validations) or 32768)
-	if type(started) ~= "number" or duration < 1000 or duration > 240000
-		or maximum_candidates < 1 or maximum_candidates > 16384
-		or maximum_validations < maximum_candidates or maximum_validations > 65536 then
+	local duration = math.floor(tonumber(options.duration_ms) or 180000)
+	local phase_duration = math.floor(tonumber(options.phase_duration_ms) or 60000)
+	local maximum_candidates = math.floor(tonumber(options.maximum_candidates) or 256)
+	local maximum_validations = math.floor(tonumber(options.maximum_validations) or 1024)
+	local maximum_expensive = math.floor(
+		tonumber(options.maximum_expensive_validations_per_deficit) or 64)
+	local progress_batch = math.floor(tonumber(options.progress_batch) or 16)
+	if type(started) ~= "number" or duration < 1000 or duration >= 240000
+		or phase_duration < 1000 or phase_duration > 60000 or phase_duration > duration
+		or maximum_candidates < 1 or maximum_candidates > 256
+		or maximum_validations < maximum_candidates or maximum_validations > 2048
+		or maximum_expensive < 1 or maximum_expensive > 64
+		or progress_batch < 1 or progress_batch > 32 then
 		return nil, "bounded enrichment limits/clock are invalid"
 	end
 	local token = {
 		schema = "smr.sbm.underground-enrichment-budget.v1",
 		map = map, plan_id = plan_id, rng_seed = seed, rng_state = seed,
 		started_ms = started, deadline_ms = started + duration,
+		phase_duration_ms = phase_duration, phase_deadline_ms = started + phase_duration,
 		maximum_candidates = maximum_candidates,
 		maximum_validations = maximum_validations,
+		maximum_expensive_validations_per_deficit = maximum_expensive,
+		progress_batch = progress_batch,
 		candidate_samples = 0, validation_calls = 0, rng_calls = 0,
+		expensive_validation_calls = 0, expensive_validation_by_deficit = {},
 		commits = 0, rejection_histogram = {}, first_rejections = {},
 		phase = "initialization", phase_candidate_samples = {},
 		phase_validation_calls = {}, phase_sequence = "initialization",
+		progress_callback = type(options.progress_callback) == "function"
+			and options.progress_callback or nil,
 	}
 	active_underground_enrichment_budget = token
 	return token
@@ -344,7 +445,14 @@ function DepositRules.SetBoundedUndergroundEnrichmentPhase(token, phase)
 	if phase == "" or #phase > 64 then return false, "bounded enrichment phase is invalid" end
 	CheckUndergroundEnrichmentBudget(token.map, "phase")
 	token.phase = phase
+	local phase_started = EnrichmentBudgetNow()
+	if type(phase_started) ~= "number" then
+		return false, "bounded enrichment phase clock is unavailable"
+	end
+	token.phase_deadline_ms = math.min(token.deadline_ms,
+		phase_started + token.phase_duration_ms)
 	token.phase_sequence = token.phase_sequence .. ">" .. phase
+	PublishUndergroundEnrichmentBudgetProgress(token, "phase-start", { phase_name = phase })
 	return true
 end
 
@@ -362,6 +470,8 @@ function DepositRules.EndBoundedUndergroundEnrichment(token)
 		elapsed_ms = math.max(0, finished - token.started_ms),
 		candidate_samples = token.candidate_samples,
 		validation_calls = token.validation_calls, rng_calls = token.rng_calls,
+		expensive_validation_calls = token.expensive_validation_calls,
+		expensive_validation_by_deficit = CountMapString(token.expensive_validation_by_deficit),
 		commits = token.commits,
 		private_final_state = token.rng_state, phase_sequence = token.phase_sequence,
 		phase_candidate_samples = CountMapString(token.phase_candidate_samples),
@@ -461,7 +571,8 @@ local function IsBuildableAt(map, pt, strict, context)
 	return result, q, r
 end
 
-local function IsUnobstructedAt(map, pt, strict, context, known_q, known_r)
+local function IsUnobstructedAt(map, pt, strict, context, known_q, known_r,
+	cheap_center_snapshot)
 	if not map or not pt then return strict ~= true end
 	context = type(context) == "table" and context.map == map and context or nil
 	local hex_grid = context and context.object_hex_grid or (map and map.object_hex_grid)
@@ -492,7 +603,8 @@ local function IsUnobstructedAt(map, pt, strict, context, known_q, known_r)
 	local const_tbl = not context and Global("const") or nil
 	local radius = context and context.deposit_obstruct_radius
 		or (type(const_tbl) == "table" and tonumber(const_tbl.DepositObstructMaxRadius) or nil)
-	if type(is_deposit_obstructed) == "function" and type(radius) == "number"
+	if cheap_center_snapshot ~= true and type(is_deposit_obstructed) == "function"
+		and type(radius) == "number"
 		and type(pt.xy) == "function" then
 		local x, y = pt:xy()
 		if type(x) == "number" and type(y) == "number" then
@@ -517,7 +629,8 @@ local function IsUnobstructedAt(map, pt, strict, context, known_q, known_r)
 	if not ok_o then
 		return strict ~= true
 	end
-	return not obstructions or #obstructions == 0
+	if type(obstructions) ~= "table" then return strict ~= true end
+	return #obstructions == 0
 end
 
 local function BuildUndergroundReachability(map)
@@ -670,7 +783,8 @@ local function CanReceiveDepositTerrain(map, pt, context)
 	return EvaluateDepositTerrain(map, pt, context)
 end
 
-local function CanReceiveDeposit(map, pt, context, defer_reachability)
+local function CanReceiveDeposit(map, pt, context, defer_reachability,
+	force_exact_obstruction)
 	CheckUndergroundEnrichmentBudget(map, "validation")
 	context = type(context) == "table" and context.map == map and context or nil
 	-- Vanilla DepositMarker placement does not accept an obstructed coordinate: it searches for a
@@ -682,7 +796,11 @@ local function CanReceiveDeposit(map, pt, context, defer_reachability)
 		NoteUndergroundEnrichmentDecision(map, "reject", "terrain", pt)
 		return false, passable, flatness, buildable, q, r, nil
 	end
-	local unobstructed = IsUnobstructedAt(map, pt, true, context, q, r)
+	local bounded_cheap = force_exact_obstruction ~= true and defer_reachability == true
+		and type(active_underground_enrichment_budget) == "table"
+		and active_underground_enrichment_budget.map == map
+	local unobstructed = IsUnobstructedAt(
+		map, pt, true, context, q, r, bounded_cheap)
 	if not unobstructed then
 		NoteUndergroundEnrichmentDecision(map, "reject", "obstruction", pt)
 		return false, passable, flatness, buildable, q, r, false
@@ -3874,6 +3992,15 @@ end
 
 local function SampleUndergroundTopUpPosition(map, lo_x, lo_y, span_x, span_y)
 	CheckUndergroundEnrichmentBudget(map, "candidate")
+	-- The bounded first-load stream must remain O(1) per draw. In particular, do not build or
+	-- enumerate the 20x20 sector eligibility corpus: the cheap buildable/passable/flat/obstruction
+	-- conjunction below rejects an ineligible draw, and the private stream immediately advances.
+	if type(active_underground_enrichment_budget) == "table"
+		and active_underground_enrichment_budget.map == map then
+		local x, y = lo_x + RandInt(span_x), lo_y + RandInt(span_y)
+		NoteUndergroundEnrichmentCandidatePoint(map, x, y)
+		return x, y, nil, nil
+	end
 	if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS ~= true then
 		return lo_x + RandInt(span_x), lo_y + RandInt(span_y), nil, nil
 	end
@@ -3897,17 +4024,26 @@ local function SampleUndergroundTopUpPosition(map, lo_x, lo_y, span_x, span_y)
 	return lo_x + RandInt(span_x), lo_y + RandInt(span_y), nil, nil
 end
 
-local function RevalidateBoundedUndergroundCandidateAtCommit(map, candidate, context)
+local function RevalidateBoundedUndergroundCandidateAtCommit(map, candidate, context, deficit)
 	local budget = active_underground_enrichment_budget
 	if type(budget) ~= "table" or budget.map ~= map then return true end
 	if type(candidate) ~= "table" or type(candidate.x) ~= "number"
 		or type(candidate.y) ~= "number" then return false end
 	local point_fn = Global("point")
 	if type(point_fn) ~= "function" then return false end
-	local ok, _, _, _, q, r = CanReceiveDeposit(
-		map, point_fn(candidate.x, candidate.y), context, false)
+	local pt = point_fn(candidate.x, candidate.y)
+	-- Consume the per-deficit native budget before any exact obstruction/reachability call so a
+	-- rejected 65th shortlist can never leak one extra expensive query past the declared cap.
+	CheckUndergroundEnrichmentBudget(map, "expensive", deficit)
+	local ok, _, _, _, q, r = CanReceiveDeposit(map, pt, context, true, true)
 	local exact = ok == true and type(q) == "number" and type(r) == "number"
 		and q == candidate.q and r == candidate.r
+	if exact then
+		exact = IsReachableFromUndergroundEntrance(map, pt, q, r) == true
+		if not exact then
+			NoteUndergroundEnrichmentDecision(map, "reject", "commit-reachability", pt)
+		end
+	end
 	if not exact then
 		NoteUndergroundEnrichmentDecision(
 			map, "reject", "commit-revalidation", point_fn(candidate.x, candidate.y))
@@ -4319,6 +4455,8 @@ function DepositRules.TopUpDeposits(map)
 			target_by_type[entry.resource] = (target_by_type[entry.resource] or 0) + 1
 		end
 	end
+	local bounded_target_additions, bounded_target_applied =
+		BoundDeferredUndergroundDeficits(map, current_by_type, target_by_type, 64)
 	local shortfall = 0
 	for res, count in pairs(target_by_type) do
 		shortfall = shortfall + math.max(0, count - (current_by_type[res] or 0))
@@ -4330,6 +4468,8 @@ function DepositRules.TopUpDeposits(map)
 			current_counts = CountMapString(current_by_type), added_counts = "",
 			surface_mountain_base_minimum = surface_mountain_base_minimum,
 			surface_mountain_base_target_extra = quota_target_extra,
+			bounded_target_additions = bounded_target_additions,
+			bounded_target_applied = bounded_target_applied,
 		})
 		return
 	end
@@ -4548,7 +4688,8 @@ function DepositRules.TopUpDeposits(map)
 		-- the lowest existing-enrichment load relative to sampled eligible terrain area.
 		local shared_candidates, pool = {}, 0
 		local deferred_relaxation_candidates = {}
-		local MAX_SAMPLES, MAX_POOL = 24000, 8000
+		local MAX_SAMPLES, MAX_POOL = underground and 256 or 24000,
+			underground and 256 or 8000
 		-- Eight thousand validated points was a fixed historical ceiling, not a gameplay
 		-- requirement. On the underground map every attempted point also performs an authoritative
 		-- entrance ConnectivityCheck, so forcing the ceiling for a few dozen missing deposits spent
@@ -5225,6 +5366,11 @@ function DepositRules.TopUpDeposits(map)
 			while true do
 				local candidate = active_selector.Take(tt, profile)
 				if not candidate or not defer_candidate_reachability then return candidate end
+				-- The bounded first-load transaction performs the expensive native reachability
+				-- query only for a shortlisted candidate immediately before commit. The external
+				-- loading cover prevents player mutation between shortlist and this revalidation.
+				if type(active_underground_enrichment_budget) == "table"
+					and active_underground_enrichment_budget.map == map then return candidate end
 				local reachable, checked = UndergroundCandidateReachable(
 					map, candidate, validation_context)
 				if checked then reachability_checks = reachability_checks + 1 end
@@ -5323,9 +5469,11 @@ function DepositRules.TopUpDeposits(map)
 					select_needed_placement(allow_any_terrain, require_extractor,
 						forbid_extractor, template_policy)
 				if not c then break end
+				local resource_key = tostring(template and
+					(template.resource or template.class) or "unknown")
 				if tpos and type(tpos.xy) == "function"
 					and RevalidateBoundedUndergroundCandidateAtCommit(
-						map, c, validation_context) then
+						map, c, validation_context, resource_key) then
 					local tx, ty = tpos:xy()
 					local clone = clone_fn(map, template, point(c.x - tx, c.y - ty, 0))
 					if clone and type(clone) == "table" then
@@ -5895,8 +6043,8 @@ function DepositRules.TopUpDeposits(map)
 			-- A strict candidate is now consumed as soon as it satisfies the same terrain and vanilla
 			-- repulsion rules. After a bounded strict search for that marker, retain a small random choice
 			-- set for the existing any-terrain completion rule and the underground maximin fallback.
-			local STRICT_SAMPLES_PER_PLACEMENT = 32
-			local FALLBACK_CHOICES_PER_PLACEMENT = 8
+			local STRICT_SAMPLES_PER_PLACEMENT = underground and 8 or 32
+			local FALLBACK_CHOICES_PER_PLACEMENT = underground and 4 or 8
 			while added < shortfall and pool < MAX_POOL and candidate_samples < MAX_SAMPLES do
 				local added_before = added
 				local strict_sample_limit = math.min(MAX_SAMPLES,
@@ -6001,6 +6149,8 @@ function DepositRules.TopUpDeposits(map)
 		area_factor = area_factor, source_counts = CountMapString(src_by_type),
 		target_counts = CountMapString(target_by_type), final_counts = CountMapString(final_by_type),
 		added_counts = CountMapString(added_by_type), added_total = added,
+		bounded_target_additions = bounded_target_additions,
+		bounded_target_applied = bounded_target_applied,
 		surface_mountain_base_minimum = surface_mountain_base_minimum,
 		surface_mountain_base_target_extra = quota_target_extra,
 		surface_mountain_base_centers = surface_mountain_base_centers,
@@ -6246,12 +6396,15 @@ function DepositRules.TopUpAnomalies(map)
 		end
 		return nil, nil
 	end
-	local shortfall = 0
-	for kind, count in pairs(target_by_kind) do
-		target_keys[#target_keys + 1] = kind
-		shortfall = shortfall + math.max(0, count - (current_by_kind[kind] or 0))
-	end
+	for kind in pairs(target_by_kind) do target_keys[#target_keys + 1] = kind end
 	table.sort(target_keys)
+	local bounded_target_additions, bounded_target_applied =
+		BoundDeferredUndergroundDeficits(map, current_by_kind, target_by_kind, 32)
+	local shortfall = 0
+	for _, kind in ipairs(target_keys) do
+		shortfall = shortfall + math.max(0,
+			(target_by_kind[kind] or 0) - (current_by_kind[kind] or 0))
+	end
 	-- Surface anomaly top-ups are deliberately constrained to the final physical perimeter.
 	-- This is a live-sector policy, not a coordinate or scenario exception.
 	local ring_sectors = math.max(0, math.floor(cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 2))
@@ -6273,6 +6426,8 @@ function DepositRules.TopUpAnomalies(map)
 			area_factor = area_factor, source_counts = CountMapString(source_by_kind),
 			target_counts = CountMapString(target_by_kind),
 			current_counts = CountMapString(current_by_kind), added_counts = "",
+			bounded_target_additions = bounded_target_additions,
+			bounded_target_applied = bounded_target_applied,
 			outer_ring_redistributed = redistribution_stats and redistribution_stats.moved or 0,
 			outer_ring_placed = redistribution_stats and redistribution_stats.outer_planned or 0,
 			inner_ring_fallback = redistribution_stats and redistribution_stats.inner_fallback or 0,
@@ -6706,6 +6861,8 @@ function DepositRules.TopUpAnomalies(map)
 			while selector do
 				local candidate = selector.Take(nil, profile)
 				if not candidate or not defer_candidate_reachability then return candidate end
+				if type(active_underground_enrichment_budget) == "table"
+					and active_underground_enrichment_budget.map == map then return candidate end
 				local reachable, checked = UndergroundCandidateReachable(
 					map, candidate, validation_context)
 				if checked then reachability_checks = reachability_checks + 1 end
@@ -7052,7 +7209,7 @@ function DepositRules.TopUpAnomalies(map)
 			local placement_succeeded = false
 			if tpos and type(tpos.xy) == "function"
 				and RevalidateBoundedUndergroundCandidateAtCommit(
-					map, c, validation_context) then
+					map, c, validation_context, tostring(needed_kind or "anomaly")) then
 				local tx, ty = tpos:xy()
 				local clone = clone_fn(map, template, point(c.x - tx, c.y - ty, 0))
 				if clone and type(clone) == "table" then
@@ -7184,6 +7341,8 @@ function DepositRules.TopUpAnomalies(map)
 		area_factor = area_factor, source_counts = CountMapString(source_by_kind),
 		target_counts = CountMapString(target_by_kind), final_counts = CountMapString(final_by_kind),
 		added_counts = CountMapString(added_by_kind), added_total = added,
+		bounded_target_additions = bounded_target_additions,
+		bounded_target_applied = bounded_target_applied,
 		underground_density_fallback_added = density_fallback_added,
 		underground_fallback_strategy = fallback_selector_stats and fallback_selector_stats.strategy or "none",
 		underground_fallback_eligible_sectors = fallback_selector_stats
@@ -8187,11 +8346,20 @@ function DepositRules.TopUpEffectDeposits(map)
 		end
 	end
 	table.sort(types)
+	local bounded_target_additions, bounded_target_applied =
+		BoundDeferredUndergroundDeficits(map, current_by_type, target_by_type, 16)
+	total_shortfall = 0
+	for _, deposit_type in ipairs(types) do
+		total_shortfall = total_shortfall + math.max(0,
+			(target_by_type[deposit_type] or 0) - (current_by_type[deposit_type] or 0))
+	end
 	if total_shortfall <= 0 then
 		SetEnrichmentTopUpStatus(map, "effects", true, 0, {
 			area_factor = area_factor, source_counts = CountMapString(source_by_type),
 			target_counts = CountMapString(target_by_type),
 			current_counts = CountMapString(current_by_type), added_counts = "",
+			bounded_target_additions = bounded_target_additions,
+			bounded_target_applied = bounded_target_applied,
 		})
 		return
 	end
@@ -8376,6 +8544,8 @@ function DepositRules.TopUpEffectDeposits(map)
 			while active do
 				local candidate = active.Take(nil, profile)
 				if not candidate or not defer_candidate_reachability then return candidate end
+				if type(active_underground_enrichment_budget) == "table"
+					and active_underground_enrichment_budget.map == map then return candidate end
 				local reachable, checked = UndergroundCandidateReachable(
 					map, candidate, validation_context)
 				if checked then reachability_checks = reachability_checks + 1 end
@@ -8448,7 +8618,7 @@ function DepositRules.TopUpEffectDeposits(map)
 				local tpos = ObjectPos(template)
 				if tpos and type(tpos.xy) == "function"
 					and RevalidateBoundedUndergroundCandidateAtCommit(
-						map, c, validation_context) then
+						map, c, validation_context, tostring(deposit_type or "effect")) then
 					local tx, ty = tpos:xy()
 					local clone = clone_fn(map, template, point(c.x - tx, c.y - ty, 0))
 					if clone and type(clone) == "table" then
@@ -8525,6 +8695,8 @@ function DepositRules.TopUpEffectDeposits(map)
 		area_factor = area_factor, source_counts = CountMapString(source_by_type),
 		target_counts = CountMapString(target_by_type), final_counts = CountMapString(final_by_type),
 		added_counts = CountMapString(added_by_type),
+		bounded_target_additions = bounded_target_additions,
+		bounded_target_applied = bounded_target_applied,
 		underground_density_fallback_added = density_fallback_added,
 		underground_fallback_strategy = fallback_selector_stats and fallback_selector_stats.strategy or "none",
 		underground_fallback_eligible_sectors = fallback_selector_stats

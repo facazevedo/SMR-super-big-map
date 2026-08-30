@@ -59,8 +59,8 @@ for token in ("duplicate key", "bundle byte receipt mismatch", "root_cause_candi
               "diagnostics complete but root cause is unknown", "raw_bounded_fields"):
     assert token in ANALYZER
 
-assert "SuperBigMap.GENERATOR_PATCH_VERSION = 302" in VERSION
-assert re.search(r"'version',\s*996\b", META)
+assert "SuperBigMap.GENERATOR_PATCH_VERSION = 303" in VERSION
+assert re.search(r"'version',\s*997\b", META)
 print("ok=true")
 print("candidate_consumption=commit-only")
 print("fallback_clearance_index=bounded-exact")

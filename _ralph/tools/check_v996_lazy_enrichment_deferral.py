@@ -12,8 +12,8 @@ ORACLE = ROOT / "_ralph" / "tools" / "v996_lazy_enrichment_state_oracle.lua"
 MICROBENCH = ROOT / "_ralph" / "tools" / "v996_bounded_topup_microbenchmark.py"
 
 checks = {
-    "metadata_v996": "'version', 996" in META,
-    "generator_patch_302": "SuperBigMap.GENERATOR_PATCH_VERSION = 302" in VER,
+    "metadata_v997": "'version', 997" in META,
+    "generator_patch_303": "SuperBigMap.GENERATOR_PATCH_VERSION = 303" in VER,
     "descriptor_schema_bumped": "SCHEMA = 2" in GEN,
     "primitive_pending_plan": all(token in GEN for token in (
         'enrichment_state = "not-materialized"',
@@ -53,7 +53,7 @@ checks = {
     "bounded_candidate_validation": all(token in DEP for token in (
         'CheckUndergroundEnrichmentBudget(map, "candidate")',
         'CheckUndergroundEnrichmentBudget(map, "validation")',
-        "maximum_candidates > 16384", "maximum_validations > 65536",
+        "maximum_candidates > 256", "maximum_validations > 2048",
     )),
     "spatial_repulsion_retained": "local function NewTopUpRepulsionTracker" in DEP
         and "OPTIMIZE_TOPUP_HARD_SPACING_SPATIAL_INDEX" in DEP,

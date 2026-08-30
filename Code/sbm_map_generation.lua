@@ -13103,8 +13103,10 @@ function Lazy.EnsureUndergroundFirstLoadReady(trigger_kind, surface, underground
 			plan_id = descriptor.enrichment_plan_id,
 			private_seed = descriptor.enrichment_private_seed,
 			trigger_kind = descriptor.enrichment_first_trigger_kind,
-			attempt = attempts, duration_ms = 240000,
-			maximum_candidates = 16384, maximum_validations = 32768,
+			attempt = attempts, duration_ms = 180000, phase_duration_ms = 60000,
+			maximum_candidates = 256, maximum_validations = 2048,
+			maximum_expensive_validations_per_deficit = 64,
+			progress_batch = 16,
 			diagnostic_heartbeat = diagnostic_heartbeat,
 		})
 	else
@@ -18110,6 +18112,10 @@ function SuperBigMap.RunDeferredUndergroundEnrichment(map, options)
 			error = tostring(reason or "unknown deferred enrichment failure"):sub(1, 768),
 			candidate_samples = budget_stats and budget_stats.candidate_samples or 0,
 			validation_calls = budget_stats and budget_stats.validation_calls or 0,
+			expensive_validation_calls = budget_stats
+				and budget_stats.expensive_validation_calls or 0,
+			expensive_validation_by_deficit = budget_stats
+				and budget_stats.expensive_validation_by_deficit or "",
 			commits = budget_stats and budget_stats.commits or 0,
 			private_final_state = budget_stats and budget_stats.private_final_state or 0,
 			rejection_histogram = budget_stats and budget_stats.rejection_histogram or "",
@@ -18139,8 +18145,13 @@ function SuperBigMap.RunDeferredUndergroundEnrichment(map, options)
 	local budget, budget_reason = deposits.BeginBoundedUndergroundEnrichment(
 		map, options.plan_id, options.private_seed, {
 			duration_ms = options.duration_ms,
+			phase_duration_ms = options.phase_duration_ms,
 			maximum_candidates = options.maximum_candidates,
 			maximum_validations = options.maximum_validations,
+			maximum_expensive_validations_per_deficit =
+				options.maximum_expensive_validations_per_deficit,
+			progress_batch = options.progress_batch,
+			progress_callback = heartbeat,
 		})
 	if not budget then return result_failure(budget_reason) end
 	local wall_owned, wall_stats = false, nil
@@ -18290,6 +18301,8 @@ function SuperBigMap.RunDeferredUndergroundEnrichment(map, options)
 		wall_ignore_owned = wall_stats ~= nil,
 		candidate_samples = budget_stats.candidate_samples,
 		validation_calls = budget_stats.validation_calls,
+		expensive_validation_calls = budget_stats.expensive_validation_calls,
+		expensive_validation_by_deficit = budget_stats.expensive_validation_by_deficit,
 		rng_calls = budget_stats.rng_calls,
 		commits = budget_stats.commits,
 		private_final_state = budget_stats.private_final_state,
