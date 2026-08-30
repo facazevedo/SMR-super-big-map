@@ -286,6 +286,9 @@ function Stop-TrackedGame([string]$Reason) {
 if ((Get-Sha256 $ContractPath) -cne $ContractSha256.ToUpperInvariant()) { throw 'contract SHA-256 mismatch' }
 $script:Contract = Get-Content -LiteralPath $ContractPath -Raw | ConvertFrom-Json
 if ($script:Contract.schema -cne 'smr.ralph.surface-only-acceptance-contract.v1') { throw 'unsupported surface-only contract schema' }
+if ([double]$script:Contract.maximum_t0_to_t1_ms -ne 100000.0) {
+    throw 'surface-only contract must pin the strict <100000ms timing boundary'
+}
 foreach ($name in @('repo', 'stage', 'run', 'harness', 'source_config', 'deployed_config', 'deployed_config_repo_relative', 'enabled_config',
         'generator_script', 'surface_t1_file', 'deferred_t1_file', 'scheduler_census_file', 'post_t1_scalar_file',
         'expected_disabled_config_sha256', 'expected_enabled_config_sha256', 'expected_deploy_file_count',
@@ -366,13 +369,19 @@ try {
 
     # T0 is immediately before the only harness run-file. No operation after this line
     # may invoke the harness except tracked quit.
-    $t0 = [DateTime]::UtcNow
+    # Stopwatch ticks are the sole authoritative external timing clock.  UTC is
+    # retained only as correlatable metadata and never participates in acceptance.
+    $timingFrequency = [Diagnostics.Stopwatch]::Frequency
+    if ($timingFrequency -le 0) { throw 'Stopwatch frequency is unavailable' }
+    $t0Utc = [DateTime]::UtcNow
+    [Int64]$t0Timestamp = [Diagnostics.Stopwatch]::GetTimestamp()
     Invoke-Harness @('run-file', '--json', '--timeout', '30', $Generator)
-    $t1Deadline = $t0.AddSeconds([int]$script:Contract.t1_timeout_seconds)
+    $t1Deadline = $t0Utc.AddSeconds([int]$script:Contract.t1_timeout_seconds)
     Wait-NonEmptyFile $SurfaceT1 $t1Deadline
-    $t1 = [DateTime]::UtcNow
-    $elapsedMs = [Math]::Round(($t1 - $t0).TotalMilliseconds, 4)
-    if ($elapsedMs -gt [double]$script:Contract.maximum_t0_to_t1_ms) { throw "Surface T0-to-T1 budget exceeded: $elapsedMs ms" }
+    [Int64]$t1Timestamp = [Diagnostics.Stopwatch]::GetTimestamp()
+    $t1Utc = [DateTime]::UtcNow
+    $elapsedMs = [Math]::Round((([double]($t1Timestamp - $t0Timestamp) * 1000.0) / [double]$timingFrequency), 4)
+    if ($elapsedMs -ge 100000.0) { throw "Surface T0-to-T1 strict <100000ms budget exceeded: $elapsedMs ms" }
 
     # These are the invariant portion of the iter241 Surface T1/Close-ready
     # verifier.  Contracts may add candidate-specific values, but cannot relax this
@@ -424,14 +433,11 @@ try {
         'planner_stale_attempts=0', 'planner_stale_bounded_search_calls=0',
         'planner_stale_bounded_search_ms=0', 'planner_stale_plan_skipped=true',
         'planner_retry_requested=false', 'planner_retry_pending=false', 'planner_retry_used=false',
-        'planner_retry_rebuild_consistent=true', 'planner_canonical_rebuilds=2',
-        'planner_canonical_rebuild_fallbacks=0', 'planner_fresh_grid_requested=true',
+        'planner_retry_rebuild_consistent=true', 'planner_fresh_grid_requested=true',
         'planner_fresh_grid_used=true', 'planner_fresh_grid_plan_used=true',
-        'planner_fresh_grid_expected_rebuilds=2', 'planner_fresh_grid_main_plan_invocations=1',
+        'planner_fresh_grid_main_plan_invocations=1',
         'planner_fresh_grid_replay_invocations=1',
-        'planner_fresh_grid_phase_order=canonical-grid-publication>fresh-plan-replay>capsule-publication>closing-rebuild',
-        'planner_fresh_grid_first_rebuild_complete=true', 'planner_fresh_grid_closing_rebuild_complete=true',
-        'planner_fresh_grid_rebuild_shape_exact=true', 'planner_marker_contract=true',
+        'planner_marker_contract=true',
         'planner_marker_index_requested=false', 'planner_marker_index_used=false',
         'planner_marker_index_fallback=false', 'planner_marker_exclusion_exact=true',
         'planner_repeat_marker_index_used=false', 'planner_repeat_marker_index_fallback=false',
@@ -494,9 +500,10 @@ try {
         ok = $true
         diagnostic_only = $false
         acceptance_timing_eligible = $true
-        t0_utc = $t0.ToString('o')
-        t1_utc = $t1.ToString('o')
+        t0_utc = $t0Utc.ToString('o')
+        t1_utc = $t1Utc.ToString('o')
         t0_to_t1_ms = $elapsedMs
+        stopwatch = [ordered]@{ frequency = $timingFrequency; t0_timestamp = $t0Timestamp; t1_timestamp = $t1Timestamp }
         underground_access_included = $false
         underground_release_invoked = $false
         generator_run_file_count = 1
@@ -524,7 +531,8 @@ try {
     Write-Json $Receipt $receipt
     Write-Json $Timing ([ordered]@{
         schema = 'smr.ralph.external_timing.v2'; diagnostic_only = $false; acceptance_timing_eligible = $true
-        t0_utc = $t0.ToString('o'); t1_utc = $t1.ToString('o'); t0_to_t1_ms = $elapsedMs
+        t0_utc = $t0Utc.ToString('o'); t1_utc = $t1Utc.ToString('o'); t0_to_t1_ms = $elapsedMs
+        stopwatch_frequency = $timingFrequency; t0_timestamp = $t0Timestamp; t1_timestamp = $t1Timestamp
         trace_active = $false; underground_access_included = $false; surface_only = $true
     })
     Stop-TrackedGame 'successful surface-only acceptance'

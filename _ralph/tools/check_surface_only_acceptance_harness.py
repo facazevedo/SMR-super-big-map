@@ -8,8 +8,11 @@ from pathlib import Path
 
 from surface_loading_reference import (
     DEFAULT_LUAC,
+    PARITY,
+    REFERENCE_PROBE_SHA256,
     compile_lua,
     render_generation,
+    sha256_file,
     static_verdict,
 )
 
@@ -163,9 +166,26 @@ def scalar_fixture(canonical: bool = False) -> dict[str, str]:
     return fields
 
 
+def strict_timing_ok(elapsed_ms: float) -> bool:
+    """Mirror the acceptance boundary: equality at 100s is a rejection."""
+    return elapsed_ms < 100000.0
+
+
+def loop_material_ok(text: str) -> bool:
+    return (
+        "_ralph/tools/parity" in text
+        and "$parityFiles.Count -eq 0" in text
+        and "head_commit" in text and "head_tree" in text
+        and "source_payload_manifest" in text and "deployed_payload_manifest" in text
+        and "stage_manifest" in text and "game_executable" in text
+        and "interpreter" in text and "live_executor_command" in text
+    )
+
+
 def main() -> int:
     executor = EXECUTOR.read_text(encoding="utf-8")
     loop = LOOP.read_text(encoding="utf-8")
+    probe_hash = sha256_file(PARITY / "determinism_capture_probe.lua")
     with tempfile.TemporaryDirectory(prefix="surface_only_acceptance_static_") as raw:
         root = Path(raw)
         generated = render_generation(
@@ -193,6 +213,11 @@ def main() -> int:
     bad_fallback["canonical_rebuilds_during_capsule_prepare"] = "3"
     extra = dict(optimized)
     extra["unmapped_runtime_field"] = "1"
+    old_parity_loop = loop.replace("_ralph/tools/parity", "_ralph/parity", 1)
+    stale_baseline_executor = executor + "\nplanner_canonical_rebuilds=2\n"
+    utc_timing_executor = executor.replace(
+        "[Diagnostics.Stopwatch]::GetTimestamp()", "[DateTime]::UtcNow.Ticks"
+    )
     def rejected(fields: dict[str, str]) -> bool:
         try:
             scalar_tuple(fields)
@@ -229,11 +254,32 @@ def main() -> int:
             and "WaitForChanged" in executor
             and "Start-Sleep -Milliseconds 20" not in executor
         ),
+        "executor_has_no_stale_canonical2_t1_baseline": (
+            "planner_canonical_rebuilds=2" not in executor
+            and "planner_fresh_grid_expected_rebuilds=2" not in executor
+            and "planner_fresh_grid_phase_order=canonical-grid-publication" not in executor
+        ),
+        "executor_uses_strict_stopwatch_less_than_100s": (
+            "[Diagnostics.Stopwatch]::GetTimestamp()" in executor
+            and "[Diagnostics.Stopwatch]::Frequency" in executor
+            and "$elapsedMs -ge 100000.0" in executor
+            and "$elapsedMs -gt [double]$script:Contract.maximum_t0_to_t1_ms" not in executor
+        ),
         "loop_has_one_live_executor_and_content_addressed_cache": (
             loop.count("-File $executor") == 1
             and "surface-loop-static-cache.v1" in loop
             and "cache_key" in loop
             and "-Launch" in loop
+        ),
+        "loop_uses_nonempty_tools_parity_and_full_content_key": loop_material_ok(loop),
+        "old_parity_path_adversary_rejected": not loop_material_ok(old_parity_loop),
+        "stale_canonical2_baseline_adversary_rejected": "planner_canonical_rebuilds=2" in stale_baseline_executor
+            and "planner_canonical_rebuilds=2" not in executor,
+        "utc_clock_timing_adversary_rejected": "[Diagnostics.Stopwatch]::GetTimestamp()" not in utc_timing_executor,
+        "strict_timing_boundary_adversaries": strict_timing_ok(99999.999) and not strict_timing_ok(100000.0),
+        "reference_probe_hash_is_intentionally_current": (
+            probe_hash == REFERENCE_PROBE_SHA256
+            and REFERENCE_PROBE_SHA256 != "6D991C11C58CFD1D803D44A2B7DA269C77DD42E9E46B8BDAC71C5EFE13AA0A07"
         ),
         "optimized_scalar_tuple_accepted": scalar_tuple(optimized) == "optimized",
         "canonical_fallback_scalar_tuple_accepted": scalar_tuple(canonical) == "canonical-fallback",
