@@ -3237,7 +3237,23 @@ end
 local function ReleaseRetainedNativeSourceMap(surface_map, reason)
 	local retention = type(surface_map) == "table"
 		and surface_map.SuperBigMapRetainedNativeSourceMap or nil
-	if type(retention) ~= "table" then return false end
+	if type(retention) ~= "table" then
+		-- The in-place Surface architecture never allocates a second map, so there is no slot to
+		-- unload. Treat that narrowly certified state as an already-complete release instead of
+		-- weakening the generic fail-closed path. The certificate is stamped only after stock
+		-- generation and every native-source capture required by the stretch have succeeded.
+		local in_place_version = type(surface_map) == "table"
+			and surface_map.SuperBigMapSurfaceSourceGeneratedInPlaceVersion or nil
+		if in_place_version == 1
+			and surface_map.SuperBigMapRetainedNativeSourceUnloadFailed == nil then
+			LoadingStep("in-place vanilla source requires no retained backing release", {
+				architecture_version = in_place_version,
+				reason = tostring(reason),
+			}, surface_map)
+			return true
+		end
+		return false
+	end
 	surface_map.SuperBigMapRetainedNativeSourceMap = nil
 	local maps = Global("Maps")
 	local change_map_in_slot = Global("ChangeMapInSlot")
@@ -10503,7 +10519,7 @@ function Lazy.FindSurfaceCapsules(surface, descriptor)
 	return result, nil
 end
 
-function Lazy.PublishSurfaceCapsules(surface, descriptor)
+function Lazy.PublishSurfaceCapsules(surface, descriptor, single_flush_transaction)
 	local place = Global("PlaceBuildingIn")
 	local point_fn = Global("point")
 	local get_shape = Global("GetExtendedSpawnShape")
@@ -10608,11 +10624,25 @@ function Lazy.PublishSurfaceCapsules(surface, descriptor)
 			pcall(passage.SetGameFlags, passage, const_tbl.gofPermanent)
 		end
 		passage.SuperBigMapLazyUndergroundCapsuleIndex = index
-		local flatten_ok = pcall(flatten, shape, passage, "flatten unbuildable")
+		local flatten_ok, flatten_result = pcall(
+			flatten, shape, passage, "flatten unbuildable")
+		local flatten_certificate_ok, flatten_certificate_reason = true, nil
+		if flatten_ok and single_flush_transaction ~= nil then
+			local record = SuperBigMap.GenerationGrids
+				and SuperBigMap.GenerationGrids.RecordSurfaceSingleFlushPublication
+			if type(record) ~= "function" then
+				flatten_certificate_ok = false
+				flatten_certificate_reason = "surface publication footprint recorder is unavailable"
+			else
+				flatten_certificate_ok, flatten_certificate_reason = record(
+					single_flush_transaction, surface, index, passage, shape, flatten_result)
+			end
+		end
 		local clear_ok = pcall(clear, surface, passage:GetPos(), passage:GetAngle(),
 			surface.obj_prefab_marker, passage:GetPos(), shape)
-		if not flatten_ok or not clear_ok then
-			return rollback("surface capsule terrain/obstruction preparation failed at " .. index)
+		if not flatten_ok or not flatten_certificate_ok or not clear_ok then
+			return rollback("surface capsule terrain/obstruction preparation failed at " .. index
+				.. (flatten_certificate_reason and (": " .. tostring(flatten_certificate_reason)) or ""))
 		end
 		-- CityInitialized already ran for the Surface. Reproduce only this new object's canonical
 		-- SpawnsOnCityInit effect so its tunnel marker and sign exist before T1.
@@ -10627,7 +10657,7 @@ function Lazy.PublishSurfaceCapsules(surface, descriptor)
 	return created, nil
 end
 
-function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
+function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid, single_flush_transaction)
 	after_canonical_grid = after_canonical_grid == true
 	if Lazy.IMPLEMENTATION ~= true then return true, "implementation disabled" end
 	local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
@@ -10916,7 +10946,8 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 	SuperBigMap.OptimizationTrace.Before("lazy capsule object publication", surface, {
 		capsules = #capsules,
 	})
-	local created, publish_reason = Lazy.PublishSurfaceCapsules(surface, descriptor)
+	local created, publish_reason = Lazy.PublishSurfaceCapsules(
+		surface, descriptor, single_flush_transaction)
 	report.fresh_grid_publication_ms = math.max(0, Lazy.Now() - publication_started)
 	if created then
 		SuperBigMap.OptimizationTrace.After("lazy capsule object publication", surface, {
@@ -11010,9 +11041,10 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 	return true
 end
 
-function Lazy.PrepareImplementationCapsulesSafe(surface, after_canonical_grid)
+function Lazy.PrepareImplementationCapsulesSafe(surface, after_canonical_grid, single_flush_transaction)
 	local call_ok, used, reason, retry = pcall(
-		Lazy.PrepareImplementationCapsules, surface, after_canonical_grid)
+		Lazy.PrepareImplementationCapsules, surface, after_canonical_grid,
+		single_flush_transaction)
 	if call_ok then return used == true, reason, retry == true end
 	return Lazy.MarkBlocked(surface, "pre-final capsule publication raised: " .. tostring(used))
 end
@@ -11097,14 +11129,20 @@ function Lazy.PrepareImplementationCapsulesAroundRebuild(surface, rebuild, reaso
 		report.surface_single_flush_buildable_calls = 0
 		report.surface_single_flush_height_snapshots = 0
 		report.surface_single_flush_height_mismatches = -1
+		report.surface_single_flush_height_mismatches_outside_publication = -1
+		report.surface_single_flush_height_changes_certified = false
+		report.surface_single_flush_publication_flatten_calls = 0
+		report.surface_single_flush_publication_bbox_digest = 0
+		report.surface_single_flush_publication_bbox_exact = false
 		report.surface_single_flush_object_family_count = 0
 		report.surface_single_flush_object_association_failures = -1
 		report.surface_single_flush_dirty_digest = 0
 		report.surface_single_flush_dirty_regions = 0
 		report.surface_single_flush_coverage_permille = 0
 		report.surface_single_flush_closing_complete = false
-		report.surface_single_flush_provenance_exact = false
-		report.surface_single_flush_cleanup_complete = false
+			report.surface_single_flush_provenance_exact = false
+			report.surface_single_flush_cleanup_complete = false
+			report.surface_single_flush_coalesced_grid_reused = false
 		report.fresh_grid_expected_rebuilds = single_flush_requested and 0 or 2
 		report.fresh_grid_first_rebuild_ms = 0
 		report.fresh_grid_main_plan_ms = 0
@@ -11141,8 +11179,10 @@ function Lazy.PrepareImplementationCapsulesAroundRebuild(surface, rebuild, reaso
 					tonumber(local_report and local_report.dirty_digest) or 0
 				report.surface_single_flush_dirty_regions =
 					tonumber(local_report and local_report.regions) or 0
-				report.surface_single_flush_coverage_permille =
-					tonumber(local_report and local_report.coverage_permille) or 0
+					report.surface_single_flush_coverage_permille =
+						tonumber(local_report and local_report.coverage_permille) or 0
+					report.surface_single_flush_coalesced_grid_reused =
+						local_report and local_report.coalesced_grid_reused == true or false
 				SuperBigMap.OptimizationTrace.After(
 					"surface single-flush preplan local rebuild", surface, local_report)
 			else
@@ -11178,7 +11218,8 @@ function Lazy.PrepareImplementationCapsulesAroundRebuild(surface, rebuild, reaso
 		end
 
 		local plan_started = Lazy.Now()
-		local capsule_ok, capsule_err = Lazy.PrepareImplementationCapsulesSafe(surface, true)
+		local capsule_ok, capsule_err = Lazy.PrepareImplementationCapsulesSafe(
+			surface, true, single_flush_transaction)
 		report.fresh_grid_plan_replay_publication_ms = math.max(0, Lazy.Now() - plan_started)
 		if capsule_ok ~= true then
 			if single_flush_transaction then
@@ -11218,6 +11259,17 @@ function Lazy.PrepareImplementationCapsulesAroundRebuild(surface, rebuild, reaso
 					tonumber(local_report and local_report.height_snapshots) or 0
 				report.surface_single_flush_height_mismatches =
 					tonumber(local_report and local_report.height_mismatches) or -1
+				report.surface_single_flush_height_mismatches_outside_publication =
+					tonumber(local_report
+						and local_report.height_mismatches_outside_publication) or -1
+				report.surface_single_flush_height_changes_certified =
+					local_report and local_report.height_changes_certified == true or false
+				report.surface_single_flush_publication_flatten_calls =
+					tonumber(local_report and local_report.publication_flatten_calls) or 0
+				report.surface_single_flush_publication_bbox_digest =
+					tonumber(local_report and local_report.publication_bbox_digest) or 0
+				report.surface_single_flush_publication_bbox_exact =
+					local_report and local_report.publication_bbox_exact == true or false
 				report.surface_single_flush_object_family_count =
 					tonumber(local_report and local_report.object_family_count) or 0
 				report.surface_single_flush_object_association_failures =
@@ -11264,10 +11316,19 @@ function Lazy.PrepareImplementationCapsulesAroundRebuild(surface, rebuild, reaso
 				and report.surface_single_flush_fallback ~= true
 				and rebuild_count == 0 and fallback_count == 0
 				and report.surface_single_flush_provenance_exact == true
-				and report.surface_single_flush_local_passability_calls == 4
-				and report.surface_single_flush_buildable_calls == 2
+					and (report.surface_single_flush_coalesced_grid_reused == true
+						and report.surface_single_flush_local_passability_calls == 2
+						and report.surface_single_flush_buildable_calls == 1
+						or report.surface_single_flush_coalesced_grid_reused ~= true
+							and report.surface_single_flush_local_passability_calls == 4
+							and report.surface_single_flush_buildable_calls == 2)
 				and report.surface_single_flush_height_snapshots == 2
-				and report.surface_single_flush_height_mismatches == 0
+				and report.surface_single_flush_height_mismatches >= 0
+				and report.surface_single_flush_height_mismatches_outside_publication == 0
+				and report.surface_single_flush_height_changes_certified == true
+				and report.surface_single_flush_publication_flatten_calls == 2
+				and report.surface_single_flush_publication_bbox_digest > 0
+				and report.surface_single_flush_publication_bbox_exact == true
 				and report.surface_single_flush_object_family_count == 6
 				and report.surface_single_flush_object_association_failures == 0
 				and report.surface_single_flush_dirty_digest
@@ -11297,9 +11358,19 @@ function Lazy.PrepareImplementationCapsulesAroundRebuild(surface, rebuild, reaso
 			rebuilds = rebuild_count, rebuild_fallbacks = fallback_count,
 			single_flush = tostring(report.surface_single_flush_used == true),
 			single_flush_fallback = tostring(report.surface_single_flush_fallback == true),
-			local_passability_calls = report.surface_single_flush_local_passability_calls,
-			local_buildable_calls = report.surface_single_flush_buildable_calls,
+				local_passability_calls = report.surface_single_flush_local_passability_calls,
+				local_buildable_calls = report.surface_single_flush_buildable_calls,
+				coalesced_grid_reused = tostring(
+					report.surface_single_flush_coalesced_grid_reused == true),
 			height_mismatches = report.surface_single_flush_height_mismatches,
+			height_mismatches_outside_publication =
+				report.surface_single_flush_height_mismatches_outside_publication,
+			height_changes_certified = tostring(
+				report.surface_single_flush_height_changes_certified == true),
+			publication_flatten_calls = report.surface_single_flush_publication_flatten_calls,
+			publication_bbox_digest = report.surface_single_flush_publication_bbox_digest,
+			publication_bbox_exact = tostring(
+				report.surface_single_flush_publication_bbox_exact == true),
 			object_association_failures =
 				report.surface_single_flush_object_association_failures,
 			dirty_digest = report.surface_single_flush_dirty_digest,
@@ -11412,10 +11483,19 @@ function Lazy.ValidatePublishedCapsuleCertificate(surface, descriptor, report)
 		and report.surface_single_flush_used == true
 		and report.surface_single_flush_fallback ~= true
 		and report.surface_single_flush_provenance_exact == true
-		and tonumber(report.surface_single_flush_local_passability_calls) == 4
-		and tonumber(report.surface_single_flush_buildable_calls) == 2
+		and (report.surface_single_flush_coalesced_grid_reused == true
+			and tonumber(report.surface_single_flush_local_passability_calls) == 2
+			and tonumber(report.surface_single_flush_buildable_calls) == 1
+			or report.surface_single_flush_coalesced_grid_reused ~= true
+				and tonumber(report.surface_single_flush_local_passability_calls) == 4
+				and tonumber(report.surface_single_flush_buildable_calls) == 2)
 		and tonumber(report.surface_single_flush_height_snapshots) == 2
-		and tonumber(report.surface_single_flush_height_mismatches) == 0
+		and (tonumber(report.surface_single_flush_height_mismatches) or -1) >= 0
+		and tonumber(report.surface_single_flush_height_mismatches_outside_publication) == 0
+		and report.surface_single_flush_height_changes_certified == true
+		and tonumber(report.surface_single_flush_publication_flatten_calls) == 2
+		and (tonumber(report.surface_single_flush_publication_bbox_digest) or 0) > 0
+		and report.surface_single_flush_publication_bbox_exact == true
 		and tonumber(report.surface_single_flush_object_family_count) == 6
 		and tonumber(report.surface_single_flush_object_association_failures) == 0
 		and tonumber(report.surface_single_flush_dirty_digest)
@@ -15032,15 +15112,11 @@ local function PatchRandomMapGenerator()
 
 			local backing_environment = (type(mapdata) == "table" and mapdata.Environment)
 				or (type(template) == "table" and template.Environment)
-			if backing_environment ~= "Underground" then
-				error("expanded surface generation requires the exact temporary vanilla backing transaction: "
-					.. tostring(migrated_results))
-			end
-
-			-- Underground generation cannot use the temporary surface migration transaction:
-			-- it must create and pair passage anchors against the live expanded surface. Present
-			-- the expanded underground backing through an exact source-sized generator view, run
-			-- vanilla once, then restore the real expanded dimensions before deferred stretching.
+			-- The in-place architecture is shared by an explicitly staged Surface candidate and the
+			-- established Underground path.  Present the expanded backing through an exact
+			-- source-sized generator view, run vanilla once, then restore the real expanded dimensions
+			-- before stretching.  Surface release configuration keeps the temporary-backing path until
+			-- this candidate proves complete object/terrain/enrichment equivalence.
 			-- Cap to the per-map generator markers if present, else the max.
 			local gen_width_tiles = (type(map.SuperBigMapGeneratorWidthTiles) == "number" and map.SuperBigMapGeneratorWidthTiles > 0)
 				and map.SuperBigMapGeneratorWidthTiles or max_random_tiles
@@ -15579,7 +15655,61 @@ local function PatchRandomMapGenerator()
 					State.sbm_entrance_pads = nil
 				end
 			end
-			CaptureGeneratedNativeEnrichments(map, "DoGenerate expanded source complete")
+			local captured_native = CaptureGeneratedNativeEnrichments(
+				map, "DoGenerate expanded source complete")
+			if backing_environment == "Surface" then
+				-- The temporary-backing architecture performed these captures on its native map just
+				-- before migration. In-place generation has the same native buildable field and live
+				-- marker coordinates at this boundary; capture and stage the answers on the same map
+				-- before the expanded terrain/object transform begins.
+				SuperBigMap.CaptureNativeSurfacePassageBuildable(map, map)
+				local sectors = SuperBigMap.SectorExploration
+				if not sectors
+					or type(sectors.CaptureVanillaStartSelection) ~= "function"
+					or type(sectors.StageVanillaStartSelection) ~= "function" then
+					error("in-place native start-sector annotation API unavailable")
+				end
+				local start_token = LoadingBegin(
+					"capture and stage in-place vanilla initial sector", map, {
+						native_enrichments = captured_native,
+					})
+				local capture_ok, selection, selection_error = pcall(
+					sectors.CaptureVanillaStartSelection, map)
+				local stage_ok, staged, stage_error = false, false, nil
+				if capture_ok and selection then
+					stage_ok, staged, stage_error = pcall(
+						sectors.StageVanillaStartSelection, map, selection,
+						"in-place vanilla source generation complete")
+				end
+				local annotation_ok = capture_ok and selection ~= nil
+					and stage_ok and staged == true
+				LoadingEnd(start_token, {
+					capture_error = capture_ok and tostring(selection_error or "")
+						or tostring(selection),
+					stage_error = stage_ok and tostring(stage_error or "") or tostring(staged),
+					winner_count = type(selection) == "table"
+						and type(selection.winners) == "table" and #selection.winners or 0,
+					staged_spawns = type(selection) == "table"
+						and type(selection.staged) == "table" and #selection.staged or 0,
+				}, annotation_ok)
+				if not annotation_ok then
+					error("in-place native start-sector annotation failed: "
+						.. tostring(capture_ok and (stage_error or staged or selection_error)
+							or selection))
+				end
+				-- This is the sole release certificate consumed by
+				-- ReleaseRetainedNativeSourceMap. Never stamp it on a partial transaction.
+				map.SuperBigMapSurfaceSourceGeneratedInPlaceVersion = 1
+				map.SuperBigMapRetainedNativeSourceUnloadFailed = nil
+				LoadingStep("in-place vanilla surface source certified", {
+					native_enrichments = captured_native,
+					passage_buildable_retained = tostring(
+						type(map.SuperBigMapPendingNativeSurfacePassageBuildable) == "table"),
+					start_annotation_pending = tostring(
+						sectors.HasPendingVanillaStartSelection
+							and sectors.HasPendingVanillaStartSelection(map) == true),
+				}, map)
+			end
 			return Unpack(results, 2)
 		end
 		generator_class.DoGenerate = do_generate_wrapper
@@ -15763,14 +15893,15 @@ function SuperBigMap.GenerationGrids.RebuildOuterResourceRing(map, ring_sectors,
 		report.error = "outer resource ring dependency margin covers the map"
 		return false, report
 	end
-	-- Full-width top/bottom and full-height left/right strips deliberately overlap only at
-	-- the corners. That keeps each passability call independent at its long edges while still
-	-- visiting about 40 percent of a 20x20 map instead of all of it.
+	-- Partition the exact ring union into four disjoint rectangles. Top and bottom own the corners;
+	-- left and right cover only the intervening span. The two-pass-tile dependency halo is already
+	-- included in inner_x/inner_y/far_x/far_y, so no cell formerly covered by the overlapping strips
+	-- is omitted. This avoids recalculating all four corner squares twice.
 	local regions = {
 		box_ctor(0, 0, map_w, inner_y),
 		box_ctor(0, far_y, map_w, map_h),
-		box_ctor(0, 0, inner_x, map_h),
-		box_ctor(far_x, 0, map_w, map_h),
+		box_ctor(0, inner_y, inner_x, far_y),
+		box_ctor(far_x, inner_y, map_w, far_y),
 	}
 	local total_started = GetPreciseTicks()
 	local pass_started = GetPreciseTicks()
@@ -15872,6 +16003,139 @@ end
 SuperBigMap.GenerationGrids.ReleaseSurfaceSingleFlushTransaction =
 	ReleaseSurfaceSingleFlushTransaction
 
+-- Bind the two post-plan native flattens to the process-local preplan transaction.  The stock
+-- helper returns the exact terrain-write bbox; accepting a changed height grid is safe only when
+-- both bboxes, objects, poses, shapes, wrapper identity, and the analytic shape+feather bound all
+-- agree with the two certified outer-ring dirty regions.  This replaces the incorrect v999
+-- assumption that publishing a real passage must leave every height sample unchanged.
+local function SurfaceSingleFlushBoxCoordinate(value, method_name)
+	local ok, result = pcall(function()
+		local method = value and value[method_name]
+		assert(type(method) == "function", "box coordinate method unavailable")
+		return method(value)
+	end)
+	return ok and type(result) == "number" and result or nil
+end
+
+local function SurfaceSingleFlushShapeCertificate(shape)
+	if type(shape) ~= "table" or #shape == 0 then return nil end
+	local hex_to_world = Global("HexToWorld")
+	if type(hex_to_world) ~= "function" then return nil end
+	local origin_ok, origin_x, origin_y = pcall(hex_to_world, 0, 0)
+	if not origin_ok or type(origin_x) ~= "number" or type(origin_y) ~= "number" then
+		return nil
+	end
+	local modulus, digest, maximum_distance2 = 2147483647, #shape, 0
+	for index, offset in ipairs(shape) do
+		local dq, dr = PointXY(offset)
+		if type(dq) ~= "number" or type(dr) ~= "number"
+			or dq ~= math.floor(dq) or dr ~= math.floor(dr) then return nil end
+		local world_ok, world_x, world_y = pcall(hex_to_world, dq, dr)
+		if not world_ok or type(world_x) ~= "number" or type(world_y) ~= "number" then
+			return nil
+		end
+		local dx, dy = world_x - origin_x, world_y - origin_y
+		maximum_distance2 = math.max(maximum_distance2, dx * dx + dy * dy)
+		digest = (digest * 48271 + math.abs(dq) * 17
+			+ math.abs(dr) * 31 + (dq < 0 and 1 or 0) + (dr < 0 and 2 or 0) + index) % modulus
+	end
+	if digest == 0 then digest = 1 end
+	return { digest = digest, maximum_distance = math.sqrt(maximum_distance2), count = #shape }
+end
+
+local function RecordSurfaceSingleFlushPublication(
+	transaction, map, index, passage, shape, flatten_bbox)
+	if type(transaction) ~= "table" or surface_single_flush_transactions[transaction] ~= map
+		or transaction.map ~= map or transaction.released == true then
+		return false, "surface publication transaction ownership is invalid"
+	end
+	index = tonumber(index)
+	local region = type(transaction.regions) == "table" and transaction.regions[index] or nil
+	local writes = transaction.publication_writes
+	if type(region) ~= "table" or type(writes) ~= "table" or index ~= #writes + 1
+		or index < 1 or index > 2 then
+		return false, "surface publication write order/region is invalid"
+	end
+	local state = SuperBigMap.State
+	if type(state) ~= "table" or type(state.original_flatten_in_build_shape) ~= "function"
+		or state.flatten_in_build_shape_version ~= 3
+		or state.flatten_in_build_shape_token == nil
+		or Global("FlattenTerrainInBuildShape") ~= state.flatten_in_build_shape_wrapper then
+		return false, "surface publication flatten wrapper identity is invalid"
+	end
+	local get_map = passage and passage.GetMap
+	local object_map = type(get_map) == "function" and SafeCall(get_map, passage) or nil
+	local position = passage and type(passage.GetPos) == "function"
+		and SafeCall(passage.GetPos, passage) or nil
+	local x, y = PointXY(position)
+	local angle = passage and type(passage.GetAngle) == "function"
+		and SafeCall(passage.GetAngle, passage) or nil
+	if object_map ~= map or x ~= region.x or y ~= region.y or angle ~= region.angle then
+		return false, "surface publication passage pose/map is outside its certificate"
+	end
+	local actual_shape = SurfaceSingleFlushShapeCertificate(shape)
+	local get_shape = Global("GetExtendedSpawnShape")
+	local reference_ok, reference_shape = false, nil
+	if type(get_shape) == "function" then
+		reference_ok, reference_shape = pcall(get_shape, "Elevator")
+	end
+	local reference = SurfaceSingleFlushShapeCertificate(reference_shape)
+	if not actual_shape or not reference or actual_shape.count ~= reference.count
+		or actual_shape.digest ~= reference.digest then
+		return false, "surface publication Elevator shape identity is invalid"
+	end
+	-- The digest is telemetry, not authority.  Prove the ordered axial-offset corpus directly so
+	-- no modular collision or reordering can stand in for the stock Elevator shape.
+	for offset_index = 1, #shape do
+		local actual_q, actual_r = PointXY(shape[offset_index])
+		local reference_q, reference_r = PointXY(reference_shape[offset_index])
+		if actual_q ~= reference_q or actual_r ~= reference_r then
+			return false, "surface publication Elevator shape offsets differ"
+		end
+	end
+	local flat_inner, flat_outer = tonumber(Global("g_NCF_FlatInner")),
+		tonumber(Global("g_NCF_FlatOuter"))
+	local const_tbl = Global("const")
+	local height_tile = type(const_tbl) == "table" and tonumber(const_tbl.HeightTileSize) or nil
+	if not flat_inner or not flat_outer or flat_inner < 0 or flat_outer < flat_inner
+		or not height_tile or height_tile <= 0 then
+		return false, "surface publication native flatten radii are invalid"
+	end
+	-- Native FlattenTerrainInShape unions a circle with FlatOuter around every shape hex.  Two
+	-- height cells cover its raster edge convention, yielding a conservative analytic enclosure.
+	local analytic_radius = math.ceil(actual_shape.maximum_distance + flat_outer + 2 * height_tile)
+	if analytic_radius <= 0 or analytic_radius > region.radius then
+		return false, "surface publication analytic flatten bound exceeds dirty provenance"
+	end
+	local min_x = SurfaceSingleFlushBoxCoordinate(flatten_bbox, "minx")
+	local min_y = SurfaceSingleFlushBoxCoordinate(flatten_bbox, "miny")
+	local max_x = SurfaceSingleFlushBoxCoordinate(flatten_bbox, "maxx")
+	local max_y = SurfaceSingleFlushBoxCoordinate(flatten_bbox, "maxy")
+	if not min_x or not min_y or not max_x or not max_y or min_x > max_x or min_y > max_y
+		or min_x > x or min_y > y or max_x < x or max_y < y
+		or min_x < x - analytic_radius or min_y < y - analytic_radius
+		or max_x > x + analytic_radius or max_y > y + analytic_radius then
+		return false, "surface publication native write bbox escaped its analytic enclosure"
+	end
+	local modulus = 2147483647
+	local digest = tonumber(transaction.publication_bbox_digest) or tonumber(transaction.dirty_digest) or 1
+	for _, value in ipairs({ index, x, y, angle, actual_shape.digest,
+		analytic_radius, min_x, min_y, max_x, max_y }) do
+		digest = (digest * 48271 + math.abs(math.floor(value)) + 1) % modulus
+	end
+	if digest == 0 then digest = 1 end
+	transaction.publication_bbox_digest = digest
+	writes[index] = {
+		index = index, x = x, y = y, angle = angle, shape_digest = actual_shape.digest,
+		analytic_radius = analytic_radius, min_x = min_x, min_y = min_y,
+		max_x = max_x, max_y = max_y,
+	}
+	return true, nil
+end
+
+SuperBigMap.GenerationGrids.RecordSurfaceSingleFlushPublication =
+	RecordSurfaceSingleFlushPublication
+
 function SuperBigMap.GenerationGrids.RebuildSurfaceSingleFlush(map, phase, transaction)
 	phase = tostring(phase or "")
 	local previous = map and map.SuperBigMapSurfaceSingleFlushReport
@@ -15882,11 +16146,18 @@ function SuperBigMap.GenerationGrids.RebuildSurfaceSingleFlush(map, phase, trans
 		phase = phase,
 		provenance_exact = false,
 		regions = 0,
-		terrain_cells = 0,
-		coverage_permille = 0,
-		dependency_margin = 0,
+			terrain_cells = 0,
+			coverage_permille = 0,
+			coalesced_grid_reused = type(previous) == "table"
+				and previous.coalesced_grid_reused == true or false,
+			dependency_margin = 0,
 		height_snapshots = 0,
 		height_mismatches = -1,
+		height_mismatches_outside_publication = -1,
+		height_changes_certified = false,
+		publication_flatten_calls = 0,
+		publication_bbox_digest = 0,
+		publication_bbox_exact = false,
 		object_family_count = 0,
 		object_association_failures = 0,
 		object_containment_failures = 0,
@@ -15993,6 +16264,7 @@ function SuperBigMap.GenerationGrids.RebuildSurfaceSingleFlush(map, phase, trans
 		local gx1, gy1 = math.ceil(x1 / height_tile), math.ceil(y1 / height_tile)
 		regions[index] = {
 			index = index, x = x, y = y, radius = radius, total_radius = total_radius,
+			angle = tonumber(pad and pad.angle),
 			x0 = x0, y0 = y0, x1 = x1, y1 = y1,
 			box = box_ctor(x0, y0, x1, y1),
 			gx0 = gx0, gy0 = gy0, gx1 = gx1, gy1 = gy1,
@@ -16027,9 +16299,21 @@ function SuperBigMap.GenerationGrids.RebuildSurfaceSingleFlush(map, phase, trans
 		if not raw or type(raw.new_instance) ~= "function" or type(raw.copyrect) ~= "function" then
 			return reject("surface height snapshot API is unavailable")
 		end
-		transaction = { map = map, regions = regions, snapshots = {}, released = false }
-		surface_single_flush_transactions[transaction] = map
-		local snapshot_ok, snapshot_error = pcall(function()
+			transaction = {
+				map = map, regions = regions, snapshots = {}, publication_writes = {},
+				publication_bbox_digest = dirty_digest, dirty_digest = dirty_digest, released = false,
+			}
+			surface_single_flush_transactions[transaction] = map
+			local ring_report = map.SuperBigMapOuterResourceRingRebuildReport
+			local coalesced_grid_exact =
+				terrain_report.coalesced_outer_ring_publication == true
+				and terrain_report.coalesced_outer_ring_grid_exact == true
+				and tonumber(terrain_report.coalesced_outer_ring_boxes) == 4
+				and tonumber(terrain_report.coalesced_outer_ring_sectors) == 2
+				and type(ring_report) == "table" and ring_report.used == true
+				and ring_report.fallback ~= true and tonumber(ring_report.boxes) == 4
+				and tonumber(ring_report.ring_sectors) == 2
+			local snapshot_ok, snapshot_error = pcall(function()
 			for index, region in ipairs(regions) do
 				local width, height = region.gx1 - region.gx0, region.gy1 - region.gy0
 				assert(width > 0 and height > 0, "empty surface height snapshot")
@@ -16040,9 +16324,15 @@ function SuperBigMap.GenerationGrids.RebuildSurfaceSingleFlush(map, phase, trans
 				snapshot:copyrect(raw,
 					box_ctor(region.gx0, region.gy0, region.gx1, region.gy1), point_fn(0, 0))
 			end
-			rebuild_regions()
-			rebuild_buildable(map)
-			report.buildable_calls = 1
+				if coalesced_grid_exact then
+					-- The just-completed outer-ring rebuild covered every changed pad cell plus the
+					-- same two-pass-tile dependency margin and rebuilt the whole BuildableGrid.
+					report.coalesced_grid_reused = true
+				else
+					rebuild_regions()
+					rebuild_buildable(map)
+					report.buildable_calls = 1
+				end
 		end)
 		if not snapshot_ok then
 			ReleaseSurfaceSingleFlushTransaction(transaction)
@@ -16058,9 +16348,15 @@ function SuperBigMap.GenerationGrids.RebuildSurfaceSingleFlush(map, phase, trans
 	if type(transaction) ~= "table" or transaction.map ~= map
 		or transaction.released == true
 		or surface_single_flush_transactions[transaction] ~= map
-		or type(transaction.snapshots) ~= "table" or #transaction.snapshots ~= 2 then
+		or type(transaction.snapshots) ~= "table" or #transaction.snapshots ~= 2
+		or type(transaction.publication_writes) ~= "table"
+		or #transaction.publication_writes ~= 2
+		or (tonumber(transaction.publication_bbox_digest) or 0) <= 0 then
 		return reject("surface closing transaction ownership is invalid")
 	end
+	report.publication_flatten_calls = #transaction.publication_writes
+	report.publication_bbox_digest = transaction.publication_bbox_digest
+	report.publication_bbox_exact = true
 	local descriptor = map.SuperBigMapLazyUndergroundDescriptor
 	local lazy = SuperBigMap.LazyUndergroundFeasibility
 	local objects, object_reason = type(lazy) == "table"
@@ -16140,10 +16436,10 @@ function SuperBigMap.GenerationGrids.RebuildSurfaceSingleFlush(map, phase, trans
 		ReleaseSurfaceSingleFlushTransaction(transaction)
 		return reject("surface capsule object escaped its certified dirty region")
 	end
-	local compare_ok, mismatch_or_error = pcall(function()
+	local compare_ok, mismatch_or_error, outside_or_error = pcall(function()
 		local raw = terrain_api.GetHeightGrid(map)
 		assert(raw and type(raw.new_instance) == "function", "live height grid unavailable")
-		local mismatches = 0
+		local mismatches, outside_mismatches = 0, 0
 		for index, region in ipairs(regions) do
 			local width, height = region.gx1 - region.gx0, region.gy1 - region.gy0
 			local current = raw:new_instance(width, height)
@@ -16177,6 +16473,25 @@ function SuperBigMap.GenerationGrids.RebuildSurfaceSingleFlush(map, phase, trans
 				local count = grid_count(difference, 1, 2147483647)
 				assert(type(count) == "number", "height comparison count failed")
 				mismatches = mismatches + count
+				local write = transaction.publication_writes[index]
+				assert(type(write) == "table" and type(difference.set) == "function",
+					"publication write/mask API unavailable")
+				-- Convert the native world bbox to the exact half-open height-sample rectangle.
+				-- One inclusive endpoint cell is retained because a write at maxx/maxy is observable.
+				local mask_gx0 = math.max(region.gx0, math.floor(write.min_x / height_tile))
+				local mask_gy0 = math.max(region.gy0, math.floor(write.min_y / height_tile))
+				local mask_gx1 = math.min(region.gx1, math.floor(write.max_x / height_tile) + 1)
+				local mask_gy1 = math.min(region.gy1, math.floor(write.max_y / height_tile) + 1)
+				assert(mask_gx0 < mask_gx1 and mask_gy0 < mask_gy1,
+					"publication write bbox has no height samples")
+				for gy = mask_gy0, mask_gy1 - 1 do
+					for gx = mask_gx0, mask_gx1 - 1 do
+						difference:set(gx - region.gx0, gy - region.gy0, 0)
+					end
+				end
+				local outside = grid_count(difference, 1, 2147483647)
+				assert(type(outside) == "number", "outside-bbox height count failed")
+				outside_mismatches = outside_mismatches + outside
 			end)
 			for owned_index = #owned, 1, -1 do
 				local value = owned[owned_index]
@@ -16184,16 +16499,24 @@ function SuperBigMap.GenerationGrids.RebuildSurfaceSingleFlush(map, phase, trans
 			end
 			if not ok_compare then error(compare_error, 0) end
 		end
-		return mismatches
+		return mismatches, outside_mismatches
 	end)
-	if not compare_ok or mismatch_or_error ~= 0 then
+	if not compare_ok then
 		report.height_mismatches = compare_ok and mismatch_or_error or -1
+		report.height_mismatches_outside_publication = -1
 		ReleaseSurfaceSingleFlushTransaction(transaction)
-		return reject(compare_ok and "surface capsule publication changed certified height"
-			or "surface height comparison failed: " .. tostring(mismatch_or_error))
+		return reject("surface height comparison failed: " .. tostring(mismatch_or_error))
 	end
 	report.height_snapshots = #transaction.snapshots
-	report.height_mismatches = 0
+	report.height_mismatches = mismatch_or_error
+	report.height_mismatches_outside_publication = outside_or_error
+	if outside_or_error ~= 0 then
+		ReleaseSurfaceSingleFlushTransaction(transaction)
+		return reject("surface height changed outside certified publication bboxes")
+	end
+	report.height_changes_certified = report.publication_bbox_exact == true
+		and report.publication_flatten_calls == 2
+		and report.height_mismatches_outside_publication == 0
 	local rebuild_ok, rebuild_error = pcall(function()
 		rebuild_regions()
 		-- Publication calls PlaceBuildingIn/FlattenTerrainInBuildShape/ClearObstructions.
@@ -16417,10 +16740,16 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 			-- passability before the stretch's authoritative final revalidation.
 			local pass_batch_reason = "SuperBigMapSurfaceStretch"
 			local pass_batch_active = false
-			if type(map.SuspendPassEdits) == "function" and type(map.ResumePassEdits) == "function" then
+			local function SuspendCombinedPassEdits()
+				if pass_batch_active then return true end
+				if type(map.SuspendPassEdits) ~= "function" or type(map.ResumePassEdits) ~= "function" then
+					return false, "pass-edit batching unavailable"
+				end
 				local suspend_ok, suspend_result = pcall(map.SuspendPassEdits, map, pass_batch_reason)
 				pass_batch_active = suspend_ok and suspend_result ~= false
+				return pass_batch_active, suspend_ok and suspend_result or suspend_result
 			end
+			SuspendCombinedPassEdits()
 			local function ResumeCombinedPassEdits(source, ignore_errors)
 				if not pass_batch_active then return true end
 				local resume_ok, resume_err = pcall(
@@ -16457,6 +16786,31 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 							})
 					else
 						ok_stretch, n_grids = true, 0
+					end
+				end
+				-- Bounded Ralph diagnostic: split the single combined pass-edit flush without changing
+				-- the release path.  The first flush publishes only the complete terrain replacement;
+				-- a fresh suspension then captures the unchanged decoration/marker transforms.  The
+				-- staged harness is the sole owner of the process-local global, and final output is still
+				-- rebuilt after both edit families.  This distinguishes the mandatory whole-map rebuild
+				-- cost from queued cosmetic-object processing before attempting a queue fast path.
+				if rawget(_G, "g_SmrRalphSplitSurfacePassEdits") == true then
+					local split_token = LoadingBegin(
+						"surface diagnostic terrain-only resume pass edits", map)
+					local split_ok, split_error = ResumeCombinedPassEdits(
+						"diagnostic after terrain replacement")
+					LoadingEnd(split_token, {
+						diagnostic_split = true,
+						authoritative_passability_rebuild = true,
+					}, split_ok == true)
+					if not split_ok then
+						error("surface diagnostic terrain-only ResumePassEdits failed: "
+							.. tostring(split_error))
+					end
+					local resuspend_ok, resuspend_error = SuspendCombinedPassEdits()
+					if not resuspend_ok then
+						error("surface diagnostic object-only SuspendPassEdits failed: "
+							.. tostring(resuspend_error))
 					end
 				end
 				-- The source map's enrichment OBJECTS were deliberately not transferred: their owning map
@@ -16660,6 +17014,68 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 							TimedSafeCall("surface top-up resources", map,
 								deposits.TopUpDeposits, map)
 						end
+						local coalesce_outer_ring_publication =
+							cfg_bool("OPTIMIZE_SURFACE_COALESCED_OUTER_RING_PUBLICATION", true)
+							and cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION", false)
+							and cfg_bool("LAZY_UNDERGROUND_OUTER_PASSAGE_PADS", true)
+						local coalesced_passage_report
+						local coalesced_resource_changed, coalesced_resource_stats
+						local coalesced_resource_prepare_ms = 0
+						local coalesced_early_grid_published = false
+						local coalesced_early_rebuild_ms = 0
+						if coalesce_outer_ring_publication then
+							if type(TerrainCopy.PrepareOuterResourceTerrain) ~= "function" then
+								error("deferred-publication outer resource terrain preparation is unavailable")
+							end
+							-- Publish the mountain-cluster pad plan before anomaly/effect selection so those
+							-- families consume the same capacity constraints as the accepted ordering. Only
+							-- gameplay-grid publication is deferred; the height field is already authoritative.
+							local started = GetPreciseTicks()
+							coalesced_resource_changed, coalesced_resource_stats = TimedSafeCall(
+								"surface prepare deferred-publication outer resource terrain", map,
+								TerrainCopy.PrepareOuterResourceTerrain, map)
+							coalesced_resource_prepare_ms = GetPreciseTicks() - started
+							if type(coalesced_resource_stats) ~= "table"
+								or tostring(coalesced_resource_stats.error or "") ~= "" then
+								error("deferred-publication outer resource terrain preparation failed: "
+									.. tostring(coalesced_resource_stats
+										and coalesced_resource_stats.error or "missing report"))
+							end
+							-- Match the accepted handoff: candidates validated before terrain shaping must not
+							-- leak into the anomaly/effect families. Their fresh sampler observes the edited
+							-- height field and the still-authoritative prepublication gameplay grids.
+							if type(deposits.ClearTopUpPlacementPool) == "function" then
+								deposits.ClearTopUpPlacementPool(map)
+							end
+							-- Reserve passage terrain now, while only the already-final resource population can
+							-- constrain it. The anomaly/effect trackers below seed these two primitives as hard
+							-- spacing obstacles, so their later placements cannot invalidate the reservation.
+							local passage_changed
+							passage_changed, coalesced_passage_report = TimedSafeCall(
+								"surface prepare early coalesced outer passage terrain", map,
+								TerrainCopy.PrepareOuterPassageTerrain, map)
+							if passage_changed ~= true or type(coalesced_passage_report) ~= "table"
+								or coalesced_passage_report.passage_pads_used ~= true
+								or tonumber(coalesced_passage_report.passage_pads) ~= 2
+								or tostring(coalesced_passage_report.error or "") ~= "" then
+								error("early coalesced outer passage terrain preparation failed")
+							end
+							local rebuild_started = GetPreciseTicks()
+							SuperBigMap.GenerationGrids.RebuildOuterResourceRingOrFinal(map,
+								coalesced_resource_stats.ring_sectors,
+								"after early coalesced outer resource and passage terrain preparation")
+							coalesced_early_rebuild_ms = GetPreciseTicks() - rebuild_started
+							local ring_report = map.SuperBigMapOuterResourceRingRebuildReport
+							coalesced_early_grid_published = type(ring_report) == "table"
+								and ring_report.used == true and ring_report.fallback ~= true
+								and tonumber(ring_report.boxes) == 4
+								and tonumber(ring_report.ring_sectors)
+									== tonumber(coalesced_resource_stats.ring_sectors)
+							if not coalesced_early_grid_published then
+								error("early coalesced outer-ring grid publication certificate failed")
+							end
+						end
+						if not coalesce_outer_ring_publication then
 						-- Resource coordinates are final now.  Prepare only failed extractor/collection
 						-- footprints and the planned mountain-cluster rocket pads, then ask the
 						-- stock engine for the authoritative passability/buildability verdict before any
@@ -16825,8 +17241,9 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								.. " first_resource_failure=" .. tostring(resource_terrain_audit
 									and resource_terrain_audit.first_resource_failure)
 								.. " first_rocket_failure=" .. tostring(resource_terrain_audit
-									and resource_terrain_audit.first_rocket_failure))
+										and resource_terrain_audit.first_rocket_failure))
 						end
+						end -- legacy resource-first terrain publication
 						-- TopUpAnomalies: post-gen replacement for the in-generation anomaly count
 						-- scaling (which shifted the generator's random stream and made expanded
 						-- layouts diverge from vanilla).
@@ -16845,6 +17262,104 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						if type(deposits.ResolveBadgeMarkerOverlaps) == "function" then
 							TimedSafeCall("surface resolve marker overlaps", map,
 								deposits.ResolveBadgeMarkerOverlaps, map, "surface density suite")
+						end
+						if coalesce_outer_ring_publication then
+							-- All enrichment coordinates are now immutable. Shape their resource footprints and
+							-- the two reserved Elevator pads before publishing either edit to gameplay grids.
+							-- Both writers are hard-clipped to the same physical two-sector outer ring; the
+							-- regional rebuild includes the engine's exact two-pass-tile dependency margin.
+							if type(TerrainCopy.PrepareOuterResourceTerrain) ~= "function"
+								or type(TerrainCopy.AuditOuterResourceTerrain) ~= "function"
+								or type(TerrainCopy.PrepareOuterPassageTerrain) ~= "function" then
+								error("coalesced outer-ring terrain preparation is unavailable")
+							end
+							local resource_changed, resource_stats =
+								coalesced_resource_changed, coalesced_resource_stats
+							local resource_prepare_ms = coalesced_resource_prepare_ms
+							if type(resource_stats) ~= "table" or tostring(resource_stats.error or "") ~= "" then
+								error("coalesced outer resource terrain preparation failed: "
+									.. tostring(resource_stats and resource_stats.error or "missing report"))
+							end
+							local passage_changed = coalesced_early_grid_published == true
+							if not coalesced_early_grid_published then
+								passage_changed, coalesced_passage_report = TimedSafeCall(
+									"surface prepare coalesced outer passage terrain", map,
+									TerrainCopy.PrepareOuterPassageTerrain, map)
+							end
+							if type(coalesced_passage_report) ~= "table"
+								or tostring(coalesced_passage_report.error or "") ~= ""
+								or coalesced_passage_report.passage_pads_used ~= true
+								or tonumber(coalesced_passage_report.passage_pads) ~= 2 then
+								error("coalesced outer passage terrain preparation failed: "
+									.. tostring(coalesced_passage_report
+										and (coalesced_passage_report.error
+											or coalesced_passage_report.passage_pad_error)
+										or "missing report"))
+							end
+							local resource_rebuild_ms = coalesced_early_rebuild_ms
+							if not coalesced_early_grid_published then
+								local resource_rebuild_started = GetPreciseTicks()
+								SuperBigMap.GenerationGrids.RebuildOuterResourceRingOrFinal(map,
+									resource_stats.ring_sectors,
+									"after coalesced outer resource and passage terrain preparation")
+								resource_rebuild_ms = GetPreciseTicks() - resource_rebuild_started
+							end
+							local ring_report = map.SuperBigMapOuterResourceRingRebuildReport
+							local coalesced_grid_exact = (resource_changed == true or passage_changed == true)
+								and type(ring_report) == "table" and ring_report.used == true
+								and ring_report.fallback ~= true and tonumber(ring_report.boxes) == 4
+								and tonumber(ring_report.ring_sectors)
+									== tonumber(resource_stats.ring_sectors)
+							if not coalesced_grid_exact then
+								error("coalesced outer-ring grid publication certificate failed")
+							end
+							local resource_ok, resource_audit =
+								TerrainCopy.AuditOuterResourceTerrain(map)
+							local repair_attempts, repair_prepare_ms, repair_rebuild_ms = 0, 0, 0
+							while resource_ok ~= true and repair_attempts < 2 and resource_audit
+								and ((tonumber(resource_audit.resource_failures) or 0) > 0
+									or (tonumber(resource_audit.rocket_failures) or 0) > 0) do
+								repair_attempts = repair_attempts + 1
+								local started = GetPreciseTicks()
+								local repair_changed, repair_stats = TimedSafeCall(
+									"surface repair coalesced outer resource terrain", map,
+									TerrainCopy.PrepareOuterResourceTerrain, map)
+								repair_prepare_ms = repair_prepare_ms + GetPreciseTicks() - started
+								if type(repair_stats) ~= "table" or tostring(repair_stats.error or "") ~= "" then
+									error("coalesced outer resource terrain repair failed: "
+										.. tostring(repair_stats and repair_stats.error or "missing report"))
+								end
+								if repair_changed ~= true then break end
+								started = GetPreciseTicks()
+								SuperBigMap.GenerationGrids.RebuildOuterResourceRingOrFinal(map,
+									repair_stats.ring_sectors,
+									"after coalesced outer resource terrain repair "
+										.. tostring(repair_attempts))
+								repair_rebuild_ms = repair_rebuild_ms + GetPreciseTicks() - started
+								resource_ok, resource_audit = TerrainCopy.AuditOuterResourceTerrain(map)
+							end
+							local final_resource_report = map.SuperBigMapOuterResourceTerrainReport
+							if type(final_resource_report) == "table" then
+								final_resource_report.initial_prepare_ms = resource_prepare_ms
+								final_resource_report.initial_rebuild_ms = resource_rebuild_ms
+								final_resource_report.repair_attempts = repair_attempts
+								final_resource_report.repair_prepare_ms = repair_prepare_ms
+								final_resource_report.repair_rebuild_ms = repair_rebuild_ms
+								final_resource_report.coalesced_outer_ring_publication = true
+							end
+							if resource_ok ~= true then
+								error("coalesced outer resource terrain audit failed: resource_failures="
+									.. tostring(resource_audit and resource_audit.resource_failures)
+									.. " rocket_failures="
+									.. tostring(resource_audit and resource_audit.rocket_failures))
+							end
+							coalesced_passage_report.coalesced_outer_ring_publication = true
+							coalesced_passage_report.coalesced_outer_ring_grid_exact = true
+							coalesced_passage_report.coalesced_outer_ring_sectors =
+								tonumber(resource_stats.ring_sectors)
+							coalesced_passage_report.coalesced_outer_ring_boxes = 4
+							coalesced_passage_report.coalesced_outer_ring_rebuild_ms =
+								resource_rebuild_ms + repair_rebuild_ms
 						end
 						if type(deposits.AuditTopUpVanillaRepulsion) ~= "function" then
 							error("top-up spacing audit is unavailable")
@@ -17010,9 +17525,13 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 							if type(TerrainCopy.PrepareOuterPassageTerrain) ~= "function" then
 								error("outer passage terrain reservation is unavailable")
 							end
-							local _, passage_report = TimedSafeCall(
-								"surface prepare outer passage terrain", map,
-								TerrainCopy.PrepareOuterPassageTerrain, map)
+								local passage_report = coalesced_passage_report
+								if type(passage_report) ~= "table" then
+									local _
+									_, passage_report = TimedSafeCall(
+										"surface prepare outer passage terrain", map,
+										TerrainCopy.PrepareOuterPassageTerrain, map)
+								end
 							if type(passage_report) ~= "table"
 								or passage_report.passage_pads_requested ~= true
 								or passage_report.passage_pads_used ~= true
