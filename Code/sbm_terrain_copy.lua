@@ -2796,6 +2796,83 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 	local native_patch_journal_rollback_failed = false
 	local native_raster_ms, legacy_raster_ms = 0, 0
 	local journal = {}
+	-- Native apron patches are serial. Pool exact-size f32 work buffers only after the previous
+	-- patch completes; independently owned U16 journal snapshots remain untouched for rollback.
+	local native_pool = {}
+	local native_pool_values = {}
+	local native_pool_allocations, native_pool_reuses, native_pool_cells = 0, 0, 0
+	local native_pool_peak_checked_out, native_pool_checked_out = 0, 0
+
+	local function native_pool_key(width_cells, height_cells, format, bits)
+		return tostring(width_cells) .. "x" .. tostring(height_cells) .. ":"
+			.. string.lower(tostring(format)) .. ":" .. tostring(bits)
+	end
+
+	local function acquire_native_pool_grid(width_cells, height_cells, format, bits, checkouts)
+		local key = native_pool_key(width_cells, height_cells, format, bits)
+		local entries = native_pool[key]
+		if not entries then entries = {}; native_pool[key] = entries end
+		for _, entry in ipairs(entries) do
+			if not entry.in_use then
+				entry.in_use = true
+				checkouts[#checkouts + 1] = entry
+				native_pool_reuses = native_pool_reuses + 1
+				native_pool_checked_out = native_pool_checked_out + 1
+				native_pool_peak_checked_out = math.max(native_pool_peak_checked_out,
+					native_pool_checked_out)
+				return entry.value
+			end
+		end
+		local value = native_new_grid(width_cells, height_cells, format, bits)
+		assert(value, "native apron pooled grid allocation failed")
+		local entry = { value = value, in_use = true }
+		entries[#entries + 1] = entry
+		native_pool_values[#native_pool_values + 1] = entry
+		checkouts[#checkouts + 1] = entry
+		native_pool_allocations = native_pool_allocations + 1
+		native_pool_cells = native_pool_cells + width_cells * height_cells
+		native_pool_checked_out = native_pool_checked_out + 1
+		native_pool_peak_checked_out = math.max(native_pool_peak_checked_out,
+			native_pool_checked_out)
+		return value
+	end
+
+	local function acquire_native_pool_clone(source, width_cells, height_cells, local_box, checkouts)
+		local format, bits = native_is_compute(source)
+		assert(format and bits, "native apron pooled clone format unavailable")
+		local value = acquire_native_pool_grid(width_cells, height_cells, format, bits, checkouts)
+		assert(type(value.copyrect) == "function", "native apron pooled clone copy unavailable")
+		value:copyrect(source, local_box, point_fn(0, 0))
+		return value
+	end
+
+	local function release_native_pool_checkouts(checkouts)
+		for checkout_index = #checkouts, 1, -1 do
+			local entry = checkouts[checkout_index]
+			assert(entry and entry.in_use, "native apron pool checkout imbalance")
+			entry.in_use = false
+			checkouts[checkout_index] = nil
+			native_pool_checked_out = native_pool_checked_out - 1
+		end
+	end
+
+	local function free_native_pool()
+		local errors = {}
+		if native_pool_checked_out ~= 0 then
+			errors[#errors + 1] = "checked_out=" .. tostring(native_pool_checked_out)
+		end
+		for pool_index = #native_pool_values, 1, -1 do
+			local entry = native_pool_values[pool_index]
+			if entry and entry.value and type(entry.value.free) == "function" then
+				local ok_free, free_error = pcall(entry.value.free, entry.value)
+				if not ok_free then errors[#errors + 1] = tostring(free_error) end
+			end
+			if entry then entry.value, entry.in_use = nil, false end
+			native_pool_values[pool_index] = nil
+		end
+		native_pool = {}
+		return #errors == 0, table.concat(errors, " | ")
+	end
 
 	-- These cell-center bounds are the exact complement of the physical perimeter ring. Native
 	-- packing is allowed to round first; then the local U16 preimage restores this rectangle.
@@ -2846,6 +2923,7 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 
 	local function apply_native_patch(candidate, index)
 		local owned, owned_lookup = {}, {}
+		local pool_checkouts = {}
 		local source_native, journaled = nil, false
 		local function own(value)
 			if value and value ~= source_native and not owned_lookup[value] then
@@ -2877,11 +2955,12 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 			if source then source_format, source_bits = native_is_compute(source) end
 			assert(source and string.lower(tostring(source_format)) == "f" and source_bits == 32,
 				"native apron f32 source conversion failed")
-			local height_grid = own(source:clone())
+			local height_grid = acquire_native_pool_clone(source, local_width, local_height,
+				local_box, pool_checkouts)
 			assert(height_grid, "native apron height snapshot failed")
 			native_mul_div_add(height_grid, native_height_scale, 1, 0)
 
-			local plane_seed = own(native_new_grid(2, 2, "f", 32))
+			local plane_seed = acquire_native_pool_grid(2, 2, "f", 32, pool_checkouts)
 			assert(plane_seed, "native apron plane allocation failed")
 			local function scaled_plane(x, y)
 				local value = candidate.center + candidate.gx * (x - candidate.x)
@@ -2897,7 +2976,8 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 
 			local coarse_width = math.ceil((local_width - 1) / native_sample_step) + 1
 			local coarse_height = math.ceil((local_height - 1) / native_sample_step) + 1
-			local coarse = own(native_new_grid(coarse_width, coarse_height, "f", 32))
+			local coarse = acquire_native_pool_grid(coarse_width, coarse_height,
+				"f", 32, pool_checkouts)
 			assert(coarse, "native apron coarse-mask allocation failed")
 			for coarse_y = 0, coarse_height - 1 do
 				local y = y0 + coarse_y * (local_height - 1) / (coarse_height - 1)
@@ -2930,14 +3010,18 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 				end
 			end
 
-			local weight_cube = own(mask:clone())
+			local weight_cube = acquire_native_pool_clone(mask, local_width, local_height,
+				local_box, pool_checkouts)
 			native_mul_div_add(weight_cube, mask, native_weight_scale, 0)
 			native_mul_div_add(weight_cube, mask, native_weight_scale, 0)
-			local inverse_cube = own(weight_cube:clone())
+			local inverse_cube = acquire_native_pool_clone(weight_cube, local_width, local_height,
+				local_box, pool_checkouts)
 			native_mul_div_add(inverse_cube, -1, 1, native_weight_scale)
-			local result = own(height_grid:clone())
+			local result = acquire_native_pool_clone(height_grid, local_width, local_height,
+				local_box, pool_checkouts)
 			native_mul_div_add(result, inverse_cube, native_weight_scale, 0)
-			local plane_term = own(plane:clone())
+			local plane_term = acquire_native_pool_clone(plane, local_width, local_height,
+				local_box, pool_checkouts)
 			native_mul_div_add(plane_term, weight_cube, native_weight_scale, 0)
 			native_add(result, plane_term)
 			native_mul_div_add(result, 1, 1, 128)
@@ -3006,6 +3090,8 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 			local free_ok, free_error = pcall(source_native.free, source_native)
 			if not free_ok then cleanup_errors[#cleanup_errors + 1] = tostring(free_error) end
 		end
+		local checkout_ok, checkout_error = pcall(release_native_pool_checkouts, pool_checkouts)
+		if not checkout_ok then cleanup_errors[#cleanup_errors + 1] = tostring(checkout_error) end
 		if not ok then error(changed, 0) end
 		if #cleanup_errors > 0 then
 			error("native apron transient cleanup failed: "
@@ -3037,6 +3123,11 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 		local native_started_ms = now_ms()
 		local ok_native, native_error = pcall(native_apply)
 		native_raster_ms = now_ms() - native_started_ms
+		local pool_released, pool_release_error = free_native_pool()
+		if not pool_released then
+			if type(resume) == "function" then pcall(resume, "SBMMountainBaseAprons") end
+			error("native apron pool cleanup failed: " .. tostring(pool_release_error), 0)
+		end
 		if ok_native then
 			local released, release_error = release_native_patch_journal(false)
 			if not released then
@@ -3061,6 +3152,11 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 			legacy_raster_ms = now_ms() - legacy_started_ms
 		end
 	else
+		local pool_released, pool_release_error = free_native_pool()
+		if not pool_released then
+			if type(resume) == "function" then pcall(resume, "SBMMountainBaseAprons") end
+			error("native apron pool cleanup failed: " .. tostring(pool_release_error), 0)
+		end
 		if native_requested then
 			native_raster_fallback = true
 			native_raster_error = "native grid APIs unavailable"
@@ -3109,6 +3205,10 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 		native_patch_journal_used = native_patch_journal_used,
 		native_patch_journal_snapshots = native_patch_journal_snapshots,
 		native_patch_journal_rollback_failed = native_patch_journal_rollback_failed,
+		native_pool_allocations = native_pool_allocations,
+		native_pool_reuses = native_pool_reuses,
+		native_pool_cells = native_pool_cells,
+		native_pool_peak_checked_out = native_pool_peak_checked_out,
 		planning_ms = planning_finished_ms - total_started_ms,
 		native_raster_ms = native_raster_ms,
 		legacy_raster_ms = legacy_raster_ms,
@@ -7254,10 +7354,85 @@ local function AnnotateDecorRelief(map, terrain_source_map)
 	local terrain_glued = 0
 	local height_failures = 0
 	local max_abs_relief = 0
-	local relief_height_inputs = {}
-	local relief_height_batch_used = false
-	local relief_height_batch_fallback = false
-	local relief_height_batch_error
+	-- A bounded diagnostic proves the engine interpolation before any native sampler is allowed to
+	-- replace terrain.GetHeight.  It never supplies gameplay data: the scalar API result below stays
+	-- authoritative even on an exact candidate match.
+	local native_height_diag = cfg_bool("DIAGNOSTIC_DECOR_RELIEF_NATIVE_HEIGHT_SAMPLER", false)
+		and relief_enabled and relief_terrain_available
+	local native_height_grid, native_height_grid_owned
+	local native_height_diag_error = ""
+	local native_height_diag_samples = 0
+	local native_height_diag_counts = {
+		nearest = 0, bilinear_floor = 0, bilinear_round = 0,
+		triangle_nwse_floor = 0, triangle_nwse_round = 0,
+		triangle_nesw_floor = 0, triangle_nesw_round = 0,
+	}
+	local native_height_diag_max_delta = {}
+	local native_height_diag_started = 0
+	local precise_ticks = Global("GetPreciseTicks")
+	if native_height_diag and type(precise_ticks) == "function" then
+		local ok_ticks, ticks = pcall(precise_ticks)
+		if ok_ticks and type(ticks) == "number" then native_height_diag_started = ticks end
+	end
+	if native_height_diag then
+		local grid_to_compute = Global("GridToCompute")
+		local ok_grid, raw_grid = pcall(terrain_api.GetHeightGrid, relief_terrain_map)
+		if ok_grid and raw_grid and type(raw_grid.get) == "function" then
+			native_height_grid = raw_grid
+		elseif ok_grid and raw_grid and type(grid_to_compute) == "function" then
+			local ok_compute, compute = pcall(grid_to_compute, raw_grid)
+			if ok_compute and compute and type(compute.get) == "function" then
+				native_height_grid = compute
+				native_height_grid_owned = compute ~= raw_grid and compute or nil
+			else
+				native_height_diag_error = "height-grid compute conversion unavailable"
+			end
+		else
+			native_height_diag_error = "height-grid read API unavailable"
+		end
+	end
+	local function compare_native_height(pos, authoritative)
+		if not native_height_grid then return end
+		local x, y = PointXY(pos)
+		if type(x) ~= "number" or type(y) ~= "number" then return end
+		local fx, fy = x / hts, y / hts
+		local x0, y0 = math.floor(fx), math.floor(fy)
+		local tx, ty = fx - x0, fy - y0
+		local ok_values, a, b, c, d = pcall(function()
+			return native_height_grid:get(x0, y0), native_height_grid:get(x0 + 1, y0),
+				native_height_grid:get(x0, y0 + 1), native_height_grid:get(x0 + 1, y0 + 1)
+		end)
+		if not ok_values or type(a) ~= "number" or type(b) ~= "number"
+			or type(c) ~= "number" or type(d) ~= "number" then
+			native_height_diag_error = "height-grid sample failed"
+			return
+		end
+		local bilinear = a * (1 - tx) * (1 - ty) + b * tx * (1 - ty)
+			+ c * (1 - tx) * ty + d * tx * ty
+		local triangle_nwse = tx >= ty
+			and (a + (b - a) * tx + (d - b) * ty)
+			or (a + (d - c) * tx + (c - a) * ty)
+		local triangle_nesw = tx + ty <= 1
+			and (a + (b - a) * tx + (c - a) * ty)
+			or (d + (c - d) * (1 - tx) + (b - d) * (1 - ty))
+		local nearest = native_height_grid:get(math.floor(fx + 0.5), math.floor(fy + 0.5))
+		local values = {
+			nearest = nearest,
+			bilinear_floor = math.floor(bilinear), bilinear_round = math.floor(bilinear + 0.5),
+			triangle_nwse_floor = math.floor(triangle_nwse),
+			triangle_nwse_round = math.floor(triangle_nwse + 0.5),
+			triangle_nesw_floor = math.floor(triangle_nesw),
+			triangle_nesw_round = math.floor(triangle_nesw + 0.5),
+		}
+		native_height_diag_samples = native_height_diag_samples + 1
+		for name, value in pairs(values) do
+			if value == authoritative then
+				native_height_diag_counts[name] = native_height_diag_counts[name] + 1
+			end
+			local delta = math.abs(value - authoritative)
+			native_height_diag_max_delta[name] = math.max(native_height_diag_max_delta[name] or 0, delta)
+		end
+	end
 	local audit_on = UndergroundDecorationAuditEnabled(map)
 	local audit_records = audit_on and setmetatable({}, { __mode = "k" }) or nil
 	local audit_list = audit_on and {} or nil
@@ -7368,58 +7543,31 @@ local function AnnotateDecorRelief(map, terrain_source_map)
 			terrain_glued = terrain_glued + 1
 			return
 		end
-		relief_height_inputs[#relief_height_inputs + 1] = { obj = obj, pos = pos }
+		local pz
+		pcall(function() pz = pos:z() end)
+		if type(pz) ~= "number" then return end
+		local ok_h, h = pcall(terrain_api.GetHeight, relief_terrain_map, pos)
+		if not ok_h or type(h) ~= "number" then
+			height_failures = height_failures + 1
+			return
+		end
+		if native_height_diag then compare_native_height(pos, h) end
+		local dz = pz - h
+		relief[obj] = dz
+		max_abs_relief = math.max(max_abs_relief, math.abs(dz))
+		annotated = annotated + 1
 	end)
 	cave_capture.capture_ok = capture_traversal_ok == true
 	cave_capture.capture_error = capture_traversal_ok ~= true
 		and tostring(capture_traversal_err) or nil
-	-- `terrain.GetHeight` and point:z are stable read-only primitives during this phase. Paying for
-	-- two protected calls per decoration dominated the measured capture interval, even though the
-	-- enclosing traversal was already protected. Resolve the unchanged ordered input list through
-	-- one bounded protection boundary. If any engine wrapper fails or returns a non-number, discard
-	-- the partial table and replay the former item-isolated path exactly.
-	local use_height_batch = cfg_bool("OPTIMIZE_DECOR_RELIEF_HEIGHT_BATCH", true)
-		and relief_enabled and relief_terrain_available and #relief_height_inputs > 0
-	if use_height_batch then
-		local batch_ok, batch_error = pcall(function()
-			for index = 1, #relief_height_inputs do
-				local input = relief_height_inputs[index]
-				local pz = input.pos:z()
-				local h = terrain_api.GetHeight(relief_terrain_map, input.pos)
-				if type(pz) ~= "number" or type(h) ~= "number" then
-					error("non-numeric decoration relief sample at index " .. tostring(index))
-				end
-				local dz = pz - h
-				relief[input.obj] = dz
-				max_abs_relief = math.max(max_abs_relief, math.abs(dz))
-				annotated = annotated + 1
-			end
-		end)
-		relief_height_batch_used = batch_ok == true
-		if not batch_ok then
-			relief_height_batch_fallback = true
-			relief_height_batch_error = tostring(batch_error)
-			relief = setmetatable({}, { __mode = "k" })
-			annotated, height_failures, max_abs_relief = 0, 0, 0
-		end
+	local native_height_diag_ms = 0
+	if native_height_diag_started > 0 and type(precise_ticks) == "function" then
+		local ok_ticks, ticks = pcall(precise_ticks)
+		if ok_ticks and type(ticks) == "number" then native_height_diag_ms = ticks - native_height_diag_started end
 	end
-	if not relief_height_batch_used then
-		for index = 1, #relief_height_inputs do
-			local input = relief_height_inputs[index]
-			local pz
-			pcall(function() pz = input.pos:z() end)
-			if type(pz) == "number" then
-				local ok_h, h = pcall(terrain_api.GetHeight, relief_terrain_map, input.pos)
-				if ok_h and type(h) == "number" then
-					local dz = pz - h
-					relief[input.obj] = dz
-					max_abs_relief = math.max(max_abs_relief, math.abs(dz))
-					annotated = annotated + 1
-				else
-					height_failures = height_failures + 1
-				end
-			end
-		end
+	if native_height_grid_owned and type(native_height_grid_owned.free) == "function" then
+		local ok_free, free_error = pcall(native_height_grid_owned.free, native_height_grid_owned)
+		if not ok_free then native_height_diag_error = tostring(free_error) end
 	end
 	-- Native generation places a few objects (prefab markers) just BEYOND the source rect, so the
 	-- src_box traversal above never sees them and they keep no source stamp. The surface survives
@@ -7528,10 +7676,20 @@ local function AnnotateDecorRelief(map, terrain_source_map)
 		explicit_z = annotated,
 		terrain_glued = terrain_glued,
 		height_failures = height_failures,
-		height_samples = #relief_height_inputs,
-		height_batch_used = relief_height_batch_used,
-		height_batch_fallback = relief_height_batch_fallback,
-		height_batch_error = relief_height_batch_error or "",
+		native_height_diag = native_height_diag == true,
+		native_height_diag_samples = native_height_diag_samples,
+		native_height_diag_nearest = native_height_diag_counts.nearest,
+		native_height_diag_bilinear_floor = native_height_diag_counts.bilinear_floor,
+		native_height_diag_bilinear_round = native_height_diag_counts.bilinear_round,
+		native_height_diag_triangle_nwse_floor = native_height_diag_counts.triangle_nwse_floor,
+		native_height_diag_triangle_nwse_round = native_height_diag_counts.triangle_nwse_round,
+		native_height_diag_triangle_nesw_floor = native_height_diag_counts.triangle_nesw_floor,
+		native_height_diag_triangle_nesw_round = native_height_diag_counts.triangle_nesw_round,
+		native_height_diag_bilinear_round_max_delta = native_height_diag_max_delta.bilinear_round or 0,
+		native_height_diag_triangle_nwse_round_max_delta = native_height_diag_max_delta.triangle_nwse_round or 0,
+		native_height_diag_triangle_nesw_round_max_delta = native_height_diag_max_delta.triangle_nesw_round or 0,
+		native_height_diag_ms = native_height_diag_ms,
+		native_height_diag_error = native_height_diag_error,
 		max_abs_relief = max_abs_relief,
 		out_of_box_stamped = out_of_box_stamped,
 		out_of_box_despawned = out_of_box_despawned,
