@@ -2809,6 +2809,25 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 	local inner_x1 = apron_ceil((count_x - ring_sectors) * sector_w - 0.5) - 1
 	local inner_y1 = apron_ceil((count_y - ring_sectors) * sector_h - 0.5) - 1
 
+	local function apron_weight(candidate, short_radius, long_radius, dx, dy)
+		local u = dx * candidate.mountain_x + dy * candidate.mountain_y
+		local v = -dx * candidate.mountain_y + dy * candidate.mountain_x
+		local ru, rv = u / short_radius, v / long_radius
+		local radius = apron_sqrt(ru * ru + rv * rv)
+		if radius >= 1.12 then return 0, false end
+		local nx, ny = 1, 0
+		if radius > 0.0001 then nx, ny = ru / radius, rv / radius end
+		local lobe3 = nx * nx * nx - 3 * nx * ny * ny
+		local lobe2 = nx * nx - ny * ny
+		local boundary = 1 + 0.055 * lobe3 + 0.035 * lobe2
+		local normalized = radius / boundary
+		if normalized >= 1 then return 0, false end
+		if normalized <= core_fraction then return 1, true end
+		local t = (normalized - core_fraction) / (1 - core_fraction)
+		local smooth = t * t * t * (t * (t * 6 - 15) + 10)
+		return 1 - smooth, false
+	end
+
 	-- Always attempt every copy and every free. Reverse replay is required before legacy fallback;
 	-- a failed replay is fatal because the scalar path must never start from a partially edited grid.
 	local function release_native_patch_journal(restore)
@@ -2842,39 +2861,14 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 		end
 		local ok, changed, raster_cells, mask_samples, core_samples,
 			restored_patch_cells = pcall(function()
-			-- Specialize the pure weight evaluator once for this ordered patch. These scalar captures
-			-- replace millions of invariant table lookups and arguments without changing expression
-			-- order, floating-point operations, either exact-core pass, or any native-grid operation.
-			local candidate_x, candidate_y = candidate.x, candidate.y
-			local candidate_center, candidate_gx, candidate_gy =
-				candidate.center, candidate.gx, candidate.gy
-			local mountain_x, mountain_y = candidate.mountain_x, candidate.mountain_y
 			local variant = ((candidate.sector_x * 17 + candidate.sector_y * 31
 				+ index * 13) % 9) - 4
 			local short_radius = outer_short * (1 + variant * 0.012)
 			local long_radius = outer_long * (1 - variant * 0.009)
-			local function patch_apron_weight(dx, dy)
-				local u = dx * mountain_x + dy * mountain_y
-				local v = -dx * mountain_y + dy * mountain_x
-				local ru, rv = u / short_radius, v / long_radius
-				local radius = apron_sqrt(ru * ru + rv * rv)
-				if radius >= 1.12 then return 0, false end
-				local nx, ny = 1, 0
-				if radius > 0.0001 then nx, ny = ru / radius, rv / radius end
-				local lobe3 = nx * nx * nx - 3 * nx * ny * ny
-				local lobe2 = nx * nx - ny * ny
-				local boundary = 1 + 0.055 * lobe3 + 0.035 * lobe2
-				local normalized = radius / boundary
-				if normalized >= 1 then return 0, false end
-				if normalized <= core_fraction then return 1, true end
-				local t = (normalized - core_fraction) / (1 - core_fraction)
-				local smooth = t * t * t * (t * (t * 6 - 15) + 10)
-				return 1 - smooth, false
-			end
-			local x0 = apron_max(0, apron_floor(candidate_x - long_radius - 2))
-			local y0 = apron_max(0, apron_floor(candidate_y - long_radius - 2))
-			local x1 = apron_min(width - 1, apron_ceil(candidate_x + long_radius + 2))
-			local y1 = apron_min(height - 1, apron_ceil(candidate_y + long_radius + 2))
+			local x0 = apron_max(0, apron_floor(candidate.x - long_radius - 2))
+			local y0 = apron_max(0, apron_floor(candidate.y - long_radius - 2))
+			local x1 = apron_min(width - 1, apron_ceil(candidate.x + long_radius + 2))
+			local y1 = apron_min(height - 1, apron_ceil(candidate.y + long_radius + 2))
 			local local_width, local_height = x1 - x0 + 1, y1 - y0 + 1
 			assert(local_width > 1 and local_height > 1, "empty native apron bounds")
 			local local_box = box_fn(0, 0, local_width, local_height)
@@ -2895,8 +2889,8 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 			local plane_seed = own(native_new_grid(2, 2, "f", 32))
 			assert(plane_seed, "native apron plane allocation failed")
 			local function scaled_plane(x, y)
-				local value = candidate_center + candidate_gx * (x - candidate_x)
-					+ candidate_gy * (y - candidate_y)
+				local value = candidate.center + candidate.gx * (x - candidate.x)
+					+ candidate.gy * (y - candidate.y)
 				return apron_floor(value * native_height_scale + 0.5)
 			end
 			plane_seed:set(0, 0, scaled_plane(x0, y0))
@@ -2914,7 +2908,8 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 				local y = y0 + coarse_y * (local_height - 1) / (coarse_height - 1)
 				for coarse_x = 0, coarse_width - 1 do
 					local x = x0 + coarse_x * (local_width - 1) / (coarse_width - 1)
-					local weight = patch_apron_weight(x - candidate_x, y - candidate_y)
+					local weight = apron_weight(candidate, short_radius, long_radius,
+						x - candidate.x, y - candidate.y)
 					coarse:set(coarse_x, coarse_y,
 						apron_floor(weight * native_weight_scale + 0.5))
 				end
@@ -2926,14 +2921,15 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 			-- Re-evaluate the complete conservative core box at full resolution. The mask is forced to
 			-- one here, and the final packed U16 result is overwritten with the literal scalar plane.
 			local core_extent = apron_ceil(long_radius * core_fraction * 1.12 + 2)
-			local core_x0 = apron_max(x0, candidate_x - core_extent)
-			local core_y0 = apron_max(y0, candidate_y - core_extent)
-			local core_x1 = apron_min(x1, candidate_x + core_extent)
-			local core_y1 = apron_min(y1, candidate_y + core_extent)
+			local core_x0 = apron_max(x0, candidate.x - core_extent)
+			local core_y0 = apron_max(y0, candidate.y - core_extent)
+			local core_x1 = apron_min(x1, candidate.x + core_extent)
+			local core_y1 = apron_min(y1, candidate.y + core_extent)
 			local exact_core_samples = 0
 			for y = apron_floor(core_y0), apron_ceil(core_y1) do
 				for x = apron_floor(core_x0), apron_ceil(core_x1) do
-					local _, in_core = patch_apron_weight(x - candidate_x, y - candidate_y)
+					local _, in_core = apron_weight(candidate, short_radius, long_radius,
+						x - candidate.x, y - candidate.y)
 					if in_core then mask:set(x - x0, y - y0, native_weight_scale) end
 					exact_core_samples = exact_core_samples + 1
 				end
@@ -2957,10 +2953,11 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 
 			for y = apron_floor(core_y0), apron_ceil(core_y1) do
 				for x = apron_floor(core_x0), apron_ceil(core_x1) do
-					local _, in_core = patch_apron_weight(x - candidate_x, y - candidate_y)
+					local _, in_core = apron_weight(candidate, short_radius, long_radius,
+						x - candidate.x, y - candidate.y)
 					if in_core then
-						local value = apron_floor(candidate_center + candidate_gx * (x - candidate_x)
-							+ candidate_gy * (y - candidate_y) + 0.5)
+						local value = apron_floor(candidate.center + candidate.gx * (x - candidate.x)
+							+ candidate.gy * (y - candidate.y) + 0.5)
 						packed_result:set(x - x0, y - y0,
 							apron_max(0, apron_min(65535, value)))
 					end
