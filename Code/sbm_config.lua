@@ -20,7 +20,6 @@ config.DebugEnrichmentAudit = false
 config.DebugElevatorTraversal = false
 config.DebugElevatorSupply = false
 config.DebugElevatorLogistics = false
-config.DebugElevatorRocks = false
 config.DebugZoom = false
 config.DebugOverviewCamera = false
 config.DebugSectorInteraction = false
@@ -326,6 +325,10 @@ config.OptimizeOuterResourceTerrainRingRebuild = true
 -- height mutation, API failure, or transaction-order mismatch invokes the former whole-map
 -- canonical rebuild at the affected boundary (both boundaries when preplan proof is unavailable).
 config.OptimizeSurfaceSingleFlushFinalization = true
+-- Plan every Surface enrichment before terrain shaping, then publish the resource and Elevator-pad
+-- height edits through the same outer-ring passability/buildable transaction.  The capsule planner
+-- can reuse that exact fresh-grid certificate and only rebuild after its two object publications.
+config.OptimizeSurfaceCoalescedOuterRingPublication = true
 -- On the initial pass, retain the broad natural feather, then settle connected components containing
 -- a high-relief extractor or landing pad once with the minimum transition width. This mirrors the
 -- successful post-rebuild repair geometry without discarding the seamless outer blend.
@@ -620,6 +623,10 @@ config.OptimizeDeferImmediateSurfaceFinalGridRebuild = true
 -- Reuse the object list collected while recording pre-stretch decoration relief, avoiding a
 -- second full MapForEach traversal immediately after the terrain stretch.
 config.OptimizeStretchDecorTraversal = true
+-- Resolve every explicit-Z decoration's source height inside one protected, allocation-bounded
+-- transaction after the native MapForEach enumeration. The unchanged per-object protected path is
+-- retained as an exact fallback if any position or terrain-height read fails.
+config.OptimizeDecorReliefHeightBatch = true
 -- NewMap would repeat the engine's just-built blank-map buildable grid, and PostNewMapLoaded would
 -- rebuild bounds/passability that the stretch immediately invalidates. Defer only the duplicate
 -- NewMap buildable pass, then defer the later full Apply exactly like the MapGenerated hooks.
@@ -642,6 +649,11 @@ config.OptimizeTopUpPlacementPools = true
 -- Every selected coordinate still runs the complete terrain, obstruction, and vanilla-repulsion
 -- checks.
 config.OptimizeSurfaceResourceSectorSampling = true
+-- Convert each pseudorandom surface resource draw to a nearby buildable hex through the engine's
+-- bounded native search before applying the complete passability, flatness, obstruction, terrain,
+-- repulsion, spacing, and census rules. This avoids spending most attempts on known-unbuildable
+-- pixels without enumerating the expanded grid or changing any final acceptance predicate.
+config.OptimizeSurfaceResourceBuildableSnap = true
 -- Guaranteed surface clusters no longer need to precompute quota candidates across all 144
 -- perimeter sectors. Visit those sectors in a scenario-seeded deterministic order, validate the
 -- unchanged local terrain/obstruction/repulsion predicates, and stop each of the outermost and
@@ -792,6 +804,20 @@ config.OptimizeHeightStepNativeDiscoveryIndex = true
 -- the existing track qualification and scalar per-row refinement. The source grid remains read-only;
 -- any allocation, native operation, enumeration, or cleanup failure falls back before repair writes.
 config.OptimizeHeightStepNativeSourceDiscoveryIndex = true
+-- After the unchanged destination detector qualifies exact per-row translations, batch each
+-- straight edge track through native compute-grid replication/add/clamp operations. Scalar Lua is
+-- retained for the narrow slope-matched feather only. A failure before the one-shot copy commit
+-- falls back to the original scalar translation; no partially written grid is retried.
+config.OptimizeHeightStepNativeDestinationTranslation = true
+-- Resynthesize the unchanged per-row quintic join in compact native bands. Endpoint samples,
+-- local slopes, quintic weights, rounding, clamping, and the rows selected by refinement remain
+-- identical to the scalar path. The final terrain write is one-shot; any earlier native failure
+-- falls back to scalar feathering on top of the already completed translation.
+config.OptimizeHeightStepNativeDestinationFeather = true
+-- Reuse the exact destination-discovery records during per-row refinement. A compact interval
+-- certificate tracks every earlier translated/feathered row and falls back to live scalar reads
+-- whenever a later refinement window could intersect a prior write, preserving sequential behavior.
+config.OptimizeHeightStepNativeRefinementIndex = true
 -- INVALIDATE BEFORE EVERY FINAL PASSABILITY REBUILD, on the surface and the underground alike
 -- (sbm_map_generation, expansion step 11). The engine rebuilds passability only over regions that
 -- were INVALIDATED first -- its own generator always calls terrain.InvalidateHeight +
@@ -925,7 +951,6 @@ C.DEBUG_ENRICHMENT_AUDIT = debug_logging_enabled and as_bool(config.DebugEnrichm
 C.DEBUG_ELEVATOR_TRAVERSAL = debug_logging_enabled and as_bool(config.DebugElevatorTraversal)
 C.DEBUG_ELEVATOR_SUPPLY = debug_logging_enabled and as_bool(config.DebugElevatorSupply)
 C.DEBUG_ELEVATOR_LOGISTICS = debug_logging_enabled and as_bool(config.DebugElevatorLogistics)
-C.DEBUG_ELEVATOR_ROCKS = debug_logging_enabled and as_bool(config.DebugElevatorRocks)
 C.DEBUG_ZOOM = debug_logging_enabled and as_bool(config.DebugZoom)
 C.DEBUG_OVERVIEW_CAMERA = debug_logging_enabled and as_bool(config.DebugOverviewCamera)
 C.DEBUG_SECTOR_INTERACTION = debug_logging_enabled and as_bool(config.DebugSectorInteraction)
@@ -1011,6 +1036,8 @@ C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_RING_REBUILD =
 	as_bool(config.OptimizeOuterResourceTerrainRingRebuild)
 C.OPTIMIZE_SURFACE_SINGLE_FLUSH_FINALIZATION =
 	as_bool(config.OptimizeSurfaceSingleFlushFinalization)
+C.OPTIMIZE_SURFACE_COALESCED_OUTER_RING_PUBLICATION =
+	as_bool(config.OptimizeSurfaceCoalescedOuterRingPublication)
 C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_PRECONDITION =
 	as_bool(config.OptimizeOuterResourceTerrainNativePrecondition)
 C.OPTIMIZE_OUTER_RESOURCE_ROCKET_RELIEF_DEFERRAL =
@@ -1189,6 +1216,7 @@ C.OPTIMIZE_STRETCH_REVALIDATION = as_bool(config.OptimizeStretchRevalidation)
 C.OPTIMIZE_DEFER_IMMEDIATE_SURFACE_FINAL_GRID_REBUILD =
 	as_bool(config.OptimizeDeferImmediateSurfaceFinalGridRebuild)
 C.OPTIMIZE_STRETCH_DECOR_TRAVERSAL = as_bool(config.OptimizeStretchDecorTraversal)
+C.OPTIMIZE_DECOR_RELIEF_HEIGHT_BATCH = as_bool(config.OptimizeDecorReliefHeightBatch)
 C.OPTIMIZE_POSTLOAD_DEFERRED_BOUNDS = as_bool(config.OptimizePostLoadDeferredBounds)
 C.OPTIMIZE_MAP_GRID_DIRECT_COPY = as_bool(config.OptimizeMapGridDirectCopy)
 C.OPTIMIZE_DIRECT_SOURCE_TERRAIN_STRETCH =
@@ -1196,6 +1224,8 @@ C.OPTIMIZE_DIRECT_SOURCE_TERRAIN_STRETCH =
 C.OPTIMIZE_TOPUP_PLACEMENT_POOLS = as_bool(config.OptimizeTopUpPlacementPools)
 C.OPTIMIZE_SURFACE_RESOURCE_SECTOR_SAMPLING =
 	as_bool(config.OptimizeSurfaceResourceSectorSampling)
+C.OPTIMIZE_SURFACE_RESOURCE_BUILDABLE_SNAP =
+	as_bool(config.OptimizeSurfaceResourceBuildableSnap)
 C.OPTIMIZE_SURFACE_RESOURCE_CANDIDATE_FIRST =
 	as_bool(config.OptimizeSurfaceResourceCandidateFirst)
 C.OPTIMIZE_SURFACE_RESOURCE_STREAMING_CLUSTERS =
@@ -1238,6 +1268,12 @@ C.OPTIMIZE_HEIGHT_STEP_NATIVE_DISCOVERY_INDEX =
 	as_bool(config.OptimizeHeightStepNativeDiscoveryIndex)
 C.OPTIMIZE_HEIGHT_STEP_NATIVE_SOURCE_DISCOVERY_INDEX =
 	as_bool(config.OptimizeHeightStepNativeSourceDiscoveryIndex)
+C.OPTIMIZE_HEIGHT_STEP_NATIVE_DESTINATION_TRANSLATION =
+	as_bool(config.OptimizeHeightStepNativeDestinationTranslation)
+C.OPTIMIZE_HEIGHT_STEP_NATIVE_DESTINATION_FEATHER =
+	as_bool(config.OptimizeHeightStepNativeDestinationFeather)
+C.OPTIMIZE_HEIGHT_STEP_NATIVE_REFINEMENT_INDEX =
+	as_bool(config.OptimizeHeightStepNativeRefinementIndex)
 C.FINAL_PASSABILITY_INVALIDATE = expansion_step_11
 	and as_bool(config.FinalPassabilityInvalidate)
 C.STRETCH_HEIGHT_GRID_DUMP_PATH = type(config.StretchHeightGridDumpPath) == "string"
