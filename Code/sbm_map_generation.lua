@@ -16740,16 +16740,10 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 			-- passability before the stretch's authoritative final revalidation.
 			local pass_batch_reason = "SuperBigMapSurfaceStretch"
 			local pass_batch_active = false
-			local function SuspendCombinedPassEdits()
-				if pass_batch_active then return true end
-				if type(map.SuspendPassEdits) ~= "function" or type(map.ResumePassEdits) ~= "function" then
-					return false, "pass-edit batching unavailable"
-				end
+			if type(map.SuspendPassEdits) == "function" and type(map.ResumePassEdits) == "function" then
 				local suspend_ok, suspend_result = pcall(map.SuspendPassEdits, map, pass_batch_reason)
 				pass_batch_active = suspend_ok and suspend_result ~= false
-				return pass_batch_active, suspend_ok and suspend_result or suspend_result
 			end
-			SuspendCombinedPassEdits()
 			local function ResumeCombinedPassEdits(source, ignore_errors)
 				if not pass_batch_active then return true end
 				local resume_ok, resume_err = pcall(
@@ -16786,31 +16780,6 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 							})
 					else
 						ok_stretch, n_grids = true, 0
-					end
-				end
-				-- Bounded Ralph diagnostic: split the single combined pass-edit flush without changing
-				-- the release path.  The first flush publishes only the complete terrain replacement;
-				-- a fresh suspension then captures the unchanged decoration/marker transforms.  The
-				-- staged harness is the sole owner of the process-local global, and final output is still
-				-- rebuilt after both edit families.  This distinguishes the mandatory whole-map rebuild
-				-- cost from queued cosmetic-object processing before attempting a queue fast path.
-				if rawget(_G, "g_SmrRalphSplitSurfacePassEdits") == true then
-					local split_token = LoadingBegin(
-						"surface diagnostic terrain-only resume pass edits", map)
-					local split_ok, split_error = ResumeCombinedPassEdits(
-						"diagnostic after terrain replacement")
-					LoadingEnd(split_token, {
-						diagnostic_split = true,
-						authoritative_passability_rebuild = true,
-					}, split_ok == true)
-					if not split_ok then
-						error("surface diagnostic terrain-only ResumePassEdits failed: "
-							.. tostring(split_error))
-					end
-					local resuspend_ok, resuspend_error = SuspendCombinedPassEdits()
-					if not resuspend_ok then
-						error("surface diagnostic object-only SuspendPassEdits failed: "
-							.. tostring(resuspend_error))
 					end
 				end
 				-- The source map's enrichment OBJECTS were deliberately not transferred: their owning map
