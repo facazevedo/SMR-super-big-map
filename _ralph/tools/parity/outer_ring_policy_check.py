@@ -877,35 +877,30 @@ static_checks = {
         and "C.OPTIMIZE_MOUNTAIN_BASE_APRON_NATIVE_RASTER" in CONFIG
         and 'cfg_bool("OPTIMIZE_MOUNTAIN_BASE_APRON_NATIVE_RASTER", true)' in aprons
     ),
-    "natural_aprons_native_raster_uses_bounded_step4_fixed_point": all(
-        token in aprons
-        for token in (
+    "natural_aprons_native_raster_uses_bounded_step4_fixed_point": (
+        all(token in aprons for token in (
             "native_weight_scale, native_height_scale, native_sample_step = 4096, 256, 4",
             "math.ceil((local_width - 1) / native_sample_step) + 1",
             "native_resample(coarse, local_width, local_height, true)",
             "native_mul_div_add(weight_cube, mask, native_weight_scale, 0)",
             "native_mul_div_add(result, inverse_cube, native_weight_scale, 0)",
-            "native_mul_div_add(plane_term, weight_cube, native_weight_scale, 0)",
+            "local result = own(source:clone())",
+            "native_mul_div_add(plane, weight_cube, native_weight_scale, 0)",
+            "native_add_mul_div(result_difference, source, -1)",
             "native_repack(result, native_is_compute(grid))",
             "if result_difference == packed_result then result_difference = packed_result:clone() end",
             'string.lower(tostring(source_format)) == "f" and source_bits == 32',
             "native_count(result_difference, 0, 2147483647)",
-        )
+        ))
+        and "plane_term" not in aprons
+        and "source_difference" not in aprons
     ),
     "natural_aprons_native_raster_preserves_literal_fallback_and_exact_core": (
         "local function legacy_apply(target_grid)" in aprons
         and "local old = target_grid:get(x, y)" in aprons
         and "target_grid:set(x, y, value)" in aprons
         and "local _, in_core = apron_weight" in aprons
-        and (
-            "packed_result:set(x - x0, y - y0," in aprons
-            or (
-                "local exact_core_row_spans = {}" in aprons
-                and "span_start = span_start or x" in aprons
-                and "for span_index = 1, #row.spans, 2 do" in aprons
-                and "packed_result:set(x - x0, row.y - y0," in aprons
-            )
-        )
+        and "packed_result:set(x - x0, y - y0," in aprons
         and "math.floor(candidate.center + candidate.gx * (x - candidate.x)" in aprons
     ),
     "natural_aprons_native_raster_restores_inner_u16_after_rounding": appears_in_order(

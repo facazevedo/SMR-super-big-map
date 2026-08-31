@@ -2877,9 +2877,11 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 			if source then source_format, source_bits = native_is_compute(source) end
 			assert(source and string.lower(tostring(source_format)) == "f" and source_bits == 32,
 				"native apron f32 source conversion failed")
-			local height_grid = own(source:clone())
-			assert(height_grid, "native apron height snapshot failed")
-			native_mul_div_add(height_grid, native_height_scale, 1, 0)
+			-- Preserve this one f32 source conversion for the final exact changed-cell count. The
+			-- arithmetic copy is disposable, so it also becomes the result accumulator below.
+			local result = own(source:clone())
+			assert(result, "native apron height snapshot failed")
+			native_mul_div_add(result, native_height_scale, 1, 0)
 
 			local plane_seed = own(native_new_grid(2, 2, "f", 32))
 			assert(plane_seed, "native apron plane allocation failed")
@@ -2921,36 +2923,12 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 			local core_x1 = math.min(x1, candidate.x + core_extent)
 			local core_y1 = math.min(y1, candidate.y + core_extent)
 			local exact_core_samples = 0
-			-- The exact core predicate is the expensive part of this bounded raster: it includes
-			-- the oriented irregular-lobe calculation and was historically evaluated twice for
-			-- every cell in the conservative core box. Preserve the first pass' exact decisions as
-			-- compact row spans and replay those spans into the packed result. This changes neither
-			-- the predicate nor its visit order, and avoids a second sqrt/quintic pass per apron.
-			local exact_core_row_spans = {}
 			for y = math.floor(core_y0), math.ceil(core_y1) do
-				local row_spans = {}
-				local span_start = nil
 				for x = math.floor(core_x0), math.ceil(core_x1) do
 					local _, in_core = apron_weight(candidate, short_radius, long_radius,
 						x - candidate.x, y - candidate.y)
-					if in_core then
-						mask:set(x - x0, y - y0, native_weight_scale)
-						span_start = span_start or x
-					elseif span_start then
-						row_spans[#row_spans + 1] = span_start
-						row_spans[#row_spans + 1] = x - 1
-						span_start = nil
-					end
+					if in_core then mask:set(x - x0, y - y0, native_weight_scale) end
 					exact_core_samples = exact_core_samples + 1
-				end
-				if span_start then
-					row_spans[#row_spans + 1] = span_start
-					row_spans[#row_spans + 1] = math.ceil(core_x1)
-				end
-				if #row_spans > 0 then
-					exact_core_row_spans[#exact_core_row_spans + 1] = {
-						y = y, spans = row_spans,
-					}
 				end
 			end
 
@@ -2959,23 +2937,25 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 			native_mul_div_add(weight_cube, mask, native_weight_scale, 0)
 			local inverse_cube = own(weight_cube:clone())
 			native_mul_div_add(inverse_cube, -1, 1, native_weight_scale)
-			local result = own(height_grid:clone())
 			native_mul_div_add(result, inverse_cube, native_weight_scale, 0)
-			local plane_term = own(plane:clone())
-			native_mul_div_add(plane_term, weight_cube, native_weight_scale, 0)
-			native_add(result, plane_term)
+			-- The resampled plane has no later consumer. Fuse its weight multiplication in place
+			-- while retaining the same native operations, operands, order, and rounding behavior.
+			native_mul_div_add(plane, weight_cube, native_weight_scale, 0)
+			native_add(result, plane)
 			native_mul_div_add(result, 1, 1, 128)
 			native_mul_div_add(result, 1, native_height_scale, 0)
 			native_clamp(result, 0, 65535)
 			local packed_result = own(native_repack(result, native_is_compute(grid)))
 			assert(packed_result, "native apron result conversion failed")
 
-			for _, row in ipairs(exact_core_row_spans) do
-				for span_index = 1, #row.spans, 2 do
-					for x = row.spans[span_index], row.spans[span_index + 1] do
+			for y = math.floor(core_y0), math.ceil(core_y1) do
+				for x = math.floor(core_x0), math.ceil(core_x1) do
+					local _, in_core = apron_weight(candidate, short_radius, long_radius,
+						x - candidate.x, y - candidate.y)
+					if in_core then
 						local value = math.floor(candidate.center + candidate.gx * (x - candidate.x)
-							+ candidate.gy * (row.y - candidate.y) + 0.5)
-						packed_result:set(x - x0, row.y - y0,
+							+ candidate.gy * (y - candidate.y) + 0.5)
+						packed_result:set(x - x0, y - y0,
 							math.max(0, math.min(65535, value)))
 					end
 				end
@@ -2995,10 +2975,11 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 			local result_difference = native_repack(packed_result, "f", 32, true)
 			if result_difference == packed_result then result_difference = packed_result:clone() end
 			result_difference = own(result_difference)
-			local source_difference = own(native_repack(source_native, "f", 32, true))
-			assert(result_difference and result_difference ~= packed_result and source_difference,
+			-- `source` is still the exact f32 preimage. Reuse it instead of converting the same
+			-- U16 snapshot a second time solely for this difference calculation.
+			assert(result_difference and result_difference ~= packed_result and source,
 				"native apron difference conversion failed")
-			native_add_mul_div(result_difference, source_difference, -1)
+			native_add_mul_div(result_difference, source, -1)
 			native_abs(result_difference)
 			-- GridCount uses a half-open lower bound: (minimum, maximum]. Zero therefore counts every
 			-- nonzero U16 difference, including the one-unit transition changes omitted by a bound of 1.
