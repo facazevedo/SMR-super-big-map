@@ -2796,6 +2796,83 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 	local native_patch_journal_rollback_failed = false
 	local native_raster_ms, legacy_raster_ms = 0, 0
 	local journal = {}
+	-- Native apron patches are serial. Pool exact-size f32 work buffers only after the previous
+	-- patch completes; independently owned U16 journal snapshots remain untouched for rollback.
+	local native_pool = {}
+	local native_pool_values = {}
+	local native_pool_allocations, native_pool_reuses, native_pool_cells = 0, 0, 0
+	local native_pool_peak_checked_out, native_pool_checked_out = 0, 0
+
+	local function native_pool_key(width_cells, height_cells, format, bits)
+		return tostring(width_cells) .. "x" .. tostring(height_cells) .. ":"
+			.. string.lower(tostring(format)) .. ":" .. tostring(bits)
+	end
+
+	local function acquire_native_pool_grid(width_cells, height_cells, format, bits, checkouts)
+		local key = native_pool_key(width_cells, height_cells, format, bits)
+		local entries = native_pool[key]
+		if not entries then entries = {}; native_pool[key] = entries end
+		for _, entry in ipairs(entries) do
+			if not entry.in_use then
+				entry.in_use = true
+				checkouts[#checkouts + 1] = entry
+				native_pool_reuses = native_pool_reuses + 1
+				native_pool_checked_out = native_pool_checked_out + 1
+				native_pool_peak_checked_out = math.max(native_pool_peak_checked_out,
+					native_pool_checked_out)
+				return entry.value
+			end
+		end
+		local value = native_new_grid(width_cells, height_cells, format, bits)
+		assert(value, "native apron pooled grid allocation failed")
+		local entry = { value = value, in_use = true }
+		entries[#entries + 1] = entry
+		native_pool_values[#native_pool_values + 1] = entry
+		checkouts[#checkouts + 1] = entry
+		native_pool_allocations = native_pool_allocations + 1
+		native_pool_cells = native_pool_cells + width_cells * height_cells
+		native_pool_checked_out = native_pool_checked_out + 1
+		native_pool_peak_checked_out = math.max(native_pool_peak_checked_out,
+			native_pool_checked_out)
+		return value
+	end
+
+	local function acquire_native_pool_clone(source, width_cells, height_cells, local_box, checkouts)
+		local format, bits = native_is_compute(source)
+		assert(format and bits, "native apron pooled clone format unavailable")
+		local value = acquire_native_pool_grid(width_cells, height_cells, format, bits, checkouts)
+		assert(type(value.copyrect) == "function", "native apron pooled clone copy unavailable")
+		value:copyrect(source, local_box, point_fn(0, 0))
+		return value
+	end
+
+	local function release_native_pool_checkouts(checkouts)
+		for checkout_index = #checkouts, 1, -1 do
+			local entry = checkouts[checkout_index]
+			assert(entry and entry.in_use, "native apron pool checkout imbalance")
+			entry.in_use = false
+			checkouts[checkout_index] = nil
+			native_pool_checked_out = native_pool_checked_out - 1
+		end
+	end
+
+	local function free_native_pool()
+		local errors = {}
+		if native_pool_checked_out ~= 0 then
+			errors[#errors + 1] = "checked_out=" .. tostring(native_pool_checked_out)
+		end
+		for pool_index = #native_pool_values, 1, -1 do
+			local entry = native_pool_values[pool_index]
+			if entry and entry.value and type(entry.value.free) == "function" then
+				local ok_free, free_error = pcall(entry.value.free, entry.value)
+				if not ok_free then errors[#errors + 1] = tostring(free_error) end
+			end
+			if entry then entry.value, entry.in_use = nil, false end
+			native_pool_values[pool_index] = nil
+		end
+		native_pool = {}
+		return #errors == 0, table.concat(errors, " | ")
+	end
 
 	-- These cell-center bounds are the exact complement of the physical perimeter ring. Native
 	-- packing is allowed to round first; then the local U16 preimage restores this rectangle.
@@ -2846,6 +2923,7 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 
 	local function apply_native_patch(candidate, index)
 		local owned, owned_lookup = {}, {}
+		local pool_checkouts = {}
 		local source_native, journaled = nil, false
 		local function own(value)
 			if value and value ~= source_native and not owned_lookup[value] then
@@ -2877,13 +2955,12 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 			if source then source_format, source_bits = native_is_compute(source) end
 			assert(source and string.lower(tostring(source_format)) == "f" and source_bits == 32,
 				"native apron f32 source conversion failed")
-			-- Preserve this one f32 source conversion for the final exact changed-cell count. The
-			-- arithmetic copy is disposable, so it also becomes the result accumulator below.
-			local result = own(source:clone())
-			assert(result, "native apron height snapshot failed")
-			native_mul_div_add(result, native_height_scale, 1, 0)
+			local height_grid = acquire_native_pool_clone(source, local_width, local_height,
+				local_box, pool_checkouts)
+			assert(height_grid, "native apron height snapshot failed")
+			native_mul_div_add(height_grid, native_height_scale, 1, 0)
 
-			local plane_seed = own(native_new_grid(2, 2, "f", 32))
+			local plane_seed = acquire_native_pool_grid(2, 2, "f", 32, pool_checkouts)
 			assert(plane_seed, "native apron plane allocation failed")
 			local function scaled_plane(x, y)
 				local value = candidate.center + candidate.gx * (x - candidate.x)
@@ -2899,7 +2976,8 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 
 			local coarse_width = math.ceil((local_width - 1) / native_sample_step) + 1
 			local coarse_height = math.ceil((local_height - 1) / native_sample_step) + 1
-			local coarse = own(native_new_grid(coarse_width, coarse_height, "f", 32))
+			local coarse = acquire_native_pool_grid(coarse_width, coarse_height,
+				"f", 32, pool_checkouts)
 			assert(coarse, "native apron coarse-mask allocation failed")
 			for coarse_y = 0, coarse_height - 1 do
 				local y = y0 + coarse_y * (local_height - 1) / (coarse_height - 1)
@@ -2932,16 +3010,20 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 				end
 			end
 
-			local weight_cube = own(mask:clone())
+			local weight_cube = acquire_native_pool_clone(mask, local_width, local_height,
+				local_box, pool_checkouts)
 			native_mul_div_add(weight_cube, mask, native_weight_scale, 0)
 			native_mul_div_add(weight_cube, mask, native_weight_scale, 0)
-			local inverse_cube = own(weight_cube:clone())
+			local inverse_cube = acquire_native_pool_clone(weight_cube, local_width, local_height,
+				local_box, pool_checkouts)
 			native_mul_div_add(inverse_cube, -1, 1, native_weight_scale)
+			local result = acquire_native_pool_clone(height_grid, local_width, local_height,
+				local_box, pool_checkouts)
 			native_mul_div_add(result, inverse_cube, native_weight_scale, 0)
-			-- The resampled plane has no later consumer. Fuse its weight multiplication in place
-			-- while retaining the same native operations, operands, order, and rounding behavior.
-			native_mul_div_add(plane, weight_cube, native_weight_scale, 0)
-			native_add(result, plane)
+			local plane_term = acquire_native_pool_clone(plane, local_width, local_height,
+				local_box, pool_checkouts)
+			native_mul_div_add(plane_term, weight_cube, native_weight_scale, 0)
+			native_add(result, plane_term)
 			native_mul_div_add(result, 1, 1, 128)
 			native_mul_div_add(result, 1, native_height_scale, 0)
 			native_clamp(result, 0, 65535)
@@ -2975,11 +3057,10 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 			local result_difference = native_repack(packed_result, "f", 32, true)
 			if result_difference == packed_result then result_difference = packed_result:clone() end
 			result_difference = own(result_difference)
-			-- `source` is still the exact f32 preimage. Reuse it instead of converting the same
-			-- U16 snapshot a second time solely for this difference calculation.
-			assert(result_difference and result_difference ~= packed_result and source,
+			local source_difference = own(native_repack(source_native, "f", 32, true))
+			assert(result_difference and result_difference ~= packed_result and source_difference,
 				"native apron difference conversion failed")
-			native_add_mul_div(result_difference, source, -1)
+			native_add_mul_div(result_difference, source_difference, -1)
 			native_abs(result_difference)
 			-- GridCount uses a half-open lower bound: (minimum, maximum]. Zero therefore counts every
 			-- nonzero U16 difference, including the one-unit transition changes omitted by a bound of 1.
@@ -3009,6 +3090,8 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 			local free_ok, free_error = pcall(source_native.free, source_native)
 			if not free_ok then cleanup_errors[#cleanup_errors + 1] = tostring(free_error) end
 		end
+		local checkout_ok, checkout_error = pcall(release_native_pool_checkouts, pool_checkouts)
+		if not checkout_ok then cleanup_errors[#cleanup_errors + 1] = tostring(checkout_error) end
 		if not ok then error(changed, 0) end
 		if #cleanup_errors > 0 then
 			error("native apron transient cleanup failed: "
@@ -3040,6 +3123,11 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 		local native_started_ms = now_ms()
 		local ok_native, native_error = pcall(native_apply)
 		native_raster_ms = now_ms() - native_started_ms
+		local pool_released, pool_release_error = free_native_pool()
+		if not pool_released then
+			if type(resume) == "function" then pcall(resume, "SBMMountainBaseAprons") end
+			error("native apron pool cleanup failed: " .. tostring(pool_release_error), 0)
+		end
 		if ok_native then
 			local released, release_error = release_native_patch_journal(false)
 			if not released then
@@ -3064,6 +3152,11 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 			legacy_raster_ms = now_ms() - legacy_started_ms
 		end
 	else
+		local pool_released, pool_release_error = free_native_pool()
+		if not pool_released then
+			if type(resume) == "function" then pcall(resume, "SBMMountainBaseAprons") end
+			error("native apron pool cleanup failed: " .. tostring(pool_release_error), 0)
+		end
 		if native_requested then
 			native_raster_fallback = true
 			native_raster_error = "native grid APIs unavailable"
@@ -3112,6 +3205,10 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 		native_patch_journal_used = native_patch_journal_used,
 		native_patch_journal_snapshots = native_patch_journal_snapshots,
 		native_patch_journal_rollback_failed = native_patch_journal_rollback_failed,
+		native_pool_allocations = native_pool_allocations,
+		native_pool_reuses = native_pool_reuses,
+		native_pool_cells = native_pool_cells,
+		native_pool_peak_checked_out = native_pool_peak_checked_out,
 		planning_ms = planning_finished_ms - total_started_ms,
 		native_raster_ms = native_raster_ms,
 		legacy_raster_ms = legacy_raster_ms,

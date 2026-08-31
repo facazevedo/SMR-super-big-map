@@ -877,23 +877,20 @@ static_checks = {
         and "C.OPTIMIZE_MOUNTAIN_BASE_APRON_NATIVE_RASTER" in CONFIG
         and 'cfg_bool("OPTIMIZE_MOUNTAIN_BASE_APRON_NATIVE_RASTER", true)' in aprons
     ),
-    "natural_aprons_native_raster_uses_bounded_step4_fixed_point": (
-        all(token in aprons for token in (
+    "natural_aprons_native_raster_uses_bounded_step4_fixed_point": all(
+        token in aprons
+        for token in (
             "native_weight_scale, native_height_scale, native_sample_step = 4096, 256, 4",
             "math.ceil((local_width - 1) / native_sample_step) + 1",
             "native_resample(coarse, local_width, local_height, true)",
             "native_mul_div_add(weight_cube, mask, native_weight_scale, 0)",
             "native_mul_div_add(result, inverse_cube, native_weight_scale, 0)",
-            "local result = own(source:clone())",
-            "native_mul_div_add(plane, weight_cube, native_weight_scale, 0)",
-            "native_add_mul_div(result_difference, source, -1)",
+            "native_mul_div_add(plane_term, weight_cube, native_weight_scale, 0)",
             "native_repack(result, native_is_compute(grid))",
             "if result_difference == packed_result then result_difference = packed_result:clone() end",
             'string.lower(tostring(source_format)) == "f" and source_bits == 32',
             "native_count(result_difference, 0, 2147483647)",
-        ))
-        and "plane_term" not in aprons
-        and "source_difference" not in aprons
+        )
     ),
     "natural_aprons_native_raster_preserves_literal_fallback_and_exact_core": (
         "local function legacy_apply(target_grid)" in aprons
@@ -931,6 +928,17 @@ static_checks = {
         and "release_native_patch_journal(false)" in aprons
         and "record.snapshot = nil" in aprons
         and "journal[journal_index] = nil" in aprons
+    ),
+    "natural_aprons_pool_only_transient_exact_size_compute_grids": (
+        "local native_pool = {}" in aprons
+        and "native_pool_key(width_cells, height_cells, format, bits)" in aprons
+        and "acquire_native_pool_clone(source, local_width, local_height" in aprons
+        and "pcall(release_native_pool_checkouts, pool_checkouts)" in aprons
+        and "local pool_released, pool_release_error = free_native_pool()" in aprons
+        and "snapshot = source_native" in aprons
+        and "value ~= source_native" in aprons
+        and "native_pool_allocations = native_pool_allocations" in aprons
+        and "native_pool_reuses = native_pool_reuses" in aprons
     ),
     "natural_aprons_native_raster_reports_operations_and_timings": all(
         token in aprons
