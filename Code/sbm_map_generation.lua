@@ -15719,47 +15719,6 @@ local function PatchRandomMapGenerator()
 	return true
 end
 
--- CloseMapLoadingScreen releases the map-name reference immediately and then waits for the
--- loading dialog to disappear. Expanded Surface generation still owns the same idLoadingScreen
--- through RandomMapGenerate at this boundary, so that wait cannot expose the scene and only
--- stalls the already-scheduled stretch. Release the exact same reference without the redundant
--- wait; the stock RandomMapGenerate close remains authoritative for the final dialog teardown.
-function SuperBigMap.PatchExpandedSurfaceMapLoadingClose()
-	local State = SuperBigMap.State
-	local current = Global("CloseMapLoadingScreen")
-	if State.expanded_surface_map_loading_close_patch_version == GENERATOR_PATCH_VERSION
-		and current == State.expanded_surface_map_loading_close_wrapper then
-		return true
-	end
-	if current == State.expanded_surface_map_loading_close_wrapper
-		and type(State.original_close_map_loading_screen) == "function" then
-		current = State.original_close_map_loading_screen
-	end
-	if type(current) ~= "function" then return false end
-	State.original_close_map_loading_screen = current
-	local wrapper = function(map_id, ...)
-		local map = Global("CurrentMap")
-		local mapdata = map and map.mapdata
-		local map_name = map and (map.name or (mapdata and mapdata.id))
-		if map and mapdata and mapdata.Environment == "Surface"
-			and map.SuperBigMapExpansionPending == true
-			and map.SuperBigMapSurfaceStretchScheduled == true
-			and tostring(map_name or "") == tostring(map_id or "") then
-			local close = Global("LoadingScreenClose")
-			local get_blocking = Global("GetGameBlockingLoadingScreen")
-			local blocking = type(get_blocking) == "function" and SafeCall(get_blocking) or nil
-			if type(close) == "function" and blocking then
-				return close("idLoadingScreen", map_id)
-			end
-		end
-		return current(map_id, ...)
-	end
-	rawset(_G, "CloseMapLoadingScreen", wrapper)
-	State.expanded_surface_map_loading_close_wrapper = wrapper
-	State.expanded_surface_map_loading_close_patch_version = GENERATOR_PATCH_VERSION
-	return true
-end
-
 
 -- THE MOD'S AUTHORITATIVE FINAL GAMEPLAY-GRID REBUILD, for either environment. It is a function
 -- because it has to run more than once on a map: a rebuild stays authoritative only until the next
@@ -20746,7 +20705,6 @@ function MapGeneration.ApplyModBehavior()
 	-- exact-vanilla generation wrapper owned by stage 01.
 	if not transform_source then MapGeneration.RestoreVanillaBehavior() end
 	PatchRandomMapGenerator()
-	SuperBigMap.PatchExpandedSurfaceMapLoadingClose()
 	-- Rebuild observational wrappers after the functional first-access gate. This makes the
 	-- diagnostic layer disposable without ever removing or duplicating the gate below it.
 	RestoreElevatorTraversalDiagnostics()
@@ -20772,14 +20730,6 @@ end
 -- Restoring only affects future generation; already-expanded maps retain their terrain.
 function MapGeneration.RestoreVanillaBehavior()
 	local State = SuperBigMap.State or {}
-	if State.expanded_surface_map_loading_close_wrapper
-		and Global("CloseMapLoadingScreen") == State.expanded_surface_map_loading_close_wrapper
-		and type(State.original_close_map_loading_screen) == "function" then
-		rawset(_G, "CloseMapLoadingScreen", State.original_close_map_loading_screen)
-	end
-	State.original_close_map_loading_screen = nil
-	State.expanded_surface_map_loading_close_wrapper = nil
-	State.expanded_surface_map_loading_close_patch_version = nil
 	ReleaseSharedBuriedWonderTexturePins()
 	RestoreDeferredVehicleNightLights(Global("CurrentMap"))
 	for target, record in pairs(offscreen_vehicle_light_suppressions) do
