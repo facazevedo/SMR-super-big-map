@@ -686,10 +686,10 @@ end
 -- ---------------------------------------------------------------------------------------------
 -- WHOLE-MAP HEIGHT NORMALIZATION
 --
--- Version 738's surface transform normalized the full SOURCE height span into the available U16
--- range. Its one-metre floor leaves almost the entire range available for relief, avoiding the
--- visibly flattened mountains produced by reserving a five-metre floor.
-local Z_FLOOR_WU = 1000
+-- Normalize the complete source relief into the available U16 range while reserving the required
+-- five-metre floor. Adaptive scaling still maps the source maximum to the engine ceiling, so this
+-- changes the vertical datum without clipping summits or discarding any source relief.
+local Z_FLOOR_WU = 5000
 
 -- A few vanilla height fields contain long one-cell discontinuities in their perimeter terrain.
 -- Resampling makes those bad source edges much easier to see as striped vertical walls. Detect
@@ -765,6 +765,23 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		used = false, fallback = false, error = "", indexes = nil,
 		bands = 0, indexed_cells = 0, enumerated = 0, survivors = 0,
 		exact_positions = 0, sampled_rows = 0, compaction_copies = 0, ms = 0,
+	}
+	local native_translation = {
+		requested = not wide_ring_only
+			and cfg_bool("OPTIMIZE_HEIGHT_STEP_NATIVE_DESTINATION_TRANSLATION", true),
+		used = false, fallback = false, error = "", groups = 0, cells = 0, ms = 0,
+	}
+	local native_feather = {
+		requested = not wide_ring_only
+			and cfg_bool("OPTIMIZE_HEIGHT_STEP_NATIVE_DESTINATION_FEATHER", true),
+		used = false, fallback = false, error = "", groups = 0, cells = 0,
+		records = 0, ms = 0,
+	}
+	local native_refinement = {
+		requested = not wide_ring_only
+			and cfg_bool("OPTIMIZE_HEIGHT_STEP_NATIVE_REFINEMENT_INDEX", true),
+		used = false, indexed_calls = 0, overlap_fallback_calls = 0,
+		indexed_candidates = 0, registered_intervals = 0,
 	}
 
 	local function at(axis, perp, along)
@@ -1238,6 +1255,28 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		report.native_discovery_index_compaction_copies = native_discovery.compaction_copies
 		report.native_discovery_index_mode = native_discovery.mode
 		report.native_discovery_index_ms = native_discovery.ms
+		report.native_translation_requested = native_translation.requested
+		report.native_translation_used = native_translation.used
+		report.native_translation_fallback = native_translation.fallback
+		report.native_translation_error = native_translation.error
+		report.native_translation_groups = native_translation.groups
+		report.native_translation_cells = native_translation.cells
+		report.native_translation_ms = native_translation.ms
+		report.native_feather_requested = native_feather.requested
+		report.native_feather_used = native_feather.used
+		report.native_feather_fallback = native_feather.fallback
+		report.native_feather_error = native_feather.error
+		report.native_feather_groups = native_feather.groups
+		report.native_feather_cells = native_feather.cells
+		report.native_feather_records = native_feather.records
+		report.native_feather_ms = native_feather.ms
+		report.native_refinement_requested = native_refinement.requested
+		report.native_refinement_used = native_refinement.used
+		report.native_refinement_indexed_calls = native_refinement.indexed_calls
+		report.native_refinement_overlap_fallback_calls =
+			native_refinement.overlap_fallback_calls
+		report.native_refinement_indexed_candidates = native_refinement.indexed_candidates
+		report.native_refinement_registered_intervals = native_refinement.registered_intervals
 		if wide_ring_only then
 			report.source_native_discovery_index_requested = native_discovery.requested
 			report.source_native_discovery_index_used = native_discovery.used
@@ -1406,6 +1445,61 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		end
 	end
 
+	-- Exact write-set certificate for sequential destination repairs. Same-axis writes are indexed by
+	-- their row; cross-axis writes by their column. A refinement window can therefore prove that its
+	-- original native-discovery evidence is still current with O(window width) interval checks.
+	local applied_x_rows, applied_y_columns, empty_intervals = {}, {}, {}
+	local function add_applied_interval(axis, along, first, last)
+		local index = axis == "x" and applied_x_rows or applied_y_columns
+		local intervals = index[along]
+		if not intervals then intervals = {}; index[along] = intervals end
+		intervals[#intervals + 1] = { first = first, last = last }
+		native_refinement.registered_intervals = native_refinement.registered_intervals + 1
+	end
+	local function interval_contains_or_intersects(intervals, first, last)
+		for _, interval in ipairs(intervals or empty_intervals) do
+			if interval.first <= last and interval.last >= first then return true end
+		end
+		return false
+	end
+	local function refinement_window_intersects_prior_write(axis, along, first, last)
+		if axis == "x" then
+			if interval_contains_or_intersects(applied_x_rows[along], first, last) then return true end
+			for cross = first, last do
+				if interval_contains_or_intersects(applied_y_columns[cross], along, along) then
+					return true
+				end
+			end
+		else
+			if interval_contains_or_intersects(applied_y_columns[along], first, last) then return true end
+			for cross = first, last do
+				if interval_contains_or_intersects(applied_x_rows[cross], along, along) then
+					return true
+				end
+			end
+		end
+		return false
+	end
+	local function register_translation_writes(selected, records)
+		local before_edge = selected.edge == "left" or selected.edge == "top"
+		for _, record in ipairs(records) do
+			local join_lo, join_hi
+			if before_edge then
+				join_lo = math.max(outer_guard + 1, record.perp - 6)
+				join_hi = math.min(selected.perp_n - 2,
+					record.perp + record.width + 12)
+				add_applied_interval(selected.axis, record.along, 0,
+					math.max(record.perp, join_hi))
+			else
+				join_lo = math.max(1, record.perp - 12)
+				join_hi = math.min(selected.perp_n - outer_guard - 2,
+					record.perp + record.width + 6)
+				add_applied_interval(selected.axis, record.along,
+					math.min(record.perp + record.width, join_lo), selected.perp_n - 1)
+			end
+		end
+	end
+
 	local function refine_step(track, along, predicted)
 		local before_edge = track.edge == "left" or track.edge == "top"
 		local lo = math.max(1, predicted - 6)
@@ -1419,6 +1513,38 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		refine_calls = refine_calls + 1
 		legacy_refine_grid_reads = legacy_refine_grid_reads + positions * max_width * 4
 		if positions <= 0 then return nil end
+		if native_refinement.requested and native_discovery.used
+			and type(native_discovery.indexes) == "table" then
+			local read_first, read_last = lo - 1, hi + max_width + 1
+			if refinement_window_intersects_prior_write(
+				track.axis, along, read_first, read_last) then
+				native_refinement.overlap_fallback_calls =
+					native_refinement.overlap_fallback_calls + 1
+			else
+				local rows = native_discovery.indexes[track.axis .. ":" .. track.edge]
+				local row = rows and rows[along] or empty_intervals
+				local function consider_candidate(perp, width, jump, low_before)
+					if perp >= lo and perp <= hi and width >= 1 and width <= max_width
+						and low_before == track.low_before then
+						local distance = math.abs(perp - predicted)
+						native_refinement.indexed_candidates =
+							native_refinement.indexed_candidates + 1
+						if not best_distance or distance < best_distance
+							or (distance == best_distance and jump > best_jump) then
+							best_perp, best_width = perp, width
+							best_distance, best_jump = distance, jump
+						end
+					end
+				end
+				for _, candidate in ipairs(row) do
+					consider_candidate(candidate.perp, candidate.width,
+						candidate.jump, candidate.low_before)
+				end
+				native_refinement.used = true
+				native_refinement.indexed_calls = native_refinement.indexed_calls + 1
+				return best_perp, best_width
+			end
+		end
 		if not rolling_refine then
 			refine_grid_reads = refine_grid_reads + positions * max_width * 4
 			for perp = lo, hi do
@@ -1590,6 +1716,313 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		end
 	end
 
+	-- Apply the already-qualified destination translation with native grid arithmetic. The detector,
+	-- per-row refinement, offsets, translated half-plane, clamping, and later quintic feather remain
+	-- unchanged; only the broad `original + offset` loop crosses the Lua/native boundary once.
+	local function native_translate_track(selected, records)
+		if not native_translation.requested or #records == 0 then return false, "not requested" end
+		local NewComputeGrid = Global("NewComputeGrid")
+		local GridResample = Global("GridResample")
+		local GridAdd = Global("GridAdd")
+		local GridClamp = Global("GridClamp")
+		local GridRepack = Global("GridRepack")
+		local GridFill = Global("GridFill")
+		local IsComputeGrid = Global("IsComputeGrid")
+		local box_fn, point_fn = Global("box"), Global("point")
+		if type(NewComputeGrid) ~= "function" or type(GridResample) ~= "function"
+			or type(GridAdd) ~= "function" or type(GridClamp) ~= "function"
+			or type(GridRepack) ~= "function" or type(GridFill) ~= "function"
+			or type(IsComputeGrid) ~= "function" or type(box_fn) ~= "function"
+			or type(point_fn) ~= "function" or type(grid.new_instance) ~= "function"
+			or type(grid.copyrect) ~= "function" then
+			return false, "native destination translation API unavailable"
+		end
+		local before_edge = selected.edge == "left" or selected.edge == "top"
+		local edge0, edge1
+		local groups = {}
+		for _, record in ipairs(records) do
+			local start = before_edge and 0 or record.perp + record.width
+			local finish = before_edge and record.perp or selected.perp_n - 1
+			if start <= finish then
+				edge0 = edge0 and math.min(edge0, start) or start
+				edge1 = edge1 and math.max(edge1, finish) or finish
+				local key = tostring(start) .. ":" .. tostring(finish)
+				local group = groups[key]
+				if not group then
+					group = { start = start, finish = finish, records = {} }
+					groups[key] = group
+				end
+				group.records[#group.records + 1] = record
+			end
+		end
+		if not edge0 or not edge1 or edge0 > edge1 then return false, "empty translation band" end
+		local edge_span = edge1 - edge0 + 1
+		local local_w = selected.axis == "x" and edge_span or selected.along_n
+		local local_h = selected.axis == "x" and selected.along_n or edge_span
+		local fmt, bits = IsComputeGrid(grid)
+		if not fmt then return false, "destination height grid is not compute-backed" end
+		local owned, owned_set = {}, {}
+		local function own(value)
+			if not value then error("native translation grid allocation failed", 0) end
+			if not owned_set[value] then owned_set[value] = true; owned[#owned + 1] = value end
+			return value
+		end
+		local committed = false
+		local started = now_ms()
+		local ok, err = pcall(function()
+			local correction = own(NewComputeGrid(local_w, local_h, "f", 32))
+			GridFill(correction, 0)
+			for _, group in pairs(groups) do
+				local span = group.finish - group.start + 1
+				local line_w = selected.axis == "x" and 1 or selected.along_n
+				local line_h = selected.axis == "x" and selected.along_n or 1
+				local line = own(NewComputeGrid(line_w, line_h, "f", 32))
+				GridFill(line, 0)
+				for _, record in ipairs(group.records) do
+					if selected.axis == "x" then
+						line:set(0, record.along, record.offset)
+					else
+						line:set(record.along, 0, record.offset)
+					end
+				end
+				local expanded_w = selected.axis == "x" and span or selected.along_n
+				local expanded_h = selected.axis == "x" and selected.along_n or span
+				local expanded = own(GridResample(line, expanded_w, expanded_h, false))
+				local layer = own(NewComputeGrid(local_w, local_h, "f", 32))
+				GridFill(layer, 0)
+				local dx = selected.axis == "x" and group.start - edge0 or 0
+				local dy = selected.axis == "x" and 0 or group.start - edge0
+				layer:copyrect(expanded, box_fn(0, 0, expanded_w, expanded_h), point_fn(dx, dy))
+				GridAdd(correction, layer)
+				native_translation.groups = native_translation.groups + 1
+			end
+			local native_region = own(grid:new_instance(local_w, local_h))
+			local source_box = selected.axis == "x"
+				and box_fn(edge0, 0, edge1 + 1, selected.along_n)
+				or box_fn(0, edge0, selected.along_n, edge1 + 1)
+			native_region:copyrect(grid, source_box, point_fn(0, 0))
+			local result = own(GridRepack(native_region, "f", 32, true))
+			GridAdd(result, correction)
+			GridClamp(result, 0, mx)
+			local packed = own(GridRepack(result, fmt, bits, false, "clamp"))
+			grid:copyrect(packed, box_fn(0, 0, local_w, local_h),
+				selected.axis == "x" and point_fn(edge0, 0) or point_fn(0, edge0))
+			committed = true
+			native_translation.cells = native_translation.cells + local_w * local_h
+		end)
+		for index = #owned, 1, -1 do
+			local value = owned[index]
+			if value and type(value.free) == "function" then pcall(value.free, value) end
+		end
+		native_translation.ms = native_translation.ms + math.max(0, now_ms() - started)
+		if not ok then
+			if committed then error("native destination translation commit failed: " .. tostring(err), 0) end
+			return false, tostring(err)
+		end
+		native_translation.used = true
+		return true
+	end
+
+	-- Apply the exact slope-matched quintic join in native compact bands. Records sharing the same
+	-- join bounds are evaluated together. Four endpoint columns/rows supply the same local slopes as
+	-- feather_join; a sparse row mask limits each group to its refined records. All group corrections
+	-- accumulate off-grid and are committed in one copy, so failure before that point is scalar-safe.
+	local function native_feather_records(selected, records)
+		if not native_feather.requested or #records == 0 then return false, "not requested" end
+		local NewComputeGrid = Global("NewComputeGrid")
+		local GridResample = Global("GridResample")
+		local GridMulDivAdd = Global("GridMulDivAdd")
+		local GridAddMulDiv = Global("GridAddMulDiv")
+		local GridAdd = Global("GridAdd")
+		local GridClamp = Global("GridClamp")
+		local GridRepack = Global("GridRepack")
+		local GridFill = Global("GridFill")
+		local IsComputeGrid = Global("IsComputeGrid")
+		local box_fn, point_fn = Global("box"), Global("point")
+		if type(NewComputeGrid) ~= "function" or type(GridResample) ~= "function"
+			or type(GridMulDivAdd) ~= "function" or type(GridAddMulDiv) ~= "function"
+			or type(GridAdd) ~= "function" or type(GridClamp) ~= "function"
+			or type(GridRepack) ~= "function" or type(GridFill) ~= "function"
+			or type(IsComputeGrid) ~= "function" or type(box_fn) ~= "function"
+			or type(point_fn) ~= "function" or type(grid.new_instance) ~= "function"
+			or type(grid.copyrect) ~= "function" then
+			return false, "native destination feather API unavailable"
+		end
+
+		local before_edge = selected.edge == "left" or selected.edge == "top"
+		local feather_weight_scale = 1048576
+		local groups, edge0, edge1 = {}, nil, nil
+		for _, record in ipairs(records) do
+			local lo, hi
+			if before_edge then
+				lo = math.max(outer_guard + 1, record.perp - 6)
+				hi = math.min(selected.perp_n - 2, record.perp + record.width + 12)
+			else
+				lo = math.max(1, record.perp - 12)
+				hi = math.min(selected.perp_n - outer_guard - 2, record.perp + record.width + 6)
+			end
+			if hi - lo >= 4 then
+				edge0 = edge0 and math.min(edge0, lo) or lo
+				edge1 = edge1 and math.max(edge1, hi) or hi
+				local key = tostring(lo) .. ":" .. tostring(hi)
+				local group = groups[key]
+				if not group then
+					group = { lo = lo, hi = hi, records = {}, along0 = record.along,
+						along1 = record.along }
+					groups[key] = group
+				end
+				group.records[#group.records + 1] = record
+				group.along0 = math.min(group.along0, record.along)
+				group.along1 = math.max(group.along1, record.along)
+			end
+		end
+		if not edge0 or not edge1 or edge0 > edge1 then return false, "empty feather band" end
+		local fmt, bits = IsComputeGrid(grid)
+		if not fmt then return false, "destination height grid is not compute-backed" end
+		local edge_span = edge1 - edge0 + 1
+		local full_w = selected.axis == "x" and edge_span or selected.along_n
+		local full_h = selected.axis == "x" and selected.along_n or edge_span
+		local owned, owned_set = {}, {}
+		local function own(value)
+			if not value then error("native feather grid allocation failed", 0) end
+			if not owned_set[value] then owned_set[value] = true; owned[#owned + 1] = value end
+			return value
+		end
+		local function release_from(first)
+			for index = #owned, first, -1 do
+				local value = owned[index]
+				if value and type(value.free) == "function" then pcall(value.free, value) end
+				owned_set[value] = nil
+				owned[index] = nil
+			end
+		end
+		local committed = false
+		local started = now_ms()
+		local ok, err = pcall(function()
+			local correction = own(NewComputeGrid(full_w, full_h, "f", 32))
+			GridFill(correction, 0)
+			for _, group in pairs(groups) do
+				local retained = #owned + 1
+				local span = group.hi - group.lo
+				local along_span = group.along1 - group.along0 + 1
+				local local_w = selected.axis == "x" and span + 1 or along_span
+				local local_h = selected.axis == "x" and along_span or span + 1
+				local extended_w = selected.axis == "x" and span + 3 or along_span
+				local extended_h = selected.axis == "x" and along_span or span + 3
+				local source_native = own(grid:new_instance(extended_w, extended_h))
+				local source_box = selected.axis == "x"
+					and box_fn(group.lo - 1, group.along0, group.hi + 2, group.along1 + 1)
+					or box_fn(group.along0, group.lo - 1, group.along1 + 1, group.hi + 2)
+				source_native:copyrect(grid, source_box, point_fn(0, 0))
+				local source_extended = own(GridRepack(source_native, "f", 32, true))
+				local source = own(NewComputeGrid(local_w, local_h, "f", 32))
+				local central_box = selected.axis == "x"
+					and box_fn(1, 0, span + 2, along_span)
+					or box_fn(0, 1, along_span, span + 2)
+				source:copyrect(source_extended, central_box, point_fn(0, 0))
+
+				local function endpoint_line(cross)
+					local line_w = selected.axis == "x" and 1 or along_span
+					local line_h = selected.axis == "x" and along_span or 1
+					local line = own(NewComputeGrid(line_w, line_h, "f", 32))
+					local relative = cross - group.lo + 1
+					local endpoint_box = selected.axis == "x"
+						and box_fn(relative, 0, relative + 1, along_span)
+						or box_fn(0, relative, along_span, relative + 1)
+					line:copyrect(source_extended, endpoint_box, point_fn(0, 0))
+					return line
+				end
+
+				local v0, v0_prev = endpoint_line(group.lo), endpoint_line(group.lo - 1)
+				local v1, v1_next = endpoint_line(group.hi), endpoint_line(group.hi + 1)
+				local slope0, slope1 = own(v0:clone()), own(v1_next:clone())
+				GridAddMulDiv(slope0, v0_prev, -1, 1)
+				GridAddMulDiv(slope1, v1, -1, 1)
+				local base0 = own(GridResample(v0, local_w, local_h, false))
+				local base1 = own(GridResample(v1, local_w, local_h, false))
+				local slope0_full = own(GridResample(slope0, local_w, local_h, false))
+				local slope1_full = own(GridResample(slope1, local_w, local_h, false))
+
+				local distance_seed_w = selected.axis == "x" and span + 1 or 1
+				local distance_seed_h = selected.axis == "x" and 1 or span + 1
+				local distance0_seed = own(NewComputeGrid(distance_seed_w, distance_seed_h, "f", 32))
+				local distance1_seed = own(NewComputeGrid(distance_seed_w, distance_seed_h, "f", 32))
+				local weight_seed = own(NewComputeGrid(distance_seed_w, distance_seed_h, "f", 32))
+				for distance = 0, span do
+					local sx, sy = selected.axis == "x" and distance or 0,
+						selected.axis == "x" and 0 or distance
+					local t = (distance + 0.0) / span
+					local smooth = t * t * t * (t * (t * 6 - 15) + 10)
+					distance0_seed:set(sx, sy, distance)
+					distance1_seed:set(sx, sy, distance - span)
+					-- Compute-grid setters require integers even for f32 storage. A 20-bit fixed-point
+					-- weight keeps the maximum interpolation error far below one height unit.
+					weight_seed:set(sx, sy,
+						math.floor(smooth * feather_weight_scale + 0.5))
+				end
+				local distance0 = own(GridResample(distance0_seed, local_w, local_h, false))
+				local distance1 = own(GridResample(distance1_seed, local_w, local_h, false))
+				local weight = own(GridResample(weight_seed, local_w, local_h, false))
+				GridMulDivAdd(slope0_full, distance0, 1, 0)
+				GridAdd(base0, slope0_full)
+				GridMulDivAdd(slope1_full, distance1, 1, 0)
+				GridAdd(base1, slope1_full)
+				local target = own(base1:clone())
+				GridAddMulDiv(target, base0, -1, 1)
+				GridMulDivAdd(target, weight, feather_weight_scale, 0)
+				GridAdd(target, base0)
+
+				local mask_line_w = selected.axis == "x" and 1 or along_span
+				local mask_line_h = selected.axis == "x" and along_span or 1
+				local mask_line = own(NewComputeGrid(mask_line_w, mask_line_h, "f", 32))
+				GridFill(mask_line, 0)
+				for _, record in ipairs(group.records) do
+					if selected.axis == "x" then
+						mask_line:set(0, record.along - group.along0, 1)
+					else
+						mask_line:set(record.along - group.along0, 0, 1)
+					end
+				end
+				local mask = own(GridResample(mask_line, local_w, local_h, false))
+				local delta = own(target:clone())
+				GridAddMulDiv(delta, source, -1, 1)
+				GridMulDivAdd(delta, mask, 1, 0)
+				local layer = own(NewComputeGrid(full_w, full_h, "f", 32))
+				GridFill(layer, 0)
+				local dx = selected.axis == "x" and group.lo - edge0 or group.along0
+				local dy = selected.axis == "x" and group.along0 or group.lo - edge0
+				layer:copyrect(delta, box_fn(0, 0, local_w, local_h), point_fn(dx, dy))
+				GridAdd(correction, layer)
+				native_feather.groups = native_feather.groups + 1
+				native_feather.cells = native_feather.cells + local_w * local_h
+				release_from(retained)
+			end
+
+			local region_native = own(grid:new_instance(full_w, full_h))
+			local region_box = selected.axis == "x"
+				and box_fn(edge0, 0, edge1 + 1, selected.along_n)
+				or box_fn(0, edge0, selected.along_n, edge1 + 1)
+			region_native:copyrect(grid, region_box, point_fn(0, 0))
+			local result = own(GridRepack(region_native, "f", 32, true))
+			GridAdd(result, correction)
+			GridMulDivAdd(result, 1, 1, 1, 2)
+			GridClamp(result, 0, mx)
+			local packed = own(GridRepack(result, fmt, bits, false, "clamp"))
+			committed = true
+			grid:copyrect(packed, box_fn(0, 0, full_w, full_h),
+				selected.axis == "x" and point_fn(edge0, 0) or point_fn(0, edge0))
+		end)
+		release_from(1)
+		native_feather.ms = native_feather.ms + math.max(0, now_ms() - started)
+		if not ok then
+			if committed then error("native destination feather commit failed: " .. tostring(err), 0) end
+			return false, tostring(err)
+		end
+		native_feather.used = true
+		native_feather.records = native_feather.records + #records
+		return true
+	end
+
 	local pause = Global("PauseInfiniteLoopDetection")
 	local resume = Global("ResumeInfiniteLoopDetection")
 	if type(pause) == "function" then pcall(pause, "SBMInternalHeightStepRepair") end
@@ -1730,6 +2163,7 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 
 			local modified, detected = 0, 0
 			local min_offset, max_offset
+			local translation_records = {}
 			for _, point in ipairs(points) do
 				local along = point.along
 				local perp, width = refine_step(selected, along, point.perp)
@@ -1752,31 +2186,62 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 						-- RepairQualifiedSourceHeightSteps after this detector returns; the immediate
 						-- physical-edge path below retains v839's destination behavior.
 						if not wide_ring_only then
-							-- Translate the low region. The feather below then replaces the inherited
-							-- resampling ramp and a few samples on both sides with a slope-matched join.
-							local perp0 = before_edge and 0 or perp + width
-							local perp1 = before_edge and perp or selected.perp_n - 1
-							for p = perp0, perp1 do
-								local original = at(selected.axis, p, along)
-								if type(original) == "number" then
-									put(selected.axis, p, along, math.min(mx, original + offset))
-									modified = modified + 1
-								end
-							end
-							local join_lo, join_hi
-							if before_edge then
-								join_lo = math.max(outer_guard + 1, perp - 6)
-								join_hi = math.min(selected.perp_n - 2, perp + width + 12)
-							else
-								join_lo = math.max(1, perp - 12)
-								join_hi = math.min(selected.perp_n - outer_guard - 2,
-									perp + width + 6)
-							end
-							modified = modified
-								+ feather_join(selected.axis, along, join_lo, join_hi)
+							translation_records[#translation_records + 1] = {
+								along = along, perp = perp, width = width, offset = offset,
+							}
 						end
 					end
 				end
+			end
+			if not wide_ring_only and #translation_records > 0 then
+				local native_ok, native_error = native_translate_track(selected, translation_records)
+				if not native_ok and native_error ~= "not requested" then
+					native_translation.fallback = true
+					native_translation.error = tostring(native_error)
+				end
+				local feather_native_ok, feather_native_error = false, "translation unavailable"
+				if native_ok then
+					feather_native_ok, feather_native_error =
+						native_feather_records(selected, translation_records)
+					if not feather_native_ok and feather_native_error ~= "not requested" then
+						native_feather.fallback = true
+						native_feather.error = tostring(feather_native_error)
+					end
+				end
+				for _, record in ipairs(translation_records) do
+					local before_edge = selected.edge == "left" or selected.edge == "top"
+					local perp0 = before_edge and 0 or record.perp + record.width
+					local perp1 = before_edge and record.perp or selected.perp_n - 1
+					if native_ok then
+						modified = modified + math.max(0, perp1 - perp0 + 1)
+					else
+						for p = perp0, perp1 do
+							local original = at(selected.axis, p, record.along)
+							if type(original) == "number" then
+								put(selected.axis, p, record.along,
+									math.min(mx, original + record.offset))
+								modified = modified + 1
+							end
+						end
+					end
+					local join_lo, join_hi
+					if before_edge then
+						join_lo = math.max(outer_guard + 1, record.perp - 6)
+						join_hi = math.min(selected.perp_n - 2,
+							record.perp + record.width + 12)
+					else
+						join_lo = math.max(1, record.perp - 12)
+						join_hi = math.min(selected.perp_n - outer_guard - 2,
+							record.perp + record.width + 6)
+					end
+					if feather_native_ok then
+						modified = modified + math.max(0, join_hi - join_lo - 1)
+					else
+						modified = modified + feather_join(
+							selected.axis, record.along, join_lo, join_hi)
+					end
+				end
+				register_translation_writes(selected, translation_records)
 			end
 			selected.modified = modified
 			selected.detected = detected
@@ -2456,12 +2921,36 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 			local core_x1 = math.min(x1, candidate.x + core_extent)
 			local core_y1 = math.min(y1, candidate.y + core_extent)
 			local exact_core_samples = 0
+			-- The exact core predicate is the expensive part of this bounded raster: it includes
+			-- the oriented irregular-lobe calculation and was historically evaluated twice for
+			-- every cell in the conservative core box. Preserve the first pass' exact decisions as
+			-- compact row spans and replay those spans into the packed result. This changes neither
+			-- the predicate nor its visit order, and avoids a second sqrt/quintic pass per apron.
+			local exact_core_row_spans = {}
 			for y = math.floor(core_y0), math.ceil(core_y1) do
+				local row_spans = {}
+				local span_start = nil
 				for x = math.floor(core_x0), math.ceil(core_x1) do
 					local _, in_core = apron_weight(candidate, short_radius, long_radius,
 						x - candidate.x, y - candidate.y)
-					if in_core then mask:set(x - x0, y - y0, native_weight_scale) end
+					if in_core then
+						mask:set(x - x0, y - y0, native_weight_scale)
+						span_start = span_start or x
+					elseif span_start then
+						row_spans[#row_spans + 1] = span_start
+						row_spans[#row_spans + 1] = x - 1
+						span_start = nil
+					end
 					exact_core_samples = exact_core_samples + 1
+				end
+				if span_start then
+					row_spans[#row_spans + 1] = span_start
+					row_spans[#row_spans + 1] = math.ceil(core_x1)
+				end
+				if #row_spans > 0 then
+					exact_core_row_spans[#exact_core_row_spans + 1] = {
+						y = y, spans = row_spans,
+					}
 				end
 			end
 
@@ -2481,14 +2970,12 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 			local packed_result = own(native_repack(result, native_is_compute(grid)))
 			assert(packed_result, "native apron result conversion failed")
 
-			for y = math.floor(core_y0), math.ceil(core_y1) do
-				for x = math.floor(core_x0), math.ceil(core_x1) do
-					local _, in_core = apron_weight(candidate, short_radius, long_radius,
-						x - candidate.x, y - candidate.y)
-					if in_core then
+			for _, row in ipairs(exact_core_row_spans) do
+				for span_index = 1, #row.spans, 2 do
+					for x = row.spans[span_index], row.spans[span_index + 1] do
 						local value = math.floor(candidate.center + candidate.gx * (x - candidate.x)
-							+ candidate.gy * (y - candidate.y) + 0.5)
-						packed_result:set(x - x0, y - y0,
+							+ candidate.gy * (row.y - candidate.y) + 0.5)
+						packed_result:set(x - x0, row.y - y0,
 							math.max(0, math.min(65535, value)))
 					end
 				end

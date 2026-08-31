@@ -897,7 +897,15 @@ static_checks = {
         and "local old = target_grid:get(x, y)" in aprons
         and "target_grid:set(x, y, value)" in aprons
         and "local _, in_core = apron_weight" in aprons
-        and "packed_result:set(x - x0, y - y0," in aprons
+        and (
+            "packed_result:set(x - x0, y - y0," in aprons
+            or (
+                "local exact_core_row_spans = {}" in aprons
+                and "span_start = span_start or x" in aprons
+                and "for span_index = 1, #row.spans, 2 do" in aprons
+                and "packed_result:set(x - x0, row.y - y0," in aprons
+            )
+        )
         and "math.floor(candidate.center + candidate.gx * (x - candidate.x)" in aprons
     ),
     "natural_aprons_native_raster_restores_inner_u16_after_rounding": appears_in_order(
