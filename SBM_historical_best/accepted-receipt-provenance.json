@@ -1,0 +1,8 @@
+{
+  "schema": "smr.sbm-historical-best.accepted-receipt-provenance.v1",
+  "accepted_t0_to_t1_ms": 75813.298,
+  "receipt": "_ralph/runs/surface-loading-under-60s-rough/artifacts/run_v1011_surface_release_apron_math_iter266b/surface_only_acceptance_receipt.json",
+  "receipt_sha256": "A20893A54314A4C9BCE823D1D3AC55DAF83A9B00B7088F38B1BEB401C4AE6B9E",
+  "production_head_recorded_by_receipt": "b617030f263783d08574b511e57b89f96f726df0",
+  "payload_identity_note": "The receipt's production HEAD did not capture the dirty worktree; payload-manifest.json is the authoritative reconstructed executable identity."
+}

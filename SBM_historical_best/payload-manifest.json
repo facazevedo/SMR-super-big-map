@@ -1,0 +1,193 @@
+{
+  "schema": "smr.ralph.exact-iter266b-dirty-payload-manifest.v1",
+  "ok": true,
+  "created_utc": "2026-09-01T02:58:29.8425282Z",
+  "file_count": 35,
+  "composition": {
+    "base_commit": "b617030f263783d08574b511e57b89f96f726df0",
+    "preserved_dirty_files": [
+      "Code/sbm_deposits.lua",
+      "Code/sbm_diagnostics.lua",
+      "Code/sbm_lifecycle.lua"
+    ],
+    "preserved_deletion": "Code/sbm_elevator_debug.lua",
+    "preserved_enabled_config_sha256": "E3E59B1A45B5A2B5A7B07BFE99E3952F2B331DD924C236E7B57487CC25ED5E6B"
+  },
+  "files": [
+    {
+      "path": "Code/sbm_config.lua",
+      "bytes": 91388,
+      "sha256": "E3E59B1A45B5A2B5A7B07BFE99E3952F2B331DD924C236E7B57487CC25ED5E6B"
+    },
+    {
+      "path": "Code/sbm_deposits.lua",
+      "bytes": 559631,
+      "sha256": "F94C66FA4892B12A4001DA117EB786880A6F1B62C8D9D772DB78631023B9EE01"
+    },
+    {
+      "path": "Code/sbm_diagnostics.lua",
+      "bytes": 14442,
+      "sha256": "B23D088875D2F52B2F55EE9116277D5C3859F8D4359700BCCFB1ECBCECB216A6"
+    },
+    {
+      "path": "Code/sbm_engine.lua",
+      "bytes": 7017,
+      "sha256": "7BBEE341CFEDE4DC7B0A2179BB7121BD6BEEDD962096E06FBD33DFF1000FA0E9"
+    },
+    {
+      "path": "Code/sbm_heat_safety.lua",
+      "bytes": 8068,
+      "sha256": "CBA6D42CE18C1F8024BFCB30CF0A8FFD77E0F2CC5296638D420485EC007F511A"
+    },
+    {
+      "path": "Code/sbm_lifecycle.lua",
+      "bytes": 75069,
+      "sha256": "7FF6554AA0C86F1EC6068967C008AB9202A22860E18FD53E96191BBE182A725C"
+    },
+    {
+      "path": "Code/sbm_loading_ui.lua",
+      "bytes": 46390,
+      "sha256": "DAF459643325EE266439BEB370AF883BFB46CDFF8F1467859A56886B3AB7BDE7"
+    },
+    {
+      "path": "Code/sbm_map_bounds.lua",
+      "bytes": 21342,
+      "sha256": "662D7B12957914538677806A5F5844688BF1D90DBFCB6028703DD7DC5A990469"
+    },
+    {
+      "path": "Code/sbm_map_generation.lua",
+      "bytes": 1024162,
+      "sha256": "E059A1B854DA08E0822C20ABE0D3F4F72E413D143449131CF20CB96F7CA85C4B"
+    },
+    {
+      "path": "Code/sbm_object_clone.lua",
+      "bytes": 15143,
+      "sha256": "324F4EB746C7F7AF9296849C9DA918D2201E692B912C303C2324014F6497BCCA"
+    },
+    {
+      "path": "Code/sbm_overview_camera.lua",
+      "bytes": 35172,
+      "sha256": "35CC47D8442A79FDD5447F3B6A51387F8A49DAF300B1BCCDD0CFF176CD47BB04"
+    },
+    {
+      "path": "Code/sbm_overview_curtains.lua",
+      "bytes": 4552,
+      "sha256": "1B99DF1540FCDF48070B825C4B857EDB42B9C54B1065B7ABE230408EC0522B64"
+    },
+    {
+      "path": "Code/sbm_overview_render.lua",
+      "bytes": 3071,
+      "sha256": "362A1662F32137CB3C5CC76D12356832CE6A72F19E7778807EF7F82795CAB4CA"
+    },
+    {
+      "path": "Code/sbm_pass_border.lua",
+      "bytes": 18429,
+      "sha256": "66218A7F25478FE29CA08F23FABC525127416724912AF7A0C594365A7EB9FF61"
+    },
+    {
+      "path": "Code/sbm_place_elevator_button.lua",
+      "bytes": 29324,
+      "sha256": "DCEC33FCCA4A0370B1FB7B4EFC29571AE1E4C7D8AFFDA4BE57848673931F6B31"
+    },
+    {
+      "path": "Code/sbm_pregame_toggle.lua",
+      "bytes": 23039,
+      "sha256": "F53ABC2E3141F65B6B6A1DF3EF2869E7A8DCC4073D5490882800AE934EB31B08"
+    },
+    {
+      "path": "Code/sbm_provenance.lua",
+      "bytes": 7290,
+      "sha256": "07E0359EA74AC71A0FE782A2E8112BD5C7511630C68602002CD19B1BAA02E99C"
+    },
+    {
+      "path": "Code/sbm_rocket_rules.lua",
+      "bytes": 42798,
+      "sha256": "381971BF9D2B27F0EB274D0BE376239F7CAA0925F37A778E43D29E3FA2814672"
+    },
+    {
+      "path": "Code/sbm_sector_exploration.lua",
+      "bytes": 125208,
+      "sha256": "0AC8D50A43FDDE19E9CAC4B3005F1B8E77015DC4E7B46E5F0408A9F8748691C5"
+    },
+    {
+      "path": "Code/sbm_sector_grid.lua",
+      "bytes": 22462,
+      "sha256": "E40E5B704C129E95451C83EB8181B607111E9A51008A43F824444E0DAF25BDF0"
+    },
+    {
+      "path": "Code/sbm_sector_highlight.lua",
+      "bytes": 32818,
+      "sha256": "0AD38FD857B1133D307E6B909D84CBEF12F25642958C61ADD83CB191A9EF8A17"
+    },
+    {
+      "path": "Code/sbm_terrain_copy.lua",
+      "bytes": 522868,
+      "sha256": "70065D24BD03E611727908DB5214E11285E0F73E0C3B61592452B242C35E0384"
+    },
+    {
+      "path": "Code/sbm_version.lua",
+      "bytes": 980,
+      "sha256": "79A9A3E37DE765CA31229000AEC066A56F5924865E6AB7AF18465A2ECB7C39E6"
+    },
+    {
+      "path": "Code/sbm_zoom_option.lua",
+      "bytes": 13006,
+      "sha256": "2AAC101E2EAB8A6E4BCC2A33B9183A106E5AD26593C1172081001F943C606828"
+    },
+    {
+      "path": "Code/sbm_zoomplus_integration.lua",
+      "bytes": 10605,
+      "sha256": "BFD821E252B07AAE608C4783D85DE2868404B1D8C6F5C64E58E91E6930261AC1"
+    },
+    {
+      "path": "Code/SuperBigMap.lua",
+      "bytes": 616,
+      "sha256": "713EEF6EF0FF7A7735FE7BA4AEB652D0375529319C253EA690BB13D4D5947624"
+    },
+    {
+      "path": "Code/ZoomPlus.lua",
+      "bytes": 47333,
+      "sha256": "BEFDC510F2E16AE2B214FAC12CD74EC48135A38823861E0623F855A413D3C6AA"
+    },
+    {
+      "path": "Images/02_zoom.jpg",
+      "bytes": 555928,
+      "sha256": "F7EE9C80BCF94B38FA100EE4F13AB5C1DF8C8200EE11AE75E73F3698B56ED71D"
+    },
+    {
+      "path": "Images/final_composed.jpg",
+      "bytes": 328469,
+      "sha256": "AD7C31AF92B9D15C82AB99688AEEDE6E7D11CC67C75778C22C06197E45DDDD9D"
+    },
+    {
+      "path": "Images/SBM_FLS.jpg",
+      "bytes": 989171,
+      "sha256": "56E0C08005D359E89A2DC7E640E53E3C282EFBC96E79C353CEEA0EEA65D5D514"
+    },
+    {
+      "path": "Images/SBM.jpg",
+      "bytes": 949982,
+      "sha256": "F4A6DDBA45C1472778BB2E05C765ACF8FEE1353DCF63C3082A3275A68BBE1851"
+    },
+    {
+      "path": "Images/scenario.jpg",
+      "bytes": 988845,
+      "sha256": "F3147F718149D34CE3E9EC6F05EC58CE2A0F2D5DB8385A2BEB72474B69210979"
+    },
+    {
+      "path": "Images/scenario02.jpg",
+      "bytes": 985530,
+      "sha256": "33E4A9E09B008C609D7F809835CD82D1F5C1D888355C1206038C85494DECB725"
+    },
+    {
+      "path": "items.lua",
+      "bytes": 3052,
+      "sha256": "366E727C01212DB9374316EF17357F60FC345006379F3F7E0A87A4F14A207B50"
+    },
+    {
+      "path": "metadata.lua",
+      "bytes": 2826,
+      "sha256": "461489E702093578B2C72AABD2FA603C405485EEBD3C68825F511D91ACFCB467"
+    }
+  ]
+}

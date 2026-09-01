@@ -1,0 +1,35 @@
+{
+  "schema": "smr.sbm-historical-best.exact-cohort-receipt.v1",
+  "ok": true,
+  "payload_manifest_sha256": "334D52B2670017A355DDB5EE84159EDD0CBE7E7EF9DB25ED578A5B914FEC0E45",
+  "historical_baseline_ms": 75813.298,
+  "samples_ms": [83160.4734, 81069.7144, 80971.6809, 78977.9642, 78839.8344],
+  "arithmetic_mean_ms": 80603.93346,
+  "median_ms": 80971.6809,
+  "population_standard_deviation_ms": 1590.2143287284803,
+  "sample_standard_deviation_ms": 1777.9136689155393,
+  "minimum_ms": 78839.8344,
+  "maximum_ms": 83160.4734,
+  "range_ms": 4320.638999999996,
+  "sample_coefficient_of_variation": 0.02205740579394721,
+  "historical_position": {
+    "samples_at_or_below_historical": 0,
+    "below_sample_minimum_by_ms": 3026.536400000012,
+    "sample_standard_deviations_from_mean": -2.6945264799736384
+  },
+  "corrected_consistency_gate": {
+    "median_within_ms": 6000,
+    "median_delta_ms": 5158.382900000011,
+    "median_passed": true,
+    "sample_cv_at_most": 0.05,
+    "sample_cv_passed": true,
+    "correction": "The former 5000 ms cutoff was superseded by the explicit 6000 ms gate; the preserved cohort is not repeated or cherry-picked."
+  },
+  "samples": [
+    {"index": 1, "receipt": "_ralph/runs/surface-loading-under-60s-rough/artifacts/run_v1011_surface_calibration_iter266b_exact_sample01_20260901T030622246Z/surface_only_acceptance_receipt.json", "receipt_sha256": "B42E59C9A4599B32B54E7FB79E72A2BD071F043A4994FA763BA7442B5C0AFDE1"},
+    {"index": 2, "receipt": "_ralph/runs/surface-loading-under-60s-rough/artifacts/run_v1011_surface_calibration_iter266b_exact_sample02_20260901T030814997Z/surface_only_acceptance_receipt.json", "receipt_sha256": "FB55F4FF9BCF0E35D23320F274F99BF7637DACC028633FDC0583BB9877FF6884"},
+    {"index": 3, "receipt": "_ralph/runs/surface-loading-under-60s-rough/artifacts/run_v1011_surface_calibration_iter266b_exact_sample03_20260901T031000023Z/surface_only_acceptance_receipt.json", "receipt_sha256": "491F342C3555A94CE3D94B86769F66D7F3B2FD252874EAFA42DE7B7860048BC6"},
+    {"index": 4, "receipt": "_ralph/runs/surface-loading-under-60s-rough/artifacts/run_v1011_surface_calibration_iter266b_exact_sample04_20260901T031312626Z/surface_only_acceptance_receipt.json", "receipt_sha256": "7E7D42F90032BF0BF4BE99432E04EA7BC73AA38F5688A08560F94B382FB29F96"},
+    {"index": 5, "receipt": "_ralph/runs/surface-loading-under-60s-rough/artifacts/run_v1011_surface_calibration_iter266b_exact_sample05_20260901T031446913Z/surface_only_acceptance_receipt.json", "receipt_sha256": "80ECB1B7165052853352534CFBF29706AD72C9EED0D8078731663ADB7A3A690D"}
+  ]
+}
