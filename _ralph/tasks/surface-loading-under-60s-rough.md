@@ -5,7 +5,7 @@
 Read `_ralph/tasks/surface-loading-under-60s.md` completely before acting. Every
 requirement in that contract is incorporated here and remains binding except where
 this revision explicitly overrides it. The incorporated file must have SHA-256
-`606CA5A6F5F8E75112D9B25AA1DB32A9669E1FB944399B3D5D9A82DF193BA64E`; fail closed if
+`E5E85A5C3103F26B75C8908C2C18E62813651383E43645973ACF386EF32F11BF`; fail closed if
 it differs.
 
 This is a new run workspace. Preserve the earlier `surface-loading-under-60s` workspace
