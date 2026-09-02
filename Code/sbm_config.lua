@@ -783,7 +783,7 @@ config.StretchAdaptiveZScale = true
 -- from the crease through its adjacent edge and replace the wall with a slope-matched quintic
 -- interpolation. Outer relief survives without flat shelves, caps, or synthetic smooth strips; the
 -- central 16 x 16 sectors and ordinary broken mountain cliffs are untouched.
-config.StretchRepairInternalHeightStep = true
+config.StretchRepairInternalHeightStep = false
 -- Reuse the exact four/six-value neighbourhood while refining a detected height-step row. This
 -- changes only how often the native grid is read; candidate order, comparisons, and writes are
 -- identical. The legacy branch remains available as a fail-closed diagnostic fallback.
