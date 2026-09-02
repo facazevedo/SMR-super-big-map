@@ -17448,6 +17448,9 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								and repulsion_stats.hard_spacing_spatial_index_hex_buckets,
 						}, repulsion_ok == true)
 						if repulsion_ok ~= true then
+							-- AuditTopUpVanillaRepulsion gates ok on nine counters; this message reported only
+							-- six, so a failure in one of the other five printed as all zeroes and named
+							-- nothing actionable. Report every gated counter.
 							error("surface top-up spacing audit failed: density_failures="
 								.. tostring(repulsion_stats and repulsion_stats.density_failures)
 								.. " duplicate_hex_pairs="
@@ -17468,7 +17471,17 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 									and repulsion_stats.first_surface_quota_spacing_violation)
 								.. " first_repulsion_violation="
 								.. tostring(repulsion_stats
-									and repulsion_stats.first_repulsion_violation))
+									and repulsion_stats.first_repulsion_violation)
+								.. " missing_positions="
+								.. tostring(repulsion_stats and repulsion_stats.missing_positions)
+								.. " missing_topup_profiles="
+								.. tostring(repulsion_stats and repulsion_stats.missing_topup_profiles)
+								.. " enrichment_spacing_violations="
+								.. tostring(repulsion_stats and repulsion_stats.enrichment_spacing_violations)
+								.. " outer_passage_pad_failures="
+								.. tostring(repulsion_stats and repulsion_stats.outer_passage_pad_failures)
+								.. " underground_fallback_strategy_failures="
+								.. tostring(repulsion_stats and repulsion_stats.underground_fallback_strategy_failures))
 						end
 						if type(deposits.AuditSurfaceTopUpPlacement) == "function" then
 							local ring_ok, ring_stats = TimedSafeCall("surface top-up placement audit", map,
