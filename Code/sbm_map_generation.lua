@@ -14893,6 +14893,47 @@ local function PatchRandomMapGenerator()
 				end
 				local bridge_ok, bridge_reason = rebuild_source_buildable_grid(target_map)
 				if bridge_ok then
+					-- Same native out-of-bounds hazard the underground branch above already guards,
+					-- which the surface path never did. The bridge leaves a source-sized z_grid
+					-- (615x710) in place and the stock ResolveBuildable tail hands it straight to
+					-- native MaskBuildableGrid, which addresses the real 820x946 backing rather than
+					-- the Lua view. That read past the end faults intermittently with
+					-- STATUS_STACK_BUFFER_OVERRUN (c0000409). Give the unavoidable stock mask call a
+					-- backing-sized grid padded with UnbuildableZ and retain the exact source grid for
+					-- the authoritative GetPlayableArea repair. Changes no source value and adds no
+					-- playable cell.
+					local source_grid = buildable and buildable.z_grid
+					local expanded_w = tonumber(map.SuperBigMapExpandedHexWidth)
+					local expanded_h = tonumber(map.SuperBigMapExpandedHexHeight)
+					local source_w = tonumber(map.hex_width)
+					local source_h = tonumber(map.hex_height)
+					local can_pad = source_grid ~= nil
+						and retained_source_buildable_grid == nil
+						and type(closure_new_grid) == "function"
+						and type(source_grid.get) == "function"
+						and type(expanded_w) == "number" and type(expanded_h) == "number"
+						and type(source_w) == "number" and type(source_h) == "number"
+						and expanded_w >= source_w and expanded_h >= source_h
+						and (expanded_w > source_w or expanded_h > source_h)
+					if can_pad then
+						local unbuildable_z = 2 ^ 16 - 1
+						if type(closure_build_unbuildable_z) == "function" then
+							local ok_z, value = pcall(closure_build_unbuildable_z)
+							if ok_z and type(value) == "number" then unbuildable_z = value end
+						end
+						local padded = closure_new_grid(expanded_w, expanded_h, 16, unbuildable_z)
+						if padded and type(padded.set) == "function" then
+							for y = 0, source_h - 1 do
+								for x = 0, source_w - 1 do
+									padded:set(x, y, source_grid:get(x, y))
+								end
+							end
+							retained_source_buildable_grid = source_grid
+							buildable.z_grid = padded
+						elseif padded then
+							pcall(function() padded:free() end)
+						end
+					end
 					return
 				end
 				if bridge_reason == "mode-not-eligible" or bridge_reason == "map-not-expanded" then
