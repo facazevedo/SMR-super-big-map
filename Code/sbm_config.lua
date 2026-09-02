@@ -804,12 +804,12 @@ config.OptimizeHeightStepNativeSourceDiscoveryIndex = true
 -- straight edge track through native compute-grid replication/add/clamp operations. Scalar Lua is
 -- retained for the narrow slope-matched feather only. A failure before the one-shot copy commit
 -- falls back to the original scalar translation; no partially written grid is retried.
-config.OptimizeHeightStepNativeDestinationTranslation = false
+config.OptimizeHeightStepNativeDestinationTranslation = true
 -- Resynthesize the unchanged per-row quintic join in compact native bands. Endpoint samples,
 -- local slopes, quintic weights, rounding, clamping, and the rows selected by refinement remain
 -- identical to the scalar path. The final terrain write is one-shot; any earlier native failure
 -- falls back to scalar feathering on top of the already completed translation.
-config.OptimizeHeightStepNativeDestinationFeather = false
+config.OptimizeHeightStepNativeDestinationFeather = true
 -- Reuse the exact destination-discovery records during per-row refinement. A compact interval
 -- certificate tracks every earlier translated/feathered row and falls back to live scalar reads
 -- whenever a later refinement window could intersect a prior write, preserving sequential behavior.
