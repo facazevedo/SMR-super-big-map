@@ -14375,8 +14375,6 @@ local function PatchRandomMapGenerator()
 			local rebuild_buildable_grid_installed = false
 			local rebuild_buildable_grid_had_raw = false
 			local rebuild_buildable_grid_raw
-			local mask_pad_installed, mask_pad_saved, mask_pad_had = false, nil, false
-			local mask_pad_calls, mask_pad_pads, mask_pad_ms = 0, 0, 0
 			local rebuild_buildable_grid_calls = 0
 			-- Proc_ResolveBuildable rebuilds map.buildable at the source-sized view, but native
 			-- MaskBuildableGrid derives its cell-to-world step from the real expanded Terrain
@@ -14895,6 +14893,47 @@ local function PatchRandomMapGenerator()
 				end
 				local bridge_ok, bridge_reason = rebuild_source_buildable_grid(target_map)
 				if bridge_ok then
+					-- Same native out-of-bounds hazard the underground branch above already guards,
+					-- which the surface path never did. The bridge leaves a source-sized z_grid
+					-- (615x710) in place and the stock ResolveBuildable tail hands it straight to
+					-- native MaskBuildableGrid, which addresses the real 820x946 backing rather than
+					-- the Lua view. That read past the end faults intermittently with
+					-- STATUS_STACK_BUFFER_OVERRUN (c0000409). Give the unavoidable stock mask call a
+					-- backing-sized grid padded with UnbuildableZ and retain the exact source grid for
+					-- the authoritative GetPlayableArea repair. Changes no source value and adds no
+					-- playable cell.
+					local source_grid = buildable and buildable.z_grid
+					local expanded_w = tonumber(map.SuperBigMapExpandedHexWidth)
+					local expanded_h = tonumber(map.SuperBigMapExpandedHexHeight)
+					local source_w = tonumber(map.hex_width)
+					local source_h = tonumber(map.hex_height)
+					local can_pad = source_grid ~= nil
+						and retained_source_buildable_grid == nil
+						and type(closure_new_grid) == "function"
+						and type(source_grid.get) == "function"
+						and type(expanded_w) == "number" and type(expanded_h) == "number"
+						and type(source_w) == "number" and type(source_h) == "number"
+						and expanded_w >= source_w and expanded_h >= source_h
+						and (expanded_w > source_w or expanded_h > source_h)
+					if can_pad then
+						local unbuildable_z = 2 ^ 16 - 1
+						if type(closure_build_unbuildable_z) == "function" then
+							local ok_z, value = pcall(closure_build_unbuildable_z)
+							if ok_z and type(value) == "number" then unbuildable_z = value end
+						end
+						local padded = closure_new_grid(expanded_w, expanded_h, 16, unbuildable_z)
+						if padded and type(padded.set) == "function" then
+							for y = 0, source_h - 1 do
+								for x = 0, source_w - 1 do
+									padded:set(x, y, source_grid:get(x, y))
+								end
+							end
+							retained_source_buildable_grid = source_grid
+							buildable.z_grid = padded
+						elseif padded then
+							pcall(function() padded:free() end)
+						end
+					end
 					return
 				end
 				if bridge_reason == "mode-not-eligible" or bridge_reason == "map-not-expanded" then
@@ -14908,62 +14947,6 @@ local function PatchRandomMapGenerator()
 				error(failure)
 			end
 
-			-- Pad the source-sized buildable grid for the duration of the ONE stock
-			-- MaskBuildableGrid call, then copy the source rectangle back and drop the pad.
-			-- Native MaskBuildableGrid addresses the real backing extent, not the Lua view, so a
-			-- 615x710 z_grid on an 820x946 backing is read out of bounds and faults
-			-- intermittently with STATUS_STACK_BUFFER_OVERRUN (c0000409). Padding must not outlive
-			-- the call: leaving an expanded grid installed (or retaining a source grid) changes what
-			-- the env.GetPlayableArea wrap sees and drags in the virtual-grid bridge on every call.
-			local function mask_pad_wrapper(target_map, z_grid, invalid_mask, unbuildable_arg, ...)
-				mask_pad_calls = mask_pad_calls + 1
-				local real_mask = mask_pad_had and mask_pad_saved or closure_mask_buildable_grid
-				if type(real_mask) ~= "function" then return end
-				local expanded_w = tonumber(map.SuperBigMapExpandedHexWidth)
-				local expanded_h = tonumber(map.SuperBigMapExpandedHexHeight)
-				local source_w, source_h
-				if z_grid and type(z_grid.size) == "function" then
-					local ok_size, gw, gh = pcall(z_grid.size, z_grid)
-					if ok_size then source_w, source_h = gw, gh or gw end
-				end
-				local box_fn, point_fn = Global("box"), Global("point")
-				local needs_pad = target_map == map
-					and type(expanded_w) == "number" and type(expanded_h) == "number"
-					and type(source_w) == "number" and type(source_h) == "number"
-					and (expanded_w > source_w or expanded_h > source_h)
-					and type(closure_new_grid) == "function"
-					and z_grid ~= nil and type(z_grid.copyrect) == "function"
-					and type(box_fn) == "function" and type(point_fn) == "function"
-				if not needs_pad then
-					return real_mask(target_map, z_grid, invalid_mask, unbuildable_arg, ...)
-				end
-				local unbuildable_z = tonumber(unbuildable_arg) or (2 ^ 16 - 1)
-				local padded = closure_new_grid(expanded_w, expanded_h, 16, unbuildable_z)
-				if not padded or type(padded.copyrect) ~= "function" then
-					if padded then pcall(function() padded:free() end) end
-					return real_mask(target_map, z_grid, invalid_mask, unbuildable_arg, ...)
-				end
-				mask_pad_pads = mask_pad_pads + 1
-				local pad_started = GetPreciseTicks()
-				local src_box = box_fn(0, 0, source_w, source_h)
-				local results
-				if pcall(padded.copyrect, padded, z_grid, src_box, point_fn(0, 0)) then
-					results = PackValues(real_mask(target_map, padded, invalid_mask, unbuildable_arg, ...))
-					pcall(z_grid.copyrect, z_grid, padded, src_box, point_fn(0, 0))
-				end
-				pcall(function() padded:free() end)
-				mask_pad_ms = mask_pad_ms + (GetPreciseTicks() - pad_started)
-				if results then return Unpack(results, 1, results.n) end
-				return real_mask(target_map, z_grid, invalid_mask, unbuildable_arg, ...)
-			end
-			if rebuild_buildable_grid_required and type(generator_closure_env) == "table" then
-				mask_pad_saved = closure_mask_buildable_grid
-				mask_pad_had = type(mask_pad_saved) == "function"
-				local ok_mask = mask_pad_had
-					and pcall(rawset, generator_closure_env, "MaskBuildableGrid", mask_pad_wrapper)
-				mask_pad_installed = ok_mask == true
-					and rawget(generator_closure_env, "MaskBuildableGrid") == mask_pad_wrapper
-			end
 			if rebuild_buildable_grid_required and type(buildable_grid_class) == "table"
 				and type(saved_buildable_grid_build) == "function" then
 				rebuild_buildable_grid_raw = rawget(buildable_grid_class, "Build")
@@ -14997,13 +14980,6 @@ local function PatchRandomMapGenerator()
 			end
 
 			local rebuild_restore_ok = true
-			print(string.format("[SBM MASKPAD] calls=%d pads=%d pad_ms=%d installed=%s",
-				mask_pad_calls, mask_pad_pads, mask_pad_ms, tostring(mask_pad_installed)))
-			if mask_pad_installed and type(generator_closure_env) == "table" then
-				pcall(rawset, generator_closure_env, "MaskBuildableGrid",
-					mask_pad_had and mask_pad_saved or nil)
-				mask_pad_installed = false
-			end
 			local rebuild_restore_reason = "not-installed"
 			State.buildable_grid_generation_hook = nil
 			if rebuild_buildable_grid_installed and type(buildable_grid_class) == "table" then
