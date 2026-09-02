@@ -62,6 +62,17 @@ different thing and is what the ruling adopts: by then that initialisation is al
 interval measures generation plus the mod pipeline. Evidence:
 `_ralph/runtime/overnight-super-big-map/pregame-removal-probe.json` and `warm-phase-budget.json`.
 
+**Baseline at this boundary: 61,751 ms median** (n=48, SD 903 ms, min 60,647, max 66,380),
+accepted v1011 payload unchanged. That is 8.2 s under 70 s and 1.75 s over the 60 s goal. The warm
+phase budget splits it into stock `GenerateCurrentRandomMap` 26,645 ms (42.9%) and the mod
+expansion pipeline plus tail 35,467 ms (57.1%). The old-boundary figure for the same unchanged
+payload is 80,496 ms.
+
+Anything citing 75.8132980 s as the current best is reading the superseded constant. It is not
+reproducible - 39 cold runs of the byte-exact payload spanned 77.0-98.3 s - it was measured at the
+old boundary, and its receipt never captured the payload identity. `_ralph/iteration-timings.md`
+rows up to 384 predate this ruling; row 385 records the corrected baseline.
+
 Mechanism: the executor stamps T0 when the generator publishes `generation_start_file`, waited on
 externally exactly as T1 is - one run-file, no game-state polling, external Stopwatch still the
 sole timing authority. A contract omitting that field keeps the historical boundary, so earlier
