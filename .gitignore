@@ -2,5 +2,6 @@
 _ralph/runs/
 _ralph/tmp/
 _ralph/cache/
+_ralph/runtime/
 _ralph/tools/parity/out/
 __pycache__/
