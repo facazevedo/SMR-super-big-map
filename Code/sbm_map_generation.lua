@@ -14376,6 +14376,7 @@ local function PatchRandomMapGenerator()
 			local rebuild_buildable_grid_had_raw = false
 			local rebuild_buildable_grid_raw
 			local mask_pad_installed, mask_pad_saved, mask_pad_had = false, nil, false
+			local mask_pad_calls, mask_pad_pads, mask_pad_ms = 0, 0, 0
 			local rebuild_buildable_grid_calls = 0
 			-- Proc_ResolveBuildable rebuilds map.buildable at the source-sized view, but native
 			-- MaskBuildableGrid derives its cell-to-world step from the real expanded Terrain
@@ -14915,6 +14916,7 @@ local function PatchRandomMapGenerator()
 			-- the call: leaving an expanded grid installed (or retaining a source grid) changes what
 			-- the env.GetPlayableArea wrap sees and drags in the virtual-grid bridge on every call.
 			local function mask_pad_wrapper(target_map, z_grid, invalid_mask, unbuildable_arg, ...)
+				mask_pad_calls = mask_pad_calls + 1
 				local real_mask = mask_pad_had and mask_pad_saved or closure_mask_buildable_grid
 				if type(real_mask) ~= "function" then return end
 				local expanded_w = tonumber(map.SuperBigMapExpandedHexWidth)
@@ -14941,6 +14943,8 @@ local function PatchRandomMapGenerator()
 					if padded then pcall(function() padded:free() end) end
 					return real_mask(target_map, z_grid, invalid_mask, unbuildable_arg, ...)
 				end
+				mask_pad_pads = mask_pad_pads + 1
+				local pad_started = GetPreciseTicks()
 				local src_box = box_fn(0, 0, source_w, source_h)
 				local results
 				if pcall(padded.copyrect, padded, z_grid, src_box, point_fn(0, 0)) then
@@ -14948,6 +14952,7 @@ local function PatchRandomMapGenerator()
 					pcall(z_grid.copyrect, z_grid, padded, src_box, point_fn(0, 0))
 				end
 				pcall(function() padded:free() end)
+				mask_pad_ms = mask_pad_ms + (GetPreciseTicks() - pad_started)
 				if results then return Unpack(results, 1, results.n) end
 				return real_mask(target_map, z_grid, invalid_mask, unbuildable_arg, ...)
 			end
@@ -14992,6 +14997,8 @@ local function PatchRandomMapGenerator()
 			end
 
 			local rebuild_restore_ok = true
+			print(string.format("[SBM MASKPAD] calls=%d pads=%d pad_ms=%d installed=%s",
+				mask_pad_calls, mask_pad_pads, mask_pad_ms, tostring(mask_pad_installed)))
 			if mask_pad_installed and type(generator_closure_env) == "table" then
 				pcall(rawset, generator_closure_env, "MaskBuildableGrid",
 					mask_pad_had and mask_pad_saved or nil)
