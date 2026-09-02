@@ -2296,7 +2296,7 @@ SuperBigMap.WallProbe = function(map, label)
 				local x, y = at(off * cell)
 				x = math.max(0, math.min(world_w - cell, x))
 				y = math.max(0, math.min(world_h - cell, y))
-				local got, z = pcall(terrain_api.GetHeight, point_fn(x, y))
+				local got, z = pcall(terrain_api.GetHeight, map, point_fn(x, y))
 				z = got and tonumber(z) or -1
 				heights[#heights + 1] = off .. "=" .. tostring(z)
 				if previous and off <= 32 then
