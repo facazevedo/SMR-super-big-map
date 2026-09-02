@@ -3979,12 +3979,30 @@ local function PrepareOuterResourceTerrain(map, options)
 				and map.SuperBigMapOuterResourceRocketPads or {}
 			local existing_resource_sites = type(map.SuperBigMapOuterResourceTerrainSites) == "table"
 				and map.SuperBigMapOuterResourceTerrainSites or {}
+			-- Align the precondition with the producer's own contract instead of a fixed six.
+			-- The resource stage clamps its cluster population to
+			-- [OUTER_RESOURCE_CLUSTER_MINIMUM_COUNT, OUTER_RESOURCE_ROCKET_PAD_MAXIMUM_COUNT]
+			-- and reports cluster_shortfall/cluster_excess against exactly that range, so a
+			-- pad count anywhere inside it is a healthy population, not a defect. Six is the
+			-- minimum of that range, not its only legal value. The pads are consumed below
+			-- purely as spacing obstacles (one ipairs walk per candidate), so any count works.
+			local rocket_pad_minimum = math.max(0,
+				math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_MINIMUM_COUNT", 6)))
+			local rocket_pad_maximum = math.max(rocket_pad_minimum,
+				math.floor(cfg_number("OUTER_RESOURCE_ROCKET_PAD_MAXIMUM_COUNT", 10)))
+			local rocket_pads_in_range = #existing_rockets >= rocket_pad_minimum
+				and #existing_rockets <= rocket_pad_maximum
+			passage_plan.rocket_pads = #existing_rockets
+			passage_plan.rocket_pad_minimum = rocket_pad_minimum
+			passage_plan.rocket_pad_maximum = rocket_pad_maximum
 			if passage_plan.error ~= "" or #passage_offsets == 0
 				or not enrichment_scan_ok or not geyser_scan_ok
-				or #existing_rockets ~= 6 then
+				or not rocket_pads_in_range then
 				passage_plan.error = passage_plan.error ~= "" and passage_plan.error
-					or #existing_rockets ~= 6
-					and "six verified resource rocket pads are unavailable"
+					or not rocket_pads_in_range
+					and string.format(
+						"verified resource rocket pad count %d is outside the producer range [%d, %d]",
+						#existing_rockets, rocket_pad_minimum, rocket_pad_maximum)
 					or "live enrichment/Elevator footprint enumeration failed"
 			else
 				local modulus = 2147483647
