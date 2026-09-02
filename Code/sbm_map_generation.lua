@@ -2269,6 +2269,56 @@ local TerrainCopy = SuperBigMap.TerrainCopy
 assert(type(TerrainCopy) == "table",
 	"sbm_map_generation: SuperBigMap.TerrainCopy missing -- load sbm_terrain_copy before this file")
 local SectorBoundary = TerrainCopy.SectorBoundary
+-- TEMPORARY WALL DIAGNOSTIC -- remove before release (tracked in the wall investigation).
+-- Samples the terrain height profile inward from each physical map edge and reports the
+-- largest adjacent step inside the outer band. A vertical boundary wall shows up as a single
+-- large step within the first few cells; the stage that first reports it is the stage that
+-- built it. Attached to SuperBigMap rather than a new file-scope local to stay clear of the
+-- main chunk's local budget.
+SuperBigMap.WallProbe = function(map, label)
+	local ok = pcall(function()
+		local terrain_api = Global("terrain")
+		local point_fn = Global("point")
+		if type(terrain_api) ~= "table" or type(terrain_api.GetHeight) ~= "function"
+			or type(point_fn) ~= "function" or not map then
+			return
+		end
+		local world_w = tonumber(map.Width)
+		local world_h = tonumber(map.Height)
+		local tiles = tonumber(map.mapdata and map.mapdata.Width) or 8192
+		if not world_w or not world_h or world_w <= 0 or world_h <= 0 or tiles <= 0 then return end
+		local cell = math.max(1, math.floor(world_w / tiles))
+		local offsets = { 0, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 64, 128, 256, 512 }
+		local function profile(name, at)
+			local heights, worst, worst_at = {}, 0, -1
+			local previous
+			for _, off in ipairs(offsets) do
+				local x, y = at(off * cell)
+				x = math.max(0, math.min(world_w - cell, x))
+				y = math.max(0, math.min(world_h - cell, y))
+				local got, z = pcall(terrain_api.GetHeight, point_fn(x, y))
+				z = got and tonumber(z) or -1
+				heights[#heights + 1] = off .. "=" .. tostring(z)
+				if previous and off <= 32 then
+					local step = math.abs(z - previous)
+					if step > worst then worst, worst_at = step, off end
+				end
+				previous = z
+			end
+			return string.format("%s[step=%d@%d %s]", name, worst, worst_at,
+				table.concat(heights, ","))
+		end
+		local mid_y, mid_x = math.floor(world_h / 2), math.floor(world_w / 2)
+		print(string.format("[SBM WALLPROBE] %s | %s | %s | %s | %s",
+			tostring(label),
+			profile("W", function(d) return d, mid_y end),
+			profile("E", function(d) return world_w - cell - d, mid_y end),
+			profile("N", function(d) return mid_x, d end),
+			profile("S", function(d) return mid_x, world_h - cell - d end)))
+	end)
+	if not ok then print("[SBM WALLPROBE] " .. tostring(label) .. " | probe failed") end
+end
+
 local FindSectorByName = TerrainCopy.FindSectorByName
 local ReinvalidateExpandedTerrain = TerrainCopy.ReinvalidateExpandedTerrain
 local StretchSourceToFull = TerrainCopy.StretchSourceToFull
@@ -16771,6 +16821,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						-- The next call mutates terrain heights, so the native source-grid buildability
 						-- snapshot is no longer current until the explicit final rebuild below succeeds.
 						map.SuperBigMapSurfaceBuildableCurrent = false
+						SuperBigMap.WallProbe(map, "01-before-stretch")
 						SuperBigMap.OptimizationTrace.Before(
 							"surface StretchSourceToFull", map)
 						ok_stretch, n_grids = StretchSourceToFull(map)
@@ -16778,6 +16829,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 							"surface StretchSourceToFull", map, {
 								ok = tostring(ok_stretch == true), grids = n_grids,
 							})
+						SuperBigMap.WallProbe(map, "02-after-stretch")
 					else
 						ok_stretch, n_grids = true, 0
 					end
@@ -16830,6 +16882,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						})
 					local recreated, recreate_stats = position_deposits.RecreateStagedNativeEnrichments(
 						map, "surface after terrain and decoration stretch")
+						SuperBigMap.WallProbe(map, "03-after-enrichment-recreate")
 					SuperBigMap.OptimizationTrace.After(
 						"surface recreate staged native enrichments", map, {
 							ok = tostring(recreated == true),
@@ -16868,6 +16921,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 							"surface verify native enrichment transform", map)
 						local verified, verify_stats = position_deposits.VerifyNativeEnrichmentTransform(
 							map, "surface after marker transform")
+							SuperBigMap.WallProbe(map, "04-after-marker-transform")
 						LoadingEnd(marker_verify_token, {
 							mismatches = verify_stats and verify_stats.mismatches or 0,
 						}, verified == true)
@@ -16888,6 +16942,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				LoadingEnd(pass_resume_token, {
 					authoritative_passability_rebuild = true,
 				}, pass_resume_ok == true)
+				SuperBigMap.WallProbe(map, "05-after-combined-pass-edits")
 				if not pass_resume_ok then
 					error("surface combined ResumePassEdits failed: " .. tostring(pass_resume_err))
 				end
@@ -16945,6 +17000,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 							error("final surface RebuildBuildableGrid failed: " .. tostring(rebuild_err))
 						end
 						map.SuperBigMapSurfaceBuildableCurrent = true
+						SuperBigMap.WallProbe(map, "06-after-final-rebuild")
 						SuperBigMap.OptimizationTrace.Before(
 							"surface audit mountain-base buildable aprons", map)
 						local apron_ok, apron_stats =
@@ -17004,6 +17060,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								"surface prepare deferred-publication outer resource terrain", map,
 								TerrainCopy.PrepareOuterResourceTerrain, map)
 							coalesced_resource_prepare_ms = GetPreciseTicks() - started
+							SuperBigMap.WallProbe(map, "07-after-outer-resource-terrain")
 							if type(coalesced_resource_stats) ~= "table"
 								or tostring(coalesced_resource_stats.error or "") ~= "" then
 								error("deferred-publication outer resource terrain preparation failed: "
@@ -17034,6 +17091,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								coalesced_resource_stats.ring_sectors,
 								"after early coalesced outer resource and passage terrain preparation")
 							coalesced_early_rebuild_ms = GetPreciseTicks() - rebuild_started
+							SuperBigMap.WallProbe(map, "08-after-passage-and-ring-rebuild")
 							local ring_report = map.SuperBigMapOuterResourceRingRebuildReport
 							coalesced_early_grid_published = type(ring_report) == "table"
 								and ring_report.used == true and ring_report.fallback ~= true

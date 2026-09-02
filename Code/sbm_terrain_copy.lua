@@ -5900,6 +5900,43 @@ end
 -- the Z transform) -- the engine's resample arithmetic is not reproducible offline, and by the end
 -- of generation later terrain edits (flatten pads, the landing pit) have overwritten transformed
 -- ground. Diagnostic only: a failure is logged and generation continues unaffected.
+-- TEMPORARY WALL DIAGNOSTIC -- remove before release (wall investigation).
+-- Reports the height-grid profile inward from each grid edge plus the largest adjacent step in
+-- the outer band, so the stage that first introduces a boundary cliff is identifiable directly.
+local function GridEdgeProbe(stage, grid)
+	if not grid or type(grid.get) ~= "function" or type(grid.size) ~= "function" then return end
+	local ok = pcall(function()
+		local ok_size, gw, gh = pcall(grid.size, grid)
+		if not ok_size or type(gw) ~= "number" then return end
+		gh = gh or gw
+		local offsets = { 0, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 64, 128, 256 }
+		local function profile(name, at)
+			local parts, worst, worst_at, previous = {}, 0, -1, nil
+			for _, off in ipairs(offsets) do
+				local x, y = at(off)
+				if x >= 0 and y >= 0 and x < gw and y < gh then
+					local got, z = pcall(grid.get, grid, x, y)
+					z = got and tonumber(z) or -1
+					parts[#parts + 1] = off .. "=" .. tostring(z)
+					if previous and off <= 32 then
+						local step = math.abs(z - previous)
+						if step > worst then worst, worst_at = step, off end
+					end
+					previous = z
+				end
+			end
+			return string.format("%s[step=%d@%d %s]", name, worst, worst_at, table.concat(parts, ","))
+		end
+		local my, mx = math.floor(gh / 2), math.floor(gw / 2)
+		print(string.format("[SBM GRIDPROBE] %s %dx%d | %s | %s | %s | %s", tostring(stage), gw, gh,
+			profile("W", function(d) return d, my end),
+			profile("E", function(d) return gw - 1 - d, my end),
+			profile("N", function(d) return mx, d end),
+			profile("S", function(d) return mx, gh - 1 - d end)))
+	end)
+	if not ok then print("[SBM GRIDPROBE] " .. tostring(stage) .. " | probe failed") end
+end
+
 local function ZDumpHeightGrid(map, stage, grid)
 	local prefix = cfg_str("STRETCH_HEIGHT_GRID_DUMP_PATH", nil)
 	if not prefix or not grid then return end
@@ -6385,6 +6422,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			-- destination without fitting the already-repaired track a second time.
 			-- Diagnostic source dumps are test-only because the configured prefix is empty in release.
 			if scale_values then ZDumpHeightGrid(map, "source-pre", src_sub) end
+			if scale_values then GridEdgeProbe("source-pre", src_sub) end
 			if scale_values and environment ~= "Underground"
 				and cfg_bool("STRETCH_REPAIR_INTERNAL_HEIGHT_STEP", true) then
 				TraceBefore("terrain height source crease detection and repair", map)
@@ -6416,6 +6454,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 					internal_step_repair)
 			end
 			if scale_values then ZDumpHeightGrid(map, "source-post", src_sub) end
+			if scale_values then GridEdgeProbe("source-post", src_sub) end
 			local fmt, bits = IsComputeGrid(src_sub)
 			TraceBefore("terrain " .. tostring(label) .. " grid resample", map)
 			local stretched = GridResample(src_sub, fw, fh, interpolate == true)
@@ -6425,6 +6464,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 				grid_kind = scale_values and "surface_height" or "surface_terrain",
 			})
 			if scale_values then ZDumpHeightGrid(map, "pre", stretched) end
+			if scale_values then GridEdgeProbe("pre", stretched) end
 			-- Retain v839's proven full-resolution destination-edge pass. The source-side pass above
 			-- only handles deeper, grid-aligned defects; this one keeps the immediate resampled skirt
 			-- seamless exactly as before.  It runs only after the source repair has been resampled.
@@ -6476,6 +6516,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 				TraceAfter("terrain height destination crease repair", map, report)
 			end
 			if scale_values then ZDumpHeightGrid(map, "finish-post", stretched) end
+			if scale_values then GridEdgeProbe("finish-post", stretched) end
 			-- FULL 3D STRETCH (config STRETCH_SCALE_HEIGHTS): scale the HEIGHT VALUES by the same
 			-- full/source factor as X/Y, making the stretch a true similarity transform -- vanilla
 			-- slope steepness and object seating geometry are preserved (XY-only stretching made
@@ -6580,6 +6621,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 				grid_kind = scale_values and "surface_height" or "surface_terrain",
 			})
 			if scale_values then ZDumpHeightGrid(map, "post", stretched) end
+			if scale_values then GridEdgeProbe("post", stretched) end
 			-- Keep the v738 transform above byte-for-byte auditable. Natural foothill aprons are an
 			-- explicit, localized post-transform terrain operation and therefore run only after the
 			-- pure-transform capture/dump, but before this grid is committed and rebuilt for gameplay.
