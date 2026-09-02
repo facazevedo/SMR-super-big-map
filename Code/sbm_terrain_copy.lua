@@ -2014,12 +2014,26 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 						bounds(distance0), bounds(distance1), bounds(weight), bounds(base0), bounds(base1),
 						bounds(target), bounds(mask), bounds(delta)))
 				end
+				-- copyrect into a LARGER destination converts through an unsigned integer path: a
+				-- negative f32 value lands as its 32-bit two's-complement magnitude (measured live:
+				-- -111 became 4294967185; same-size copies stay exact). A legitimate join lowers
+				-- cells, so split the correction into its non-negative parts, copy each into the
+				-- full-band layer, and recombine natively. This was the remaining boundary plateau:
+				-- every negative join delta became ~4.29e9 and the clamp wrote the grid maximum.
+				local delta_positive = own(delta:clone())
+				GridClamp(delta_positive, 0, 16777216)
+				local delta_negative = own(delta:clone())
+				GridMulDivAdd(delta_negative, -1, 1, 0)
+				GridClamp(delta_negative, 0, 16777216)
 				local layer = own(NewComputeGrid(full_w, full_h, "f", 32))
-				GridFill(layer, 0)
 				local dx = selected.axis == "x" and group.lo - edge0 or group.along0
 				local dy = selected.axis == "x" and group.along0 or group.lo - edge0
-				layer:copyrect(delta, box_fn(0, 0, local_w, local_h), point_fn(dx, dy))
+				GridFill(layer, 0)
+				layer:copyrect(delta_positive, box_fn(0, 0, local_w, local_h), point_fn(dx, dy))
 				GridAdd(correction, layer)
+				GridFill(layer, 0)
+				layer:copyrect(delta_negative, box_fn(0, 0, local_w, local_h), point_fn(dx, dy))
+				GridAddMulDiv(correction, layer, -1, 1)
 				native_feather.groups = native_feather.groups + 1
 				native_feather.cells = native_feather.cells + local_w * local_h
 				release_from(retained)
@@ -2195,7 +2209,7 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 			phase_ms.point_expand = phase_ms.point_expand
 				+ math.max(0, now_ms() - expand_started_ms)
 
-			local modified, detected = 0, 0
+			local modified, detected, guard_skipped = 0, 0, 0
 			local min_offset, max_offset
 			local translation_records = {}
 			for _, point in ipairs(points) do
@@ -2211,7 +2225,18 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 					local high_perp = selected.low_before and perp + width or perp
 					local low = at(selected.axis, low_perp, along)
 					local high = at(selected.axis, high_perp, along)
-					if type(low) == "number" and type(high) == "number" and high > low then
+					-- The join band below is clamped away from the physical edge guard. When that
+					-- clamp would leave the step itself outside the band, the join's far anchor
+					-- straddles the step and extrapolates the raw discontinuity as a slope (measured
+					-- live: slope 1422 per cell, far-anchor minima near 5000 -- a trench thousands of
+					-- units deep). Such a record lies within outer_guard + width cells of the edge,
+					-- inside the resample smear of the physical boundary; leave it exactly as resampled.
+					local join_contains_step = wide_ring_only
+						or (before_edge and perp >= outer_guard + 1)
+						or (not before_edge and perp + width <= selected.perp_n - outer_guard - 2)
+					if not join_contains_step then
+						guard_skipped = guard_skipped + 1
+					elseif type(low) == "number" and type(high) == "number" and high > low then
 						local offset = high - low
 						min_offset = not min_offset and offset or math.min(min_offset, offset)
 						max_offset = not max_offset and offset or math.max(max_offset, offset)
@@ -2281,6 +2306,7 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 			selected.detected = detected
 			selected.min_offset = min_offset
 			selected.max_offset = max_offset
+			selected.guard_skipped = guard_skipped
 		end
 		phase_ms.apply = math.max(0, now_ms() - apply_started_ms)
 		selected_tracks[1].qualified = #qualified
@@ -2297,12 +2323,13 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		})
 	end
 
-	local modified, detected = 0, 0
+	local modified, detected, guard_skipped = 0, 0, 0
 	local edges, axes = {}, {}
 	local min_offset, max_offset
 	for _, selected in ipairs(selected_tracks) do
 		modified = modified + (selected.modified or 0)
 		detected = detected + (selected.detected or 0)
+		guard_skipped = guard_skipped + (selected.guard_skipped or 0)
 		edges[#edges + 1] = selected.edge
 		axes[#axes + 1] = selected.axis
 		if selected.min_offset then
@@ -2316,7 +2343,7 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		return false, native_discovery.decorate({
 			reason = "no edge-facing outer-ring step", threshold = threshold,
 			edge_margin = wide_ring_only and edge_margin or near_margin,
-			outer_guard = outer_guard, candidates = #tracks,
+			outer_guard = outer_guard, candidates = #tracks, guard_skipped = guard_skipped,
 			left_tracks = track_counts.left, right_tracks = track_counts.right,
 			top_tracks = track_counts.top, bottom_tracks = track_counts.bottom,
 			min = mn, max = mx, scan_grid_reads = scan_grid_reads,
@@ -2337,7 +2364,7 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		first_along = primary.first_along, last_along = primary.last_along,
 		edge_perp = primary.last_perp, rows = primary.count,
 		repairs = #selected_tracks, qualified = primary.qualified,
-		modified = modified, detected = detected,
+		modified = modified, detected = detected, guard_skipped = guard_skipped,
 		candidates = #tracks,
 		min_offset = min_offset, max_offset = max_offset,
 		left_tracks = track_counts.left, right_tracks = track_counts.right,
@@ -5967,6 +5994,45 @@ local function GridEdgeProbe(stage, grid)
 			profile("E", function(d) return gw - 1 - d, my end),
 			profile("N", function(d) return mx, d end),
 			profile("S", function(d) return mx, gh - 1 - d end)))
+	end)
+	-- TEMPORARY (wall investigation): sampled all-rows scan of a 48-cell band at each edge.
+	pcall(function()
+		local ok_size, gw, gh = pcall(grid.size, grid)
+		if not ok_size or type(gw) ~= "number" then return end
+		gh = gh or gw
+		local minmax = Global("GridMinMax")
+		local ok_mm, gmn, gmx = pcall(minmax, grid)
+		if not ok_mm then gmx = nil end
+		local band, along_step = 48, 8
+		local function scan(name, along_n, at)
+			local worst, worst_along, worst_off, saturated, bad_rows = 0, -1, -1, 0, 0
+			for along = 0, along_n - 1, along_step do
+				local previous, row_bad = nil, false
+				for off = 0, band - 1 do
+					local x, y = at(along, off)
+					local got, z = pcall(grid.get, grid, x, y)
+					z = got and tonumber(z) or nil
+					if z then
+						if gmx and z >= gmx then saturated = saturated + 1 end
+						if previous then
+							local step = math.abs(z - previous)
+							if step > worst then worst, worst_along, worst_off = step, along, off end
+							if step > 4000 then row_bad = true end
+						end
+						previous = z
+					end
+				end
+				if row_bad then bad_rows = bad_rows + 1 end
+			end
+			return string.format("%s[maxstep=%d@%d/%d sat=%d badrows=%d]", name, worst,
+				worst_along, worst_off, saturated, bad_rows)
+		end
+		print(string.format("[SBM GRIDSCAN] %s %dx%d gmax=%s | %s | %s | %s | %s", tostring(stage),
+			gw, gh, tostring(gmx),
+			scan("W", gh, function(a, d) return d, a end),
+			scan("E", gh, function(a, d) return gw - 1 - d, a end),
+			scan("N", gw, function(a, d) return a, d end),
+			scan("S", gw, function(a, d) return a, gh - 1 - d end)))
 	end)
 	if not ok then print("[SBM GRIDPROBE] " .. tostring(stage) .. " | probe failed") end
 end
