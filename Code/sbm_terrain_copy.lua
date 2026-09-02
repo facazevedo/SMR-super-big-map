@@ -1802,13 +1802,6 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 				or box_fn(0, edge0, selected.along_n, edge1 + 1)
 			native_region:copyrect(grid, source_box, point_fn(0, 0))
 			local result = own(GridRepack(native_region, "f", 32, true))
-			do -- TEMPORARY (wall investigation)
-				local ok_c, c0, c1 = pcall(GridMinMax, correction)
-				local ok_r, r0, r1 = pcall(GridMinMax, result)
-				print(string.format("[SBM TRANSLATE] %s/%s edge0=%d edge1=%d local=%dx%d records=%d correction=%s..%s region=%s..%s",
-					tostring(selected.axis), tostring(selected.edge), edge0, edge1, local_w, local_h,
-					#records, tostring(c0), tostring(c1), tostring(r0), tostring(r1)))
-			end
 			GridAdd(result, correction)
 			GridClamp(result, 0, mx)
 			local packed = own(GridRepack(result, fmt, bits, false, "clamp"))
@@ -2001,19 +1994,6 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 				local delta = own(target:clone())
 				GridAddMulDiv(delta, source, -1, 1)
 				GridMulDivAdd(delta, mask, 1, 0)
-				-- TEMPORARY (wall investigation): per-group bounds of every intermediate.
-				do
-					local function bounds(g)
-						local ok_b, a, b = pcall(GridMinMax, g)
-						return ok_b and (tostring(a) .. ".." .. tostring(b)) or "?"
-					end
-					print(string.format("[SBM FEATHER] %s/%s lo=%d hi=%d along=%d..%d recs=%d src=%s v0=%s v0p=%s v1=%s v1n=%s s0=%s s1=%s d0=%s d1=%s w=%s b0=%s b1=%s tgt=%s mask=%s delta=%s",
-						tostring(selected.axis), tostring(selected.edge), group.lo, group.hi,
-						group.along0, group.along1, #group.records, bounds(source), bounds(v0),
-						bounds(v0_prev), bounds(v1), bounds(v1_next), bounds(slope0), bounds(slope1),
-						bounds(distance0), bounds(distance1), bounds(weight), bounds(base0), bounds(base1),
-						bounds(target), bounds(mask), bounds(delta)))
-				end
 				-- copyrect into a LARGER destination converts through an unsigned integer path: a
 				-- negative f32 value lands as its 32-bit two's-complement magnitude (measured live:
 				-- -111 became 4294967185; same-size copies stay exact). A legitimate join lowers
@@ -2045,13 +2025,6 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 				or box_fn(0, edge0, selected.along_n, edge1 + 1)
 			region_native:copyrect(grid, region_box, point_fn(0, 0))
 			local result = own(GridRepack(region_native, "f", 32, true))
-			do -- TEMPORARY (wall investigation)
-				local ok_c, c0, c1 = pcall(GridMinMax, correction)
-				local ok_r, r0, r1 = pcall(GridMinMax, result)
-				print(string.format("[SBM FEATHER-TOTAL] %s/%s edge0=%d edge1=%d full=%dx%d groups=%d correction=%s..%s region=%s..%s",
-					tostring(selected.axis), tostring(selected.edge), edge0, edge1, full_w, full_h,
-					#records, tostring(c0), tostring(c1), tostring(r0), tostring(r1)))
-			end
 			GridAdd(result, correction)
 			GridMulDivAdd(result, 1, 1, 1, 2)
 			GridClamp(result, 0, mx)
@@ -5955,88 +5928,6 @@ local function AuditOuterResourceTerrain(map)
 		and cluster_anchor_failures == 0 and cluster_premium_excess == 0, report
 end
 
--- TEST-ONLY SEAM (config StretchHeightGridDumpPath, empty = off). Writes a destination height
--- grid to "<prefix>-<environment>-<stage>.raw" so the offline gate can score the PURE transform
--- between its own input ("pre", straight out of GridResample) and its output ("post", right after
--- the Z transform) -- the engine's resample arithmetic is not reproducible offline, and by the end
--- of generation later terrain edits (flatten pads, the landing pit) have overwritten transformed
--- ground. Diagnostic only: a failure is logged and generation continues unaffected.
--- TEMPORARY WALL DIAGNOSTIC -- remove before release (wall investigation).
--- Reports the height-grid profile inward from each grid edge plus the largest adjacent step in
--- the outer band, so the stage that first introduces a boundary cliff is identifiable directly.
-local function GridEdgeProbe(stage, grid)
-	if not grid or type(grid.get) ~= "function" or type(grid.size) ~= "function" then return end
-	local ok = pcall(function()
-		local ok_size, gw, gh = pcall(grid.size, grid)
-		if not ok_size or type(gw) ~= "number" then return end
-		gh = gh or gw
-		local offsets = { 0, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 64, 128, 256 }
-		local function profile(name, at)
-			local parts, worst, worst_at, previous = {}, 0, -1, nil
-			for _, off in ipairs(offsets) do
-				local x, y = at(off)
-				if x >= 0 and y >= 0 and x < gw and y < gh then
-					local got, z = pcall(grid.get, grid, x, y)
-					z = got and tonumber(z) or -1
-					parts[#parts + 1] = off .. "=" .. tostring(z)
-					if previous and off <= 32 then
-						local step = math.abs(z - previous)
-						if step > worst then worst, worst_at = step, off end
-					end
-					previous = z
-				end
-			end
-			return string.format("%s[step=%d@%d %s]", name, worst, worst_at, table.concat(parts, ","))
-		end
-		local my, mx = math.floor(gh / 2), math.floor(gw / 2)
-		print(string.format("[SBM GRIDPROBE] %s %dx%d | %s | %s | %s | %s", tostring(stage), gw, gh,
-			profile("W", function(d) return d, my end),
-			profile("E", function(d) return gw - 1 - d, my end),
-			profile("N", function(d) return mx, d end),
-			profile("S", function(d) return mx, gh - 1 - d end)))
-	end)
-	-- TEMPORARY (wall investigation): sampled all-rows scan of a 48-cell band at each edge.
-	pcall(function()
-		local ok_size, gw, gh = pcall(grid.size, grid)
-		if not ok_size or type(gw) ~= "number" then return end
-		gh = gh or gw
-		local minmax = Global("GridMinMax")
-		local ok_mm, gmn, gmx = pcall(minmax, grid)
-		if not ok_mm then gmx = nil end
-		local band, along_step = 48, 8
-		local function scan(name, along_n, at)
-			local worst, worst_along, worst_off, saturated, bad_rows = 0, -1, -1, 0, 0
-			for along = 0, along_n - 1, along_step do
-				local previous, row_bad = nil, false
-				for off = 0, band - 1 do
-					local x, y = at(along, off)
-					local got, z = pcall(grid.get, grid, x, y)
-					z = got and tonumber(z) or nil
-					if z then
-						if gmx and z >= gmx then saturated = saturated + 1 end
-						if previous then
-							local step = math.abs(z - previous)
-							if step > worst then worst, worst_along, worst_off = step, along, off end
-							if step > 4000 then row_bad = true end
-						end
-						previous = z
-					end
-				end
-				if row_bad then bad_rows = bad_rows + 1 end
-			end
-			return string.format("%s[maxstep=%d@%d/%d sat=%d badrows=%d]", name, worst,
-				worst_along, worst_off, saturated, bad_rows)
-		end
-		print(string.format("[SBM GRIDSCAN] %s %dx%d gmax=%s | %s | %s | %s | %s", tostring(stage),
-			gw, gh, tostring(gmx),
-			scan("W", gh, function(a, d) return d, a end),
-			scan("E", gh, function(a, d) return gw - 1 - d, a end),
-			scan("N", gw, function(a, d) return a, d end),
-			scan("S", gw, function(a, d) return a, gh - 1 - d end)))
-	end)
-	if not ok then print("[SBM GRIDPROBE] " .. tostring(stage) .. " | probe failed") end
-end
-
 local function ZDumpHeightGrid(map, stage, grid)
 	local prefix = cfg_str("STRETCH_HEIGHT_GRID_DUMP_PATH", nil)
 	if not prefix or not grid then return end
@@ -6522,7 +6413,6 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			-- destination without fitting the already-repaired track a second time.
 			-- Diagnostic source dumps are test-only because the configured prefix is empty in release.
 			if scale_values then ZDumpHeightGrid(map, "source-pre", src_sub) end
-			if scale_values then GridEdgeProbe("source-pre", src_sub) end
 			if scale_values and environment ~= "Underground"
 				and cfg_bool("STRETCH_REPAIR_INTERNAL_HEIGHT_STEP", true) then
 				TraceBefore("terrain height source crease detection and repair", map)
@@ -6554,7 +6444,6 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 					internal_step_repair)
 			end
 			if scale_values then ZDumpHeightGrid(map, "source-post", src_sub) end
-			if scale_values then GridEdgeProbe("source-post", src_sub) end
 			local fmt, bits = IsComputeGrid(src_sub)
 			TraceBefore("terrain " .. tostring(label) .. " grid resample", map)
 			local stretched = GridResample(src_sub, fw, fh, interpolate == true)
@@ -6564,7 +6453,6 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 				grid_kind = scale_values and "surface_height" or "surface_terrain",
 			})
 			if scale_values then ZDumpHeightGrid(map, "pre", stretched) end
-			if scale_values then GridEdgeProbe("pre", stretched) end
 			-- Retain v839's proven full-resolution destination-edge pass. The source-side pass above
 			-- only handles deeper, grid-aligned defects; this one keeps the immediate resampled skirt
 			-- seamless exactly as before.  It runs only after the source repair has been resampled.
@@ -6616,7 +6504,6 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 				TraceAfter("terrain height destination crease repair", map, report)
 			end
 			if scale_values then ZDumpHeightGrid(map, "finish-post", stretched) end
-			if scale_values then GridEdgeProbe("finish-post", stretched) end
 			-- FULL 3D STRETCH (config STRETCH_SCALE_HEIGHTS): scale the HEIGHT VALUES by the same
 			-- full/source factor as X/Y, making the stretch a true similarity transform -- vanilla
 			-- slope steepness and object seating geometry are preserved (XY-only stretching made
@@ -6721,7 +6608,6 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 				grid_kind = scale_values and "surface_height" or "surface_terrain",
 			})
 			if scale_values then ZDumpHeightGrid(map, "post", stretched) end
-			if scale_values then GridEdgeProbe("post", stretched) end
 			-- Keep the v738 transform above byte-for-byte auditable. Natural foothill aprons are an
 			-- explicit, localized post-transform terrain operation and therefore run only after the
 			-- pure-transform capture/dump, but before this grid is committed and rebuilt for gameplay.
