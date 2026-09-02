@@ -787,19 +787,19 @@ config.StretchRepairInternalHeightStep = true
 -- Reuse the exact four/six-value neighbourhood while refining a detected height-step row. This
 -- changes only how often the native grid is read; candidate order, comparisons, and writes are
 -- identical. The legacy branch remains available as a fail-closed diagnostic fallback.
-config.OptimizeHeightStepRefineRollingWindow = false
+config.OptimizeHeightStepRefineRollingWindow = true
 -- Build a read-only native destination-crease candidate index. U16 operands, signed differences,
 -- doubled flanks, and thresholds are all represented exactly in f32; accepted (perp,width,jump)
 -- records are sorted back into the legacy loop order before the unchanged Lua offer/track/refine
 -- path consumes them. Any native API, allocation, or enumeration failure falls back to the
 -- unchanged rolling Lua scan before a terrain write can occur.
-config.OptimizeHeightStepNativeDiscoveryIndex = false
+config.OptimizeHeightStepNativeDiscoveryIndex = true
 -- The source crease detector visits only every eighth row in the two-sector perimeter and accepts
 -- either jump direction. Compact exactly those sampled rows into bounded native slabs, apply the
 -- unchanged U16 difference/flank predicate there, then restore the legacy perpendicular order before
 -- the existing track qualification and scalar per-row refinement. The source grid remains read-only;
 -- any allocation, native operation, enumeration, or cleanup failure falls back before repair writes.
-config.OptimizeHeightStepNativeSourceDiscoveryIndex = false
+config.OptimizeHeightStepNativeSourceDiscoveryIndex = true
 -- After the unchanged destination detector qualifies exact per-row translations, batch each
 -- straight edge track through native compute-grid replication/add/clamp operations. Scalar Lua is
 -- retained for the narrow slope-matched feather only. A failure before the one-shot copy commit
@@ -813,7 +813,7 @@ config.OptimizeHeightStepNativeDestinationFeather = false
 -- Reuse the exact destination-discovery records during per-row refinement. A compact interval
 -- certificate tracks every earlier translated/feathered row and falls back to live scalar reads
 -- whenever a later refinement window could intersect a prior write, preserving sequential behavior.
-config.OptimizeHeightStepNativeRefinementIndex = false
+config.OptimizeHeightStepNativeRefinementIndex = true
 -- INVALIDATE BEFORE EVERY FINAL PASSABILITY REBUILD, on the surface and the underground alike
 -- (sbm_map_generation, expansion step 11). The engine rebuilds passability only over regions that
 -- were INVALIDATED first -- its own generator always calls terrain.InvalidateHeight +
