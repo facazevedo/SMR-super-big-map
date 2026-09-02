@@ -14399,6 +14399,53 @@ local function PatchRandomMapGenerator()
 			-- exact source-sized grid only for this synchronous generation transaction while the
 			-- live BuildableGrid temporarily exposes a destination-sized, unbuildable-padded copy.
 			local retained_source_buildable_grid
+			-- SURFACE STOCK-MASK PAD. On the surface the bridge below leaves the exact source-sized
+			-- z_grid (615x710) live and the stock ResolveBuildable tail hands it straight to native
+			-- MaskBuildableGrid, which addresses the real 820x946 backing: an out-of-bounds access
+			-- that fails intermittently with STATUS_STACK_BUFFER_OVERRUN (c0000409). Give only that
+			-- one native call a backing-sized copy padded with UnbuildableZ, then put the exact source
+			-- grid back at the very next stock call (GetPlayableArea), so every later consumer --
+			-- including the source-sized playable-mask repair -- sees the identical state as before.
+			-- retained_source_buildable_grid stays nil on the surface: that variable switches the
+			-- mask repair into its fail-closed mode and was the 20x slowdown of the first attempt.
+			local surface_mask_pad_owner, surface_mask_pad_grid, surface_mask_source_grid
+			local function release_surface_mask_pad(reason)
+				local owner, padded, source =
+					surface_mask_pad_owner, surface_mask_pad_grid, surface_mask_source_grid
+				surface_mask_pad_owner, surface_mask_pad_grid, surface_mask_source_grid = nil, nil, nil
+				if not padded then return end
+				local ticks = Global("GetPreciseTicks")
+				local started = type(ticks) == "function" and ticks() or 0
+				-- Carry any native writes made through the padded copy back into the source grid, so
+				-- the restored grid is exactly what an in-bounds stock call would have left behind.
+				local written = 0
+				if source and type(source.size) == "function" and type(padded.get) == "function" then
+					local ok_size, source_w, source_h = pcall(source.size, source)
+					if ok_size and type(source_w) == "number" then
+						source_h = source_h or source_w
+						for y = 0, source_h - 1 do
+							for x = 0, source_w - 1 do
+								local value = padded:get(x, y)
+								if value ~= source:get(x, y) then
+									source:set(x, y, value)
+									written = written + 1
+								end
+							end
+						end
+					end
+				end
+				if owner and owner.z_grid == padded then
+					owner.z_grid = source
+				elseif source then
+					pcall(function() source:free() end)
+				end
+				pcall(function() padded:free() end)
+				-- TEMPORARY (wall/crash investigation): does the stock native mask call write into the
+				-- buildable grid, and what does the restore cost?
+				print(string.format("[SBM MASKPAD] release=%s written=%d restore_ms=%d",
+					tostring(reason), written,
+					type(ticks) == "function" and (ticks() - started) or -1))
+			end
 			local function rebuild_source_buildable_grid(target_map)
 				if is_underground
 					or target_map ~= map
@@ -14740,6 +14787,9 @@ local function PatchRandomMapGenerator()
 			if type(saved_get_playable_area) == "function" then
 				env.GetPlayableArea = function(...)
 					local args = PackValues(...)
+					-- The stock MaskBuildableGrid call has completed by now; restore the exact source
+					-- grid before the source-sized mask repair inspects buildable.z_grid.
+					release_surface_mask_pad("GetPlayableArea")
 					local repaired_mask, repair_reason = rebuild_source_invalid_mask(args[3])
 					if repaired_mask then
 						args[3] = repaired_mask
@@ -14893,6 +14943,51 @@ local function PatchRandomMapGenerator()
 				end
 				local bridge_ok, bridge_reason = rebuild_source_buildable_grid(target_map)
 				if bridge_ok then
+					-- See SURFACE STOCK-MASK PAD above.
+					local source_grid = buildable and buildable.z_grid
+					local expanded_w = tonumber(map.SuperBigMapExpandedHexWidth)
+					local expanded_h = tonumber(map.SuperBigMapExpandedHexHeight)
+					local source_w, source_h
+					if source_grid and type(source_grid.size) == "function" then
+						local ok_size, grid_w, grid_h = pcall(source_grid.size, source_grid)
+						if ok_size then source_w, source_h = grid_w, grid_h or grid_w end
+					end
+					local can_pad = source_grid ~= nil and surface_mask_pad_grid == nil
+						and type(closure_new_grid) == "function"
+						and type(source_grid.get) == "function"
+						and type(source_w) == "number" and type(source_h) == "number"
+						and source_w == tonumber(map.hex_width) and source_h == tonumber(map.hex_height)
+						and type(expanded_w) == "number" and type(expanded_h) == "number"
+						and expanded_w >= source_w and expanded_h >= source_h
+						and (expanded_w > source_w or expanded_h > source_h)
+					if can_pad then
+						local ticks = Global("GetPreciseTicks")
+						local started = type(ticks) == "function" and ticks() or 0
+						local unbuildable_z = 2 ^ 16 - 1
+						if type(closure_build_unbuildable_z) == "function" then
+							local ok_z, value = pcall(closure_build_unbuildable_z)
+							if ok_z and type(value) == "number" then unbuildable_z = value end
+						end
+						local padded = closure_new_grid(expanded_w, expanded_h, 16, unbuildable_z)
+						if padded and type(padded.set) == "function" then
+							for y = 0, source_h - 1 do
+								for x = 0, source_w - 1 do
+									padded:set(x, y, source_grid:get(x, y))
+								end
+							end
+							surface_mask_pad_owner = buildable
+							surface_mask_pad_grid = padded
+							surface_mask_source_grid = source_grid
+							buildable.z_grid = padded
+						elseif padded then
+							pcall(function() padded:free() end)
+						end
+						-- TEMPORARY (wall/crash investigation): pad cost.
+						print(string.format("[SBM MASKPAD] install=%s pad_ms=%d %dx%d->%dx%d",
+							tostring(buildable.z_grid == padded),
+							type(ticks) == "function" and (ticks() - started) or -1,
+							source_w, source_h, expanded_w, expanded_h))
+					end
 					return
 				end
 				if bridge_reason == "mode-not-eligible" or bridge_reason == "map-not-expanded" then
@@ -14929,6 +15024,8 @@ local function PatchRandomMapGenerator()
 					original_on_generate_logic, self, env, map, ...) }
 			end
 
+			-- Safety net: a transaction that never reached GetPlayableArea must not leak the pad.
+			release_surface_mask_pad("transaction-end")
 			if retained_source_buildable_grid then
 				local retained = retained_source_buildable_grid
 				retained_source_buildable_grid = nil
