@@ -1802,6 +1802,13 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 				or box_fn(0, edge0, selected.along_n, edge1 + 1)
 			native_region:copyrect(grid, source_box, point_fn(0, 0))
 			local result = own(GridRepack(native_region, "f", 32, true))
+			do -- TEMPORARY (wall investigation)
+				local ok_c, c0, c1 = pcall(GridMinMax, correction)
+				local ok_r, r0, r1 = pcall(GridMinMax, result)
+				print(string.format("[SBM TRANSLATE] %s/%s edge0=%d edge1=%d local=%dx%d records=%d correction=%s..%s region=%s..%s",
+					tostring(selected.axis), tostring(selected.edge), edge0, edge1, local_w, local_h,
+					#records, tostring(c0), tostring(c1), tostring(r0), tostring(r1)))
+			end
 			GridAdd(result, correction)
 			GridClamp(result, 0, mx)
 			local packed = own(GridRepack(result, fmt, bits, false, "clamp"))
@@ -1994,6 +2001,19 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 				local delta = own(target:clone())
 				GridAddMulDiv(delta, source, -1, 1)
 				GridMulDivAdd(delta, mask, 1, 0)
+				-- TEMPORARY (wall investigation): per-group bounds of every intermediate.
+				do
+					local function bounds(g)
+						local ok_b, a, b = pcall(GridMinMax, g)
+						return ok_b and (tostring(a) .. ".." .. tostring(b)) or "?"
+					end
+					print(string.format("[SBM FEATHER] %s/%s lo=%d hi=%d along=%d..%d recs=%d src=%s v0=%s v0p=%s v1=%s v1n=%s s0=%s s1=%s d0=%s d1=%s w=%s b0=%s b1=%s tgt=%s mask=%s delta=%s",
+						tostring(selected.axis), tostring(selected.edge), group.lo, group.hi,
+						group.along0, group.along1, #group.records, bounds(source), bounds(v0),
+						bounds(v0_prev), bounds(v1), bounds(v1_next), bounds(slope0), bounds(slope1),
+						bounds(distance0), bounds(distance1), bounds(weight), bounds(base0), bounds(base1),
+						bounds(target), bounds(mask), bounds(delta)))
+				end
 				local layer = own(NewComputeGrid(full_w, full_h, "f", 32))
 				GridFill(layer, 0)
 				local dx = selected.axis == "x" and group.lo - edge0 or group.along0
@@ -2011,6 +2031,13 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 				or box_fn(0, edge0, selected.along_n, edge1 + 1)
 			region_native:copyrect(grid, region_box, point_fn(0, 0))
 			local result = own(GridRepack(region_native, "f", 32, true))
+			do -- TEMPORARY (wall investigation)
+				local ok_c, c0, c1 = pcall(GridMinMax, correction)
+				local ok_r, r0, r1 = pcall(GridMinMax, result)
+				print(string.format("[SBM FEATHER-TOTAL] %s/%s edge0=%d edge1=%d full=%dx%d groups=%d correction=%s..%s region=%s..%s",
+					tostring(selected.axis), tostring(selected.edge), edge0, edge1, full_w, full_h,
+					#records, tostring(c0), tostring(c1), tostring(r0), tostring(r1)))
+			end
 			GridAdd(result, correction)
 			GridMulDivAdd(result, 1, 1, 1, 2)
 			GridClamp(result, 0, mx)
