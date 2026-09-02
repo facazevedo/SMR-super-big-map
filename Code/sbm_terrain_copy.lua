@@ -719,6 +719,7 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		return false, { reason = "height grid too small" }
 	end
 	local ok_mm, mn, mx = pcall(GridMinMax, grid)
+	local clamp_probe_calls, clamp_probe_ms = 0, 0
 	if not ok_mm or type(mn) ~= "number" or type(mx) ~= "number" or mx <= mn then
 		return false, { reason = "height range unavailable" }
 	end
@@ -1809,7 +1810,12 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 			-- ceiling. A resampled-skirt repair only redistributes relief already present in the
 			-- band, so the band's own [min, max] is the correct ceiling and a legitimate repair is
 			-- unaffected.
+			local clamp_t0 = now_ms()
 			local ok_band, band_mn, band_mx = pcall(GridMinMax, result)
+			clamp_probe_calls = clamp_probe_calls + 1
+			clamp_probe_ms = clamp_probe_ms + math.max(0, now_ms() - clamp_t0)
+			print(string.format("[SBM CLAMP] n=%d minmax_ms=%d ok=%s",
+				clamp_probe_calls, clamp_probe_ms, tostring(ok_band)))
 			GridAdd(result, correction)
 			if ok_band and type(band_mn) == "number" and type(band_mx) == "number"
 				and band_mx > band_mn then
@@ -2024,7 +2030,12 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 			-- ceiling. A resampled-skirt repair only redistributes relief already present in the
 			-- band, so the band's own [min, max] is the correct ceiling and a legitimate repair is
 			-- unaffected.
+			local clamp_t0 = now_ms()
 			local ok_band, band_mn, band_mx = pcall(GridMinMax, result)
+			clamp_probe_calls = clamp_probe_calls + 1
+			clamp_probe_ms = clamp_probe_ms + math.max(0, now_ms() - clamp_t0)
+			print(string.format("[SBM CLAMP] n=%d minmax_ms=%d ok=%s",
+				clamp_probe_calls, clamp_probe_ms, tostring(ok_band)))
 			GridAdd(result, correction)
 			GridMulDivAdd(result, 1, 1, 1, 2)
 			if ok_band and type(band_mn) == "number" and type(band_mx) == "number"
