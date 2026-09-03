@@ -2657,6 +2657,9 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers, capture_rej
 		CanPlace = can_place,
 		CanPlaceUnique = can_place_unique,
 		CanPlaceMinimum = can_place_minimum,
+		-- Seed a non-enrichment gameplay footprint (an outer passage pad) as a hard spacing
+		-- obstacle, so CanPlaceMinimum enforces the same clearance the audit verifies.
+		ReserveHex = reserve_enrichment_hex,
 		Commit = commit,
 		Stats = function() return stats end,
 	}
@@ -7694,6 +7697,22 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 	local MIN_ENRICHMENT_HEX_DISTANCE = TopUpEnrichmentMinimumHexDistance()
 	local enrichment_spacing = NewTopUpRepulsionTracker(
 		map, "outer-ring anomaly enrichment spacing", ignored)
+	-- The coalesced path reserves the two outer passage pads BEFORE anomaly/effect selection,
+	-- and AuditTopUpVanillaRepulsion then requires MIN_ENRICHMENT_HEX_DISTANCE clearance between
+	-- every pad and every enrichment. Nothing ever seeded the pads into this tracker, so
+	-- placement was blind to them: a SubsurfaceAnomalyMarker could land 2 hexes from a pad and
+	-- fail the audit after the fact, aborting generation. Seed each pad centre as a non-surface
+	-- footprint - the audit's own description of a passage - so placement and audit agree. In
+	-- the non-coalesced path the pads do not exist yet and this loop is a no-op.
+	local seeded_passage_pads = 0
+	for _, pad in ipairs(type(map.SuperBigMapOuterPassagePads) == "table"
+		and map.SuperBigMapOuterPassagePads or {}) do
+		if type(pad) == "table" and type(pad.x) == "number" and type(pad.y) == "number"
+			and enrichment_spacing.ReserveHex(pad.x, pad.y, nil) then
+			seeded_passage_pads = seeded_passage_pads + 1
+		end
+	end
+	map.SuperBigMapSeededPassagePadObstacles = seeded_passage_pads
 	-- The outer perimeter is mostly cliffs/void on stretched maps. Before this filter, sequential
 	-- placement still spent 128 complete Lua terrain/obstruction probes in every one of the 204
 	-- perimeter sectors merely to prove that most sectors contained no buildable hex at all. Ask the
