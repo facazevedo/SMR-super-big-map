@@ -8639,6 +8639,34 @@ local function PatchEntranceBadgePosition()
 						end
 				end
 			end
+			-- The entrance sign is created after every EnsureEntranceVisualsReady pass has run
+			-- (measured: those passes report zero markers and zero signs, while two of each
+			-- exist by T1), so nothing ever applied the overview badge scale to it and it kept
+			-- the default 100 while the overview wants const.SignsOverviewCameraScaleUp - 550.
+			-- At 1/5.5 size the badge is invisible when zoomed out over a 20x20 grid. Apply the
+			-- scale/opacity for the live camera state at creation; the existing passes keep it
+			-- correct across later overview transitions.
+			if sign then
+				local is_overview = Engine.Global("IsOverviewMode")
+				local overview = type(is_overview) == "function"
+					and SafeCall(is_overview) == true
+				local const_tbl = Engine.Global("const")
+				local scale = type(const_tbl) == "table"
+					and (overview and const_tbl.SignsOverviewCameraScaleUp
+						or const_tbl.SignsOverviewCameraScaleDown) or nil
+				local opacity = type(const_tbl) == "table"
+					and (overview and const_tbl.SignsOverviewCameraOpacityUp
+						or const_tbl.SignsOverviewCameraOpacityDown) or nil
+				if type(scale) == "number" and type(sign.SetScale) == "function" then
+					SafeCall(sign.SetScale, sign, scale)
+				end
+				if type(opacity) == "number" and type(sign.SetOpacity) == "function" then
+					SafeCall(sign.SetOpacity, sign, opacity)
+				end
+				if type(sign.SetNoDepthTest) == "function" then
+					SafeCall(sign.SetNoDepthTest, sign, overview)
+				end
+			end
 			return result
 		end
 		originals[class_name] = original
