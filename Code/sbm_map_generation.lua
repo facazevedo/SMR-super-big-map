@@ -12337,7 +12337,9 @@ function Lazy.OwnedMaterializationInFlight(surface, descriptor, report)
 				.. tostring(report.persisted_state_live_reentry_allowed)
 		elseif tonumber(report.persisted_state_live_reentry_count) ~= 2 then
 			detail = "live_reentry_count="
-				.. tostring(report.persisted_state_live_reentry_count) .. " want=2"
+				.. tostring(report.persisted_state_live_reentry_count) .. " want=2 seq="
+				.. tostring(report.persisted_state_live_reentry_phase_sequence)
+				.. " last_phase=" .. tostring(report.persisted_state_live_reentry_phase)
 		else
 			detail = "live_reentry_phase_sequence="
 				.. tostring(report.persisted_state_live_reentry_phase_sequence)
