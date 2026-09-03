@@ -1059,28 +1059,61 @@ local function NewSectorBalancedCandidateSelector(map, candidates, label, candid
 		local terrain_capacity = terrain_key and capacity_by_terrain[terrain_key] or nil
 		local source_candidates = terrain_key and candidates_by_terrain[terrain_key] or candidates
 		if not source_candidates then return nil end
-		local best, best_load, best_capacity = {}, nil, nil
-		for _, candidate in ipairs(source_candidates) do
+		-- The winner is the filter-passing candidate with the smallest load/capacity ratio, ties
+		-- collected in iteration order and one drawn with RandInt. The ratio is cheap and the
+		-- filter (repulsion.CanPlace) is not, so rank first and only filter in ascending ratio
+		-- order until a tie-group yields a passer: that group IS the minimum among passers, so the
+		-- resulting best set, its order and the RandInt draw are all identical. Previously every
+		-- placement filtered the whole pool - measured 20,588 ms over 377 calls, 20.6s of a 23.6s
+		-- step, for 232 placements.
+		local ranked, ranked_n = {}, 0
+		for index, candidate in ipairs(source_candidates) do
 			if not candidate.used
-				and (terrain_key == nil or candidate._sbm_selector_terrain_key == terrain_key)
-				and (type(candidate_filter) ~= "function"
-					or candidate_filter(candidate, context) == true) then
+				and (terrain_key == nil or candidate._sbm_selector_terrain_key == terrain_key) then
 				local _, key = CandidateSector(map, candidate)
 				local candidate_capacity = key
 					and ((terrain_capacity and terrain_capacity[key]) or capacity[key]) or 0
 				if key and candidate_capacity > 0 then
-					local candidate_load = loads[key] or 0
-					local better = not best_load
-						or candidate_load * best_capacity < best_load * candidate_capacity
-					local equal = best_load
-						and candidate_load * best_capacity == best_load * candidate_capacity
-					if not balanced then better, equal = best_load == nil, best_load ~= nil end
-					if better then
-						best = { candidate }
-						best_load, best_capacity = candidate_load, candidate_capacity
-					elseif equal then
-						best[#best + 1] = candidate
+					ranked_n = ranked_n + 1
+					ranked[ranked_n] = { candidate = candidate, order = index,
+						load = loads[key] or 0, capacity = candidate_capacity }
+				end
+			end
+		end
+		if ranked_n == 0 then return nil end
+		local best = {}
+		if balanced then
+			table.sort(ranked, function(a, b)
+				local lhs, rhs = a.load * b.capacity, b.load * a.capacity
+				if lhs ~= rhs then return lhs < rhs end
+				return a.order < b.order
+			end)
+			local group_start = 1
+			while group_start <= ranked_n do
+				local head = ranked[group_start]
+				local group_end = group_start
+				while group_end < ranked_n do
+					local nxt = ranked[group_end + 1]
+					if head.load * nxt.capacity ~= nxt.load * head.capacity then break end
+					group_end = group_end + 1
+				end
+				for index = group_start, group_end do
+					local entry = ranked[index]
+					if type(candidate_filter) ~= "function"
+						or candidate_filter(entry.candidate, context) == true then
+						best[#best + 1] = entry.candidate
 					end
+				end
+				if #best > 0 then break end
+				group_start = group_end + 1
+			end
+		else
+			-- Unbalanced mode collects every passing candidate, so the whole pool is required.
+			for index = 1, ranked_n do
+				local entry = ranked[index]
+				if type(candidate_filter) ~= "function"
+					or candidate_filter(entry.candidate, context) == true then
+					best[#best + 1] = entry.candidate
 				end
 			end
 		end
