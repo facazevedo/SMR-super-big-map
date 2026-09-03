@@ -1840,6 +1840,14 @@ local function RevealVanillaStartSectors(map)
 	-- SCANS it, so its content spawns. The anchor (camera, InitialSector) stays vanilla's first
 	-- winner, but the scan set must be the whole revealed set or the auxiliary sector's deposits
 	-- are missing from the expanded map (measured: b2-04's TerrainDepositConcrete).
+	-- The staged native set is the source of truth for which deposits this reveal spawns,
+	-- and the scan below runs with marker lists emptied when it is active. Vanilla's
+	-- auxiliary nearest-concrete sector therefore no longer needs to be SCANNED for its
+	-- deposits to exist - the replay places them - and scanning it revealed a second
+	-- destination sector at game start when only the anchor should be explored.
+	local staged_set = data.staged
+	local staged_replay_active = (SuperBigMap.Config or {}).START_SPAWN_STAGED_REPLAY == true
+		and type(staged_set) == "table" and #staged_set > 0
 	local reveal_targets = { selected }
 	local winner2 = data.winners and data.winners[2]
 	if winner2 then
@@ -1858,7 +1866,9 @@ local function RevealVanillaStartSectors(map)
 			error("no expanded sector contains the transformed auxiliary concrete sector center")
 		end
 		if w2_sector ~= selected then
-			reveal_targets[#reveal_targets + 1] = w2_sector
+			if not staged_replay_active then
+				reveal_targets[#reveal_targets + 1] = w2_sector
+			end
 			-- InitialReveal precomputed CanPlaceDeposit spawn positions only for the first
 			-- winner's candidate sectors; replicate its inner loop for the auxiliary sector
 			-- (Exploration.lua:900-906) so its surface markers spawn exactly the same way.

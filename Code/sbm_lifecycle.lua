@@ -1336,6 +1336,15 @@ RegisterOnce("SectorScanned", function(status, sector, _old_status)
 			map = SafeCall(sector.city.GetMap, sector.city)
 		end
 		SafeCall(gen.RestoreEntranceBadgePositions, map or Global("CurrentMap"), "SectorScanned")
+		-- Concrete/regolith deposits are gated on sector reveal, and the start reveal places
+		-- markers across the whole transformed winner box, which spans more than one
+		-- destination sector. Re-run the gate whenever a sector is scanned so the newly
+		-- revealed ones appear and the still-unexplored neighbours stay hidden.
+		local highlight = SuperBigMap.SectorHighlight
+		if highlight and type(highlight.ApplyOverviewResourceScanGate) == "function" then
+			SafeCall(highlight.ApplyOverviewResourceScanGate,
+				map or Global("CurrentMap"), nil, "SectorScanned")
+		end
 	end
 end)
 
