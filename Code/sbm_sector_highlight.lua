@@ -46,11 +46,9 @@ end
 local function ApplyOverviewResourceScanGate(map, overview_active, reason)
 	map = map or Engine.Global("CurrentMap")
 	if not map or type(map.MapForEach) ~= "function" or not IsModMap(map) then
-		print("[SBM GATE] SKIP map unavailable or not expanded reason=" .. tostring(reason))
 		return false, { reason = "map unavailable or not expanded" }
 	end
 	if type(map.mapdata) == "table" and map.mapdata.Environment == "Underground" then
-		print("[SBM GATE] SKIP underground reason=" .. tostring(reason))
 		return false, { reason = "underground uses proximity reveal" }
 	end
 	if overview_active == nil then
@@ -63,14 +61,12 @@ local function ApplyOverviewResourceScanGate(map, overview_active, reason)
 	local get_sector = Engine.Global("GetMapSectorXY")
 	local is_valid = Engine.Global("IsValid")
 	if not city or type(get_sector) ~= "function" then
-		print("[SBM GATE] SKIP sector lookup unavailable reason=" .. tostring(reason))
 		return false, { reason = "sector lookup unavailable" }
 	end
 
 	local signs_visible = Engine.Global("g_SignsVisible") ~= false
 	local icons_visible = Engine.Global("g_ResourceIconsVisible") ~= false
-	local stats = { hidden = 0, shown = 0, restored = 0, unresolved = 0,
-		terrain = 0, subsurface = 0 }
+	local stats = { hidden = 0, shown = 0, restored = 0, unresolved = 0 }
 	local function valid(obj)
 		return obj and (type(is_valid) ~= "function" or Engine.SafeCall(is_valid, obj) == true)
 	end
@@ -109,10 +105,6 @@ local function ApplyOverviewResourceScanGate(map, overview_active, reason)
 			stats.unresolved = stats.unresolved + 1
 			return
 		end
-		if always_gate == true then
-			print(string.format("[SBM GATE] terrain obj sector=%s status=%s",
-				tostring(sector.id), tostring(sector.status)))
-		end
 		if sector.status == "unexplored" then
 			obj.SuperBigMapOverviewHiddenUntilScan = true
 			if set_visible(obj, false) then stats.hidden = stats.hidden + 1 end
@@ -124,19 +116,10 @@ local function ApplyOverviewResourceScanGate(map, overview_active, reason)
 		end
 	end
 
-	pcall(map.MapForEach, map, "map", "SubsurfaceDeposit", function(obj)
-		stats.subsurface = stats.subsurface + 1
-		gate_badge(obj)
-	end)
+	pcall(map.MapForEach, map, "map", "SubsurfaceDeposit", gate_badge)
 	pcall(map.MapForEach, map, "map", "TerrainDeposit", function(obj)
-		stats.terrain = stats.terrain + 1
 		gate_badge(obj, true)
 	end)
-	-- TEMPORARY gate diagnostic (remove before release).
-	print(string.format(
-		"[SBM GATE] reason=%s overview=%s terrain=%d subsurface=%d hidden=%d shown=%d restored=%d unresolved=%d",
-		tostring(reason or "?"), tostring(overview_active == true), stats.terrain,
-		stats.subsurface, stats.hidden, stats.shown, stats.restored, stats.unresolved))
 	if stats.hidden > 0 or stats.restored > 0 or stats.unresolved > 0 then
 		stats.overview = tostring(overview_active == true)
 		stats.reason = tostring(reason or "unspecified")
@@ -282,37 +265,6 @@ local function EnsureEntranceVisualsReady(map, overview_active, reason)
 		invoke(obj, "SetOpacity", 100)
 	end
 
-	-- Underground entrances are the one badge class that must be findable before a sector
-	-- is scanned: on a 20x20 grid the player would otherwise scan blind to find an
-	-- elevator. Vanilla only creates the sign from
-	-- SurfaceUndergroundTunnelMarker:SpawnDeposit, which runs on reveal, so in an
-	-- unscanned sector the object does not exist at all. Place the sign directly:
-	-- PlaceSign marks it revealed itself and the entrance-badge position patch keeps it on
-	-- the stretched coordinate. SpawnDeposit is deliberately not used, so no anomaly
-	-- sequence starts early.
-	-- TEMPORARY badge diagnostic (remove before release).
-	local placed_signs, seen_markers, skip_existing, skip_nofn, fail_place = 0, 0, 0, 0, 0
-	pcall(map.MapForEach, map, "map", "SurfaceUndergroundTunnelMarker", function(marker)
-		seen_markers = seen_markers + 1
-		if not valid(marker) then return end
-		if valid(marker.tunnel_sign) then
-			skip_existing = skip_existing + 1
-			return
-		end
-		if type(marker.PlaceSign) ~= "function" then
-			skip_nofn = skip_nofn + 1
-			return
-		end
-		local ok_place = pcall(marker.PlaceSign, marker)
-		if ok_place and valid(marker.tunnel_sign) then
-			placed_signs = placed_signs + 1
-		else
-			fail_place = fail_place + 1
-		end
-	end)
-	stats.signs_placed = placed_signs
-	print(string.format("[SBM BADGE] reason=%s markers=%d placed=%d existing=%d nofn=%d fail=%d",
-		tostring(reason or "?"), seen_markers, placed_signs, skip_existing, skip_nofn, fail_place))
 	pcall(map.MapForEach, map, "map", "SurfaceUndergroundTunnelSign", prepare_badge)
 	for _, class_name in ipairs({
 		"UndergroundPassageBase",
