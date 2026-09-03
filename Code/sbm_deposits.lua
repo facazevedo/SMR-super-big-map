@@ -6138,7 +6138,9 @@ function DepositRules.TopUpDeposits(map)
 			-- set for the existing any-terrain completion rule and the underground maximin fallback.
 			local STRICT_SAMPLES_PER_PLACEMENT = underground and 8 or 32
 			local FALLBACK_CHOICES_PER_PLACEMENT = underground and 4 or 8
+			local seq_t0, seq_iters = GetPreciseTicks(), 0
 			while added < shortfall and pool < MAX_POOL and candidate_samples < MAX_SAMPLES do
+				seq_iters = seq_iters + 1
 				local added_before = added
 				local strict_sample_limit = math.min(MAX_SAMPLES,
 					candidate_samples + STRICT_SAMPLES_PER_PLACEMENT)
@@ -6183,6 +6185,8 @@ function DepositRules.TopUpDeposits(map)
 
 				if added == added_before and candidate_samples >= MAX_SAMPLES then break end
 			end
+			print(string.format("[SBM SEQ] iters=%d added=%d shortfall=%d pool=%d samples=%d ms=%d",
+				seq_iters, added, shortfall, pool, candidate_samples, GetPreciseTicks() - seq_t0))
 		else
 			-- Surface behavior and the explicit optimization rollback retain the historical strict search
 			-- opportunity before any relaxation.
