@@ -1135,6 +1135,11 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 	local entrance_highlight = SuperBigMap.SectorHighlight
 	if entrance_highlight and type(entrance_highlight.EnsureEntranceVisualsReady) == "function" then
 		SafeCall(entrance_highlight.EnsureEntranceVisualsReady, map, nil, "CurrentMapChangeDone")
+	-- TEMPORARY problem dump (remove with Code/sbm_problem_dump.lua).
+	local dump = SuperBigMap.ProblemDump
+	if dump and type(dump.Run) == "function" then
+		SafeCall(dump.Run, "CurrentMapChangeDone", map or Global("CurrentMap"))
+	end
 	end
 	-- Clear any legacy underground overview decals on a map switch.
 	do
@@ -1344,6 +1349,11 @@ RegisterOnce("SectorScanned", function(status, sector, _old_status)
 		if highlight and type(highlight.ApplyOverviewResourceScanGate) == "function" then
 			SafeCall(highlight.ApplyOverviewResourceScanGate,
 				map or Global("CurrentMap"), nil, "SectorScanned")
+		-- TEMPORARY problem dump (remove with Code/sbm_problem_dump.lua).
+		local dump = SuperBigMap.ProblemDump
+		if dump and type(dump.Run) == "function" then
+			SafeCall(dump.Run, "SectorScanned", map or Global("CurrentMap"))
+		end
 		end
 	end
 end)
@@ -1541,6 +1551,11 @@ RegisterOnce("MapGenerated", function(map)
 	local entrance_highlight = SuperBigMap.SectorHighlight
 	if mod_map and entrance_highlight and type(entrance_highlight.EnsureEntranceVisualsReady) == "function" then
 		SafeCall(entrance_highlight.EnsureEntranceVisualsReady, map, nil, "MapGenerated-finalized")
+	-- TEMPORARY problem dump (remove with Code/sbm_problem_dump.lua).
+	local dump = SuperBigMap.ProblemDump
+	if dump and type(dump.Run) == "function" then
+		SafeCall(dump.Run, "MapGenerated-finalized", map or Global("CurrentMap"))
+	end
 	end
 	-- The startup OverviewMode message may have fired while exact-vanilla source
 	-- generation owned CurrentMap. Reframe explicitly now that the expanded map and

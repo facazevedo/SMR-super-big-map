@@ -13509,6 +13509,13 @@ function Lazy.MaterializeWithForegroundCover(route)
 		end
 		return nil, "underground generation started off the input thread"
 	end
+	-- TEMPORARY problem dump at first access (remove with Code/sbm_problem_dump.lua).
+	do
+		local dump = SuperBigMap.ProblemDump
+		if dump and type(dump.Run) == "function" then
+			SafeCall(dump.Run, "first-access:" .. tostring(route or "?"), Lazy.StateSurface())
+		end
+	end
 	local surface = Lazy.StateSurface()
 	local begin_cover = SuperBigMap.ExpansionLoadingBegin
 	local end_cover = SuperBigMap.ExpansionLoadingEnd
