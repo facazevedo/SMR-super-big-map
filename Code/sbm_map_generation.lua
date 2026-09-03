@@ -16787,7 +16787,27 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 			local resume_ild = Global("ResumeInfiniteLoopDetection")
 			if type(pause_ild) == "function" then SafeCall(pause_ild, "SuperBigMapStretch") end
 			local ok_stretch, n_grids = false, 0
-			local surface_pipeline_token = LoadingBegin("surface expansion pipeline", map)
+			-- TEMPORARY determinism bisect: order-independent digest of every placed DepositMarker
+		-- hex. Sorted before hashing so engine enumeration order cannot affect the value; a
+		-- change between stages localises where two identical-input runs first diverge.
+		local function MarkerSetDigest(stage)
+			local keys = {}
+			pcall(map.MapForEach, map, "map", "DepositMarker", function(o)
+				local pos = o and o:GetPos()
+				local wx, wy = Global("point") and pos and pos:xy()
+				if type(wx) == "number" then
+					keys[#keys + 1] = tostring(o.class) .. ":" .. tostring(wx) .. ":" .. tostring(wy)
+				end
+			end)
+			table.sort(keys)
+			local h = 0
+			for _, k in ipairs(keys) do
+				for i = 1, #k do h = (h * 31 + string.byte(k, i)) % 2147483647 end
+			end
+			print(string.format("[SBM MARKERSET] %s n=%d digest=%d", tostring(stage), #keys, h))
+		end
+
+		local surface_pipeline_token = LoadingBegin("surface expansion pipeline", map)
 			-- Create and render the dialog before pass edits are suspended. ResumePassEdits requires
 			-- GameTime to match the value captured by SuspendPassEdits, so no Sleep/yield is allowed
 			-- inside that transaction.
@@ -17013,6 +17033,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 							error("final surface RebuildBuildableGrid failed: " .. tostring(rebuild_err))
 						end
 						map.SuperBigMapSurfaceBuildableCurrent = true
+						MarkerSetDigest("01-after-final-rebuild")
 						-- TEMPORARY determinism probe: digest the buildable grid immediately after the
 						-- authoritative rebuild, BEFORE any top-up placement, so a divergence here proves the
 						-- grid itself is non-deterministic rather than reflecting divergent object placement.
@@ -17099,6 +17120,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								"surface prepare deferred-publication outer resource terrain", map,
 								TerrainCopy.PrepareOuterResourceTerrain, map)
 							coalesced_resource_prepare_ms = GetPreciseTicks() - started
+							MarkerSetDigest("02-after-outer-resource-terrain")
 							if type(coalesced_resource_stats) ~= "table"
 								or tostring(coalesced_resource_stats.error or "") ~= "" then
 								error("deferred-publication outer resource terrain preparation failed: "
@@ -17129,6 +17151,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								coalesced_resource_stats.ring_sectors,
 								"after early coalesced outer resource and passage terrain preparation")
 							coalesced_early_rebuild_ms = GetPreciseTicks() - rebuild_started
+							MarkerSetDigest("03-after-passage-and-ring")
 							local ring_report = map.SuperBigMapOuterResourceRingRebuildReport
 							coalesced_early_grid_published = type(ring_report) == "table"
 								and ring_report.used == true and ring_report.fallback ~= true
