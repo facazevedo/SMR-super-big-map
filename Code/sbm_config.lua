@@ -14,8 +14,8 @@ local config = {}
 -- ============================================================================
 -- Diagnostic channels remain available for targeted troubleshooting and stay
 -- disabled in published builds.
-config.DebugLoggingEnabled = false
-config.DebugLoadingTimings = false
+config.DebugLoggingEnabled = true
+config.DebugLoadingTimings = true
 config.DebugEnrichmentAudit = false
 config.DebugElevatorTraversal = false
 config.DebugElevatorSupply = false
