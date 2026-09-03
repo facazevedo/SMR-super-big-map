@@ -5566,9 +5566,12 @@ function DepositRules.TopUpDeposits(map)
 			maximum_this_pass = maximum_this_pass or shortfall
 			while added < shortfall and placed_this_pass < maximum_this_pass
 				and active_selector.Remaining() > 0 do
+				local sel_t0 = GetPreciseTicks()
 				local c, template, tpos, profile =
 					select_needed_placement(allow_any_terrain, require_extractor,
 						forbid_extractor, template_policy)
+				sbm_select_ms = (sbm_select_ms or 0) + (GetPreciseTicks() - sel_t0)
+				sbm_select_calls = (sbm_select_calls or 0) + 1
 				if not c then break end
 				local resource_key = tostring(template and
 					(template.resource or template.class) or "unknown")
@@ -5576,7 +5579,9 @@ function DepositRules.TopUpDeposits(map)
 					and RevalidateBoundedUndergroundCandidateAtCommit(
 						map, c, validation_context, resource_key) then
 					local tx, ty = tpos:xy()
+					local clone_t0 = GetPreciseTicks()
 					local clone = clone_fn(map, template, point(c.x - tx, c.y - ty, 0))
+					sbm_clone_ms = (sbm_clone_ms or 0) + (GetPreciseTicks() - clone_t0)
 					if clone and type(clone) == "table" then
 						NoteUndergroundEnrichmentDecision(map, "commit", "resource", nil)
 						active_selector.Commit(c)
@@ -6153,6 +6158,7 @@ function DepositRules.TopUpDeposits(map)
 			local FALLBACK_CHOICES_PER_PLACEMENT = underground and 4 or 8
 			local seq_t0, seq_iters = GetPreciseTicks(), 0
 			sbm_ctor_ms, sbm_place_ms, sbm_place_calls = 0, 0, 0
+			sbm_select_ms, sbm_select_calls, sbm_clone_ms = 0, 0, 0
 			while added < shortfall and pool < MAX_POOL and candidate_samples < MAX_SAMPLES do
 				seq_iters = seq_iters + 1
 				local added_before = added
@@ -6199,6 +6205,8 @@ function DepositRules.TopUpDeposits(map)
 
 				if added == added_before and candidate_samples >= MAX_SAMPLES then break end
 			end
+			print(string.format("[SBM INNER] select_calls=%d select_ms=%d clone_ms=%d",
+				sbm_select_calls or 0, sbm_select_ms or 0, sbm_clone_ms or 0))
 			print(string.format("[SBM SPLIT] calls=%d ctor_ms=%d place_ms=%d",
 				sbm_place_calls or 0, sbm_ctor_ms or 0, sbm_place_ms or 0))
 			print(string.format("[SBM SEQ] iters=%d added=%d shortfall=%d pool=%d samples=%d ms=%d",
