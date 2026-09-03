@@ -12062,7 +12062,33 @@ function Lazy.PendingForElevator(elevator)
 end
 
 function Lazy.OwnedSurfaceGenerationInFlight(surface, descriptor, report)
+	-- TEMPORARY first-access diagnostic (remove before release). The published capsule
+	-- certificate needs two live re-entries, pre-surface-pipeline then
+	-- closing-canonical-rebuild, and only the first is ever recorded. Log every call with the
+	-- descriptor state, the three phase markers, the Surface loading ref and the cover
+	-- visibility, plus the verdict, so the blocking precondition is identifiable.
+	local function trace(verdict)
+		local visible = SuperBigMap.ExpansionLoadingVisible
+		local visible_now = "n/a"
+		if type(visible) == "function" then
+			local ok_v, v = pcall(visible)
+			visible_now = ok_v and tostring(v) or "call-failed"
+		end
+		print(string.format("[SBM REENTRY] state=%s pending=%s stretch_sched=%s post_sched=%s loading_ref=%s cover_visible=%s count=%s seq=%s verdict=%s",
+			tostring(type(descriptor) == "table" and descriptor.state or "?"),
+			tostring(type(surface) == "table" and surface.SuperBigMapStretchPipelinePending == true),
+			tostring(type(surface) == "table" and surface.SuperBigMapSurfaceStretchScheduled == true),
+			tostring(type(surface) == "table"
+				and surface.SuperBigMapSurfacePostPipelineRevalidationScheduled == true),
+			tostring(type(surface) == "table" and surface_loading_ref_maps[surface] == true),
+			tostring(visible_now),
+			tostring(type(report) == "table" and report.persisted_state_live_reentry_count or "?"),
+			tostring(type(report) == "table"
+				and report.persisted_state_live_reentry_phase_sequence or "?"),
+			tostring(verdict)))
+	end
 	local function failed(invariant, actual)
+		trace(tostring(invariant) .. "=" .. tostring(actual))
 		return false, nil, tostring(invariant) .. "=" .. tostring(actual)
 	end
 	if type(surface) ~= "table" then return failed("surface_table", type(surface)) end
@@ -12185,6 +12211,7 @@ function Lazy.OwnedSurfaceGenerationInFlight(surface, descriptor, report)
 			if surface_loading_ref_maps[surface] == true then
 				return failed("pre_surface_loading_cover", true)
 			end
+			trace("OK:pre-surface-pipeline")
 			return true, "pre-surface-pipeline"
 		end
 		if pipeline_pending and stretch_scheduled and post_scheduled then
@@ -12215,6 +12242,7 @@ function Lazy.OwnedSurfaceGenerationInFlight(surface, descriptor, report)
 			exact = exact and type(capsule.validation_z) == "number"
 		end
 		if not exact then return failed("closing_capsule_contract", false) end
+		trace("attempt:closing-canonical-rebuild")
 		return canonical_loading_cover("closing-canonical-rebuild")
 	end
 	return failed("descriptor_state", descriptor.state)
@@ -20426,7 +20454,12 @@ local function PatchDeferredUndergroundAccess(source)
 		local live_surface = lazy.StateSurface()
 		SuperBigMap.OptimizationTrace.Before("lazy persisted-state live re-entry validation",
 			live_surface)
+		-- TEMPORARY: which trigger reached the persisted-state validation, and its verdict.
+		print("[SBM REENTRY-TRIGGER] source=" .. tostring(source)
+			.. " surface=" .. tostring(live_surface ~= nil))
 		local persisted_ok, persisted_reason = lazy.ValidatePersistedState(live_surface)
+		print("[SBM REENTRY-TRIGGER] source=" .. tostring(source) .. " ok="
+			.. tostring(persisted_ok) .. " reason=" .. tostring(persisted_reason))
 		local live_report = live_surface
 			and live_surface.SuperBigMapLazyUndergroundFeasibilityReport or nil
 		if persisted_ok == true then
