@@ -2600,12 +2600,20 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers, capture_rej
 			end
 			return false
 		end
-		local candidate_is_surface = profile.layer == "surf" and profile.resource ~= "Effects"
-		if not can_place_minimum(candidate, candidate_is_surface,
-			TopUpEnrichmentMinimumHexDistance()) then return false end
+		-- Consult the verdict cache BEFORE the minimum-distance scan. That scan walks a 5x5 hex
+		-- neighbourhood, so running it ahead of the cache made every cached answer pay ~25 table
+		-- probes: ~298k calls x 25 across one generation. candidate_is_surface derives only from
+		-- the profile, which profile_cache_key already covers, so the cached verdict subsumes it.
 		local profile_key = profile_cache_key(profile)
 		local cached = cached_verdict(candidate, profile_key)
 		if cached ~= nil then return cached end
+		local candidate_is_surface = profile.layer == "surf" and profile.resource ~= "Effects"
+		if not can_place_minimum(candidate, candidate_is_surface,
+			TopUpEnrichmentMinimumHexDistance()) then
+			-- Enrichment occupancy only ever grows within a pass, so a minimum-distance rejection
+			-- can never turn into an acceptance. Cache it like every other negative verdict.
+			return remember_verdict(candidate, profile_key, false)
+		end
 		if occupied_hexes[hkey] then
 			stats.duplicate_hex_rejects = stats.duplicate_hex_rejects + 1
 			if capture_rejections == true then
