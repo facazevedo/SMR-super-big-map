@@ -340,9 +340,40 @@ local function NoteUndergroundEnrichmentDecision(map, kind, reason, pt)
 	}, "@"):sub(1, 192)
 end
 
+-- Deterministic placement stream. Engine.RandInt prefers AsyncRand, whose sequence is reseeded
+-- per session, so top-up candidate positions differed on every run from byte-identical terrain:
+-- measured at 14N134W, the same gen_hash produced marker-set digests 287334137 vs 1492257784,
+-- 27 vs 51 outer-resource retries and a 52s vs 76s T0-to-T1. It also consumed the global RNG at
+-- points vanilla never does, which shifts the shared stream. Derive the stream from the map's
+-- own generator seed instead: reproducible per landing site, and no global draw. Same Lehmer
+-- constants the underground budget path already uses.
+local deterministic_placement_rng = nil
+local function SeedDeterministicPlacement(map, tag)
+	local generator = map and map.RandomMapGenObject
+	local numeric = tonumber(generator and generator.Seed)
+	if not numeric then deterministic_placement_rng = nil return false end
+	local state = math.abs(math.floor(numeric)) % 2147483647
+	for index = 1, #tostring(tag or "") do
+		state = (state * 31 + string.byte(tostring(tag), index)) % 2147483647
+	end
+	if state == 0 then state = 1 end
+	deterministic_placement_rng = { state = state, calls = 0, tag = tostring(tag or "") }
+	return true
+end
+
 local function RandInt(limit)
 	local budget = active_underground_enrichment_budget
-	if type(budget) ~= "table" then return SharedRandInt(limit) end
+	if type(budget) ~= "table" then
+		local rng = deterministic_placement_rng
+		if type(rng) == "table" then
+			limit = math.floor(tonumber(limit) or 0)
+			if limit <= 0 then return 0 end
+			rng.calls = rng.calls + 1
+			rng.state = (rng.state * 48271) % 2147483647
+			return rng.state % limit
+		end
+		return SharedRandInt(limit)
+	end
 	limit = math.floor(tonumber(limit) or 0)
 	if limit <= 0 then return 0 end
 	budget.rng_calls = budget.rng_calls + 1
@@ -4268,6 +4299,7 @@ end
 -- Breakthrough anomalies are preserved exactly from the vanilla source record set.
 
 function DepositRules.TopUpDeposits(map)
+	SeedDeterministicPlacement(map, "deposits")
 	if cfg().TOPUP_RESOURCES ~= true then return end
 	if not ExpansionAdditionStagesReady("resource top-up") then return end
 	map = map or Global("CurrentMap")
@@ -6330,6 +6362,7 @@ end
 -- sector. Native anomalies remain at their exact proportional vanilla coordinates and participate
 -- only as fixed obstacles in the vanilla repulsion tracker.
 function DepositRules.TopUpAnomalies(map)
+	SeedDeterministicPlacement(map, "anomalies")
 	if cfg().TOPUP_ANOMALIES ~= true then return end
 	if not ExpansionAdditionStagesReady("anomaly top-up") then return end
 	map = map or Global("CurrentMap")
@@ -8371,6 +8404,7 @@ local function VerifiedMountainRocketPadAt(map, x, y)
 end
 
 function DepositRules.TopUpEffectDeposits(map)
+	SeedDeterministicPlacement(map, "effects")
 	if not ExpansionAdditionStagesReady("effect top-up") then return end
 	map = map or Global("CurrentMap")
 	SetEnrichmentTopUpStatus(map, "effects", false, 0)
