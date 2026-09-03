@@ -1,3 +1,4 @@
+rawset(_G, "sbm_select_ms", 0) rawset(_G, "sbm_select_calls", 0) rawset(_G, "sbm_clone_ms", 0)
 rawset(_G, "sbm_ctor_ms", 0) rawset(_G, "sbm_place_ms", 0) rawset(_G, "sbm_place_calls", 0)
 -- Super Big Map -- stretch enrichment placement and scan gating.
 --
