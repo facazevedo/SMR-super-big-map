@@ -2488,17 +2488,19 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers, capture_rej
 		local by_profile = placement_cache[candidate]
 		local cached = by_profile and by_profile[profile_key]
 		if not cached then return nil end
-		return cached.result
+		if cached.result == false or cached.generation == obstacle_generation then
+			return cached.result
+		end
+		return nil
 	end
 
-	local function remember_verdict(candidate, profile_key, result, radius)
+	local function remember_verdict(candidate, profile_key, result)
 		local by_profile = placement_cache[candidate]
 		if not by_profile then
 			by_profile = {}
 			placement_cache[candidate] = by_profile
 		end
-		by_profile[profile_key] = { result = result == true,
-			radius = tonumber(radius) or math.huge }
+		by_profile[profile_key] = { result = result == true, generation = obstacle_generation }
 		return result
 	end
 
@@ -2608,7 +2610,7 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers, capture_rej
 				end
 			end
 		end
-		return remember_verdict(candidate, profile_key, true, search_radius)
+		return remember_verdict(candidate, profile_key, true)
 	end
 
 	-- Used only after an underground family has exhausted every fully vanilla-spaced candidate.
@@ -2685,22 +2687,6 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers, capture_rej
 		if not candidate or not profile then return false end
 		if not add_entry(candidate.x, candidate.y, profile, marker, true) then return false end
 		obstacle_generation = obstacle_generation + 1
-		local cx, cy = candidate.x, candidate.y
-		if type(cx) == "number" and type(cy) == "number" then
-			for cached_candidate, by_profile in pairs(placement_cache) do
-				local px, py = cached_candidate.x, cached_candidate.y
-				if type(px) == "number" and type(py) == "number" then
-					local dx, dy = px - cx, py - cy
-					local distance_sq = dx * dx + dy * dy
-					for key, entry in pairs(by_profile) do
-						if entry.result == true then
-							local r = entry.radius or math.huge
-							if r == math.huge or distance_sq <= r * r then by_profile[key] = nil end
-						end
-					end
-				end
-			end
-		end
 		stats.committed = stats.committed + 1
 		return true
 	end
