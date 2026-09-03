@@ -1,3 +1,4 @@
+rawset(_G, "sbm_ctor_ms", 0) rawset(_G, "sbm_place_ms", 0) rawset(_G, "sbm_place_calls", 0)
 -- Super Big Map -- stretch enrichment placement and scan gating.
 --
 -- Native markers are recreated at their proportional post-stretch coordinates and additions are
@@ -5690,11 +5691,16 @@ function DepositRules.TopUpDeposits(map)
 			if surface_selector_loads then
 				surface_selector_load_cache_reuses = surface_selector_load_cache_reuses + 1
 			end
+			local ctor_t0 = GetPreciseTicks()
 			local strict_selector = NewSectorBalancedCandidateSelector(
 				map, shared_candidates, label or "resources strict reserve",
 				function(candidate, profile) return repulsion.CanPlace(candidate, profile) end,
 				surface_selector_loads)
+			local place_t0 = GetPreciseTicks()
 			place_from(strict_selector, false, false)
+			sbm_ctor_ms = (sbm_ctor_ms or 0) + (place_t0 - ctor_t0)
+			sbm_place_ms = (sbm_place_ms or 0) + (GetPreciseTicks() - place_t0)
+			sbm_place_calls = (sbm_place_calls or 0) + 1
 		end
 		local function place_relaxed_once(label)
 			if added >= shortfall then return end
@@ -6159,6 +6165,7 @@ function DepositRules.TopUpDeposits(map)
 			local STRICT_SAMPLES_PER_PLACEMENT = underground and 8 or 32
 			local FALLBACK_CHOICES_PER_PLACEMENT = underground and 4 or 8
 			local seq_t0, seq_iters = GetPreciseTicks(), 0
+			sbm_ctor_ms, sbm_place_ms, sbm_place_calls = 0, 0, 0
 			while added < shortfall and pool < MAX_POOL and candidate_samples < MAX_SAMPLES do
 				seq_iters = seq_iters + 1
 				local added_before = added
@@ -6205,6 +6212,8 @@ function DepositRules.TopUpDeposits(map)
 
 				if added == added_before and candidate_samples >= MAX_SAMPLES then break end
 			end
+			print(string.format("[SBM SPLIT] calls=%d ctor_ms=%d place_ms=%d",
+				sbm_place_calls or 0, sbm_ctor_ms or 0, sbm_place_ms or 0))
 			print(string.format("[SBM SEQ] iters=%d added=%d shortfall=%d pool=%d samples=%d ms=%d",
 				seq_iters, added, shortfall, pool, candidate_samples, GetPreciseTicks() - seq_t0))
 		else
