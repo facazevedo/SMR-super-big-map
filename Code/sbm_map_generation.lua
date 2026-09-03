@@ -17013,6 +17013,33 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 							error("final surface RebuildBuildableGrid failed: " .. tostring(rebuild_err))
 						end
 						map.SuperBigMapSurfaceBuildableCurrent = true
+						-- TEMPORARY determinism probe: digest the buildable grid immediately after the
+						-- authoritative rebuild, BEFORE any top-up placement, so a divergence here proves the
+						-- grid itself is non-deterministic rather than reflecting divergent object placement.
+						do
+							local bz = map and map.buildable and map.buildable.z_grid
+							local digest, samples, dims = "n/a", 0, "n/a"
+							if bz and type(bz.get) == "function" and type(bz.size) == "function" then
+								local ok_s, gw, gh = pcall(bz.size, bz)
+								if ok_s and type(gw) == "number" then
+									gh = gh or gw
+									local h = 0
+									for y = 0, gh - 1, 17 do
+										for x = 0, gw - 1, 13 do
+											local okv, v = pcall(bz.get, bz, x, y)
+											if okv and type(v) == "number" then
+												h = (h * 31 + v) % 2147483647
+												samples = samples + 1
+											end
+										end
+									end
+									digest = tostring(h)
+									dims = tostring(gw) .. "x" .. tostring(gh)
+								end
+							end
+							print(string.format("[SBM PREPLACE] buildable_digest=%s samples=%d dims=%s",
+								tostring(digest), samples, tostring(dims)))
+						end
 						SuperBigMap.OptimizationTrace.Before(
 							"surface audit mountain-base buildable aprons", map)
 						local apron_ok, apron_stats =
