@@ -17099,6 +17099,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					if deposits
 						and cfg_bool("EXPANSION_STEP_13_CALCULATE_ENRICHMENT_ADDITIONS", false) then
 						SetLoadingPhase("Distributing surface resources and anomalies")
+						MarkerSetDigest("10-before-topup-deposits")
 						if type(deposits.TopUpDeposits) == "function" then
 							TimedSafeCall("surface top-up resources", map,
 								deposits.TopUpDeposits, map)
@@ -17338,10 +17339,12 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						-- TopUpAnomalies: post-gen replacement for the in-generation anomaly count
 						-- scaling (which shifted the generator's random stream and made expanded
 						-- layouts diverge from vanilla).
+						MarkerSetDigest("11-before-topup-anomalies")
 						if type(deposits.TopUpAnomalies) == "function" then
 							TimedSafeCall("surface top-up anomalies", map,
 								deposits.TopUpAnomalies, map)
 						end
+						MarkerSetDigest("12-before-topup-effects")
 						if type(deposits.TopUpEffectDeposits) == "function" then
 							TimedSafeCall("surface top-up effect deposits", map,
 								deposits.TopUpEffectDeposits, map)
