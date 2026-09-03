@@ -515,7 +515,7 @@ config.LazyUndergroundSourceGenerationFeasibility = false
 -- publishes two deterministic passage capsules, and materializes the complete Underground map under
 -- the foreground first-access cover. Once stock GenerateNextMap has been suppressed, any failure is
 -- sticky and access remains blocked; the implementation never exposes a partial map.
-config.LazyUndergroundSourceGeneration = true
+config.LazyUndergroundSourceGeneration = false
 -- v968 exact-center capsule planner. The enclosing lazy-underground implementation remains default-off;
 -- when explicitly enabled, each private candidate gets one stock-compatible native validation at
 -- depth 0: its snapped center is either accepted or rejected and neighbours are never searched.
