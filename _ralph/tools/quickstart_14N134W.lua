@@ -30,8 +30,16 @@ CreateRealTimeThread(function()
 			tostring(params.Seed), tostring(GetCurrentRandomMapName()),
 			tostring(IsGameRuleActive("RoughTerrain")), tostring(params.SuperBigMapExpandMap))
 
-		-- This is the Start button: everything above is the colony site screen.
+		-- This is the Start button: everything above is the colony site screen. The XAction wraps
+		-- generation in LoadingScreenOpen/Close, and that is load-bearing rather than cosmetic: the
+		-- mod's expansion loading cover rides on it, and the lazy-underground guard's
+		-- closing-canonical-rebuild re-entry only counts while ExpansionLoadingVisible() is true.
+		-- Generating without it leaves persisted_state_live_reentry_count at 1 of 2, so the capsule
+		-- certificate never completes and first access to the underground is refused with
+		-- "surface_capsule_certificate".
+		LoadingScreenOpen("idLoadingScreen", "StartGame")
 		GenerateCurrentRandomMap()
+		LoadingScreenClose("idLoadingScreen", "StartGame")
 
 		local map = CurrentMap
 		printf("[SBM QUICKSTART] generated map=%s hex=%sx%s",
