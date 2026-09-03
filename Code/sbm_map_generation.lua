@@ -12305,7 +12305,45 @@ function Lazy.OwnedMaterializationInFlight(surface, descriptor, report)
 		or tonumber(report.persisted_state_live_reentry_count) ~= 2
 		or report.persisted_state_live_reentry_phase_sequence
 			~= "pre-surface-pipeline>closing-canonical-rebuild" then
-		return failed("surface_capsule_certificate", false)
+		-- The aggregate name alone is not actionable: this gate has twelve independent
+		-- conditions and the player-facing message only quoted the group. Report the first
+		-- field that actually failed, with its value and the expectation.
+		local detail
+		if type(descriptor.capsules) ~= "table" then
+			detail = "capsules_type=" .. type(descriptor.capsules)
+		elseif #descriptor.capsules ~= 2 then
+			detail = "capsules_count=" .. tostring(#descriptor.capsules) .. " want=2"
+		elseif tonumber(descriptor.capsule_planner_version) ~= Lazy.CAPSULE_PLANNER_VERSION then
+			detail = "planner_version=" .. tostring(descriptor.capsule_planner_version)
+				.. " want=" .. tostring(Lazy.CAPSULE_PLANNER_VERSION)
+		elseif (tonumber(descriptor.plan_digest) or 0) <= 0 then
+			detail = "plan_digest=" .. tostring(descriptor.plan_digest)
+		elseif (tonumber(descriptor.validation_z_digest) or 0) <= 0 then
+			detail = "descriptor_validation_z_digest=" .. tostring(descriptor.validation_z_digest)
+		elseif tonumber(report.capsules_published) ~= 2 then
+			detail = "capsules_published=" .. tostring(report.capsules_published) .. " want=2"
+		elseif tonumber(report.validation_z_certificates) ~= 2 then
+			detail = "validation_z_certificates=" .. tostring(report.validation_z_certificates)
+				.. " want=2"
+		elseif report.validation_z_digest ~= descriptor.validation_z_digest then
+			detail = "validation_z_digest report=" .. tostring(report.validation_z_digest)
+				.. " descriptor=" .. tostring(descriptor.validation_z_digest)
+		elseif report.deterministic_repeat ~= true then
+			detail = "deterministic_repeat=" .. tostring(report.deterministic_repeat)
+		elseif report.final_grid_revalidation ~= true then
+			detail = "final_grid_revalidation=" .. tostring(report.final_grid_revalidation)
+		elseif report.persisted_state_live_reentry_allowed ~= true then
+			detail = "live_reentry_allowed="
+				.. tostring(report.persisted_state_live_reentry_allowed)
+		elseif tonumber(report.persisted_state_live_reentry_count) ~= 2 then
+			detail = "live_reentry_count="
+				.. tostring(report.persisted_state_live_reentry_count) .. " want=2"
+		else
+			detail = "live_reentry_phase_sequence="
+				.. tostring(report.persisted_state_live_reentry_phase_sequence)
+				.. " want=pre-surface-pipeline>closing-canonical-rebuild"
+		end
+		return failed("surface_capsule_certificate", detail)
 	end
 	for _, capsule in ipairs(descriptor.capsules) do
 		local validation_z = capsule.validation_z
