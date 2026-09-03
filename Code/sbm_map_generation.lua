@@ -16787,28 +16787,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 			local resume_ild = Global("ResumeInfiniteLoopDetection")
 			if type(pause_ild) == "function" then SafeCall(pause_ild, "SuperBigMapStretch") end
 			local ok_stretch, n_grids = false, 0
-			-- TEMPORARY determinism bisect: order-independent digest of every placed DepositMarker
-		-- hex. Sorted before hashing so engine enumeration order cannot affect the value; a
-		-- change between stages localises where two identical-input runs first diverge.
-		local function MarkerSetDigest(stage)
-			local keys = {}
-			pcall(map.MapForEach, map, "map", "DepositMarker", function(o)
-				local pos = o and o:GetPos()
-				local wx, wy = Global("point") and pos and pos:xy()
-				if type(wx) == "number" then
-					keys[#keys + 1] = tostring(o.class) .. ":" .. tostring(wx) .. ":" .. tostring(wy)
-				end
-			end)
-			table.sort(keys)
-			local h = 0
-			for _, k in ipairs(keys) do
-				for i = 1, #k do h = (h * 31 + string.byte(k, i)) % 2147483647 end
-			end
-			print(string.format("[SBM STAGE] %s t=%d n=%d digest=%d",
-				tostring(stage), GetPreciseTicks(), #keys, h))
-		end
-
-		local surface_pipeline_token = LoadingBegin("surface expansion pipeline", map)
+			local surface_pipeline_token = LoadingBegin("surface expansion pipeline", map)
 			-- Create and render the dialog before pass edits are suspended. ResumePassEdits requires
 			-- GameTime to match the value captured by SuspendPassEdits, so no Sleep/yield is allowed
 			-- inside that transaction.
@@ -16862,9 +16841,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						map.SuperBigMapSurfaceBuildableCurrent = false
 						SuperBigMap.OptimizationTrace.Before(
 							"surface StretchSourceToFull", map)
-						MarkerSetDigest("00-before-stretch")
-					ok_stretch, n_grids = StretchSourceToFull(map)
-					MarkerSetDigest("01b-after-stretch")
+						ok_stretch, n_grids = StretchSourceToFull(map)
 						SuperBigMap.OptimizationTrace.After(
 							"surface StretchSourceToFull", map, {
 								ok = tostring(ok_stretch == true), grids = n_grids,
@@ -16973,7 +16950,6 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				-- passability-grid setter, so this cannot be omitted or narrowed without leaving stale
 				-- rover/building reachability. Identify it explicitly in timing output so it is not
 				-- mistaken for removable marker-movement overhead.
-				MarkerSetDigest("04-before-pass-resume")
 				local pass_resume_token = LoadingBegin("surface resume combined pass edits", map)
 				local pass_resume_ok, pass_resume_err = ResumeCombinedPassEdits(
 					"after surface marker movement")
@@ -17037,34 +17013,6 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 							error("final surface RebuildBuildableGrid failed: " .. tostring(rebuild_err))
 						end
 						map.SuperBigMapSurfaceBuildableCurrent = true
-						MarkerSetDigest("01-after-final-rebuild")
-						-- TEMPORARY determinism probe: digest the buildable grid immediately after the
-						-- authoritative rebuild, BEFORE any top-up placement, so a divergence here proves the
-						-- grid itself is non-deterministic rather than reflecting divergent object placement.
-						do
-							local bz = map and map.buildable and map.buildable.z_grid
-							local digest, samples, dims = "n/a", 0, "n/a"
-							if bz and type(bz.get) == "function" and type(bz.size) == "function" then
-								local ok_s, gw, gh = pcall(bz.size, bz)
-								if ok_s and type(gw) == "number" then
-									gh = gh or gw
-									local h = 0
-									for y = 0, gh - 1, 17 do
-										for x = 0, gw - 1, 13 do
-											local okv, v = pcall(bz.get, bz, x, y)
-											if okv and type(v) == "number" then
-												h = (h * 31 + v) % 2147483647
-												samples = samples + 1
-											end
-										end
-									end
-									digest = tostring(h)
-									dims = tostring(gw) .. "x" .. tostring(gh)
-								end
-							end
-							print(string.format("[SBM PREPLACE] buildable_digest=%s samples=%d dims=%s",
-								tostring(digest), samples, tostring(dims)))
-						end
 						SuperBigMap.OptimizationTrace.Before(
 							"surface audit mountain-base buildable aprons", map)
 						local apron_ok, apron_stats =
@@ -17099,7 +17047,6 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					if deposits
 						and cfg_bool("EXPANSION_STEP_13_CALCULATE_ENRICHMENT_ADDITIONS", false) then
 						SetLoadingPhase("Distributing surface resources and anomalies")
-						MarkerSetDigest("10-before-topup-deposits")
 						if type(deposits.TopUpDeposits) == "function" then
 							TimedSafeCall("surface top-up resources", map,
 								deposits.TopUpDeposits, map)
@@ -17125,7 +17072,6 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								"surface prepare deferred-publication outer resource terrain", map,
 								TerrainCopy.PrepareOuterResourceTerrain, map)
 							coalesced_resource_prepare_ms = GetPreciseTicks() - started
-							MarkerSetDigest("02-after-outer-resource-terrain")
 							if type(coalesced_resource_stats) ~= "table"
 								or tostring(coalesced_resource_stats.error or "") ~= "" then
 								error("deferred-publication outer resource terrain preparation failed: "
@@ -17156,7 +17102,6 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								coalesced_resource_stats.ring_sectors,
 								"after early coalesced outer resource and passage terrain preparation")
 							coalesced_early_rebuild_ms = GetPreciseTicks() - rebuild_started
-							MarkerSetDigest("03-after-passage-and-ring")
 							local ring_report = map.SuperBigMapOuterResourceRingRebuildReport
 							coalesced_early_grid_published = type(ring_report) == "table"
 								and ring_report.used == true and ring_report.fallback ~= true
@@ -17339,12 +17284,10 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						-- TopUpAnomalies: post-gen replacement for the in-generation anomaly count
 						-- scaling (which shifted the generator's random stream and made expanded
 						-- layouts diverge from vanilla).
-						MarkerSetDigest("11-before-topup-anomalies")
 						if type(deposits.TopUpAnomalies) == "function" then
 							TimedSafeCall("surface top-up anomalies", map,
 								deposits.TopUpAnomalies, map)
 						end
-						MarkerSetDigest("12-before-topup-effects")
 						if type(deposits.TopUpEffectDeposits) == "function" then
 							TimedSafeCall("surface top-up effect deposits", map,
 								deposits.TopUpEffectDeposits, map)
