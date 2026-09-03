@@ -13444,6 +13444,31 @@ function Lazy.ShowAccessFailure(reason)
 end
 
 function Lazy.MaterializeWithForegroundCover(route)
+	-- Both construction entry points reach this from the UI/input thread
+	-- (terminal -> XDesktop -> Construction -> ConstructionController.Activate or
+	-- ElevatorBase.PlaceConstructionSite). LoadingScreenOpen asserts off a real-time thread
+	-- ("The loading screen requires a real time thread") and Lazy.Materialize waits on
+	-- WaitMsg, which cannot yield there either. Run the whole transaction on a real-time
+	-- thread and report not-ready for this attempt: the cover is visible while it runs and the
+	-- next placement finds the underground materialized.
+	local is_real_time = Global("IsRealTimeThread")
+	local ok_realtime, in_realtime = false, false
+	if type(is_real_time) == "function" then
+		ok_realtime, in_realtime = pcall(is_real_time)
+	end
+	if not (ok_realtime and in_realtime == true) then
+		local create_thread = Global("CreateRealTimeThread")
+		if type(create_thread) == "function"
+			and Lazy.deferred_foreground_materialize ~= true then
+			Lazy.deferred_foreground_materialize = true
+			create_thread(function()
+				pcall(Lazy.MaterializeWithForegroundCover,
+					tostring(route or "unknown") .. "-deferred")
+				Lazy.deferred_foreground_materialize = nil
+			end)
+		end
+		return nil, "underground generation started off the input thread"
+	end
 	local surface = Lazy.StateSurface()
 	local begin_cover = SuperBigMap.ExpansionLoadingBegin
 	local end_cover = SuperBigMap.ExpansionLoadingEnd
