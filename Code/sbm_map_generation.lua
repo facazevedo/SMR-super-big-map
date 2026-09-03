@@ -13481,6 +13481,26 @@ function Lazy.MaterializeWithForegroundCover(route)
 	local fallback_open = false
 	local open_screen = Global("LoadingScreenOpen")
 	local close_screen = Global("LoadingScreenClose")
+	-- ExpansionLoadingBegin reports only whether its dialog was visible on the first
+	-- synchronous attempt. Its watcher presents it a frame or two later, because
+	-- EnsureUndergroundBackdrop waits for two rendered frames and this thread has drawn none
+	-- yet. Opening the engine fallback immediately therefore left the engine artwork - mission
+	-- text, sponsor, Close - showing through underneath the mod cover for the whole
+	-- generation. Give the cover its frames first and only fall back if it never appears.
+	if not visible and started then
+		local sleep = Global("Sleep")
+		local cover_visible = SuperBigMap.ExpansionLoadingVisible
+		if type(sleep) == "function" and type(cover_visible) == "function" then
+			for _ = 1, 20 do
+				if not pcall(sleep, 30) then break end
+				local ok_visible, shown = pcall(cover_visible)
+				if ok_visible and shown == true then
+					visible = true
+					break
+				end
+			end
+		end
+	end
 	if not visible and type(open_screen) == "function" then
 		fallback_open = pcall(open_screen, fallback_id, 2)
 	end
