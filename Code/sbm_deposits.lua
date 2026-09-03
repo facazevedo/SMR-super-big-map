@@ -229,6 +229,10 @@ end
 local MapWorldSize = Engine.MapWorldSize
 
 local DepositRules = {}
+-- Hex coordinates on an expanded map span roughly -1024..1024; the offset keeps the packed key
+-- positive and the stride exceeds any reachable row, so the mapping stays collision-free.
+local HEX_KEY_OFFSET = 32768
+local HEX_KEY_STRIDE = 131072
 local SharedRandInt = Engine.RandInt
 
 -- The deferred underground enrichment transaction must not consume the simulation's shared RNG.
@@ -2462,7 +2466,11 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers, capture_rej
 		if type(point_fn) ~= "function" or type(world_to_hex) ~= "function" then return nil end
 		local ok, q, r = pcall(world_to_hex, point_fn(x, y))
 		if not ok or type(q) ~= "number" or type(r) ~= "number" then return nil end
-		return q, r, tostring(q) .. ":" .. tostring(r)
+		-- Numeric hex key. can_place_minimum scans a 5x5 neighbourhood per call and formerly built
+		-- each key with tostring(q) .. ":" .. tostring(r): measured 377 selections over a ~790
+		-- candidate pool did ~298k such calls, i.e. ~7.4M string allocations, which was 20.6s of
+		-- the 23.6s surface top-up step. A packed integer keys the same table identically.
+		return q, r, (q + HEX_KEY_OFFSET) * HEX_KEY_STRIDE + (r + HEX_KEY_OFFSET)
 	end
 
 	local function hex_key(x, y)
@@ -2703,7 +2711,7 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers, capture_rej
 				local distance = math.max(math.abs(dq), math.abs(dr), math.abs(dq + dr))
 				if distance < minimum_distance then
 					local occupied = enrichment_hexes[
-						tostring(q + dq) .. ":" .. tostring(r + dr)]
+						(q + dq + HEX_KEY_OFFSET) * HEX_KEY_STRIDE + (r + dr + HEX_KEY_OFFSET)]
 					local surface_neighbours = distance > 0 and candidate_is_surface == true
 						and occupied and occupied.non_surface == 0
 					if occupied and not surface_neighbours then
