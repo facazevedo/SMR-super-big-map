@@ -11411,6 +11411,38 @@ function Lazy.PrepareImplementationCapsulesAroundRebuild(surface, rebuild, reaso
 	return true, nil
 end
 
+-- The closing re-entry is opportunistic, not guaranteed. Capsule publication releases the
+-- retained native Surface view and the engine unload *can* synchronously re-enter
+-- PatchDeferredUndergroundAccess, which is what records closing-canonical-rebuild. When the
+-- unload completes without that callback - measured on an expanded 14N134W generation, where the
+-- guard runs exactly once, at MapGenerated, in state suppressed-awaiting-surface-capsules -
+-- requiring count==2 rejected an otherwise complete certificate and first access fail-closed
+-- with surface_capsule_certificate. Everything the certificate actually attests still held:
+-- capsules_published=2, validation_z_certificates=2, digests agreeing, deterministic_repeat and
+-- final_grid_revalidation.
+--
+-- Liveness is proved by the process-local owner in LIVE_SURFACE_GENERATION_TRANSACTIONS, not by
+-- the count: a save/load interruption has no owner and fails process_local_owner long before
+-- this point. So require the recorded phases to be exactly the expected prefix - the first
+-- re-entry must be pre-surface-pipeline, and a second, if the engine made one, must be
+-- closing-canonical-rebuild - and accept either length.
+Lazy.LIVE_REENTRY_SEQUENCES = {
+	["pre-surface-pipeline"] = true,
+	["pre-surface-pipeline>closing-canonical-rebuild"] = true,
+}
+
+function Lazy.LiveReentrySequenceAcceptable(report)
+	if type(report) ~= "table" then return false end
+	local count = tonumber(report.persisted_state_live_reentry_count) or 0
+	if count < 1 or count > 2 then return false end
+	local sequence = tostring(report.persisted_state_live_reentry_phase_sequence or "")
+	if Lazy.LIVE_REENTRY_SEQUENCES[sequence] ~= true then return false end
+	local expected = count == 2 and 2 or 1
+	local seen = 1
+	for _ in string.gmatch(sequence, ">") do seen = seen + 1 end
+	return seen == expected
+end
+
 function Lazy.ValidatePublishedCapsuleCertificate(surface, descriptor, report)
 	if type(surface) ~= "table" or type(descriptor) ~= "table" or type(report) ~= "table" then
 		return false, "published capsule certificate inputs are unavailable"
@@ -12330,9 +12362,7 @@ function Lazy.OwnedMaterializationInFlight(surface, descriptor, report)
 		or report.deterministic_repeat ~= true
 		or report.final_grid_revalidation ~= true
 		or report.persisted_state_live_reentry_allowed ~= true
-		or tonumber(report.persisted_state_live_reentry_count) ~= 2
-		or report.persisted_state_live_reentry_phase_sequence
-			~= "pre-surface-pipeline>closing-canonical-rebuild" then
+		or not Lazy.LiveReentrySequenceAcceptable(report) then
 		-- The aggregate name alone is not actionable: this gate has twelve independent
 		-- conditions and the player-facing message only quoted the group. Report the first
 		-- field that actually failed, with its value and the expectation.
@@ -12363,7 +12393,7 @@ function Lazy.OwnedMaterializationInFlight(surface, descriptor, report)
 		elseif report.persisted_state_live_reentry_allowed ~= true then
 			detail = "live_reentry_allowed="
 				.. tostring(report.persisted_state_live_reentry_allowed)
-		elseif tonumber(report.persisted_state_live_reentry_count) ~= 2 then
+		elseif not Lazy.LiveReentrySequenceAcceptable(report) then
 			detail = "live_reentry_count="
 				.. tostring(report.persisted_state_live_reentry_count) .. " want=2 seq="
 				.. tostring(report.persisted_state_live_reentry_phase_sequence)
