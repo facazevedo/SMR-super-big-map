@@ -241,6 +241,15 @@ local function EnsureEntranceVisualsReady(map, overview_active, reason)
 			signs_visible = false
 		end
 		invoke(sign, "SetVisible", signs_visible and sign.revealed ~= false)
+		-- TEMPORARY badge scale diagnostic (remove before release).
+		local live_is_overview = Engine.Global("IsOverviewMode")
+		local live_overview = type(live_is_overview) == "function"
+			and Engine.SafeCall(live_is_overview) == true
+		print(string.format(
+			"[SBM SCALE] reason=%s passed_overview=%s live_overview=%s applied_scale=%s vis=%s revealed=%s",
+			tostring(reason or "?"), tostring(overview), tostring(live_overview),
+			tostring(scale), tostring(signs_visible and sign.revealed ~= false),
+			tostring(sign.revealed)))
 	end
 	local function prepare_passage(obj)
 		if seen[obj] or not valid(obj) then return end
