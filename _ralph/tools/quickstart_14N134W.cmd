@@ -9,6 +9,17 @@ rem game always loads what is committed; the game only ever reads the Mods folde
 set PROJ=D:\PROJS\SMR\super-big-map
 set CLI=D:\PROJS\SMR\smr-harness\cli.py
 
+rem The harness will not attach to a game it did not launch: an already-open MarsDebug.exe
+rem surfaces as "port is open but not owned by this harness", which reads like a harness fault.
+rem Say what to do instead.
+tasklist /FI "IMAGENAME eq MarsDebug.exe" 2>nul | find /I "MarsDebug.exe" >nul
+if not errorlevel 1 (
+  echo [quickstart] Surviving Mars is already running.
+  echo [quickstart] Close the game first, then run this shortcut again.
+  pause
+  exit /b 1
+)
+
 echo [quickstart] deploying current payload...
 python "%PROJ%\_ralph\tools\deploy.py" sync >nul 2>&1
 if errorlevel 1 (
