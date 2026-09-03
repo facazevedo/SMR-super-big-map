@@ -84,9 +84,13 @@ local function ApplyOverviewResourceScanGate(map, overview_active, reason)
 		end
 		stats.restored = stats.restored + 1
 	end
-	local function gate_badge(obj)
+	-- always_gate: TerrainDeposit (concrete/regolith) is not an ExplorableObject, so
+	-- vanilla never scan-gates it and it would otherwise disclose outer-ring resources
+	-- before the sector is revealed. Gate it in and out of overview; subsurface badges
+	-- keep the existing overview-only behaviour driven by their own reveal state.
+	local function gate_badge(obj, always_gate)
 		if not valid(obj) then return end
-		if overview_active ~= true then
+		if overview_active ~= true and always_gate ~= true then
 			restore_normal_visibility(obj)
 			return
 		end
@@ -113,7 +117,9 @@ local function ApplyOverviewResourceScanGate(map, overview_active, reason)
 	end
 
 	pcall(map.MapForEach, map, "map", "SubsurfaceDeposit", gate_badge)
-	pcall(map.MapForEach, map, "map", "TerrainDeposit", gate_badge)
+	pcall(map.MapForEach, map, "map", "TerrainDeposit", function(obj)
+		gate_badge(obj, true)
+	end)
 	if stats.hidden > 0 or stats.restored > 0 or stats.unresolved > 0 then
 		stats.overview = tostring(overview_active == true)
 		stats.reason = tostring(reason or "unspecified")
@@ -259,6 +265,23 @@ local function EnsureEntranceVisualsReady(map, overview_active, reason)
 		invoke(obj, "SetOpacity", 100)
 	end
 
+	-- Underground entrances are the one badge class that must be findable before a sector
+	-- is scanned: on a 20x20 grid the player would otherwise scan blind to find an
+	-- elevator. Vanilla only creates the sign from
+	-- SurfaceUndergroundTunnelMarker:SpawnDeposit, which runs on reveal, so in an
+	-- unscanned sector the object does not exist at all. Place the sign directly:
+	-- PlaceSign marks it revealed itself and the entrance-badge position patch keeps it on
+	-- the stretched coordinate. SpawnDeposit is deliberately not used, so no anomaly
+	-- sequence starts early.
+	local placed_signs = 0
+	pcall(map.MapForEach, map, "map", "SurfaceUndergroundTunnelMarker", function(marker)
+		if not valid(marker) or valid(marker.tunnel_sign) then return end
+		if type(marker.PlaceSign) ~= "function" then return end
+		if pcall(marker.PlaceSign, marker) and valid(marker.tunnel_sign) then
+			placed_signs = placed_signs + 1
+		end
+	end)
+	stats.signs_placed = placed_signs
 	pcall(map.MapForEach, map, "map", "SurfaceUndergroundTunnelSign", prepare_badge)
 	for _, class_name in ipairs({
 		"UndergroundPassageBase",
