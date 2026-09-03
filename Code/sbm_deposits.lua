@@ -4852,9 +4852,14 @@ function DepositRules.TopUpDeposits(map)
 			target = math.min(MAX_POOL, math.max(pool, math.floor(target or pool)))
 			maximum_samples = math.min(MAX_SAMPLES,
 				math.max(candidate_samples, math.floor(maximum_samples or MAX_SAMPLES)))
+			local fill_t0 = GetPreciseTicks()
+			local fill_start_samples = candidate_samples
 			while candidate_samples < maximum_samples and pool < target do
 				sample_valid_candidate(prefilter)
 			end
+			print(string.format("[SBM FILL] samples=%d (+%d) max=%d pool=%d target=%d ms=%d",
+				candidate_samples, candidate_samples - fill_start_samples, maximum_samples,
+				pool, target, GetPreciseTicks() - fill_t0))
 			return pool
 		end
 		-- The terrain pass publishes one opportunity per pseudorandomly selected mountain-base
