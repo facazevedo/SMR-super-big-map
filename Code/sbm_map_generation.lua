@@ -16804,7 +16804,8 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 			for _, k in ipairs(keys) do
 				for i = 1, #k do h = (h * 31 + string.byte(k, i)) % 2147483647 end
 			end
-			print(string.format("[SBM MARKERSET] %s n=%d digest=%d", tostring(stage), #keys, h))
+			print(string.format("[SBM STAGE] %s t=%d n=%d digest=%d",
+				tostring(stage), GetPreciseTicks(), #keys, h))
 		end
 
 		local surface_pipeline_token = LoadingBegin("surface expansion pipeline", map)
@@ -16861,7 +16862,9 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						map.SuperBigMapSurfaceBuildableCurrent = false
 						SuperBigMap.OptimizationTrace.Before(
 							"surface StretchSourceToFull", map)
-						ok_stretch, n_grids = StretchSourceToFull(map)
+						MarkerSetDigest("00-before-stretch")
+					ok_stretch, n_grids = StretchSourceToFull(map)
+					MarkerSetDigest("01b-after-stretch")
 						SuperBigMap.OptimizationTrace.After(
 							"surface StretchSourceToFull", map, {
 								ok = tostring(ok_stretch == true), grids = n_grids,
@@ -16970,6 +16973,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				-- passability-grid setter, so this cannot be omitted or narrowed without leaving stale
 				-- rover/building reachability. Identify it explicitly in timing output so it is not
 				-- mistaken for removable marker-movement overhead.
+				MarkerSetDigest("04-before-pass-resume")
 				local pass_resume_token = LoadingBegin("surface resume combined pass edits", map)
 				local pass_resume_ok, pass_resume_err = ResumeCombinedPassEdits(
 					"after surface marker movement")
