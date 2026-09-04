@@ -28,6 +28,9 @@ config.DebugUndergroundDecorationPositions = false
 -- Focused temporary parity trace: scalar-only and independent from the broad release-debug gate.
 -- Keep enabled until the fresh vanilla/expanded twin isolates reservation versus consumer drift.
 config.TraceUndergroundSeedReservation = true
+-- Focused trace for the underground entrance oracle: which blank map was picked, the two
+-- authored marker positions, and where the stretch puts them. Keep on while entrances move.
+config.TraceUndergroundOracle = true
 -- Focused outer-ring terrain-crease trace. It records only detector/repair scalars and is
 -- independent from the broad release-debug gate.
 config.TraceTerrainCreaseRepair = true
@@ -954,6 +957,7 @@ C.DEBUG_OVERVIEW_GRID_VISUALS = debug_logging_enabled and as_bool(config.DebugOv
 C.DEBUG_UNDERGROUND_DECORATION_POSITIONS = debug_logging_enabled
 	and as_bool(config.DebugUndergroundDecorationPositions)
 C.TRACE_UNDERGROUND_SEED_RESERVATION = as_bool(config.TraceUndergroundSeedReservation)
+C.TRACE_UNDERGROUND_ORACLE = as_bool(config.TraceUndergroundOracle)
 C.TRACE_TERRAIN_CREASE_REPAIR = as_bool(config.TraceTerrainCreaseRepair)
 C.TRACE_OUTER_RESOURCE_RETRY_PROVENANCE = as_bool(config.TraceOuterResourceRetryProvenance)
 C.NATIVE_SOURCE_MANIFEST = as_bool(config.NativeSourceManifest)
