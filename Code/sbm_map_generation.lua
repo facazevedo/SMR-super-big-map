@@ -9208,6 +9208,8 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 		oracle_entrance_glued = 0,
 		oracle_entrance_relocated = 0,
 		oracle_entrance_max_offset = 0,
+		oracle_entrance_rings = 0,
+		oracle_entrance_shape_checks = 0,
 		oracle_entrance_trace = {},
 		stock_search_requested = Lazy.FRESH_GRID_CAPSULE_PLANNING == true
 			and Lazy.POST_CANONICAL_STOCK_CAPSULE_SEARCH == true
@@ -9599,8 +9601,62 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 		if type(oracle) ~= "table" or type(oracle.ExpandedEntrances) ~= "function" then
 			return fail("underground entrance oracle is unavailable")
 		end
-		if type(find_buildable) ~= "function" then
-			return fail("FindBuildableAreaAround is unavailable for entrance placement")
+		-- Deliberately NOT FindBuildableAreaAround. That helper creates original_z once for the whole
+		-- search (Lua/Pathfinding.lua:30), so after the first probed hex every later candidate must
+		-- also sit at that one absolute height; on rough terrain it therefore reports "nowhere" and
+		-- vanilla falls back to a random passable spot far away. Measured here: the authored position
+		-- of entrance 1 returns nil from it outright. Walk the rings ourselves with a fresh
+		-- original_z per candidate, which is what "the nearest tile that can take it" actually means.
+		local validate_shape = Global("ValidateEachShapeHexPos")
+		local unbuildable_fn = Global("buildUnbuildableZ")
+		if type(validate_shape) ~= "function" or type(unbuildable_fn) ~= "function"
+			or type(buildable.GetZ) ~= "function"
+			or type(object_grid.GetBuildObstructions) ~= "function" then
+			return fail("entrance placement APIs are unavailable")
+		end
+		local sentinel_ok, unbuildable_z = pcall(unbuildable_fn)
+		if not sentinel_ok or type(unbuildable_z) ~= "number" then
+			return fail("entrance placement sentinel is unavailable")
+		end
+		local search_radius = math.max(1,
+			math.floor(cfg_number("LAZY_UNDERGROUND_ENTRANCE_SEARCH_RADIUS_HEXES", 256)))
+		local shape_budget = math.max(1,
+			math.floor(cfg_number("LAZY_UNDERGROUND_ENTRANCE_SHAPE_CHECK_BUDGET", 20000)))
+		local shape_checks = 0
+		local function footprint_fits(q, r, angle)
+			-- One cheap read rejects most candidates before the 127-hex footprint walk.
+			local center_z = buildable:GetZ(q, r)
+			if center_z == unbuildable_z then return false end
+			if shape_checks >= shape_budget then return nil end
+			shape_checks = shape_checks + 1
+			local original_z = false
+			local wx, wy = hex_to_world(q, r)
+			local validated = validate_shape(shape, point_fn(wx, wy), angle, function(hq, hr)
+				local z = buildable:GetZ(hq, hr)
+				original_z = original_z or z
+				if z == unbuildable_z or z ~= original_z then return false end
+				if #object_grid:GetBuildObstructions(hq, hr) > 0 then return false end
+				if deposit_filter and not deposit_filter(hq, hr) then return false end
+				return true
+			end)
+			return validated == true
+		end
+		local RING_DIRECTIONS = { { 1, 0 }, { 1, -1 }, { 0, -1 }, { -1, 0 }, { -1, 1 }, { 0, 1 } }
+		local function nearest_fitting_hex(q0, r0, angle)
+			if footprint_fits(q0, r0, angle) then return q0, r0, 0 end
+			for radius = 1, search_radius do
+				local q, r = q0 - radius, r0 + radius
+				for direction = 1, 6 do
+					local step = RING_DIRECTIONS[direction]
+					for _ = 1, radius do
+						local fits = footprint_fits(q, r, angle)
+						if fits == nil then return nil, nil, nil, "shape check budget exhausted" end
+						if fits then return q, r, radius end
+						q, r = q + step[1], r + step[2]
+					end
+				end
+			end
+			return nil, nil, nil, string.format("no fitting tile within %d hexes", search_radius)
 		end
 		local entrances, oracle_error = oracle.ExpandedEntrances(surface, surface)
 		if type(entrances) ~= "table" or #entrances < report.capsules_required then
@@ -9620,16 +9676,26 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 			local wanted_x, wanted_y = PointXY(center)
 			report.oracle_entrance_searches = report.oracle_entrance_searches + 1
 			report.attempts = report.attempts + 1
-			local found_ok, x, y, z = pcall(find_buildable, object_grid, buildable,
-				center, angle, shape, deposit_filter)
+			local start_ok, q0, r0 = pcall(world_to_hex, center)
+			if not start_ok or type(q0) ~= "number" or type(r0) ~= "number" then
+				return fail(string.format("underground entrance %d has no start hex", index))
+			end
+			local found_ok, fq, fr, rings, search_error =
+				pcall(nearest_fitting_hex, q0, r0, angle)
 			if not found_ok then
-				return fail("entrance placement search raised: " .. tostring(x))
+				return fail("entrance placement search raised: " .. tostring(fq))
 			end
-			if type(x) ~= "number" or type(y) ~= "number" then
-				return fail(string.format(
-					"no buildable ground for underground entrance %d near (%s,%s)",
-					index, tostring(wanted_x), tostring(wanted_y)))
+			if type(fq) ~= "number" or type(fr) ~= "number" then
+				return fail(string.format("underground entrance %d: %s (authored at %s,%s)",
+					index, tostring(search_error or "no fitting tile"),
+					tostring(wanted_x), tostring(wanted_y)))
 			end
+			local world_ok, x, y = pcall(hex_to_world, fq, fr)
+			if not world_ok or type(x) ~= "number" or type(y) ~= "number" then
+				return fail(string.format("underground entrance %d hex has no world position", index))
+			end
+			report.oracle_entrance_rings = math.max(
+				tonumber(report.oracle_entrance_rings) or 0, rings or 0)
 			-- Entrances belong in the playable interior. The same inner margin every other capsule
 			-- path uses is what keeps them out of the outer ring.
 			if x < margin_x or x > world_width - margin_x
@@ -9646,10 +9712,7 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 						index, prior.index))
 				end
 			end
-			local hex_ok, q, r = pcall(world_to_hex, point_fn(x, y))
-			if not hex_ok or type(q) ~= "number" or type(r) ~= "number" then
-				return fail("underground entrance world position has no hex")
-			end
+			local q, r = fq, fr
 			local offset_x = x - (tonumber(wanted_x) or x)
 			local offset_y = y - (tonumber(wanted_y) or y)
 			local offset = math.floor(math.sqrt(offset_x * offset_x + offset_y * offset_y) + 0.5)
@@ -9664,10 +9727,43 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 				wanted_x = wanted_x, wanted_y = wanted_y, x = x, y = y, q = q, r = r,
 				angle = angle, offset = offset,
 			}
-			capsules[index] = { index = index, x = x, y = y,
-				z = type(z) == "number" and z or 0, q = q, r = r, angle = angle }
+			capsules[index] = { index = index, x = x, y = y, z = 0,
+				q = q, r = r, angle = angle }
 		end
+		report.oracle_entrance_shape_checks = shape_checks
 		report.bounded_max_depth = 0
+		report.exact_center_shape_checks = report.attempts
+		-- Certify each chosen centre at depth zero, exactly as the paths this replaces do: the
+		-- footprint must sit on one buildable Z with no obstruction, and that Z is retained so a
+		-- later probe can reconstruct the committed footprint. Replay performs no validation.
+		if not replay_only then
+			for _, capsule in ipairs(capsules) do
+				report.publication_validation_calls = report.publication_validation_calls + 1
+				local original_z = false
+				local wx, wy = hex_to_world(capsule.q, capsule.r)
+				local validated = validate_shape(shape, point_fn(wx, wy), capsule.angle,
+					function(hq, hr)
+						local z = buildable:GetZ(hq, hr)
+						original_z = original_z or z
+						if z == unbuildable_z or z ~= original_z then return false end
+						if #object_grid:GetBuildObstructions(hq, hr) > 0 then return false end
+						if deposit_filter and not deposit_filter(hq, hr) then return false end
+						return true
+					end)
+				if validated ~= true or type(original_z) ~= "number" or original_z ~= original_z
+					or original_z < 0 or original_z >= 65535
+					or original_z ~= math.floor(original_z) then
+					report.full_search_mismatches = report.full_search_mismatches + 1
+					return fail(string.format(
+						"underground entrance %d failed exact depth-zero validation at (%d,%d)",
+						capsule.index, capsule.x, capsule.y))
+				end
+				capsule.validation_z = original_z
+				report.validation_z_certificates = report.validation_z_certificates + 1
+				report.publication_validation_exact_centers =
+					report.publication_validation_exact_centers + 1
+			end
+		end
 		report.full_validation_complete = #capsules == report.capsules_required
 		report.plan_safe_for_publication = report.full_validation_complete
 	elseif report.outer_passage_pad_requested == true then
@@ -10481,6 +10577,16 @@ function Lazy.PublishDiagnosticTerminalFailure(surface, reason)
 end
 
 function Lazy.MarkBlocked(surface, reason)
+	-- Every block reason in order, capped. descriptor.failure keeps only the first (failure_sticky),
+	-- which hides later, more specific causes: the first block here is often a generic
+	-- "persisted incomplete lazy state" from the lifecycle hook while the real fault is the block
+	-- that follows it.
+	local block_trace = SuperBigMap.State.lazy_block_trace
+	if type(block_trace) ~= "table" then
+		block_trace = {}
+		SuperBigMap.State.lazy_block_trace = block_trace
+	end
+	if #block_trace < 8 then block_trace[#block_trace + 1] = tostring(reason) end
 	SuperBigMap.OptimizationTrace.Error("lazy underground fail-closed block", surface, reason)
 	if surface ~= nil then
 		Lazy.LIVE_SURFACE_GENERATION_TRANSACTIONS[surface] = nil
@@ -10799,12 +10905,10 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid, singl
 	local outer_passage_active = Lazy.FRESH_GRID_CAPSULE_PLANNING == true
 		and Lazy.OUTER_PASSAGE_PADS == true
 		and not oracle_entrance_active
-	if oracle_entrance_active and not after_canonical_grid then
-		-- Entrance placement reads the live buildable grid to decide whether the authored position
-		-- can take the footprint, so it is only meaningful once the canonical grids exist.
-		return Lazy.MarkBlocked(surface,
-			"underground entrance placement was invoked before canonical Surface grids")
-	end
+	-- No pre-canonical guard for entrance placement. The healthy path calls this before the canonical
+	-- rebuild and treats anything but success as fatal, and the ring journal it replaced read the
+	-- buildable grid at this same stage; refusing here stalled the whole stretch pipeline. Grid drift
+	-- between here and the final rebuild is what the replay and final revalidation already cover.
 	if stock_search_active and not after_canonical_grid then
 		return Lazy.MarkBlocked(surface,
 			"v970 stock capsule search was invoked before canonical Surface grids")
@@ -10938,6 +11042,28 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid, singl
 				== plan_report.outer_passage_pad_finalization_dirty_digest
 			and twin_report.attempts == plan_report.attempts
 			and twin_report.private_draws == plan_report.private_draws
+	elseif oracle_entrance_active then
+		-- Same shape as the bounded contract -- both entrances certified at depth zero before
+		-- publication, replay doing no validation of its own -- but stated in terms of what entrance
+		-- placement actually produces. The ring counters it replaced are meaningless here.
+		validation_contract = validation_contract
+			and plan_report.oracle_entrance_used == true
+			and plan_report.capsules_planned == 2
+			and plan_report.bounded_max_depth == 0
+			and plan_report.publication_validation_calls == 2
+			and plan_report.publication_validation_exact_centers == 2
+			and plan_report.validation_z_certificates == 2
+			and plan_report.validation_z_digest > 0
+			and plan_report.publication_validation_depth == 0
+			and plan_report.full_search_calls == 0
+			and plan_report.full_search_mismatches == 0
+			and twin_report.replay_only == true
+			and twin_report.oracle_entrance_used == true
+			and twin_report.capsules_planned == 2
+			and twin_report.publication_validation_calls == 0
+			and twin_report.validation_z_certificates == 0
+			and twin_report.validation_z_digest == 0
+			and twin_report.full_search_calls == 0
 	elseif stock_search_active then
 		validation_contract = validation_contract and plan_report.stock_search_used == true
 			and plan_report.stock_search_after_canonical_grid == true

@@ -549,6 +549,11 @@ config.LazyUndergroundOuterPassagePads = false
 -- glued to its twin unless that ground cannot take the Elevator footprint -- uneven, unbuildable or
 -- blocked -- in which case the stock FindBuildableAreaAround walks out to the nearest tile that can.
 config.LazyUndergroundOracleEntrances = true
+-- How far the entrance relocation may walk, in hexes, and how many full Elevator-footprint checks
+-- it may spend doing so. The walk is nearest-first, so a small answer is found immediately; the caps
+-- only bound the pathological case where the authored position sits in genuinely hostile terrain.
+config.LazyUndergroundEntranceSearchRadiusHexes = 256
+config.LazyUndergroundEntranceShapeCheckBudget = 20000
 -- TEMP test aid: remove the underground darkness blanket on any underground gameplay map,
 -- including vanilla-mode tests, and restore the previous value on surface/menu transitions.
 config.UndergroundRevealAllDarkness = false
@@ -1206,6 +1211,10 @@ C.LAZY_UNDERGROUND_POST_CANONICAL_STOCK_CAPSULE_SEARCH =
 	as_bool(config.LazyUndergroundPostCanonicalStockCapsuleSearch)
 C.LAZY_UNDERGROUND_OUTER_PASSAGE_PADS = as_bool(config.LazyUndergroundOuterPassagePads)
 C.LAZY_UNDERGROUND_ORACLE_ENTRANCES = as_bool(config.LazyUndergroundOracleEntrances)
+C.LAZY_UNDERGROUND_ENTRANCE_SEARCH_RADIUS_HEXES =
+	as_number(config.LazyUndergroundEntranceSearchRadiusHexes)
+C.LAZY_UNDERGROUND_ENTRANCE_SHAPE_CHECK_BUDGET =
+	as_number(config.LazyUndergroundEntranceShapeCheckBudget)
 C.UNDERGROUND_REVEAL_ALL_DARKNESS = as_bool(config.UndergroundRevealAllDarkness)
 C.UNDERGROUND_REVEAL_ALL_ENRICHMENTS_FOR_TESTING =
 	as_bool(config.RevealAllUndergroundEnrichmentsForTesting)
