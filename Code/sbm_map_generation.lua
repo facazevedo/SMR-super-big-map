@@ -5205,6 +5205,13 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 				reserved_seed = tostring(pending.seed),
 				authority_tag = tostring(pending.authority_tag or "production"),
 			}, destination)
+			-- Read the authored underground entrance markers now, on this real-time thread. The
+			-- capsule planner needs them but runs where ChangeMapInSlot's yield requirement may not
+			-- hold; after this the oracle answers from cache. Not fatal if it fails.
+			local oracle = SuperBigMap.UndergroundOracle
+			if type(oracle) == "table" and type(oracle.Prime) == "function" then
+				SafeCall(oracle.Prime, destination)
+			end
 		else
 			SuperBigMap.State.test_twin_underground_seed = nil
 		end
@@ -8931,6 +8938,9 @@ if SuperBigMap.State.lazy_underground_reload_restore_ok ~= false
 			"LAZY_UNDERGROUND_FRESH_GRID_CAPSULE_PLANNING", true),
 		POST_CANONICAL_STOCK_CAPSULE_SEARCH = cfg_bool(
 			"LAZY_UNDERGROUND_POST_CANONICAL_STOCK_CAPSULE_SEARCH", true),
+		-- Entrances go where the underground authors them, never in the outer ring. The ring stays
+		-- reserved for rocket landing clusters, resources, anomalies and deposits.
+		ORACLE_ENTRANCES = cfg_bool("LAZY_UNDERGROUND_ORACLE_ENTRANCES", true),
 		OUTER_PASSAGE_PADS = cfg_bool("LAZY_UNDERGROUND_OUTER_PASSAGE_PADS", true),
 		CAPSULE_PLANNER_VERSION = 7,
 		ENRICHMENT_SCHEMA = 1,
@@ -9190,9 +9200,19 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 		full_search_exact_centers = 0,
 		full_search_mismatches = 0,
 		full_search_cap = 0,
+		oracle_entrance_requested = Lazy.ORACLE_ENTRANCES == true,
+		oracle_entrance_used = false,
+		oracle_entrance_map = "",
+		oracle_entrance_reason = "",
+		oracle_entrance_searches = 0,
+		oracle_entrance_glued = 0,
+		oracle_entrance_relocated = 0,
+		oracle_entrance_max_offset = 0,
+		oracle_entrance_trace = {},
 		stock_search_requested = Lazy.FRESH_GRID_CAPSULE_PLANNING == true
 			and Lazy.POST_CANONICAL_STOCK_CAPSULE_SEARCH == true
-			and Lazy.OUTER_PASSAGE_PADS ~= true,
+			and Lazy.OUTER_PASSAGE_PADS ~= true
+			and Lazy.ORACLE_ENTRANCES ~= true,
 		stock_search_used = false,
 		stock_search_start_attempts = 0,
 		stock_search_selected = 0,
@@ -9202,7 +9222,8 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 		stock_search_pause_requested = false,
 		stock_search_pause_used = false,
 		stock_search_resume_ok = false,
-		outer_passage_pad_requested = Lazy.OUTER_PASSAGE_PADS == true,
+		outer_passage_pad_requested = Lazy.OUTER_PASSAGE_PADS == true
+			and Lazy.ORACLE_ENTRANCES ~= true,
 		outer_passage_pad_used = false,
 		outer_passage_pad_report_exact = false,
 		outer_passage_pad_direct_sampling = false,
@@ -9562,7 +9583,94 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 	end
 	local capsules = {}
 	local max_attempts = 512
-	if report.outer_passage_pad_requested == true then
+	if report.oracle_entrance_requested == true then
+		-- The two entrances are authored content of the blank underground map, so their position is
+		-- known without building anything (see sbm_underground_oracle).  Put each surface capsule on
+		-- its underground twin, stretched onto the expanded map, and only move it when that ground
+		-- cannot take the Elevator footprint -- uneven, unbuildable, or blocked.  In that case
+		-- FindBuildableAreaAround walks outward to the nearest tile that can, which is the same
+		-- engine call vanilla's own FindPassageSpawnPos uses.
+		--
+		-- No terrain is preconditioned here.  The outer-ring writer cannot serve these positions at
+		-- all: it treats the central 16x16 sectors as a hard no-write zone and restores that
+		-- rectangle from the snapshot after every raster pass, so an interior pad would be carved
+		-- and then reverted.  Flattening therefore stays where vanilla does it, at spawn time.
+		local oracle = SuperBigMap.UndergroundOracle
+		if type(oracle) ~= "table" or type(oracle.ExpandedEntrances) ~= "function" then
+			return fail("underground entrance oracle is unavailable")
+		end
+		if type(find_buildable) ~= "function" then
+			return fail("FindBuildableAreaAround is unavailable for entrance placement")
+		end
+		local entrances, oracle_error = oracle.ExpandedEntrances(surface, surface)
+		if type(entrances) ~= "table" or #entrances < report.capsules_required then
+			report.oracle_entrance_reason = tostring(oracle_error
+				or string.format("oracle returned %d entrances, need %d",
+					type(entrances) == "table" and #entrances or -1, report.capsules_required))
+			return fail("underground entrance oracle did not yield two entrances: "
+				.. report.oracle_entrance_reason)
+		end
+		report.oracle_entrance_used = true
+		report.oracle_entrance_map = tostring(entrances.source_map_name or "")
+		local minimum_distance2 = minimum_distance * minimum_distance
+		for index = 1, report.capsules_required do
+			local entrance = entrances[index]
+			local angle = tonumber(entrance.angle) or 0
+			local center = snap_world(point_fn(entrance.x, entrance.y))
+			local wanted_x, wanted_y = PointXY(center)
+			report.oracle_entrance_searches = report.oracle_entrance_searches + 1
+			report.attempts = report.attempts + 1
+			local found_ok, x, y, z = pcall(find_buildable, object_grid, buildable,
+				center, angle, shape, deposit_filter)
+			if not found_ok then
+				return fail("entrance placement search raised: " .. tostring(x))
+			end
+			if type(x) ~= "number" or type(y) ~= "number" then
+				return fail(string.format(
+					"no buildable ground for underground entrance %d near (%s,%s)",
+					index, tostring(wanted_x), tostring(wanted_y)))
+			end
+			-- Entrances belong in the playable interior. The same inner margin every other capsule
+			-- path uses is what keeps them out of the outer ring.
+			if x < margin_x or x > world_width - margin_x
+				or y < margin_y or y > world_height - margin_y then
+				return fail(string.format(
+					"underground entrance %d relocated outside the inner margin to (%d,%d)",
+					index, x, y))
+			end
+			for _, prior in ipairs(capsules) do
+				local dx, dy = x - prior.x, y - prior.y
+				if dx * dx + dy * dy < minimum_distance2 then
+					return fail(string.format(
+						"underground entrances %d and %d are closer than the stock minimum",
+						index, prior.index))
+				end
+			end
+			local hex_ok, q, r = pcall(world_to_hex, point_fn(x, y))
+			if not hex_ok or type(q) ~= "number" or type(r) ~= "number" then
+				return fail("underground entrance world position has no hex")
+			end
+			local offset_x = x - (tonumber(wanted_x) or x)
+			local offset_y = y - (tonumber(wanted_y) or y)
+			local offset = math.floor(math.sqrt(offset_x * offset_x + offset_y * offset_y) + 0.5)
+			if offset == 0 then
+				report.oracle_entrance_glued = report.oracle_entrance_glued + 1
+			else
+				report.oracle_entrance_relocated = report.oracle_entrance_relocated + 1
+			end
+			report.oracle_entrance_max_offset = math.max(report.oracle_entrance_max_offset, offset)
+			report.oracle_entrance_trace[#report.oracle_entrance_trace + 1] = {
+				index = index, source_x = entrance.source_x, source_y = entrance.source_y,
+				wanted_x = wanted_x, wanted_y = wanted_y, x = x, y = y, q = q, r = r,
+				angle = angle, offset = offset,
+			}
+			capsules[index] = { index = index, x = x, y = y,
+				z = type(z) == "number" and z or 0, q = q, r = r, angle = angle }
+		end
+		report.bounded_max_depth = 0
+		report.full_validation_complete = #capsules == report.capsules_required
+		report.plan_safe_for_publication = report.full_validation_complete
+	elseif report.outer_passage_pad_requested == true then
 		-- v972: bounded direct-ring terrain planning has already selected and organically
 		-- preconditioned exactly two
 		-- dedicated Elevator pads in the physical outer ring. Consume that primitive journal verbatim.
@@ -10683,11 +10791,20 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid, singl
 		authority_tag = descriptor.authority_tag }
 	local next_map = { map_name = descriptor.map_name, map_slot = descriptor.map_slot,
 		map_preset = descriptor.map_preset }
+	local oracle_entrance_active = Lazy.ORACLE_ENTRANCES == true
 	local stock_search_active = Lazy.FRESH_GRID_CAPSULE_PLANNING == true
 		and Lazy.POST_CANONICAL_STOCK_CAPSULE_SEARCH == true
 		and Lazy.OUTER_PASSAGE_PADS ~= true
+		and not oracle_entrance_active
 	local outer_passage_active = Lazy.FRESH_GRID_CAPSULE_PLANNING == true
 		and Lazy.OUTER_PASSAGE_PADS == true
+		and not oracle_entrance_active
+	if oracle_entrance_active and not after_canonical_grid then
+		-- Entrance placement reads the live buildable grid to decide whether the authored position
+		-- can take the footprint, so it is only meaningful once the canonical grids exist.
+		return Lazy.MarkBlocked(surface,
+			"underground entrance placement was invoked before canonical Surface grids")
+	end
 	if stock_search_active and not after_canonical_grid then
 		return Lazy.MarkBlocked(surface,
 			"v970 stock capsule search was invoked before canonical Surface grids")
@@ -10743,6 +10860,41 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid, singl
 		twin_report.stock_search_after_canonical_grid = after_canonical_grid
 	end
 	local validation_contract = plan_report.plan_safe_for_publication == true
+	if oracle_entrance_active then
+		-- The ring-specific counters have no meaning here: nothing is sampled and no terrain is
+		-- written.  What must hold instead is that both entrances came from the authored underground
+		-- markers, that each one is either glued to its twin or was moved by the stock search, and
+		-- that main and replay agree.
+		local function oracle_plan_contract(candidate)
+			return type(candidate) == "table"
+				and candidate.oracle_entrance_used == true
+				and tostring(candidate.oracle_entrance_map or "") ~= ""
+				and candidate.oracle_entrance_searches == candidate.capsules_required
+				and candidate.oracle_entrance_glued + candidate.oracle_entrance_relocated
+					== candidate.capsules_required
+				and candidate.capsules_planned == candidate.capsules_required
+				and candidate.outer_passage_pad_used == false
+				and candidate.bounded_max_depth == 0
+		end
+		if not oracle_plan_contract(plan_report) then
+			return Lazy.MarkBlocked(surface, string.format(
+				"underground entrance plan contract failed: used=%s map=%s searches=%s glued=%s"
+					.. " relocated=%s planned=%s reason=%s",
+				tostring(plan_report.oracle_entrance_used),
+				tostring(plan_report.oracle_entrance_map),
+				tostring(plan_report.oracle_entrance_searches),
+				tostring(plan_report.oracle_entrance_glued),
+				tostring(plan_report.oracle_entrance_relocated),
+				tostring(plan_report.capsules_planned),
+				tostring(plan_report.oracle_entrance_reason)))
+		end
+		if not oracle_plan_contract(twin_report) then
+			return Lazy.MarkBlocked(surface,
+				"underground entrance replay did not reproduce the plan contract")
+		end
+		validation_contract = validation_contract
+			and twin_report.plan_safe_for_publication == true
+	end
 	if outer_passage_active then
 		local function outer_plan_contract(candidate, publication_calls)
 			return type(candidate) == "table"
@@ -10940,6 +11092,10 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid, singl
 	descriptor.capsule_planner_max_depth = plan_report.bounded_max_depth
 	descriptor.capsule_planner_stock_search = stock_search_active
 	descriptor.capsule_planner_outer_passage_pads = outer_passage_active
+	descriptor.capsule_planner_oracle_entrances = oracle_entrance_active
+	descriptor.capsule_planner_oracle_map = plan_report.oracle_entrance_map
+	descriptor.capsule_planner_oracle_relocated = plan_report.oracle_entrance_relocated
+	descriptor.capsule_planner_oracle_max_offset = plan_report.oracle_entrance_max_offset
 	descriptor.capsule_planner_stock_search_cap = plan_report.full_search_cap
 	descriptor.private_rng.final_state = plan_report.private_final_state
 	local publication_started = Lazy.Now()

@@ -535,14 +535,20 @@ config.LazyUndergroundFreshGridCapsulePlanning = true
 -- capped at eight stock calls per deterministic main/replay plan, so the prior 512-footprint scan
 -- cannot recur. Failure at the cap is sticky and publishes no capsule.
 config.LazyUndergroundPostCanonicalStockCapsuleSearch = true
--- v972 bounded direct-ring passage-pad preconditioning. The enclosing lazy implementation remains
--- default-off. Candidate centers are sampled directly inside certified physical outer-ring strips;
--- only four viable footprints per site are scored and marker exclusion is a conservative
--- center-radius test before the exact obstruction-shape walk.
--- When enabled, two private deterministic Elevator footprints are reserved only after all Surface
--- enrichments are final, then flattened through the existing organic native outer-terrain journal.
--- The post-canonical capsule path consumes these exact sites and performs no nearest-site search.
-config.LazyUndergroundOuterPassagePads = true
+-- RETIRED by LazyUndergroundOracleEntrances. Underground entrances are never in the outer ring:
+-- the ring is for rocket landing clusters, resources, anomalies and deposits. The authored
+-- underground markers land in the playable interior, and the outer-terrain journal physically
+-- cannot serve them -- it treats the central 16x16 sectors as a hard no-write zone and restores
+-- that rectangle after every raster pass, so an interior pad would be carved and then reverted.
+-- Left in place, and still honoured, only so the previous ring behaviour can be restored by
+-- turning LazyUndergroundOracleEntrances off.
+config.LazyUndergroundOuterPassagePads = false
+-- Place both surface entrances on their underground twins. The two SurfacePassageMarker objects are
+-- authored into every BlankUnderground_0X map, so the positions are read with a bare map load and no
+-- generation (sbm_underground_oracle), then stretched onto the expanded map. Each entrance stays
+-- glued to its twin unless that ground cannot take the Elevator footprint -- uneven, unbuildable or
+-- blocked -- in which case the stock FindBuildableAreaAround walks out to the nearest tile that can.
+config.LazyUndergroundOracleEntrances = true
 -- TEMP test aid: remove the underground darkness blanket on any underground gameplay map,
 -- including vanilla-mode tests, and restore the previous value on surface/menu transitions.
 config.UndergroundRevealAllDarkness = false
@@ -1199,6 +1205,7 @@ C.LAZY_UNDERGROUND_FRESH_GRID_CAPSULE_PLANNING =
 C.LAZY_UNDERGROUND_POST_CANONICAL_STOCK_CAPSULE_SEARCH =
 	as_bool(config.LazyUndergroundPostCanonicalStockCapsuleSearch)
 C.LAZY_UNDERGROUND_OUTER_PASSAGE_PADS = as_bool(config.LazyUndergroundOuterPassagePads)
+C.LAZY_UNDERGROUND_ORACLE_ENTRANCES = as_bool(config.LazyUndergroundOracleEntrances)
 C.UNDERGROUND_REVEAL_ALL_DARKNESS = as_bool(config.UndergroundRevealAllDarkness)
 C.UNDERGROUND_REVEAL_ALL_ENRICHMENTS_FOR_TESTING =
 	as_bool(config.RevealAllUndergroundEnrichmentsForTesting)

@@ -61,12 +61,16 @@ Oracle.BLANK_UNDERGROUND_MAPS = {
 }
 
 function Oracle.PickUndergroundMapName(surface_map)
+	local map = surface_map or Global("MainMap")
+	-- During generation GetRandomMapGenerator may not resolve the map yet, but the map carries the
+	-- generator object directly; either route yields the same Seed.
 	local get_generator = Global("GetRandomMapGenerator")
-	if type(get_generator) ~= "function" then
-		return nil, "GetRandomMapGenerator unavailable"
+	local generator = type(get_generator) == "function"
+		and SafeCall(get_generator, map) or nil
+	if type(generator) ~= "table" then
+		generator = type(map) == "table" and map.RandomMapGenObject or nil
 	end
-	local generator = SafeCall(get_generator, surface_map or Global("MainMap"))
-	local seed = generator and generator.Seed
+	local seed = type(generator) == "table" and generator.Seed or nil
 	if type(seed) ~= "number" then
 		return nil, "surface generator has no seed"
 	end
@@ -172,6 +176,20 @@ function Oracle.ReadVanillaEntrances(map_name)
 	trace("read %s slot=%d ms=%d size=%s markers=%d %s", map_name, slot, elapsed,
 		tostring(markers.height_map_size), #markers, table.concat(parts, " "))
 	return markers
+end
+
+-- Fill the cache while we are certainly on the generation's real-time thread.  The capsule planner
+-- runs in contexts that may not be able to yield, and ChangeMapInSlot requires a yielding thread;
+-- priming here makes every later lookup pure arithmetic.  Failure is not fatal: the planner reports
+-- the reason and the caller decides.
+function Oracle.Prime(surface_map)
+	local markers, name_or_error = Oracle.SourceEntrances(surface_map)
+	if not markers then
+		trace("prime failed: %s", tostring(name_or_error))
+		return false, name_or_error
+	end
+	trace("primed %s markers=%d", tostring(name_or_error), #markers)
+	return true, name_or_error
 end
 
 -- Markers for the underground map this surface will get, in source coordinates.
