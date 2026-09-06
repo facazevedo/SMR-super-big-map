@@ -473,11 +473,46 @@ CreateRealTimeThread(function()
 
 			-- Count every loading display raised between the Elevator placement and the completed
 			-- switch: vanilla's screen through the global, the mod's cover through its own entry.
-			local opens = {}
+			-- Each open also records when it happened and what the underground's deferred-preparation
+			-- state was at that instant, so an unexpected display can be attributed instead of guessed.
+			local phase_t0 = GetPreciseTicks()
+			local function ug_state_snapshot()
+				return string.format("prep=%s done=%s running=%s pending=%s desired=%s gen=%s",
+					tostring(ug.SuperBigMapUndergroundPrepared),
+					tostring(ug.SuperBigMapUndergroundStretchDone),
+					tostring(ug.SuperBigMapUndergroundStretchRunning),
+					tostring(ug.SuperBigMapUndergroundStretchPending),
+					tostring(ug.SuperBigMapDesiredWidthTiles),
+					tostring(ug.SuperBigMapGeneratorWidthTiles))
+			end
+			local function short_stack()
+				local dbg = rawget(_G, "debug")
+				if type(dbg) == "table" and type(dbg.traceback) == "function" then
+					local ok, s = pcall(dbg.traceback, "", 2)
+					if ok and type(s) == "string" then
+						s = string.gsub(s, "\r", "")
+						s = string.gsub(s, "\n%s*", " <- ")
+						return string.sub(s, 1, 400)
+					end
+				end
+				local get_stack = rawget(_G, "GetStack")
+				if type(get_stack) == "function" then
+					local ok, s = pcall(get_stack, 2, false, 6)
+					if ok and type(s) == "string" then
+						s = string.gsub(string.gsub(s, "\r", ""), "\n%s*", " <- ")
+						return string.sub(s, 1, 400)
+					end
+				end
+				return "no stack source"
+			end
+			local opens, open_details = {}, {}
 			local original_open = rawget(_G, "LoadingScreenOpen")
 			if type(original_open) == "function" then
 				rawset(_G, "LoadingScreenOpen", function(id, reason, ...)
 					opens[#opens + 1] = tostring(id) .. "/" .. tostring(reason)
+					open_details[#open_details + 1] = string.format("%s/%s @%dms %s %s",
+						tostring(id), tostring(reason), GetPreciseTicks() - phase_t0,
+						ug_state_snapshot(), short_stack())
 					return original_open(id, reason, ...)
 				end)
 			end
@@ -489,7 +524,11 @@ CreateRealTimeThread(function()
 					return original_cover(...)
 				end
 			end
+			-- Assigned once the construction controller exists; every early return restores the
+			-- vanilla cable-cascade default through restore_counters below.
+			local restore_cascade = function() end
 			local function restore_counters()
+				restore_cascade()
 				if type(original_open) == "function" then
 					rawset(_G, "LoadingScreenOpen", original_open)
 				end
@@ -498,6 +537,7 @@ CreateRealTimeThread(function()
 				end
 				R.ug_loading_screen_opens = #opens
 				R.ug_loading_screen_ids = table.concat(opens, " ")
+				R.ug_loading_screen_detail = table.concat(open_details, " || ")
 				R.ug_expansion_covers = covers
 				R.ug_loading_displays = #opens + covers
 			end
@@ -522,6 +562,31 @@ CreateRealTimeThread(function()
 				restore_counters()
 				return "the vanilla construction controller is unavailable"
 			end
+
+			-- The player never reaches ConstructionController:Place without the construction mode
+			-- dialog, whose Init sets UICity:SetCableCascadeDeletion(false, "ConstructionModeDialog")
+			-- (Lua/Construction/Construction.lua:212) and whose Close restores it (:302). The flag
+			-- defaults to true (Lua/DemolishCascading.lua:3), so a headless placement that skips the
+			-- dialog trips vanilla's own assert at Construction.lua(2387) and lets the placement
+			-- cascade-delete cables. Mirror both halves on every city the assert can read.
+			local cascade_cities, seen_city = {}, {}
+			for _, c in ipairs({ ctrl.city, rawget(_G, "UICity"), map.City }) do
+				if type(c) == "table" and not seen_city[c]
+					and type(c.SetCableCascadeDeletion) == "function" then
+					seen_city[c] = true
+					cascade_cities[#cascade_cities + 1] = c
+				end
+			end
+			local function set_cascade(enabled)
+				for _, c in ipairs(cascade_cities) do
+					pcall(c.SetCableCascadeDeletion, c, enabled, "ConstructionModeDialog")
+				end
+			end
+			set_cascade(false)
+			restore_cascade = function() set_cascade(true) end
+			R.ug_cascade_cities = #cascade_cities
+			R.ug_cascade_disabled = tostring(cascade_cities[1] ~= nil
+				and cascade_cities[1].cascade_cable_deletion_enabled == false)
 			local template = BuildingTemplates and BuildingTemplates.Elevator
 			local params = { pos = target_passage:GetPos(), angle = target_passage:GetAngle() }
 			if template and type(template.AddPlacementParams) == "function" then
@@ -557,7 +622,9 @@ CreateRealTimeThread(function()
 					return "Elevator placement failed: " .. tostring(ext)
 				end
 			end
+			-- ConstructionModeDialog:Close order: Deactivate the controller, then restore the flag.
 			pcall(ctrl.Deactivate, ctrl)
+			set_cascade(true)
 
 			local site = rawget(target_passage, "elevator_construction")
 			if not (site and IsValid(site)) then
@@ -608,11 +675,19 @@ CreateRealTimeThread(function()
 				and rawget(first_elevator, "other") == second_elevator)
 
 			------------------------------------------------------------ switch maps
+			-- The HUD map-switch button's own handler calls
+			-- State.change_current_map_slot_wrapper(slot, true, "idChangeCurrentMapSlot")
+			-- (sbm_map_generation.lua:13216), which is exactly the global the mod installs. Record
+			-- that identity so "the probe bypassed the gate" is a measurement, not an assumption.
 			local change = rawget(_G, "ChangeCurrentMapSlot")
 			if type(change) ~= "function" then
 				restore_counters()
 				return "ChangeCurrentMapSlot is unavailable"
 			end
+			local sbm_state = SBM and rawget(SBM, "State")
+			R.ug_switch_is_mod_gate = tostring(type(sbm_state) == "table"
+				and change == rawget(sbm_state, "change_current_map_slot_wrapper"))
+			R.ug_switch_pre_state = ug_state_snapshot()
 			local switch_t0 = GetPreciseTicks()
 			local sw_ok, sw_err = pcall(change, ug.slot, true)
 			R.ug_switch_ok = tostring(sw_ok)
@@ -759,6 +834,10 @@ CreateRealTimeThread(function()
 			tostring(R.ug_first_access_ok), tostring(R.ug_first_access_error),
 			tostring(R.ug_access_method), tostring(R.ug_loading_displays),
 			tostring(R.ug_pre_hex), tostring(R.ug_post_hex))
+		printf("[RULES] first access route: mod_gate=%s cascade_cities=%s cascade_disabled=%s pre=%s",
+			tostring(R.ug_switch_is_mod_gate), tostring(R.ug_cascade_cities),
+			tostring(R.ug_cascade_disabled), tostring(R.ug_switch_pre_state))
+		printf("[RULES] first access displays: %s", tostring(R.ug_loading_screen_detail))
 		printf("[RULES] underground after access: passages: %s", tostring(R.ug_post_passage_records))
 		printf("[RULES] underground after access: enrich=%s/%s imprints=%s (%s) revealed=%s/%s",
 			tostring(R.ug_enrichment_digest), tostring(R.ug_enrichment_count),
