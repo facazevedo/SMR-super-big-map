@@ -307,6 +307,32 @@ CreateRealTimeThread(function()
 		R.pairs_unglued = unglued_pairs
 		R.max_ring_distance = max_ring_distance
 
+		-- Gate 2 requires the validity REASON behind every nonzero ring distance. The mod keeps it in
+		-- SuperBigMapPassageGlueReport on the surface map (durable, not gated on a log channel), so read
+		-- it straight from there instead of scraping [SuperBigMap] audit lines.
+		local glue = map.SuperBigMapPassageGlueReport
+		R.glue_report_present = type(glue) == "table"
+		if type(glue) == "table" then
+			R.glue_records = #glue
+			for gi = 1, #glue do
+				local g = glue[gi]
+				local prefix = "glue" .. gi .. "_"
+				for _, k in ipairs({ "pair", "algorithm", "ring_distance", "glued",
+					"twin_image_q", "twin_image_r", "twin_image_x", "twin_image_y",
+					"twin_preimage_q", "twin_preimage_r", "twin_image_surface_reason",
+					"twin_image_underground_valid", "twin_image_underground_reason",
+					"surface_q", "surface_r", "surface_x", "surface_y", "surface_angle",
+					"vanilla_surface_q", "vanilla_surface_r",
+					"vanilla_surface_image_q", "vanilla_surface_image_r",
+					"drift_wu", "candidates_checked", "candidates_rejected",
+					"twin_image_footprint", "committed_footprint" }) do
+					R[prefix .. k] = tostring(g[k])
+				end
+			end
+		else
+			R.glue_records = 0
+		end
+
 		------------------------------------------------------------------ gate 6: signs and deposits
 		local signs = {}
 		local n_signs = 0
@@ -413,6 +439,13 @@ CreateRealTimeThread(function()
 			tostring(R.pairs_glued), tostring(R.surface_passages), tostring(R.max_ring_distance))
 		printf("[RULES] %s", RULES_LINE)
 		printf("[RULES] passages: %s", tostring(R.passage_records))
+		for gi = 1, (R.glue_records or 0) do
+			printf("[RULES] glue %d: ring=%s algorithm=%s anchor_reason=%s rejected=%s",
+				gi, tostring(R["glue" .. gi .. "_ring_distance"]),
+				tostring(R["glue" .. gi .. "_algorithm"]),
+				tostring(R["glue" .. gi .. "_twin_image_surface_reason"]),
+				tostring(R["glue" .. gi .. "_candidates_rejected"]))
+		end
 		printf("[RULES] underground passages: %s", tostring(R.underground_passage_records))
 		printf("[RULES] signs: %s", tostring(R.sign_records))
 		printf("[RULES] revealed: %s start=%s", tostring(R.revealed_list), tostring(R.start_sector))

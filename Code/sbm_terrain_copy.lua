@@ -6643,6 +6643,14 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 			local vanilla_image = type(vanilla_surface_q) == "number"
 				and type(vanilla_surface_r) == "number"
 				and scaled_final_hex(vanilla_surface_q, vanilla_surface_r) or nil
+			local function rejection_histogram()
+				local summary = {}
+				for reason, count in pairs(surface_rejections) do
+					summary[#summary + 1] = reason .. " x" .. tostring(count)
+				end
+				table.sort(summary)
+				return table.concat(summary, "; ")
+			end
 			local anchor_underground_valid, anchor_underground_reason,
 				anchor_preimage_q, anchor_preimage_r = underground_verdict(anchor_q, anchor_r)
 			surface_q, surface_r = anchor_q, anchor_r
@@ -6666,11 +6674,6 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 						pairs = stats.pairs }
 				end
 				search_algorithm = "nearest fitting surface hex by outward ring walk from the twin image"
-				local rejection_summary = {}
-				for reason, count in pairs(surface_rejections) do
-					rejection_summary[#rejection_summary + 1] = reason .. " x" .. tostring(count)
-				end
-				table.sort(rejection_summary)
 				EntranceAudit("PASSAGE_PLAN_SURFACE_EXACT_REJECTED", {
 					pair = i,
 					exact_q = anchor_q, exact_r = anchor_r,
@@ -6682,7 +6685,7 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 					committed_radius = surface_radius,
 					delta_x = surface_x - anchor_x, delta_y = surface_y - anchor_y,
 					surface_angle = surface_angle,
-					candidates_rejected = table.concat(rejection_summary, "; "),
+					candidates_rejected = rejection_histogram(),
 					exact_footprint = EntranceAuditEnabled()
 						and describe_footprint(surface_map, anchor_q, anchor_r,
 							surface_angle, surface_anchor) or nil,
@@ -6718,6 +6721,42 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 					math.abs(drift_dq + drift_dr)),
 				candidates_checked = stats.checked,
 			}, underground_map)
+			-- The glue rule allows a nonzero ring distance only with a recorded validity reason, so
+			-- the reason must survive the run whether or not the gated Elevator audit channel is on.
+			-- Keep it on the surface map beside the other generation reports; the footprint
+			-- descriptions cost at most two extra walks per pair and only when the anchor is refused.
+			local glue_report = surface_map.SuperBigMapPassageGlueReport
+			if type(glue_report) ~= "table" or i == 1 then
+				glue_report = {}
+				surface_map.SuperBigMapPassageGlueReport = glue_report
+			end
+			glue_report[#glue_report + 1] = {
+				pair = i,
+				algorithm = search_algorithm,
+				ring_distance = surface_radius,
+				glued = surface_radius == 0,
+				twin_image_q = anchor_q, twin_image_r = anchor_r,
+				twin_image_x = anchor_x, twin_image_y = anchor_y,
+				twin_preimage_q = anchor_preimage_q, twin_preimage_r = anchor_preimage_r,
+				twin_image_surface_reason = anchor_surface_reason or "accepted",
+				twin_image_underground_valid = anchor_underground_valid,
+				twin_image_underground_reason = anchor_underground_reason,
+				surface_q = surface_q, surface_r = surface_r,
+				surface_x = surface_x, surface_y = surface_y,
+				surface_angle = surface_angle,
+				vanilla_surface_q = vanilla_surface_q, vanilla_surface_r = vanilla_surface_r,
+				vanilla_surface_image_q = vanilla_image and vanilla_image.final_q,
+				vanilla_surface_image_r = vanilla_image and vanilla_image.final_r,
+				drift_wu = math.floor(math.sqrt(drift_x * drift_x + drift_y * drift_y) + 0.5),
+				candidates_checked = stats.checked,
+				candidates_rejected = rejection_histogram(),
+				twin_image_footprint = anchor_surface_reason
+					and describe_footprint(surface_map, anchor_q, anchor_r,
+						surface_angle, surface_anchor) or nil,
+				committed_footprint = anchor_surface_reason
+					and describe_footprint(surface_map, surface_q, surface_r,
+						surface_angle, surface_anchor) or nil,
+			}
 			-- `plan.final_*` is deliberately NOT overwritten with the surface hex: the underground
 			-- endpoint's deferred final alignment must still move it to the image of its authored
 			-- marker, so a relocated surface endpoint records a ring distance instead of dragging
