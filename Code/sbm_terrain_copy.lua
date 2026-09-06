@@ -5892,8 +5892,11 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 			and x >= 0 and y >= 0 and x < w and y < h
 	end
 
-	local minimum_normal_z = tonumber((SuperBigMap.Config or {}).TOPUP_MINIMUM_TERRAIN_NORMAL_Z) or 4080
-	minimum_normal_z = math.max(0, math.min(4096, minimum_normal_z))
+	-- No terrain-normal threshold here on purpose. TOPUP_MINIMUM_TERRAIN_NORMAL_Z governs top-up
+	-- placement; an entrance may only leave its twin's image when the Elevator footprint does not
+	-- fit (uneven or unbuildable Z, impassable, obstructed), which is what the checks below and
+	-- vanilla's own IsTerrainFlatForPlacement decide. Borrowing the top-up slope threshold pushed a
+	-- pair 8 rings off a footprint vanilla accepts (see the glue report of iter 003).
 	local function footprint_buildable(map, q, r, angle, anchor)
 		local buildable = map and map.buildable
 		if not buildable or type(buildable.GetZ) ~= "function" then
@@ -5948,15 +5951,6 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 				local ok_passable, passable = pcall(terrain_api.IsPassable, map, hex_point)
 				if not ok_passable or passable ~= true then
 					failure_reason = "impassable footprint hex"
-					return false
-				end
-			end
-			if type(terrain_api) == "table" and type(terrain_api.GetTerrainNormal) == "function" then
-				local ok_normal, normal = pcall(terrain_api.GetTerrainNormal, map, hex_point)
-				local normal_z = ok_normal and normal and type(normal.z) == "function"
-					and SafeCall(normal.z, normal) or nil
-				if type(normal_z) ~= "number" or normal_z < minimum_normal_z then
-					failure_reason = "sloped footprint hex"
 					return false
 				end
 			end
