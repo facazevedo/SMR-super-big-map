@@ -54,7 +54,7 @@ local ObjectScalesWithTerrain = ObjectClone and ObjectClone.ObjectScalesWithTerr
 local DecorTopUp = {}
 SuperBigMap.DecorTopUp = DecorTopUp
 
-DecorTopUp.VERSION = 4
+DecorTopUp.VERSION = 6
 DecorTopUp.SEED_TAG = "SuperBigMapDecorEnginePass"
 DecorTopUp.LastStats = nil
 
@@ -502,9 +502,9 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 			end
 			stats.synthetic_templates = #templates
 			local per_group = math.max(1, math.floor(
-				cfg_number("STRETCH_DECOR_ENGINE_PASS_SYNTHETIC_ATTEMPTS_PER_GROUP", 40)))
+				cfg_number("STRETCH_DECOR_ENGINE_PASS_SYNTHETIC_ATTEMPTS_PER_GROUP", 120)))
 			local jitter_max = math.max(100, math.floor(
-				cfg_number("STRETCH_DECOR_ENGINE_PASS_SYNTHETIC_JITTER_MAX_PERCENT", 250)))
+				cfg_number("STRETCH_DECOR_ENGINE_PASS_SYNTHETIC_JITTER_MAX_PERCENT", 350)))
 			local get_type = terrain_api.GetTerrainType
 			local type_cache = {}
 			local function terrain_type_at(x, y)
@@ -534,27 +534,48 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 			stats.synthetic_allowed_types = allowed_count
 			local attempts, budget = 0, (target - placed) * per_group
 			local rejected = { obstruct = 0, decorated = 0, no_match = 0, bounds = 0, failed = 0, terrain = 0 }
+			-- A template hemmed in by mountain masses fails every draw on the obstruct circles (1,021
+			-- of 1,320 rejections in v903).  Drop a template after `patience` consecutive OBSTRUCT
+			-- misses so the remaining attempts go where the map has room; a success resets its count.
+			-- Only obstruct misses count: a crowded template (existing stamps) or an off-type draw is
+			-- not hopeless.  v904 counted every miss with patience 12 and drained all 58 templates
+			-- after 789 of 3,960 attempts at a ~3% per-attempt success rate.
+			local patience = math.max(1, math.floor(
+				cfg_number("STRETCH_DECOR_ENGINE_PASS_SYNTHETIC_TEMPLATE_PATIENCE", 24)))
+			local template_fail, exhausted = {}, 0
 			while placed < target and attempts < budget and #templates > 0 do
 				attempts = attempts + 1
-				local template = templates[stream.rand(#templates) + 1]
+				local ti = stream.rand(#templates) + 1
+				local template = templates[ti]
 				local extra = math.max(1, math.floor(template.radius * (jitter_max - 100) / 100))
 				local dist = math.floor(template.radius) + stream.rand(extra)
 				local dx, dy = rotate_radius(dist, stream.rand(MAX_ROTATION), point20, true)
 				local sx, sy = template.x + (tonumber(dx) or 0), template.y + (tonumber(dy) or 0)
+				local outcome
 				if map_w and (sx - template.radius < 0 or sy - template.radius < 0
 					or sx + template.radius >= map_w or sy + template.radius >= map_h) then
-					rejected.bounds = rejected.bounds + 1
+					outcome = "bounds"
 				elseif allowed_count > 0 and not allowed_types[terrain_type_at(sx, sy)] then
-					rejected.terrain = rejected.terrain + 1
+					outcome = "terrain"
 				else
-					local outcome = try_stamp(template.marker, sx, sy, template.radius)
-					if outcome == "placed" then
-						placed_synthetic = placed_synthetic + 1
-					else
-						rejected[outcome] = (rejected[outcome] or 0) + 1
+					outcome = try_stamp(template.marker, sx, sy, template.radius)
+				end
+				if outcome == "placed" then
+					placed_synthetic = placed_synthetic + 1
+					template_fail[template] = 0
+				else
+					rejected[outcome] = (rejected[outcome] or 0) + 1
+					if outcome == "obstruct" then
+						local misses = (template_fail[template] or 0) + 1
+						template_fail[template] = misses
+						if misses >= patience then
+							table.remove(templates, ti)
+							exhausted = exhausted + 1
+						end
 					end
 				end
 			end
+			stats.synthetic_templates_exhausted = exhausted
 			stats.synthetic_attempts = attempts
 			stats.synthetic_budget = budget
 			for k, v in pairs(rejected) do stats["synthetic_rejected_" .. k] = v end
