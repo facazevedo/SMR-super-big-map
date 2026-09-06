@@ -29,6 +29,11 @@
 -- object offsets and cosmetic scale x area_factor^0.5 about the group centre, Z reseated on the
 -- stretched terrain.
 --
+-- When the authored sites run out (they do: most unused sites sit inside Border/Slope prefab radii
+-- that vanilla's own obstruct grid rejects), the pass continues on SYNTHETIC sites: it borrows the
+-- filters of a used site and tries seeded positions around it on the same terrain type, so the
+-- content is still a group vanilla would place in that context; only the site is the mod's.
+--
 -- This replenishes the decor-pass share only.  Decor baked into the terrain prefabs stays at
 -- 1/area_factor density; nothing short of re-laying the map can change that.
 
@@ -49,7 +54,7 @@ local ObjectScalesWithTerrain = ObjectClone and ObjectClone.ObjectScalesWithTerr
 local DecorTopUp = {}
 SuperBigMap.DecorTopUp = DecorTopUp
 
-DecorTopUp.VERSION = 1
+DecorTopUp.VERSION = 4
 DecorTopUp.SEED_TAG = "SuperBigMapDecorEnginePass"
 DecorTopUp.LastStats = nil
 
@@ -348,109 +353,217 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 			if ok_size and type(w) == "number" then map_w, map_h = w, h or w end
 		end
 
-		-- 4. Vanilla's loop, over the unused sites, until the deficit is met.
-		local guard = #unused * 2 + 8
-		while placed < target and #unused > 0 and guard > 0 do
-			guard = guard - 1
-			local idx = stream.rand(#unused) + 1
-			local site = table.remove(unused, idx)
-			local marker = site.marker
-			if not is_valid or is_valid(marker) then
-				local prefabs = SafeCall(marker.GetMatchingMarkers, marker, revision, version)
-				if type(prefabs) ~= "table" or #prefabs == 0 then
-					skipped_no_match = skipped_no_match + 1
-				elseif circle_hits(obstruct, site.x, site.y, site.radius) then
-					skipped_obstructed = skipped_obstructed + 1
-					stats.skipped_by_obstruct = (stats.skipped_by_obstruct or 0) + 1
-				elseif circle_hits(decorated, site.x, site.y, site.radius) then
-					skipped_obstructed = skipped_obstructed + 1
-					stats.skipped_by_decorated = (stats.skipped_by_decorated or 0) + 1
-				else
-					local prefab = weighted_rand(prefabs, prefab_weight_decor, stream.seed())
-					if type(prefab) == "table" then
-						local name = prefab_markers[prefab]
-						local prefab_radius = (tonumber(prefab.max_radius) or 0) * type_tile * length_scale
-						local max_offset = math.max(0, math.floor(site.radius - prefab_radius))
-						local dx, dy = rotate_radius(stream.rand(max_offset), stream.rand(MAX_ROTATION), point20, true)
-						local cx, cy = site.x + (tonumber(dx) or 0), site.y + (tonumber(dy) or 0)
-						local inside = not map_w or (cx >= 0 and cy >= 0 and cx < map_w and cy < map_h)
-						if type(name) == "string" and inside then
-							local defs = defs_cache[name]
-							if defs == nil and type(get_prefab_defs) == "function" then
-								local derr, d = get_prefab_defs(name)
-								defs = not derr and d or false
-								defs_cache[name] = defs
-							end
-							local raster = raster_cache[name]
-							if raster == nil and type(prefab_preload) == "function" then
-								raster = SafeCall(prefab_preload, prefab) or false
-								raster_cache[name] = raster
-							end
-							local angle = stream.rand(tonumber(prefab.rotation) or MAX_ROTATION)
-								- (tonumber(prefab.orientation) or 0)
-							local center = point_fn(cx, cy)
-							if type(center.SetTerrainZ) == "function" then
-								local okz, cz = pcall(center.SetTerrainZ, center, map)
-								if okz and cz then center = cz end
-							end
-							local params = { dont_change_terrain = true, allow_outsiders = true }
-							if defs then params.defs = defs end
-							if raster then
-								local copy = {}
-								for k, v in pairs(raster) do copy[k] = v end
-								params.raster_params = copy
-							end
-							local perr, objs = place_prefab(map, name, center, angle, nil, params)
-							if perr or type(objs) ~= "table" or #objs == 0 then
-								failed = failed + 1
-							else
-								-- The group arrived at native offsets and native size.  Give it the
-								-- stretch's similarity about its centre so it matches its neighbours,
-								-- and reseat each object on the stretched terrain.
-								for _, obj in ipairs(objs) do
-									local ox, oy = PointXY(ObjectPosition(obj))
-									if type(ox) == "number" and type(oy) == "number" then
-										local nx = cx + (ox - cx) * length_scale
-										local ny = cy + (oy - cy) * length_scale
-										local outside = map_w and (nx < 0 or ny < 0 or nx >= map_w or ny >= map_h)
-										if outside and type(done_object) == "function" then
-											pcall(done_object, obj)
-										else
-											local np = point_fn(math.floor(nx + 0.5), math.floor(ny + 0.5))
-											if type(np.SetTerrainZ) == "function" then
-												local okz, nz = pcall(np.SetTerrainZ, np, map)
-												if okz and nz then np = nz end
-											end
-											if type(obj.SetPos) == "function" then pcall(obj.SetPos, obj, np) end
-											if type(ObjectScalesWithTerrain) == "function" and ObjectScalesWithTerrain(obj)
-												and type(obj.GetScale) == "function" and type(obj.SetScale) == "function" then
-												local s = SafeCall(obj.GetScale, obj)
-												if type(s) == "number" and s > 0 then
-													pcall(obj.SetScale, obj, math.min(500, math.max(1, math.floor(s * length_scale + 0.5))))
-												end
-											end
-											if type(set_game_flags) == "function" and gof ~= 0 then pcall(set_game_flags, obj, gof) end
-											obj.SuperBigMapDecorEnginePass = true
-											placed_list[#placed_list + 1] = obj
-											objects = objects + 1
-										end
-									end
-								end
-								placed = placed + 1
-								prefabs_count[prefab] = (prefabs_count[prefab] or 0) + 1
-								marker.DecorTestPrefab = name
-								local circle = { x = cx, y = cy, r = prefab_radius }
-								decorated[#decorated + 1] = circle
-								if prefab.decor_obstruct then obstruct[#obstruct + 1] = circle end
+		-- 4. One stamp attempt.  Filters come from `marker`, the site is (sx, sy) with radius
+		--    site_radius; everything else is vanilla's decor loop: obstruct check, decor check,
+		--    weighted pick, jittered stamp inside the site, spacing circles recorded afterwards.
+		--    Returns "placed" (plus the prefab name) or the reason it did not place.
+		local dropped_non_cosmetic = 0
+		local function try_stamp(marker, sx, sy, site_radius)
+			local prefabs = SafeCall(marker.GetMatchingMarkers, marker, revision, version)
+			if type(prefabs) ~= "table" or #prefabs == 0 then return "no_match" end
+			if circle_hits(obstruct, sx, sy, site_radius) then return "obstruct" end
+			if circle_hits(decorated, sx, sy, site_radius) then return "decorated" end
+			local prefab = weighted_rand(prefabs, prefab_weight_decor, stream.seed())
+			if type(prefab) ~= "table" then return "no_match" end
+			local name = prefab_markers[prefab]
+			if type(name) ~= "string" then return "no_match" end
+			local prefab_radius = (tonumber(prefab.max_radius) or 0) * type_tile * length_scale
+			local max_offset = math.max(0, math.floor(site_radius - prefab_radius))
+			local dx, dy = rotate_radius(stream.rand(max_offset), stream.rand(MAX_ROTATION), point20, true)
+			local cx, cy = sx + (tonumber(dx) or 0), sy + (tonumber(dy) or 0)
+			if map_w and (cx < 0 or cy < 0 or cx >= map_w or cy >= map_h) then return "bounds" end
+			local defs = defs_cache[name]
+			if defs == nil and type(get_prefab_defs) == "function" then
+				local derr, d = get_prefab_defs(name)
+				defs = not derr and d or false
+				defs_cache[name] = defs
+			end
+			local raster = raster_cache[name]
+			if raster == nil and type(prefab_preload) == "function" then
+				raster = SafeCall(prefab_preload, prefab) or false
+				raster_cache[name] = raster
+			end
+			local angle = stream.rand(tonumber(prefab.rotation) or MAX_ROTATION)
+				- (tonumber(prefab.orientation) or 0)
+			local center = point_fn(cx, cy)
+			if type(center.SetTerrainZ) == "function" then
+				local okz, cz = pcall(center.SetTerrainZ, center, map)
+				if okz and cz then center = cz end
+			end
+			local params = { dont_change_terrain = true, allow_outsiders = true }
+			if defs then params.defs = defs end
+			if raster then
+				local copy = {}
+				for k, v in pairs(raster) do copy[k] = v end
+				params.raster_params = copy
+			end
+			local perr, objs = place_prefab(map, name, center, angle, nil, params)
+			if perr or type(objs) ~= "table" or #objs == 0 then return "failed" end
+			-- The group arrived at native offsets and native size.  Give it the stretch's
+			-- similarity about its centre so it matches its neighbours, and reseat each object on
+			-- the stretched terrain.
+			for _, obj in ipairs(objs) do
+				local ox, oy = PointXY(ObjectPosition(obj))
+				if type(ox) == "number" and type(oy) == "number" then
+					local nx = cx + (ox - cx) * length_scale
+					local ny = cy + (oy - cy) * length_scale
+					local outside = map_w and (nx < 0 or ny < 0 or nx >= map_w or ny >= map_h)
+					-- Only cosmetic scatter may come out of this pass.  A decor prefab is authored art,
+					-- but anything gameplay-bearing that rode along -- deposit, anomaly or feature
+					-- markers, nested decor sites -- is removed rather than left as an orphan a later
+					-- stage could turn into a geyser or a deposit.  The stamp's own PrefabMarker stays,
+					-- tagged as a decor stamp, so later passes classify it exactly like vanilla's.
+					local class_name = tostring(obj.class or "")
+					local is_stamp_marker = class_name == "PrefabMarker"
+					-- Deny first: every other prefab-authoring object (feature sites, nested decor sites)
+					-- and anything deposit-, anomaly- or building-like is never cosmetic, whatever the
+					-- scale rule says -- the v902 census still showed 11 PrefabFeatureMarker objects
+					-- placed by this pass.
+					local denied = not is_stamp_marker and (IsKindOfSafe(obj, "PrefabObj")
+						or class_name:find("Marker", 1, true) ~= nil
+						or IsKindOfSafe(obj, "Deposit") or IsKindOfSafe(obj, "DepositMarker")
+						or IsKindOfSafe(obj, "SubsurfaceAnomaly") or IsKindOfSafe(obj, "SubsurfaceAnomalyMarker")
+						or IsKindOfSafe(obj, "EffectDepositMarker") or IsKindOfSafe(obj, "Building"))
+					local cosmetic = not denied and (is_stamp_marker
+						or (type(ObjectScalesWithTerrain) == "function" and ObjectScalesWithTerrain(obj) == true))
+					if (outside or not cosmetic) and type(done_object) == "function" then
+						if not outside then dropped_non_cosmetic = dropped_non_cosmetic + 1 end
+						pcall(done_object, obj)
+					else
+						if is_stamp_marker then obj.zone = ZONE_DECOR end
+						local np = point_fn(math.floor(nx + 0.5), math.floor(ny + 0.5))
+						if type(np.SetTerrainZ) == "function" then
+							local okz, nz = pcall(np.SetTerrainZ, np, map)
+							if okz and nz then np = nz end
+						end
+						if type(obj.SetPos) == "function" then pcall(obj.SetPos, obj, np) end
+						if type(ObjectScalesWithTerrain) == "function" and ObjectScalesWithTerrain(obj)
+							and type(obj.GetScale) == "function" and type(obj.SetScale) == "function" then
+							local sc = SafeCall(obj.GetScale, obj)
+							if type(sc) == "number" and sc > 0 then
+								pcall(obj.SetScale, obj, math.min(500, math.max(1, math.floor(sc * length_scale + 0.5))))
 							end
 						end
+						if type(set_game_flags) == "function" and gof ~= 0 then pcall(set_game_flags, obj, gof) end
+						obj.SuperBigMapDecorEnginePass = true
+						placed_list[#placed_list + 1] = obj
+						objects = objects + 1
 					end
 				end
 			end
+			placed = placed + 1
+			prefabs_count[prefab] = (prefabs_count[prefab] or 0) + 1
+			local circle = { x = cx, y = cy, r = prefab_radius }
+			decorated[#decorated + 1] = circle
+			if prefab.decor_obstruct then obstruct[#obstruct + 1] = circle end
+			return "placed", name
 		end
+
+		-- 5. Vanilla's loop over the sites it left unused, until the deficit is met.
+		local placed_authored, skipped_bounds = 0, 0
+		local guard = #unused * 2 + 8
+		while placed < target and #unused > 0 and guard > 0 do
+			guard = guard - 1
+			local site = table.remove(unused, stream.rand(#unused) + 1)
+			if not is_valid or is_valid(site.marker) then
+				local outcome, name = try_stamp(site.marker, site.x, site.y, site.radius)
+				if outcome == "placed" then
+					placed_authored = placed_authored + 1
+					site.marker.DecorTestPrefab = name
+					site.used = true
+				elseif outcome == "obstruct" then
+					skipped_obstructed = skipped_obstructed + 1
+					stats.skipped_by_obstruct = (stats.skipped_by_obstruct or 0) + 1
+				elseif outcome == "decorated" then
+					skipped_obstructed = skipped_obstructed + 1
+					stats.skipped_by_decorated = (stats.skipped_by_decorated or 0) + 1
+				elseif outcome == "no_match" then skipped_no_match = skipped_no_match + 1
+				elseif outcome == "bounds" then skipped_bounds = skipped_bounds + 1
+				else failed = failed + 1 end
+			end
+		end
+		stats.placed_authored = placed_authored
+		stats.sites_exhausted = #unused == 0 and placed < target
+
+		-- 6. Synthetic sites.  The map authors too few free decor sites for 1.778x density: at
+		--    14N134W, 137 of the 152 sites vanilla left unused sit inside Border/Slope prefab radii
+		--    that vanilla's own obstruct grid rejects, and vanilla had consumed nearly every placeable
+		--    one (7 remained).  So once the authored sites run out, borrow the filters of a used site
+		--    -- the group is then one vanilla would put in exactly that context -- and try a seeded
+		--    position around it, between 1x and JITTER_MAX x its radius away and on the same terrain
+		--    type.  Only the site is the mod's; matcher, weights, spacing and stamp stay vanilla's.
+		local placed_synthetic = 0
+		if placed < target and cfg_bool("STRETCH_DECOR_ENGINE_PASS_SYNTHETIC_SITES", true) then
+			local templates = {}
+			for _, site in ipairs(sites) do
+				if site.used and site.radius > 0 and (not is_valid or is_valid(site.marker)) then
+					templates[#templates + 1] = site
+				end
+			end
+			stats.synthetic_templates = #templates
+			local per_group = math.max(1, math.floor(
+				cfg_number("STRETCH_DECOR_ENGINE_PASS_SYNTHETIC_ATTEMPTS_PER_GROUP", 40)))
+			local jitter_max = math.max(100, math.floor(
+				cfg_number("STRETCH_DECOR_ENGINE_PASS_SYNTHETIC_JITTER_MAX_PERCENT", 250)))
+			local get_type = terrain_api.GetTerrainType
+			local type_cache = {}
+			local function terrain_type_at(x, y)
+				if type(get_type) ~= "function" then return 0 end
+				local key = math.floor(x / type_tile) * 1000003 + math.floor(y / type_tile)
+				local cached = type_cache[key]
+				if cached ~= nil then return cached end
+				local okt, t = pcall(get_type, map, point_fn(x, y))
+				t = okt and type(t) == "number" and t or -1
+				type_cache[key] = t
+				return t
+			end
+			-- Vanilla-like context means a terrain type vanilla's own decor already sits on.  Read
+			-- it under every existing stamp and every used site and accept any of those types, rather
+			-- than demanding equality with one template's centre: prefabs paint their own texture
+			-- inside their footprint, so the equality test rejected 987 of 1320 attempts (75%) for
+			-- positions on perfectly ordinary decorated ground.
+			local allowed_types, allowed_count = {}, 0
+			local function allow(t)
+				if t >= 0 and not allowed_types[t] then
+					allowed_types[t] = true
+					allowed_count = allowed_count + 1
+				end
+			end
+			for i = 1, marker_circles do allow(terrain_type_at(decorated[i].x, decorated[i].y)) end
+			for _, site in ipairs(templates) do allow(terrain_type_at(site.x, site.y)) end
+			stats.synthetic_allowed_types = allowed_count
+			local attempts, budget = 0, (target - placed) * per_group
+			local rejected = { obstruct = 0, decorated = 0, no_match = 0, bounds = 0, failed = 0, terrain = 0 }
+			while placed < target and attempts < budget and #templates > 0 do
+				attempts = attempts + 1
+				local template = templates[stream.rand(#templates) + 1]
+				local extra = math.max(1, math.floor(template.radius * (jitter_max - 100) / 100))
+				local dist = math.floor(template.radius) + stream.rand(extra)
+				local dx, dy = rotate_radius(dist, stream.rand(MAX_ROTATION), point20, true)
+				local sx, sy = template.x + (tonumber(dx) or 0), template.y + (tonumber(dy) or 0)
+				if map_w and (sx - template.radius < 0 or sy - template.radius < 0
+					or sx + template.radius >= map_w or sy + template.radius >= map_h) then
+					rejected.bounds = rejected.bounds + 1
+				elseif allowed_count > 0 and not allowed_types[terrain_type_at(sx, sy)] then
+					rejected.terrain = rejected.terrain + 1
+				else
+					local outcome = try_stamp(template.marker, sx, sy, template.radius)
+					if outcome == "placed" then
+						placed_synthetic = placed_synthetic + 1
+					else
+						rejected[outcome] = (rejected[outcome] or 0) + 1
+					end
+				end
+			end
+			stats.synthetic_attempts = attempts
+			stats.synthetic_budget = budget
+			for k, v in pairs(rejected) do stats["synthetic_rejected_" .. k] = v end
+		end
+		stats.placed_synthetic = placed_synthetic
 		stats.placed, stats.objects = placed, objects
 		stats.skipped_obstructed, stats.skipped_no_match, stats.failed = skipped_obstructed, skipped_no_match, failed
-		stats.sites_exhausted = #unused == 0 and placed < target
+		stats.skipped_bounds = skipped_bounds
+		stats.dropped_non_cosmetic = dropped_non_cosmetic
 		stats.ms = (SafeCall(Global("GetPreciseTicks")) or 0) - started_ms
 		DecorTopUp.LastObjects = placed_list
 	end)
