@@ -28,13 +28,22 @@ def cli(*args, timeout=600):
 
 
 def state_json(query, timeout=120):
+    """Return the harness envelope's payload value, not the envelope.
+
+    `cli.py state --json` answers {"ok": .., "exit": .., "data": {"value": <payload>}}, so the
+    caller has to unwrap twice; unwrapping once left the status as a JSON blob that never equals
+    "complete" and made a successful run exit 1.
+    """
     proc = cli("state", query, "--json", timeout=timeout)
     if proc.returncode != 0:
         return None, proc
     try:
-        return json.loads(proc.stdout), proc
+        envelope = json.loads(proc.stdout)
     except json.JSONDecodeError:
         return None, proc
+    if isinstance(envelope, dict) and isinstance(envelope.get("data"), dict):
+        return envelope["data"], proc
+    return envelope, proc
 
 
 def main():
