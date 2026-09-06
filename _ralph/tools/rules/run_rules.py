@@ -74,7 +74,16 @@ def main():
     ap.add_argument("--pin-ug-seed", type=int, default=0,
                     help="pin the reserved underground seed (gate 1's pair); 0 leaves the "
                          "production AsyncRand reservation in place")
+    ap.add_argument("--pin-game-seed", default="",
+                    help="pin vanilla's per-game seed by passing this text as Game.seed_text to "
+                         "NewGame (gate 1's pair; vanilla's own new-game seed field). Empty leaves "
+                         "the random seed text in place. Letters, digits, _ and - only.")
     args = ap.parse_args()
+
+    if args.pin_game_seed and not all(c.isalnum() or c in "_-" for c in args.pin_game_seed):
+        print("[run_rules] --pin-game-seed accepts letters, digits, _ and - only "
+              "(it is substituted into a Lua string literal)")
+        return 4
 
     out = pathlib.Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -84,12 +93,13 @@ def main():
     chunk = (chunk.replace("__LAT__", str(args.lat))
                   .replace("__LON__", str(args.lon))
                   .replace("__SITE__", args.site)
-                  .replace("__UG_SEED__", str(args.pin_ug_seed)))
+                  .replace("__UG_SEED__", str(args.pin_ug_seed))
+                  .replace("__GAME_SEED_TEXT__", args.pin_game_seed))
     inst = TMP / ".tmp_rules_probe_instance.lua"
     inst.write_text(chunk, encoding="utf-8")
 
     print(f"[run_rules] site={args.site} lat={args.lat} lon={args.lon} "
-          f"pin_ug_seed={args.pin_ug_seed}")
+          f"pin_ug_seed={args.pin_ug_seed} pin_game_seed={args.pin_game_seed or '(none)'}")
     print("[run_rules] starting hidden daemon")
     proc = cli("daemon", "start", "--hidden", "--timeout", "300", timeout=420)
     print(proc.stdout.strip() or proc.stderr.strip())
@@ -119,6 +129,7 @@ def main():
         time.sleep(10)
 
     result = {"site": args.site, "lat": args.lat, "lon": args.lon, "status": status,
+              "pin_ug_seed": args.pin_ug_seed, "pin_game_seed": args.pin_game_seed,
               "elapsed_s": round(time.time() - started, 1)}
     payload, raw = state_json("RULES", timeout=180)
     result["rules"] = payload.get("value", payload) if payload else {"raw": raw.stdout[-4000:]}

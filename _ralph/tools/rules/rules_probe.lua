@@ -72,8 +72,21 @@ CreateRealTimeThread(function()
 
 		------------------------------------------------------------------ bootstrap
 		RULES_STATUS = "bootstrap"
+		-- Seed-parity pair (gate 1, underground half): vanilla's own `GameSeed` is drawn per game
+		-- (`NewGame` gives an empty `seed_text` a `random_encode64(48)` value, CommonLua/Game.lua:23,
+		-- and `InitGameSeed` hashes it, CommonLua/Random.lua:22-30), and the deferred wonder
+		-- anomaly's spawn start comes from `table.shuffle` on that stream
+		-- (`BottomlessPitBase:GetSpawnStartPos`).  Rule 1 forbids seeding a vanilla draw, so the pair
+		-- pins the game seed the way the new-game UI does: a fixed `seed_text` passed to `NewGame`,
+		-- which `GameClass:new` stores BEFORE `Msg("NewGame")` initialises the `GameSeed` GameVar.
+		-- Empty means "do not pin" and leaves vanilla's random seed text in place.
+		local pin_game_seed_text = "__GAME_SEED_TEXT__"
 		DoneGame()
-		NewGame()
+		if pin_game_seed_text ~= "" then
+			NewGame({ seed_text = pin_game_seed_text })
+		else
+			NewGame()
+		end
 		InitNewGameMissionParams()
 		LoadLastNewGameSettings("regular", { RoughTerrain = true })
 		ChangeMap("PreGame")
@@ -150,6 +163,15 @@ CreateRealTimeThread(function()
 		R.surface_seed = tostring(surface_seed)
 		R.pin_ug_seed = tostring(pin_ug_seed)
 		R.pin_ug_result = pin_ug_result
+		-- The game-seed pin's own proof: the text asked for, the text the game kept, and the two
+		-- GameVars derived from it. `GameSeed` must equal `xxhash(seed_text)` for a pinned run and
+		-- must be identical across the pinned pair.
+		R.pin_game_seed_text = pin_game_seed_text ~= "" and pin_game_seed_text or "not_requested"
+		R.game_seed_text = tostring(rawget(_G, "Game") and Game.seed_text)
+		R.game_seed = tostring(rawget(_G, "GameSeed"))
+		R.interaction_seed = tostring(rawget(_G, "InteractionSeed"))
+		R.game_seed_matches_pin = tostring(pin_game_seed_text == ""
+			or (rawget(_G, "Game") and Game.seed_text == pin_game_seed_text) == true)
 		local gen = GetRandomMapGenerator and GetRandomMapGenerator(map)
 		R.generator_seed = tostring(gen and gen.Seed)
 		R.generator_preset = tostring(gen and gen.Id)
@@ -1087,6 +1109,10 @@ CreateRealTimeThread(function()
 			tostring(R.sign_count), tostring(R.terrain_deposits), tostring(R.deposits_visible_in_unexplored),
 			tostring(R.pairs_glued), tostring(R.surface_passages), tostring(R.max_ring_distance))
 		printf("[RULES] %s", RULES_LINE)
+		printf("[RULES] seeds: surface=%s pin_ug=%s(%s) pin_game=%s kept=%s game_seed=%s matches=%s",
+			tostring(R.surface_seed), tostring(R.pin_ug_seed), tostring(R.pin_ug_result),
+			tostring(R.pin_game_seed_text), tostring(R.game_seed_text), tostring(R.game_seed),
+			tostring(R.game_seed_matches_pin))
 		printf("[RULES] passages: %s", tostring(R.passage_records))
 		for gi = 1, (R.glue_records or 0) do
 			printf("[RULES] glue %d: ring=%s algorithm=%s anchor_reason=%s rejected=%s",
