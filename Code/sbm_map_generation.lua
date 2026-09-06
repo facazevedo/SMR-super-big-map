@@ -7823,6 +7823,13 @@ end
 -- Wrap the global for the duration of the deferred spawn only and record both, so one cold pair
 -- decides between them. All collection is pcall-guarded: a diagnostic failure must never disturb
 -- the spawn or gate 8.
+--
+-- v913 run 1 produced NO trace entries, which the record could not tell apart from "never
+-- installed". v914 therefore (a) writes an install line immediately, so the next run distinguishes
+-- the two, (b) adds a second, independent observer as a class-method patch on the spawned marker
+-- class's GetVisualPosXYZ -- the exact value DepositMarker.lua:67 reads -- because a _G wrap is not
+-- guaranteed to be seen by engine-internal call sites, and (c) digests the buildable grid, whose
+-- determinism no measurement has covered yet (the settle digests passability only).
 function WonderVerticalDiagnostics.InstallWonderSpawnSearchTrace(map)
 	local original = Global("FindUnobstructedDepositPos")
 	if type(original) ~= "function" or type(map) ~= "table" then return false end
@@ -7941,24 +7948,83 @@ function WonderVerticalDiagnostics.InstallWonderSpawnSearchTrace(map)
 		local ok_pre, pre = pcall(prelude, marker)
 		local x, y, obstructed, moved = original(marker, dont_move_if_obstruct)
 		local ok_post, post = pcall(postlude, x, y, obstructed, moved)
-		entries[#entries + 1] = (ok_pre and pre or ("prelude_error=" .. tostring(pre)))
+		entries[#entries + 1] = "observer=global:"
+			.. (ok_pre and pre or ("prelude_error=" .. tostring(pre)))
 			.. ":" .. (ok_post and post or ("postlude_error=" .. tostring(post)))
 		return x, y, obstructed, moved
 	end
 	rawset(_G, "FindUnobstructedDepositPos", wrapper)
 
+	-- Second observer, independent of the _G wrap: the marker class's own GetVisualPosXYZ is the
+	-- value FindUnobstructedDepositPos starts its spiral from. A class-method patch is seen by
+	-- engine-internal call sites that a global wrap can miss.
+	local marker_class = Engine.ClassTable("SubsurfaceSpecialAnomalyMarker")
+	local class_visual = type(marker_class) == "table" and marker_class.GetVisualPosXYZ or nil
+	local class_had_own = type(marker_class) == "table"
+		and rawget(marker_class, "GetVisualPosXYZ") ~= nil
+	local class_wrapper
+	if type(class_visual) == "function" then
+		class_wrapper = function(self, ...)
+			local x, y, z = class_visual(self, ...)
+			if #entries < 24 then
+				local ok_line, line = pcall(function()
+					local px, py = PointXY(Engine.ObjectPos(self))
+					local q, r = hex_of(x, y)
+					return "observer=class_visual:marker_visual=" .. tostring(x) .. "," .. tostring(y)
+						.. ":marker_pos=" .. tostring(px) .. "," .. tostring(py)
+						.. ":visual_equals_pos=" .. tostring(px == x and py == y)
+						.. ":visual_hex=" .. tostring(q) .. "," .. tostring(r)
+						.. ":spawner=" .. tostring(self and self.spawner and self.spawner.class)
+				end)
+				entries[#entries + 1] = ok_line and line
+					or ("observer=class_visual:error=" .. tostring(line))
+			end
+			return x, y, z
+		end
+		rawset(marker_class, "GetVisualPosXYZ", class_wrapper)
+	end
+
+	-- Written immediately so the next run can tell "installed but never called" from "never
+	-- installed", and so the buildable/passability window around the spawner is on record before
+	-- any marker exists.
+	local wonders = WonderVerticalDiagnostics.LiveDeferredUndergroundWonders(map) or {}
+	local spawner_lines = {}
+	for _, wonder in ipairs(wonders) do
+		local wx, wy = PointXY(Engine.ObjectPos(wonder))
+		local wq, wr = hex_of(wx, wy)
+		local vwx, vwy = SafeCall(wonder.GetVisualPosXYZ, wonder)
+		spawner_lines[#spawner_lines + 1] = tostring(wonder.class)
+			.. "@" .. tostring(wx) .. "," .. tostring(wy)
+			.. ":visual=" .. tostring(vwx) .. "," .. tostring(vwy)
+			.. ":hex=" .. tostring(wq) .. "," .. tostring(wr)
+			.. ":window=" .. window_digest(wq, wr)
+	end
+	local install_line = "observer=install:global_wrapped=true"
+		.. ":class_wrapped=" .. tostring(class_wrapper ~= nil)
+		.. ":class_had_own=" .. tostring(class_had_own)
+		.. ":wonders=" .. tostring(#wonders)
+		.. ":spawners=" .. table.concat(spawner_lines, "|")
+	map.SuperBigMapWonderSpawnSearchTrace = install_line
+
 	return {
 		entries = entries,
-		restore = function()
+		restore = function(summary)
 			if Global("FindUnobstructedDepositPos") == wrapper then
 				rawset(_G, "FindUnobstructedDepositPos", original)
 			end
-			local text = table.concat(entries, " || ")
-			local previous = map.SuperBigMapWonderSpawnSearchTrace
-			if type(previous) == "string" and previous ~= "" then
-				text = text ~= "" and (previous .. " || " .. text) or previous
+			if class_wrapper and type(marker_class) == "table"
+				and rawget(marker_class, "GetVisualPosXYZ") == class_wrapper then
+				rawset(marker_class, "GetVisualPosXYZ", class_had_own and class_visual or nil)
 			end
-			map.SuperBigMapWonderSpawnSearchTrace = text
+			local text = install_line .. ":calls=" .. tostring(#entries)
+				.. ":" .. tostring(summary or "")
+			if #entries > 0 then text = text .. " || " .. table.concat(entries, " || ") end
+			local previous = map.SuperBigMapWonderSpawnSearchTraceHistory
+			map.SuperBigMapWonderSpawnSearchTraceHistory =
+				(type(previous) == "string" and previous ~= "") and (previous .. " ## " .. text)
+				or text
+			map.SuperBigMapWonderSpawnSearchTrace =
+				map.SuperBigMapWonderSpawnSearchTraceHistory
 		end,
 	}
 end
@@ -8067,7 +8133,11 @@ function WonderVerticalDiagnostics.AuditDeferredUndergroundWonderAnomalies(
 	end
 
 	if search_trace then
-		SafeCall(search_trace.restore)
+		SafeCall(search_trace.restore, "audit_reason=" .. tostring(reason)
+			.. ":wonders=" .. tostring(#wonders)
+			.. ":spawned=" .. tostring(stats.spawned)
+			.. ":existing=" .. tostring(stats.existing)
+			.. ":linked=" .. tostring(stats.linked_markers))
 		stats.search_trace = #search_trace.entries
 	end
 
