@@ -13228,6 +13228,33 @@ local function PatchDeferredUndergroundHudAccess(source)
 	return true
 end
 
+-- Temporary instrumentation (rules-parity gate 10): every install, reuse and removal of the
+-- first-access gate is recorded with its caller and with whether the write actually reached the
+-- global the engine calls. A bounded in-memory ring on State, so it adds no log volume; a cold
+-- run reads it to attribute a missing wrapper instead of guessing. Remove once gate 10 is green.
+function SuperBigMap.TraceUndergroundAccessGate(action, source, detail)
+	local State = SuperBigMap.State
+	if type(State) ~= "table" then return end
+	local trace = State.underground_access_gate_trace
+	if type(trace) ~= "table" then
+		trace = {}
+		State.underground_access_gate_trace = trace
+	end
+	if #trace >= 48 then return end
+	local ticks = Global("GetPreciseTicks")
+	ticks = type(ticks) == "function" and ticks() or -1
+	local stack = "no stack source"
+	local get_stack = Global("GetStack")
+	if type(get_stack) == "function" then
+		local ok, text = pcall(get_stack, 2, false, 5)
+		if ok and type(text) == "string" then
+			stack = string.sub(string.gsub(string.gsub(text, "\r", ""), "\n%s*", " <- "), 1, 240)
+		end
+	end
+	trace[#trace + 1] = string.format("%s src=%s @%s %s | %s", tostring(action),
+		tostring(source or "?"), tostring(ticks), tostring(detail or ""), stack)
+end
+
 -- FIRST-ACCESS GATE. Every vanilla HUD/object route that changes between already-loaded map
 -- slots funnels through ChangeCurrentMapSlot. Hold that one call before it emits CurrentMapChange
 -- or exposes the target map, run the complete deferred underground pipeline, and switch only on
@@ -13235,7 +13262,10 @@ end
 -- across the eventual switch. The committed entrance footprint is naturally valid before the
 -- native passage-pad preparation runs; final alignment never turns an invalid candidate into one.
 local function PatchDeferredUndergroundAccess(source)
-	if not cfg_bool("EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE", false) then return false end
+	if not cfg_bool("EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE", false) then
+		SuperBigMap.TraceUndergroundAccessGate("skip-config", source)
+		return false
+	end
 	PatchSupplyGridOverlayCopyGuard(source)
 	PatchElevatorSupplyTransactionBoundary(source)
 	SuperBigMap.ElevatorSupplyRepair.PatchConsumerConnection(source)
@@ -13248,6 +13278,7 @@ local function PatchDeferredUndergroundAccess(source)
 	local State = SuperBigMap.State
 	local current = Global("ChangeCurrentMapSlot")
 	if type(current) ~= "function" then
+		SuperBigMap.TraceUndergroundAccessGate("skip-no-global", source)
 		PatchDeferredUndergroundHudAccess(source)
 		RestoreDeferredUndergroundElevatorAccess()
 		reapply_removed_diagnostics()
@@ -13255,11 +13286,17 @@ local function PatchDeferredUndergroundAccess(source)
 	end
 	if current == State.change_current_map_slot_wrapper
 		and State.underground_access_patch_version == GENERATOR_PATCH_VERSION then
+		SuperBigMap.TraceUndergroundAccessGate("reuse", source)
 		PatchDeferredUndergroundHudAccess(source)
 		PatchDeferredUndergroundElevatorAccess(source)
 		reapply_removed_diagnostics()
 		return true
 	end
+	SuperBigMap.TraceUndergroundAccessGate("install-begin", source, string.format(
+		"had_wrapper=%s global_is_wrapper=%s version=%s",
+		tostring(State.change_current_map_slot_wrapper ~= nil),
+		tostring(current == State.change_current_map_slot_wrapper),
+		tostring(State.underground_access_patch_version)))
 	-- Hot-reload upgrade: unwrap our previous closure before capturing the vanilla original.
 	if current == State.change_current_map_slot_wrapper
 		and type(State.original_change_current_map_slot) == "function" then
@@ -13450,6 +13487,8 @@ local function PatchDeferredUndergroundAccess(source)
 	rawset(_G, "ChangeCurrentMapSlot", wrapper)
 	State.change_current_map_slot_wrapper = wrapper
 	State.underground_access_patch_version = GENERATOR_PATCH_VERSION
+	SuperBigMap.TraceUndergroundAccessGate("install-done", source, string.format(
+		"global_is_wrapper=%s", tostring(Global("ChangeCurrentMapSlot") == wrapper)))
 	PatchDeferredUndergroundHudAccess(source)
 	PatchDeferredUndergroundElevatorAccess(source)
 	reapply_removed_diagnostics()
@@ -13719,6 +13758,14 @@ function MapGeneration.RestoreVanillaBehavior()
 	State.original_elevator_link_through_passage = nil
 	State.persistent_passage_marker_wrapper = nil
 	State.persistent_passage_marker_patch_version = nil
+	if State.change_current_map_slot_wrapper ~= nil
+		or State.underground_access_patch_version ~= nil then
+		SuperBigMap.TraceUndergroundAccessGate("restore", "MapGeneration.RestoreVanillaBehavior", string.format(
+			"had_wrapper=%s global_is_wrapper=%s version=%s",
+			tostring(State.change_current_map_slot_wrapper ~= nil),
+			tostring(Global("ChangeCurrentMapSlot") == State.change_current_map_slot_wrapper),
+			tostring(State.underground_access_patch_version)))
+	end
 	if State.change_current_map_slot_wrapper
 		and Global("ChangeCurrentMapSlot") == State.change_current_map_slot_wrapper
 		and type(State.original_change_current_map_slot) == "function" then

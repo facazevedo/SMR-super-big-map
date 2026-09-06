@@ -144,13 +144,49 @@ CreateRealTimeThread(function()
 
 		-- rawget: the debug build reports reading an undefined global in a mod env as a LUA ERROR,
 		-- and every foreign mod env would raise one here, polluting the no-errors gate's log scan.
-		local SBM
+		local SBM, SBM_env
 		for i = 1, #(ModsLoaded or {}) do
 			local env = ModsLoaded[i] and ModsLoaded[i].env
 			local candidate = type(env) == "table" and rawget(env, "SuperBigMap")
-			if type(candidate) == "table" then SBM = candidate end
+			if type(candidate) == "table" then SBM, SBM_env = candidate, env end
 		end
 		R.mod_found = SBM and true or false
+
+		------------------------------------------------- gate 10: first-access gate at T1
+		-- Timestamp the gate's installation state BEFORE any probe action, so a missing wrapper
+		-- at first access can be told apart from one that was never installed, one that was
+		-- installed and later removed, and one whose rawset landed in the mod env instead of the
+		-- global table the engine calls.
+		local sbm_state_t1 = SBM and rawget(SBM, "State")
+		local wrapper_t1 = type(sbm_state_t1) == "table"
+			and rawget(sbm_state_t1, "change_current_map_slot_wrapper") or nil
+		local global_ccms = rawget(_G, "ChangeCurrentMapSlot")
+		R.gate_wrapper_type = tostring(type(wrapper_t1))
+		R.gate_installed = tostring(wrapper_t1 ~= nil and global_ccms == wrapper_t1)
+		R.gate_patch_version = tostring(type(sbm_state_t1) == "table"
+			and rawget(sbm_state_t1, "underground_access_patch_version"))
+		-- If the mod's rawset(_G, ...) wrote into its own environment, the key exists there and the
+		-- engine's global still holds vanilla's function.
+		R.gate_env_own_ccms = tostring(type(SBM_env) == "table"
+			and rawget(SBM_env, "ChangeCurrentMapSlot") ~= nil)
+		R.gate_env_ccms_is_wrapper = tostring(type(SBM_env) == "table" and wrapper_t1 ~= nil
+			and rawget(SBM_env, "ChangeCurrentMapSlot") == wrapper_t1)
+		-- Indexed, not rawget: the env's own `_G` key may be absent and resolve through its
+		-- metatable. pcall because a mod env may install a strict-global __index.
+		local ok_env_g, env_g = pcall(function()
+			return type(SBM_env) == "table" and SBM_env._G or nil
+		end)
+		R.gate_env_g_is_real = tostring(ok_env_g and env_g == _G)
+		local lifecycle = SBM and rawget(SBM, "Lifecycle")
+		R.gate_lifecycle_active = tostring(type(lifecycle) == "table"
+			and type(lifecycle.IsActive) == "function" and lifecycle.IsActive())
+		local sbm_cfg = SBM and rawget(SBM, "Config") or {}
+		R.gate_cfg_step01 = tostring(sbm_cfg.EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE)
+		R.gate_cfg_step02 = tostring(sbm_cfg.EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE)
+		local gate_trace = type(sbm_state_t1) == "table"
+			and rawget(sbm_state_t1, "underground_access_gate_trace") or nil
+		R.gate_trace_count = type(gate_trace) == "table" and #gate_trace or -1
+		R.gate_trace = type(gate_trace) == "table" and table.concat(gate_trace, " || ") or "absent"
 
 		------------------------------------------------------------------ gate 1: enrichment digest
 		local enrich, ring_enrich = {}, 0
@@ -688,6 +724,17 @@ CreateRealTimeThread(function()
 			R.ug_switch_is_mod_gate = tostring(type(sbm_state) == "table"
 				and change == rawget(sbm_state, "change_current_map_slot_wrapper"))
 			R.ug_switch_pre_state = ug_state_snapshot()
+			-- The same facts as at T1, now at the moment of the switch: a wrapper that
+			-- disappeared between the two timestamps has a removal entry in the trace.
+			R.ug_gate_wrapper_type = tostring(type(sbm_state) == "table"
+				and type(rawget(sbm_state, "change_current_map_slot_wrapper")) or "no-state")
+			R.ug_gate_patch_version = tostring(type(sbm_state) == "table"
+				and rawget(sbm_state, "underground_access_patch_version"))
+			local switch_trace = type(sbm_state) == "table"
+				and rawget(sbm_state, "underground_access_gate_trace") or nil
+			R.ug_gate_trace_count = type(switch_trace) == "table" and #switch_trace or -1
+			R.ug_gate_trace = type(switch_trace) == "table"
+				and table.concat(switch_trace, " || ") or "absent"
 			local switch_t0 = GetPreciseTicks()
 			local sw_ok, sw_err = pcall(change, ug.slot, true)
 			R.ug_switch_ok = tostring(sw_ok)
