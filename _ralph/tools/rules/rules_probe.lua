@@ -587,23 +587,79 @@ CreateRealTimeThread(function()
 				end
 				return "no stack source"
 			end
+			-- The switch window: every vanilla screen opened between the map-switch call and the
+			-- prepared underground belongs to first access; anything outside it (an account save,
+			-- say) is recorded with its stack but is not a display first access raised.
+			local switch_win_t0, switch_win_t1 = nil, nil
 			local opens, open_details = {}, {}
+			local window_opens, outside_opens = {}, {}
 			local original_open = rawget(_G, "LoadingScreenOpen")
 			if type(original_open) == "function" then
 				rawset(_G, "LoadingScreenOpen", function(id, reason, ...)
-					opens[#opens + 1] = tostring(id) .. "/" .. tostring(reason)
-					open_details[#open_details + 1] = string.format("%s/%s @%dms %s %s",
-						tostring(id), tostring(reason), GetPreciseTicks() - phase_t0,
+					local label = tostring(id) .. "/" .. tostring(reason)
+					local in_window = switch_win_t0 ~= nil and switch_win_t1 == nil
+					opens[#opens + 1] = label
+					if in_window then
+						window_opens[#window_opens + 1] = label
+					else
+						outside_opens[#outside_opens + 1] = label
+					end
+					open_details[#open_details + 1] = string.format("%s @%dms window=%s %s %s",
+						label, GetPreciseTicks() - phase_t0, in_window and "in" or "out",
 						ug_state_snapshot(), short_stack())
 					return original_open(id, reason, ...)
 				end)
 			end
-			local covers = 0
+			-- The mod reference-counts its expansion cover (sbm_loading_ui.lua:934-1029): Begin raises
+			-- the count and only the 0->1 transition creates a box, End releases one reference and only
+			-- the final release tears it down. Shadow that arithmetic so the number of DISPLAYS is
+			-- measured instead of inferred from the number of Begin calls, and sample the mod's own
+			-- ExpansionLoadingVisible around each call as independent corroboration.
+			local covers, cover_ends, cover_refs, cover_displays = 0, 0, 0, 0
+			local cover_events = {}
+			local function cover_visible()
+				local vis = SBM and rawget(SBM, "ExpansionLoadingVisible")
+				if type(vis) ~= "function" then return "?" end
+				local ok_v, v = pcall(vis)
+				return ok_v and tostring(v) or "?"
+			end
 			local original_cover = SBM and rawget(SBM, "ExpansionLoadingBegin")
 			if SBM and type(original_cover) == "function" then
-				SBM.ExpansionLoadingBegin = function(...)
+				SBM.ExpansionLoadingBegin = function(presentation, ...)
 					covers = covers + 1
-					return original_cover(...)
+					local before = cover_refs
+					cover_refs = before + 1
+					local created = before == 0
+					if created then cover_displays = cover_displays + 1 end
+					local vis_before = cover_visible()
+					local r = original_cover(presentation, ...)
+					cover_events[#cover_events + 1] = string.format(
+						"BEGIN(%s) refs %d->%d @%dms display=%s vis %s->%s %s",
+						tostring(presentation), before, cover_refs,
+						GetPreciseTicks() - phase_t0, tostring(created),
+						vis_before, cover_visible(), short_stack())
+					return r
+				end
+			end
+			local original_cover_end = SBM and rawget(SBM, "ExpansionLoadingEnd")
+			if SBM and type(original_cover_end) == "function" then
+				SBM.ExpansionLoadingEnd = function(force_all, ...)
+					cover_ends = cover_ends + 1
+					local before = cover_refs
+					if force_all ~= true and cover_refs > 1 then
+						cover_refs = cover_refs - 1
+					else
+						cover_refs = 0
+					end
+					local closed = cover_refs == 0
+					local vis_before = cover_visible()
+					local r = original_cover_end(force_all, ...)
+					cover_events[#cover_events + 1] = string.format(
+						"END(force=%s) refs %d->%d @%dms closed=%s vis %s->%s %s",
+						tostring(force_all), before, cover_refs,
+						GetPreciseTicks() - phase_t0, tostring(closed),
+						vis_before, cover_visible(), short_stack())
+					return r
 				end
 			end
 			-- Assigned once the construction controller exists; every early return restores the
@@ -617,11 +673,25 @@ CreateRealTimeThread(function()
 				if SBM and type(original_cover) == "function" then
 					SBM.ExpansionLoadingBegin = original_cover
 				end
+				if SBM and type(original_cover_end) == "function" then
+					SBM.ExpansionLoadingEnd = original_cover_end
+				end
 				R.ug_loading_screen_opens = #opens
 				R.ug_loading_screen_ids = table.concat(opens, " ")
 				R.ug_loading_screen_detail = table.concat(open_details, " || ")
 				R.ug_expansion_covers = covers
-				R.ug_loading_displays = #opens + covers
+				R.ug_expansion_cover_ends = cover_ends
+				R.ug_cover_displays = cover_displays
+				R.ug_cover_refs_final = cover_refs
+				R.ug_cover_events = table.concat(cover_events, " || ")
+				R.ug_switch_window_opens = #window_opens
+				R.ug_switch_window_open_ids = table.concat(window_opens, " ")
+				R.ug_outside_window_opens = #outside_opens
+				R.ug_outside_window_open_ids = table.concat(outside_opens, " ")
+				-- Gate 10 counts what first access actually put on screen: the reference-counted cover
+				-- boxes plus any vanilla loading screen inside the switch window.
+				R.ug_loading_displays = cover_displays + #window_opens
+				R.ug_loading_displays_raw = #opens + covers
 			end
 
 			------------------------------------------------------------ place the Elevator
@@ -794,6 +864,7 @@ CreateRealTimeThread(function()
 			R.ug_gate_trace = type(switch_trace) == "table"
 				and table.concat(switch_trace, " || ") or "absent"
 			local switch_t0 = GetPreciseTicks()
+			switch_win_t0 = switch_t0
 			-- Same argument list as the HUD's OnPress (sbm_map_generation.lua:13214).
 			local sw_ok, sw_err = pcall(change, ug.slot, true, "idChangeCurrentMapSlot")
 			R.ug_switch_ok = tostring(sw_ok)
@@ -803,7 +874,8 @@ CreateRealTimeThread(function()
 				if CurrentMap == ug and ug.SuperBigMapUndergroundStretchDone == true then break end
 				Sleep(200)
 			end
-			R.ug_switch_ms = GetPreciseTicks() - switch_t0
+			switch_win_t1 = GetPreciseTicks()
+			R.ug_switch_ms = switch_win_t1 - switch_t0
 			R.ug_current_is_underground = tostring(CurrentMap == ug)
 			R.ug_stretch_done = tostring(ug.SuperBigMapUndergroundStretchDone)
 			R.ug_prepared_after = tostring(ug.SuperBigMapUndergroundPrepared)
@@ -950,7 +1022,13 @@ CreateRealTimeThread(function()
 			tostring(R.gate_vanilla_env_ccms_is_wrapper),
 			tostring(R.gate_vanilla_env_ccms_is_original),
 			tostring(R.gate_caller_env_ccms_is_wrapper))
-		printf("[RULES] first access displays: %s", tostring(R.ug_loading_screen_detail))
+		printf("[RULES] first access displays: cover_boxes=%s begins=%s ends=%s refs_final=%s in_window=%s (%s) outside=%s (%s)",
+			tostring(R.ug_cover_displays), tostring(R.ug_expansion_covers),
+			tostring(R.ug_expansion_cover_ends), tostring(R.ug_cover_refs_final),
+			tostring(R.ug_switch_window_opens), tostring(R.ug_switch_window_open_ids),
+			tostring(R.ug_outside_window_opens), tostring(R.ug_outside_window_open_ids))
+		printf("[RULES] first access cover events: %s", tostring(R.ug_cover_events))
+		printf("[RULES] first access screens: %s", tostring(R.ug_loading_screen_detail))
 		printf("[RULES] underground after access: passages: %s", tostring(R.ug_post_passage_records))
 		printf("[RULES] underground after access: enrich=%s/%s imprints=%s (%s) revealed=%s/%s",
 			tostring(R.ug_enrichment_digest), tostring(R.ug_enrichment_count),
