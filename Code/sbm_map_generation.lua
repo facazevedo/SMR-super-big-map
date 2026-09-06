@@ -7811,6 +7811,158 @@ function WonderVerticalDiagnostics.LinkedWonderAnomalies(map)
 	return linked
 end
 
+-- TEMPORARY DIAGNOSTIC for gate 1's underground half; remove before DONE.md.
+-- MEASURED: four cold runs on one pinned underground seed produced four different arrival hexes
+-- for BottomlessPit's rare anomaly (180,330 / 221,321 / 173,353 / 208,318 around spawner 212,325)
+-- while the pre-spawn passability digest was byte-identical in the pinned pair and every seeded
+-- placement phase drew identically. Vanilla's search is deterministic and RNG-free
+-- (SpawnsOnCityInit:Spawn -> FindUnobstructedDepositPos -> FindBuildableAround), so the differing
+-- input must be either the search's START POSITION -- DepositMarker.lua:67 reads
+-- marker:GetVisualPosXYZ(), the render-interpolated value, not the logical position Spawn set one
+-- line earlier -- or the object/buildable grids the spiral reads, which no digest has covered yet.
+-- Wrap the global for the duration of the deferred spawn only and record both, so one cold pair
+-- decides between them. All collection is pcall-guarded: a diagnostic failure must never disturb
+-- the spawn or gate 8.
+function WonderVerticalDiagnostics.InstallWonderSpawnSearchTrace(map)
+	local original = Global("FindUnobstructedDepositPos")
+	if type(original) ~= "function" or type(map) ~= "table" then return false end
+	local world_to_hex = Global("WorldToHex")
+	local hex_to_world = Global("HexToWorld")
+	local point_ctor = Global("point")
+	local terrain_api = Global("terrain")
+	local is_passable = type(terrain_api) == "table" and terrain_api.IsPassable or nil
+	local is_deposit_obstructed = Global("IsDepositObstructed")
+	local const_tbl = Global("const")
+	local hex_size = type(const_tbl) == "table" and tonumber(const_tbl.HexSize) or 0
+	local buildable = map.buildable
+	local get_z = buildable and buildable.GetZ or nil
+	local object_hex_grid = map.object_hex_grid
+	local build_unbuildable = Global("buildUnbuildableZ")
+	local sentinel_ok, sentinel = false, nil
+	if type(build_unbuildable) == "function" then
+		sentinel_ok, sentinel = pcall(build_unbuildable)
+	end
+	if not sentinel_ok then sentinel = nil end
+	local entries = {}
+
+	local function hex_of(x, y)
+		if type(world_to_hex) ~= "function" or type(point_ctor) ~= "function"
+			or type(x) ~= "number" or type(y) ~= "number" then return nil, nil end
+		local ok_h, q, r = pcall(world_to_hex, point_ctor(x, y))
+		if not ok_h or type(q) ~= "number" then return nil, nil end
+		return q, r
+	end
+
+	-- Fingerprint of the two grids the spiral actually reads, sampled over the window it can walk
+	-- (the widest observed arrival was 39 hexes out). A stable digest with a moving arrival hex
+	-- rules the grids out; a moving digest names them.
+	local function window_digest(q0, r0)
+		if type(q0) ~= "number" or type(r0) ~= "number" or type(get_z) ~= "function"
+			or type(hex_to_world) ~= "function" then return "unavailable" end
+		local build_hash, pass_hash, samples = 5381, 5381, 0
+		for dq = -56, 56, 4 do
+			for dr = -56, 56, 4 do
+				local q, r = q0 + dq, r0 + dr
+				local ok_z, z = pcall(get_z, buildable, q, r)
+				local zv = (ok_z and type(z) == "number") and z or -1
+				build_hash = (build_hash * 33 + zv) % 1000000007
+				local pv = 0
+				local ok_w, wx, wy = pcall(hex_to_world, q, r)
+				if ok_w and type(wx) == "number" and type(is_passable) == "function" then
+					local ok_p, p = pcall(is_passable, map, wx, wy)
+					pv = (ok_p and p) and 1 or 0
+				end
+				pass_hash = (pass_hash * 33 + pv) % 1000000007
+				samples = samples + 1
+			end
+		end
+		return tostring(build_hash) .. "/" .. tostring(pass_hash) .. "/" .. tostring(samples)
+	end
+
+	local function prelude(marker)
+		local spawner = marker and marker.spawner or nil
+		local mx, my = PointXY(Engine.ObjectPos(marker))
+		local vx, vy = SafeCall(marker.GetVisualPosXYZ, marker)
+		local sx, sy, svx, svy
+		if spawner then
+			sx, sy = PointXY(Engine.ObjectPos(spawner))
+			svx, svy = SafeCall(spawner.GetVisualPosXYZ, spawner)
+		end
+		local radius = SafeCall(marker.GetObstructionRadius, marker)
+		local passable, start_obstructed, start_blocked, start_z
+		if type(vx) == "number" and type(vy) == "number" then
+			if type(is_passable) == "function" then
+				local ok_p, p = pcall(is_passable, map, vx, vy)
+				passable = ok_p and p == true
+			end
+			if type(is_deposit_obstructed) == "function" and object_hex_grid then
+				local ok_o, o = pcall(is_deposit_obstructed, object_hex_grid, vx, vy, radius)
+				start_obstructed = ok_o and o == true
+			end
+			if type(marker.MapHasAny) == "function" and type(point_ctor) == "function" then
+				local block_range = IsKindOfSafe(marker, "SurfaceDepositMarker") and 1 or 2
+				local ok_b, b = pcall(marker.MapHasAny, marker, point_ctor(vx, vy),
+					hex_size * block_range, "Deposit", "SurfaceUndergroundTunnelMarker")
+				start_blocked = ok_b and b == true
+			end
+		end
+		local sq, sr = hex_of(vx, vy)
+		if type(sq) == "number" and type(get_z) == "function" then
+			local ok_z, z = pcall(get_z, buildable, sq, sr)
+			start_z = ok_z and z or nil
+		end
+		return "class=" .. tostring(marker and marker.class)
+			.. ":spawner=" .. tostring(spawner and spawner.class)
+			.. ":marker_pos=" .. tostring(mx) .. "," .. tostring(my)
+			.. ":marker_visual=" .. tostring(vx) .. "," .. tostring(vy)
+			.. ":visual_equals_pos=" .. tostring(mx == vx and my == vy)
+			.. ":spawner_pos=" .. tostring(sx) .. "," .. tostring(sy)
+			.. ":spawner_visual=" .. tostring(svx) .. "," .. tostring(svy)
+			.. ":start_hex=" .. tostring(sq) .. "," .. tostring(sr)
+			.. ":start_passable=" .. tostring(passable)
+			.. ":start_deposit_obstructed=" .. tostring(start_obstructed)
+			.. ":start_blocked_by_deposit=" .. tostring(start_blocked)
+			.. ":start_buildable_z=" .. tostring(start_z)
+			.. ":unbuildable_z=" .. tostring(sentinel)
+			.. ":obstruction_radius=" .. tostring(radius)
+			.. ":window=" .. window_digest(sq, sr)
+	end
+
+	local function postlude(x, y, obstructed, moved)
+		local rq, rr = hex_of(x, y)
+		return "result=" .. tostring(x) .. "," .. tostring(y)
+			.. ":result_hex=" .. tostring(rq) .. "," .. tostring(rr)
+			.. ":obstructed=" .. tostring(obstructed)
+			.. ":moved=" .. tostring(moved)
+	end
+
+	local wrapper
+	wrapper = function(marker, dont_move_if_obstruct)
+		local ok_pre, pre = pcall(prelude, marker)
+		local x, y, obstructed, moved = original(marker, dont_move_if_obstruct)
+		local ok_post, post = pcall(postlude, x, y, obstructed, moved)
+		entries[#entries + 1] = (ok_pre and pre or ("prelude_error=" .. tostring(pre)))
+			.. ":" .. (ok_post and post or ("postlude_error=" .. tostring(post)))
+		return x, y, obstructed, moved
+	end
+	rawset(_G, "FindUnobstructedDepositPos", wrapper)
+
+	return {
+		entries = entries,
+		restore = function()
+			if Global("FindUnobstructedDepositPos") == wrapper then
+				rawset(_G, "FindUnobstructedDepositPos", original)
+			end
+			local text = table.concat(entries, " || ")
+			local previous = map.SuperBigMapWonderSpawnSearchTrace
+			if type(previous) == "string" and previous ~= "" then
+				text = text ~= "" and (previous .. " || " .. text) or previous
+			end
+			map.SuperBigMapWonderSpawnSearchTrace = text
+		end,
+	}
+end
+
 function WonderVerticalDiagnostics.AuditDeferredUndergroundWonderAnomalies(
 	map, spawn_missing, reason)
 	local wonders, allowed = WonderVerticalDiagnostics.LiveDeferredUndergroundWonders(map)
@@ -7832,6 +7984,9 @@ function WonderVerticalDiagnostics.AuditDeferredUndergroundWonderAnomalies(
 	end
 
 	local linked = WonderVerticalDiagnostics.LinkedWonderAnomalies(map)
+	-- Temporary: only the spawning call needs the search trace; see InstallWonderSpawnSearchTrace.
+	local search_trace = spawn_missing == true
+		and WonderVerticalDiagnostics.InstallWonderSpawnSearchTrace(map) or nil
 	for _, wonder in ipairs(wonders) do
 		local class_name = tostring(wonder.class or "?")
 		class_counts[class_name] = (class_counts[class_name] or 0) + 1
@@ -7909,6 +8064,11 @@ function WonderVerticalDiagnostics.AuditDeferredUndergroundWonderAnomalies(
 			marker_details[#marker_details + 1] = class_name .. "@"
 				.. tostring(x) .. "," .. tostring(y)
 		end
+	end
+
+	if search_trace then
+		SafeCall(search_trace.restore)
+		stats.search_trace = #search_trace.entries
 	end
 
 	local classes = {}

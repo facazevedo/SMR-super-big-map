@@ -987,6 +987,12 @@ CreateRealTimeThread(function()
 					.. ",ms=" .. tostring(settle.rebuild_ms)
 					.. ",count=" .. tostring(settle.rebuild_count))
 				or "absent"
+				-- v913 (temporary): the deferred spawn's own search boundary — the marker's logical
+				-- vs visual start position, the start-hex predicates, a fingerprint of the buildable
+				-- and passability grids over the window the spiral can walk, and the returned hex.
+				local search_trace = rawget(ug, "SuperBigMapWonderSpawnSearchTrace")
+				R.ug_wonder_spawn_trace = (type(search_trace) == "string" and search_trace ~= "")
+					and search_trace or "absent"
 
 			-- Underground reveal state, and the sector grid the passage records are labelled with.
 			local ug_sectors, ug_revealed, ug_sector_count = {}, {}, 0
