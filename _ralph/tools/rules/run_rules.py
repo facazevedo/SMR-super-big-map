@@ -22,9 +22,25 @@ CLI = ["python", r"D:\PROJS\SMR\smr-harness\cli.py"]
 PROBE = pathlib.Path(__file__).resolve().parent / "rules_probe.lua"
 
 
+class _TimedOut:
+    """Stand-in for a CompletedProcess when the harness call itself timed out.
+
+    The probe's non-yielding blocks (surface post-pipeline, underground expansion) can hold the
+    debugger for minutes, so a `state` poll can exceed its timeout. Raising out of the poll loop
+    would abandon a running tracked game; treat it as one failed poll instead.
+    """
+
+    returncode = 1
+    stdout = ""
+    stderr = "harness call timed out"
+
+
 def cli(*args, timeout=600):
-    proc = subprocess.run(CLI + list(args), capture_output=True, text=True, timeout=timeout)
-    return proc
+    try:
+        return subprocess.run(CLI + list(args), capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        print(f"[run_rules] harness call timed out after {timeout}s: {' '.join(args)}")
+        return _TimedOut()
 
 
 def state_json(query, timeout=120):
@@ -52,7 +68,8 @@ def main():
     ap.add_argument("--lat", type=int, default=-14 * 60)
     ap.add_argument("--lon", type=int, default=-134 * 60)
     ap.add_argument("--site", default="14N134W")
-    ap.add_argument("--wait", type=int, default=1200, help="seconds to wait for the probe")
+    ap.add_argument("--wait", type=int, default=2400,
+                    help="seconds to wait for the probe (surface T1 plus underground first access)")
     ap.add_argument("--keep-alive", action="store_true", help="do not quit the game at the end")
     args = ap.parse_args()
 
