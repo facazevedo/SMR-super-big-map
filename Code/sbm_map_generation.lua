@@ -11963,6 +11963,32 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 						.. tostring(pre_anomaly_reseat_stats
 							and pre_anomaly_reseat_stats.error or "unknown error"))
 				end
+				-- MEASURED (v2 iteration 001, pinned-seed pair): between the "before reachability and
+				-- density" rebuild and this point the pipeline runs several object-grid transactions
+				-- (passage-pair alignment, deferred tunnel-marker activation, indicator restoration,
+				-- the reseat above). Each ResumePassEdits re-derives passability only over the region
+				-- it touched, and nothing rebuilds the buildable grid afterwards. Vanilla's
+				-- SpawnsAnomalyOnCityInit:Spawn -> FindUnobstructedDepositPos -> FindBuildableAround
+				-- is a deterministic spiral over object_hex_grid and map.buildable with no RNG, yet
+				-- with the same pinned underground seed BottomlessPit arrived 32 hexes from its
+				-- spawner on the unbuildable sentinel in one run and 9 hexes out on buildable ground
+				-- in the other: the same search read different grids. Settle both grids here so the
+				-- spawn's only inputs are the seed and the final terrain. RebuildFinal is idempotent
+				-- and whole-map; the closing call after the last object-grid transaction stays.
+				SetLoadingPhase("Settling underground grids before the wonder anomaly spawn")
+				RebuildFinalUndergroundGameplayGrids("before deferred wonder anomaly spawn")
+				-- Durable record of what the settle found pending, alongside the reachability report:
+				-- a changed passability digest here means the grids the spawn would otherwise have
+				-- read were stale.
+				map.SuperBigMapWonderSpawnGridSettle = {
+					stage = tostring(map.SuperBigMapFinalPassStage),
+					branch = tostring(map.SuperBigMapFinalPassBranch),
+					hash_before = tostring(map.SuperBigMapFinalPassHashBefore),
+					hash_after = tostring(map.SuperBigMapFinalPassHashAfter),
+					dirty = map.SuperBigMapFinalPassHashBefore ~= map.SuperBigMapFinalPassHashAfter,
+					rebuild_ms = tonumber(map.SuperBigMapFinalPassMs) or -1,
+					rebuild_count = tonumber(map.SuperBigMapFinalPassCount) or -1,
+				}
 				SetLoadingPhase("Activating underground wonder anomalies")
 				local wonder_anomaly_token = LoadingBegin(
 					"underground activate buried wonder anomalies", map)

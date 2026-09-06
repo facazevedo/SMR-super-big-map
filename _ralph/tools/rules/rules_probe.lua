@@ -974,6 +974,19 @@ CreateRealTimeThread(function()
 			R.ug_wonder_calls = #wonder_lines
 			R.ug_wonder_report = #wonder_lines > 0
 				and table.concat(wonder_lines, " || ") or "absent"
+			-- v912: the pipeline settles the underground grids immediately before the deferred
+			-- wonder-anomaly spawn. `dirty=true` means the passability digest moved there, i.e. the
+			-- spawn would otherwise have searched a stale grid.
+			local settle = rawget(ug, "SuperBigMapWonderSpawnGridSettle")
+			R.ug_wonder_grid_settle = type(settle) == "table"
+				and ("stage=" .. tostring(settle.stage)
+					.. ",branch=" .. tostring(settle.branch)
+					.. ",dirty=" .. tostring(settle.dirty)
+					.. ",before=" .. tostring(settle.hash_before)
+					.. ",after=" .. tostring(settle.hash_after)
+					.. ",ms=" .. tostring(settle.rebuild_ms)
+					.. ",count=" .. tostring(settle.rebuild_count))
+				or "absent"
 
 			-- Underground reveal state, and the sector grid the passage records are labelled with.
 			local ug_sectors, ug_revealed, ug_sector_count = {}, {}, 0
