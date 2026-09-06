@@ -27,9 +27,27 @@ CreateRealTimeThread(function()
 			return h, #list
 		end
 
-		local function hexof(map, x, y)
+		local function hexqr(x, y)
 			local q, r = WorldToHex(point(x, y))
+			return q, r
+		end
+
+		local function hexof(map, x, y)
+			local q, r = hexqr(x, y)
 			return tostring(q) .. "," .. tostring(r)
+		end
+
+		-- Cube distance between two axial hexes: the number of rings an outward hex-ring walk needs
+		-- to reach one from the other, i.e. the contract's "ring distance" for gate 2.
+		local function hexdist(q1, r1, q2, r2)
+			if type(q1) ~= "number" or type(r1) ~= "number"
+				or type(q2) ~= "number" or type(r2) ~= "number" then
+				return -1
+			end
+			local dq, dr = q1 - q2, r1 - r2
+			local a, b, c = dq < 0 and -dq or dq, dr < 0 and -dr or dr, dq + dr
+			if c < 0 then c = -c end
+			return math.max(a, math.max(b, c))
 		end
 
 		local function posxy(o)
@@ -207,25 +225,87 @@ CreateRealTimeThread(function()
 		end
 
 		------------------------------------------------------------------ gates 2/3: entrances
+		-- The stretch ratio the map was built with, so the probe can compute the stretched image of an
+		-- underground position itself instead of trusting a stamped field. Integer division would
+		-- collapse 8192/6144 to 1 in this engine's Lua, hence the + 0.0 promotion.
+		local function tiles_ratio(desired_field, source_field)
+			local desired = tonumber(map[desired_field])
+			local source = tonumber(map[source_field])
+			if desired and source and source > 0 and desired > source then
+				return (desired + 0.0) / source
+			end
+			return nil
+		end
+		local ratio = tiles_ratio("SuperBigMapDesiredWidthTiles", "SuperBigMapGeneratorWidthTiles")
+			or tiles_ratio("SuperBigMapDesiredWidthTiles", "SuperBigMapSourceWidthTiles")
+		R.stretch_ratio_source = ratio and "surface tile metadata" or "fallback 4/3"
+		ratio = ratio or (4.0 / 3.0)
+		R.stretch_ratio = tostring(ratio)
+
+		local function stamped(o, field)
+			local v = rawget(o, "SuperBigMapPassage" .. field)
+			if v == nil then v = rawget(o, "SuperBigMap" .. field) end
+			return tonumber(v)
+		end
+
 		local pairs_out = {}
-		local n_surface_passages = 0
+		local n_surface_passages, glued_pairs, unglued_pairs = 0, 0, 0
+		local max_ring_distance = 0
 		pcall(map.MapForEach, map, "map", "UndergroundPassage", function(o)
 			n_surface_passages = n_surface_passages + 1
 			local x, y = posxy(o)
+			local q, r = hexqr(x, y)
 			local s = sector_at(x, y)
+
+			-- The live twin on the underground map. Before first access that map still presents its
+			-- authored (un-stretched) content, so this position is the authored SurfacePassageMarker's.
 			local other = rawget(o, "other")
-			local orec = "none"
+			local orec, twin_q, twin_r, img_q, img_r = "none", nil, nil, nil, nil
 			if other and IsValid(other) then
 				local ox, oy = posxy(other)
-				orec = tostring(other.class) .. "@" .. hexof(map, ox, oy) .. " map=" .. tostring(other:GetMap())
+				twin_q, twin_r = hexqr(ox, oy)
+				local ix, iy = math.floor(ox * ratio + 0.5), math.floor(oy * ratio + 0.5)
+				img_q, img_r = hexqr(ix, iy)
+				orec = string.format("%s hex=%s world=%d,%d image_hex=%s,%s",
+					tostring(other.class), tostring(twin_q) .. "," .. tostring(twin_r), ox, oy,
+					tostring(img_q), tostring(img_r))
 			end
-			pairs_out[#pairs_out + 1] = string.format("surf %s hex=%s world=%d,%d sector=%s ring=%s other=%s",
-				tostring(o.class), hexof(map, x, y), x, y,
+
+			-- The mod's own commitment record, for the contract's per-pair table.
+			local rec_src_q = stamped(o, "CommittedPassageSourceQ")
+			local rec_src_r = stamped(o, "CommittedPassageSourceR")
+			local rec_true_q = stamped(o, "TrueUndergroundPassageQ")
+			local rec_true_r = stamped(o, "TrueUndergroundPassageR")
+			local rec_com_q = stamped(o, "CommittedPassageQ")
+			local rec_com_r = stamped(o, "CommittedPassageR")
+			local rec_van_q = stamped(o, "SurfaceSourceQ")
+			local rec_van_r = stamped(o, "SurfaceSourceR")
+
+			-- Gate 2's ring distance: how far the surface endpoint sits from the stretched image of
+			-- its underground twin. Measured against the probe's own image first; the stamped
+			-- TrueUnderground* fields are reported beside it so a disagreement is visible.
+			local ring_distance = hexdist(q, r, img_q, img_r)
+			local stamped_distance = hexdist(q, r, rec_true_q, rec_true_r)
+			if ring_distance == 0 then glued_pairs = glued_pairs + 1
+			else unglued_pairs = unglued_pairs + 1 end
+			if ring_distance > max_ring_distance then max_ring_distance = ring_distance end
+
+			pairs_out[#pairs_out + 1] = string.format(
+				"surf %s hex=%s,%s world=%d,%d sector=%s ring_band=%s ring_distance=%s "
+				.. "stamped_distance=%s vanilla_surface_src=%s,%s underground_src=%s,%s "
+				.. "stamped_image=%s,%s committed=%s,%s twin=[%s]",
+				tostring(o.class), tostring(q), tostring(r), x, y,
 				s and (s.id .. "(" .. s.col .. "," .. s.row .. ")") or "?",
-				tostring(in_ring(x, y)), orec)
+				tostring(in_ring(x, y)), tostring(ring_distance), tostring(stamped_distance),
+				tostring(rec_van_q), tostring(rec_van_r), tostring(rec_src_q), tostring(rec_src_r),
+				tostring(rec_true_q), tostring(rec_true_r), tostring(rec_com_q), tostring(rec_com_r),
+				orec)
 		end)
 		R.surface_passages = n_surface_passages
 		R.passage_records = table.concat(pairs_out, " | ")
+		R.pairs_glued = glued_pairs
+		R.pairs_unglued = unglued_pairs
+		R.max_ring_distance = max_ring_distance
 
 		------------------------------------------------------------------ gate 6: signs and deposits
 		local signs = {}
@@ -302,18 +382,38 @@ CreateRealTimeThread(function()
 			local ugen = GetRandomMapGenerator and GetRandomMapGenerator(ug)
 			R.underground_seed = tostring(ugen and ugen.Seed)
 			R.underground_prepared = tostring(ug.SuperBigMapUndergroundPrepared)
+			local ug_recs, ug_n = {}, 0
+			pcall(ug.MapForEach, ug, "map", "SurfacePassage", function(o)
+				ug_n = ug_n + 1
+				local x, y = posxy(o)
+				local q, r = hexqr(x, y)
+				local ix, iy = math.floor(x * ratio + 0.5), math.floor(y * ratio + 0.5)
+				local iq, ir = hexqr(ix, iy)
+				ug_recs[#ug_recs + 1] = string.format(
+					"%s hex=%s,%s world=%d,%d image_hex=%s,%s committed_src=%s,%s true_image=%s,%s linked=%s",
+					tostring(o.class), tostring(q), tostring(r), x, y, tostring(iq), tostring(ir),
+					tostring(stamped(o, "CommittedPassageSourceQ")),
+					tostring(stamped(o, "CommittedPassageSourceR")),
+					tostring(stamped(o, "TrueUndergroundPassageQ")),
+					tostring(stamped(o, "TrueUndergroundPassageR")),
+					tostring(rawget(o, "other") ~= nil))
+			end)
+			R.underground_passages = ug_n
+			R.underground_passage_records = table.concat(ug_recs, " | ")
 		end
 
 		rawset(_G, "RULES", R)
 		RULES_LINE = string.format(
-			"t0t1=%s hex=%sx%s enrich=%s/%s decor=%s/%s ring_decor=%s sectors=%s revealed=%s passages=%s signs=%s deps=%s vis_unexp=%s",
+			"t0t1=%s hex=%sx%s enrich=%s/%s decor=%s/%s ring_decor=%s sectors=%s revealed=%s passages=%s signs=%s deps=%s vis_unexp=%s glued=%s/%s max_ring=%s",
 			tostring(R.t0_to_t1_ms), tostring(R.hex_width), tostring(R.hex_height),
 			tostring(R.enrichment_digest), tostring(R.enrichment_count),
 			tostring(R.decor_digest), tostring(R.decor_alive), tostring(R.decor_ring_objects_measured),
 			tostring(R.sector_count), tostring(R.revealed_count), tostring(R.surface_passages),
-			tostring(R.sign_count), tostring(R.terrain_deposits), tostring(R.deposits_visible_in_unexplored))
+			tostring(R.sign_count), tostring(R.terrain_deposits), tostring(R.deposits_visible_in_unexplored),
+			tostring(R.pairs_glued), tostring(R.surface_passages), tostring(R.max_ring_distance))
 		printf("[RULES] %s", RULES_LINE)
 		printf("[RULES] passages: %s", tostring(R.passage_records))
+		printf("[RULES] underground passages: %s", tostring(R.underground_passage_records))
 		printf("[RULES] signs: %s", tostring(R.sign_records))
 		printf("[RULES] revealed: %s start=%s", tostring(R.revealed_list), tostring(R.start_sector))
 		RULES_STATUS = "complete"
