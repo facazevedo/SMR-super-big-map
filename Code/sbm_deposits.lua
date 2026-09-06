@@ -8910,6 +8910,17 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 		wonder_validation_context[key] = value
 	end
 	wonder_validation_context.wonder_reserved_hexes = {}
+	-- Gate 1's underground half: with the reserved underground seed pinned, two cold runs still
+	-- produced different marker sets, and the only differing input in the whole placement report was
+	-- one draw here (`wonder_reachability:1` vs `:0`), i.e. one marker's validity VERDICT differed
+	-- from identical underground data. The shared validation context is built once per map and
+	-- memoizes buildability per hex (`buildable_by_hex`), so a hex first probed before a pending
+	-- grid rebuild settled keeps that stale answer for every later phase. Judge each marker a second
+	-- time through a context built at this instant and record both verdicts durably: a cached/fresh
+	-- disagreement names that cause directly, without log scraping. Diagnostic only -- the fresh
+	-- context is never used to place anything and consumes no placement draw.
+	local fresh_validation_context = NewDepositValidationContext(map)
+	fresh_validation_context.wonder_reserved_hexes = {}
 	local reserved = UndergroundWonderReservedHexes(map)
 	local map_w, map_h = MapWorldSize(map)
 	local get_sector = Global("GetMapSectorXY")
@@ -8921,30 +8932,30 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 		[96] = true, [128] = true, [160] = true,
 	}
 
-	local function raw_buildable_z(q, r)
-		local buildable = wonder_validation_context.buildable
-		local get_z = wonder_validation_context.buildable_get_z
+	local function raw_buildable_z(q, r, context)
+		context = context or wonder_validation_context
+		local buildable = context.buildable
+		local get_z = context.buildable_get_z
 		if not buildable or type(get_z) ~= "function"
 			or type(q) ~= "number" or type(r) ~= "number" then return nil end
 		local ok_z, z = pcall(get_z, buildable, q, r)
 		return ok_z and z or nil
 	end
 
-	local function terrain_diagnostic(pt, include_obstruction)
-		local buildable, q, r = IsBuildableAt(
-			map, pt, true, wonder_validation_context)
-		local passable = PassableAt(map, pt, wonder_validation_context)
-		local flatness = FlatnessAt(map, pt, wonder_validation_context) or 0
-		local flat_ok = flatness >= wonder_validation_context.flatness_minimum
+	local function terrain_diagnostic(pt, include_obstruction, context)
+		context = context or wonder_validation_context
+		local buildable, q, r = IsBuildableAt(map, pt, true, context)
+		local passable = PassableAt(map, pt, context)
+		local flatness = FlatnessAt(map, pt, context) or 0
+		local flat_ok = flatness >= context.flatness_minimum
 		local unobstructed
 		if include_obstruction == true then
-			unobstructed = IsUnobstructedAt(
-				map, pt, true, wonder_validation_context, q, r) == true
+			unobstructed = IsUnobstructedAt(map, pt, true, context, q, r) == true
 		end
 		return {
 			buildable = buildable == true, q = q, r = r,
-			buildable_z = raw_buildable_z(q, r),
-			unbuildable_z = wonder_validation_context.build_unbuildable_z,
+			buildable_z = raw_buildable_z(q, r, context),
+			unbuildable_z = context.build_unbuildable_z,
 			passable = passable == true, flatness = flatness, flat_ok = flat_ok,
 			unobstructed = unobstructed,
 		}
@@ -8960,6 +8971,7 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 
 	local function state_diagnostic_text(state)
 		local diagnostic = state.diagnostic or {}
+		local fresh = state.fresh_diagnostic or {}
 		return "marker_world=" .. point_xy_text(state.marker_pos)
 			.. ":spawner_world=" .. point_xy_text(state.spawner_pos)
 			.. ":marker_hex=" .. tostring(state.marker_q) .. "," .. tostring(state.marker_r)
@@ -8976,6 +8988,18 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 			.. ":reserved=" .. tostring(state.reserved_overlap)
 			.. ":badge_overlap=" .. tostring(state.overlap)
 			.. ":entrance_connected=" .. tostring(state.reachable)
+			-- The three conjuncts of the verdict, so a run-to-run diff names the failing clause.
+			.. ":base_ok=" .. tostring(state.base_ok)
+			.. ":local_ok=" .. tostring(state.local_ok)
+			.. ":accepted_fallback=" .. tostring(state.accepted_terrain_fallback)
+			-- The same predicates re-read through a context built at judgment time.
+			.. ":fresh_terrain_ok=" .. tostring(state.fresh_terrain_ok)
+			.. ":fresh_base_ok=" .. tostring(state.fresh_base_ok)
+			.. ":fresh_buildable=" .. tostring(fresh.buildable)
+			.. ":fresh_buildable_z=" .. tostring(fresh.buildable_z)
+			.. ":fresh_passable=" .. tostring(fresh.passable)
+			.. ":fresh_flatness=" .. tostring(fresh.flatness)
+			.. ":fresh_unobstructed=" .. tostring(fresh.unobstructed)
 	end
 
 	local function marker_state(marker, occupied)
@@ -9011,8 +9035,17 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 		local accepted_terrain_fallback =
 			marker.SuperBigMapDeferredWonderAnomalyLocalTerrainFallback == true
 		local diagnostic = terrain_diagnostic(marker_pos, true)
+		-- Diagnostic second opinion on the identical predicates (see fresh_validation_context).
+		local fresh_terrain_ok, _, _, _, fresh_q, fresh_r = EvaluateDepositTerrain(
+			map, marker_pos, fresh_validation_context, true)
+		local fresh_unobstructed = fresh_terrain_ok and IsUnobstructedAt(
+			map, marker_pos, true, fresh_validation_context, fresh_q, fresh_r) == true
+		local fresh_diagnostic = terrain_diagnostic(marker_pos, true, fresh_validation_context)
 		return terrain_ok and (base_ok or accepted_terrain_fallback)
 			and local_ok and not overlap, {
+			fresh_terrain_ok = fresh_terrain_ok == true,
+			fresh_base_ok = (fresh_terrain_ok and fresh_unobstructed) == true,
+			fresh_diagnostic = fresh_diagnostic,
 			marker_pos = marker_pos, spawner_pos = spawner_pos,
 			marker_q = marker_q, marker_r = marker_r,
 			spawner_q = spawner_q, spawner_r = spawner_r,
@@ -9213,7 +9246,10 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 					details[#details + 1] = class_name .. "=moved@"
 						.. tostring(state.marker_q) .. "," .. tostring(state.marker_r)
 						.. "->" .. tostring(candidate.q) .. "," .. tostring(candidate.r)
+						.. ":radius=" .. tostring(candidate.radius)
 						.. ":distance=" .. tostring(post_state.distance)
+						-- The pre-move judgment is the record that must match run to run.
+						.. ":pre=" .. state_diagnostic_text(state)
 				else
 					stats.unresolved = stats.unresolved + 1
 					marker.SuperBigMapDeferredWonderAnomalyReachabilityValidated = nil
@@ -9227,6 +9263,34 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 	stats.connectivity_cache_checks = reachability.checks
 	stats.connectivity_cache_rejected = reachability.rejected
 	stats.connectivity_failures = reachability.failures
+	-- Durable per-map record of this pass (gate 1's underground half). The audit channel is config
+	-- gated and lives only in the log; a pinned seed-parity pair has to diff the verdicts themselves,
+	-- so keep them on the map where the probe can read them like SuperBigMapPlacementSeedReport.
+	local entrance_hexes = {}
+	for _, seed_pos in ipairs(reachability.seeds or {}) do
+		local ok_seed_hex, seed_q, seed_r = pcall(world_to_hex, seed_pos)
+		entrance_hexes[#entrance_hexes + 1] = ok_seed_hex
+			and (tostring(seed_q) .. "," .. tostring(seed_r)) or "?"
+	end
+	local wonder_report = type(map.SuperBigMapWonderReachabilityReport) == "table"
+		and map.SuperBigMapWonderReachabilityReport or {}
+	if #wonder_report < 8 then
+		wonder_report[#wonder_report + 1] = {
+			repair = repair_invalid == true,
+			markers = stats.markers, valid = stats.valid, invalid = stats.invalid,
+			moved = stats.moved, unresolved = stats.unresolved,
+			entrance_disconnected = stats.entrance_disconnected,
+			draws = type(deterministic_placement_rng) == "table"
+				and deterministic_placement_rng.calls or -1,
+			method = tostring(reachability.method),
+			entrance_seeds = table.concat(entrance_hexes, "|"),
+			connectivity_checks = reachability.checks,
+			connectivity_rejected = reachability.rejected,
+			connectivity_failures = reachability.failures,
+			details = stats.details,
+		}
+	end
+	map.SuperBigMapWonderReachabilityReport = wonder_report
 	AuditEmit("UNDERGROUND_WONDER_ANOMALY_REACHABILITY", stats, map)
 	return stats.unresolved == 0 and stats.valid == stats.markers, stats
 end

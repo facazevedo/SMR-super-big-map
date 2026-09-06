@@ -945,6 +945,35 @@ CreateRealTimeThread(function()
 			if type(ug_stream_report) == "function" then
 				R.ug_placement_seed, R.ug_placement_phases = ug_stream_report(ug)
 			end
+			-- The one input that differed in the iter-011 pinned pair was a verdict inside
+			-- EnsureDeferredUndergroundWonderAnomaliesReachable.  sbm_deposits.lua now records each
+			-- pass durably on the map (SuperBigMapWonderReachabilityReport): counters, the entrance
+			-- seed hexes its connectivity used, and the per-marker judgment including the second
+			-- opinion taken through a freshly built validation context.
+			local wonder_report = rawget(ug, "SuperBigMapWonderReachabilityReport")
+			local wonder_lines = {}
+			if type(wonder_report) == "table" then
+				for i, entry in ipairs(wonder_report) do
+					wonder_lines[#wonder_lines + 1] = "call" .. i
+						.. "{repair=" .. tostring(entry.repair)
+						.. ",markers=" .. tostring(entry.markers)
+						.. ",valid=" .. tostring(entry.valid)
+						.. ",invalid=" .. tostring(entry.invalid)
+						.. ",moved=" .. tostring(entry.moved)
+						.. ",unresolved=" .. tostring(entry.unresolved)
+						.. ",disconnected=" .. tostring(entry.entrance_disconnected)
+						.. ",draws=" .. tostring(entry.draws)
+						.. ",method=" .. tostring(entry.method)
+						.. ",entrances=" .. tostring(entry.entrance_seeds)
+						.. ",conn_checks=" .. tostring(entry.connectivity_checks)
+						.. ",conn_rejected=" .. tostring(entry.connectivity_rejected)
+						.. ",conn_failures=" .. tostring(entry.connectivity_failures)
+						.. "}details=" .. tostring(entry.details)
+				end
+			end
+			R.ug_wonder_calls = #wonder_lines
+			R.ug_wonder_report = #wonder_lines > 0
+				and table.concat(wonder_lines, " || ") or "absent"
 
 			-- Underground reveal state, and the sector grid the passage records are labelled with.
 			local ug_sectors, ug_revealed, ug_sector_count = {}, {}, 0
@@ -1072,6 +1101,8 @@ CreateRealTimeThread(function()
 		printf("[RULES] first access cover events: %s", tostring(R.ug_cover_events))
 		printf("[RULES] first access screens: %s", tostring(R.ug_loading_screen_detail))
 		printf("[RULES] underground after access: passages: %s", tostring(R.ug_post_passage_records))
+		printf("[RULES] underground wonder reachability (%s calls): %s",
+			tostring(R.ug_wonder_calls), tostring(R.ug_wonder_report))
 		printf("[RULES] underground after access: enrich=%s/%s imprints=%s (%s) revealed=%s/%s",
 			tostring(R.ug_enrichment_digest), tostring(R.ug_enrichment_count),
 			tostring(R.ug_imprints), tostring(R.ug_imprint_records),
