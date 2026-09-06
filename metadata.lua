@@ -13,7 +13,7 @@ return PlaceObj('ModDef', {
 	},
 	'id', "SuperBigMap",
 	'author', "fredware",
-	'version', 887,
+	'version', 900,
 	'lua_revision', 350453,
 	'saved_with_revision', 392284,
 	'code', {
@@ -35,6 +35,7 @@ return PlaceObj('ModDef', {
 		"Code/sbm_object_clone.lua",
 		"Code/sbm_provenance.lua",
 		"Code/sbm_terrain_copy.lua",
+		"Code/sbm_decor_topup.lua",
 		"Code/sbm_pass_border.lua",
 		"Code/sbm_map_generation.lua",
 		"Code/sbm_place_elevator_button.lua",

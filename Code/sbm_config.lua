@@ -527,6 +527,15 @@ config.StretchMoveEntranceVisuals = true
 -- objects), but that clone burst noticeably slows the load. OFF by default -- the spread decor is
 -- usually dense enough; set true if the map feels sparse and you'll accept the slower load.
 config.StretchDecorTopUp = false
+-- ENGINE DECOR PASS (sbm_decor_topup). Vanilla stamps DecorationRatio% of the authored decor
+-- sites; the stretch spreads those groups over area_factor more ground. Re-run vanilla's decor
+-- stage over the sites it left unused, sized to the deficit (D * (area_factor - 1)), with a
+-- private seed-derived stream: same seed, same decor, no engine RNG draw. Existing decor is
+-- never touched. Restores the decor-pass share to vanilla density; decor baked into terrain
+-- prefabs stays spread. Surface only unless the underground switch is on.
+config.StretchDecorEnginePass = true
+config.StretchDecorEnginePassUnderground = false
+config.StretchDecorEnginePassMaxPlacements = 4000
 -- LOADING OPTIMIZATIONS. Defer the provisional blank-map buildability
 -- calculation until native ResolveBuildable has generated terrain, and defer MapGenerated's
 -- full-map bounds/buildable/passability rebuild because the stretch changes those grids moments
@@ -1052,6 +1061,9 @@ C.STRETCH_RELIEF_AWARE_DECOR = as_bool(config.StretchReliefAwareDecor)
 C.STRETCH_STAMP_OUT_OF_BOX_SOURCES = as_bool(config.StretchStampOutOfBoxSources)
 C.STRETCH_DESPAWN_OUT_OF_BOX_CONTENT = as_bool(config.StretchDespawnOutOfBoxContent)
 C.STRETCH_DECOR_TOPUP = as_bool(config.StretchDecorTopUp)
+C.STRETCH_DECOR_ENGINE_PASS = as_bool(config.StretchDecorEnginePass)
+C.STRETCH_DECOR_ENGINE_PASS_UNDERGROUND = as_bool(config.StretchDecorEnginePassUnderground)
+C.STRETCH_DECOR_ENGINE_PASS_MAX_PLACEMENTS = as_number(config.StretchDecorEnginePassMaxPlacements, 4000)
 C.OPTIMIZE_STRETCH_DEFERRED_REBUILDS = as_bool(config.OptimizeStretchDeferredRebuilds)
 C.OPTIMIZE_STRETCH_REVALIDATION = as_bool(config.OptimizeStretchRevalidation)
 C.OPTIMIZE_STRETCH_DECOR_TRAVERSAL = as_bool(config.OptimizeStretchDecorTraversal)

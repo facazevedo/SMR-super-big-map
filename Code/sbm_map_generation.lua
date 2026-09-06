@@ -10874,6 +10874,18 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						end
 					end
 				end
+				-- Step 3b: the engine's own decor stage, re-run over the stretched surface and sized to
+				-- the density deficit (config StretchDecorEnginePass, sbm_decor_topup). It stamps decor
+				-- prefabs at the authored sites vanilla left unused, so it must run after the marker
+				-- passes moved those sites, and before the resume below so its groups land in the same
+				-- authoritative passability rebuild. Cosmetic: a failure is recorded, not fatal.
+				local decor_topup = SuperBigMap.DecorTopUp
+				if decor_topup and type(decor_topup.Run) == "function" then
+					SetLoadingPhase("Restoring surface decoration density")
+					local decor_token = LoadingBegin("surface engine decor pass", map)
+					local decor_ok, decor_stats = decor_topup.Run(map, pass_batch_active)
+					LoadingEnd(decor_token, decor_stats, decor_ok == true)
+				end
 				-- This ResumePassEdits is the surface's sole authoritative passability rebuild after
 				-- replacing the complete height/type terrain grids. The engine exposes no transformed
 				-- passability-grid setter, so this cannot be omitted or narrowed without leaving stale
