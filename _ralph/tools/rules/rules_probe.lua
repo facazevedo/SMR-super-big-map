@@ -177,6 +177,52 @@ CreateRealTimeThread(function()
 			return type(SBM_env) == "table" and SBM_env._G or nil
 		end)
 		R.gate_env_g_is_real = tostring(ok_env_g and env_g == _G)
+		-- Which table do vanilla's own callers resolve globals in? The captured original switch is
+		-- the representative sample: if its environment holds the mod wrapper, every vanilla caller
+		-- reaches the gate and only this chunk's `_G` is a stale copy; if it holds vanilla's
+		-- function, the mod's rawset lands where the engine never looks.
+		local function fn_env(fn)
+			if type(fn) ~= "function" then return nil end
+			local getfenv_fn = rawget(_G, "getfenv")
+			if type(getfenv_fn) == "function" then
+				local ok, env = pcall(getfenv_fn, fn)
+				if ok and type(env) == "table" then return env end
+			end
+			local dbg = rawget(_G, "debug")
+			if type(dbg) == "table" and type(dbg.getfenv) == "function" then
+				local ok, env = pcall(dbg.getfenv, fn)
+				if ok and type(env) == "table" then return env end
+			end
+			if type(dbg) == "table" and type(dbg.getupvalue) == "function" then
+				for i = 1, 64 do
+					local ok, name, value = pcall(dbg.getupvalue, fn, i)
+					if not ok or name == nil then break end
+					if name == "_ENV" and type(value) == "table" then return value end
+				end
+			end
+			return nil
+		end
+		local original_t1 = type(sbm_state_t1) == "table"
+			and rawget(sbm_state_t1, "original_change_current_map_slot") or nil
+		R.gate_original_type = tostring(type(original_t1))
+		R.gate_original_is_probe_global = tostring(original_t1 ~= nil and original_t1 == global_ccms)
+		local venv = fn_env(original_t1)
+		R.gate_vanilla_env_found = tostring(venv ~= nil)
+		R.gate_vanilla_env_is_probe_g = tostring(venv ~= nil and venv == _G)
+		R.gate_vanilla_env_is_mod_env = tostring(venv ~= nil and venv == SBM_env)
+		R.gate_vanilla_env_ccms_type = tostring(venv ~= nil
+			and type(rawget(venv, "ChangeCurrentMapSlot")) or "no-env")
+		R.gate_vanilla_env_ccms_is_wrapper = tostring(venv ~= nil and wrapper_t1 ~= nil
+			and rawget(venv, "ChangeCurrentMapSlot") == wrapper_t1)
+		R.gate_vanilla_env_ccms_is_original = tostring(venv ~= nil and original_t1 ~= nil
+			and rawget(venv, "ChangeCurrentMapSlot") == original_t1)
+		-- Second sample: a vanilla caller of the switch, in case the switch itself was defined in an
+		-- environment its callers do not share.
+		local caller_env = fn_env(rawget(_G, "ChangeMap"))
+		R.gate_caller_env_found = tostring(caller_env ~= nil)
+		R.gate_caller_env_is_probe_g = tostring(caller_env ~= nil and caller_env == _G)
+		R.gate_caller_env_ccms_is_wrapper = tostring(caller_env ~= nil and wrapper_t1 ~= nil
+			and rawget(caller_env, "ChangeCurrentMapSlot") == wrapper_t1)
 		local lifecycle = SBM and rawget(SBM, "Lifecycle")
 		R.gate_lifecycle_active = tostring(type(lifecycle) == "table"
 			and type(lifecycle.IsActive) == "function" and lifecycle.IsActive())
@@ -715,12 +761,24 @@ CreateRealTimeThread(function()
 			-- State.change_current_map_slot_wrapper(slot, true, "idChangeCurrentMapSlot")
 			-- (sbm_map_generation.lua:13216), which is exactly the global the mod installs. Record
 			-- that identity so "the probe bypassed the gate" is a measurement, not an assumption.
-			local change = rawget(_G, "ChangeCurrentMapSlot")
+			-- Iter 008 proved this chunk's `_G` is not the table the mod wrote: it still holds
+			-- vanilla's function, so calling it bypassed the gate. Take the mod's own reference,
+			-- which is exactly what the HUD handler calls, and keep the `_G` copy as a recorded
+			-- fallback only.
+			local sbm_state = SBM and rawget(SBM, "State")
+			local state_wrapper = type(sbm_state) == "table"
+				and rawget(sbm_state, "change_current_map_slot_wrapper") or nil
+			local change, switch_route
+			if type(state_wrapper) == "function" then
+				change, switch_route = state_wrapper, "state_wrapper"
+			else
+				change, switch_route = rawget(_G, "ChangeCurrentMapSlot"), "probe_global"
+			end
+			R.ug_switch_route = switch_route
 			if type(change) ~= "function" then
 				restore_counters()
 				return "ChangeCurrentMapSlot is unavailable"
 			end
-			local sbm_state = SBM and rawget(SBM, "State")
 			R.ug_switch_is_mod_gate = tostring(type(sbm_state) == "table"
 				and change == rawget(sbm_state, "change_current_map_slot_wrapper"))
 			R.ug_switch_pre_state = ug_state_snapshot()
@@ -736,7 +794,8 @@ CreateRealTimeThread(function()
 			R.ug_gate_trace = type(switch_trace) == "table"
 				and table.concat(switch_trace, " || ") or "absent"
 			local switch_t0 = GetPreciseTicks()
-			local sw_ok, sw_err = pcall(change, ug.slot, true)
+			-- Same argument list as the HUD's OnPress (sbm_map_generation.lua:13214).
+			local sw_ok, sw_err = pcall(change, ug.slot, true, "idChangeCurrentMapSlot")
 			R.ug_switch_ok = tostring(sw_ok)
 			R.ug_switch_error = tostring(sw_ok and "none" or sw_err)
 			local sdl = GetPreciseTicks() + 900000
@@ -881,9 +940,16 @@ CreateRealTimeThread(function()
 			tostring(R.ug_first_access_ok), tostring(R.ug_first_access_error),
 			tostring(R.ug_access_method), tostring(R.ug_loading_displays),
 			tostring(R.ug_pre_hex), tostring(R.ug_post_hex))
-		printf("[RULES] first access route: mod_gate=%s cascade_cities=%s cascade_disabled=%s pre=%s",
-			tostring(R.ug_switch_is_mod_gate), tostring(R.ug_cascade_cities),
-			tostring(R.ug_cascade_disabled), tostring(R.ug_switch_pre_state))
+		printf("[RULES] first access route: route=%s mod_gate=%s cascade_cities=%s cascade_disabled=%s pre=%s",
+			tostring(R.ug_switch_route), tostring(R.ug_switch_is_mod_gate),
+			tostring(R.ug_cascade_cities), tostring(R.ug_cascade_disabled),
+			tostring(R.ug_switch_pre_state))
+		printf("[RULES] gate env: vanilla_env=%s probe_g=%s mod_env=%s ccms=%s is_wrapper=%s is_original=%s caller_wrapper=%s",
+			tostring(R.gate_vanilla_env_found), tostring(R.gate_vanilla_env_is_probe_g),
+			tostring(R.gate_vanilla_env_is_mod_env), tostring(R.gate_vanilla_env_ccms_type),
+			tostring(R.gate_vanilla_env_ccms_is_wrapper),
+			tostring(R.gate_vanilla_env_ccms_is_original),
+			tostring(R.gate_caller_env_ccms_is_wrapper))
 		printf("[RULES] first access displays: %s", tostring(R.ug_loading_screen_detail))
 		printf("[RULES] underground after access: passages: %s", tostring(R.ug_post_passage_records))
 		printf("[RULES] underground after access: enrich=%s/%s imprints=%s (%s) revealed=%s/%s",
