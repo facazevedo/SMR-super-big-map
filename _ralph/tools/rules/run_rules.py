@@ -71,6 +71,9 @@ def main():
     ap.add_argument("--wait", type=int, default=2400,
                     help="seconds to wait for the probe (surface T1 plus underground first access)")
     ap.add_argument("--keep-alive", action="store_true", help="do not quit the game at the end")
+    ap.add_argument("--pin-ug-seed", type=int, default=0,
+                    help="pin the reserved underground seed (gate 1's pair); 0 leaves the "
+                         "production AsyncRand reservation in place")
     args = ap.parse_args()
 
     out = pathlib.Path(args.out)
@@ -80,11 +83,13 @@ def main():
     chunk = PROBE.read_text(encoding="utf-8")
     chunk = (chunk.replace("__LAT__", str(args.lat))
                   .replace("__LON__", str(args.lon))
-                  .replace("__SITE__", args.site))
+                  .replace("__SITE__", args.site)
+                  .replace("__UG_SEED__", str(args.pin_ug_seed)))
     inst = TMP / ".tmp_rules_probe_instance.lua"
     inst.write_text(chunk, encoding="utf-8")
 
-    print(f"[run_rules] site={args.site} lat={args.lat} lon={args.lon}")
+    print(f"[run_rules] site={args.site} lat={args.lat} lon={args.lon} "
+          f"pin_ug_seed={args.pin_ug_seed}")
     print("[run_rules] starting hidden daemon")
     proc = cli("daemon", "start", "--hidden", "--timeout", "300", timeout=420)
     print(proc.stdout.strip() or proc.stderr.strip())

@@ -84,6 +84,27 @@ CreateRealTimeThread(function()
 		params.SuperBigMapExpandMap = true
 		local surface_seed = params.Seed
 
+		-- Seed-parity pair (gate 1, underground half): vanilla itself draws the underground
+		-- generator seed with AsyncRand, so two cold runs of one site never share an underground
+		-- unless that one reservation is pinned.  MapGeneration.SetTwinUndergroundSeedForTest
+		-- (sbm_map_generation.lua:13568) substitutes the value at the same consumer transaction
+		-- while still consuming the production draw.  0 means "do not pin".
+		local pin_ug_seed = __UG_SEED__
+		local pin_ug_result = "not_requested"
+		if pin_ug_seed ~= 0 then
+			pin_ug_result = "mod_not_found"
+			for i = 1, #(ModsLoaded or {}) do
+				local env = ModsLoaded[i] and ModsLoaded[i].env
+				local candidate = type(env) == "table" and rawget(env, "SuperBigMap")
+				local mg = type(candidate) == "table" and rawget(candidate, "MapGeneration") or nil
+				if type(mg) == "table" and type(mg.SetTwinUndergroundSeedForTest) == "function" then
+					local pin_ok, pin_err = mg.SetTwinUndergroundSeedForTest(
+						pin_ug_seed, "ralph_seed_parity")
+					pin_ug_result = pin_ok and "pinned" or ("refused:" .. tostring(pin_err))
+				end
+			end
+		end
+
 		------------------------------------------------------------------ START press
 		RULES_STATUS = "generating"
 		local t0 = GetPreciseTicks()
@@ -127,6 +148,8 @@ CreateRealTimeThread(function()
 		R.hex_width = map.hex_width
 		R.hex_height = map.hex_height
 		R.surface_seed = tostring(surface_seed)
+		R.pin_ug_seed = tostring(pin_ug_seed)
+		R.pin_ug_result = pin_ug_result
 		local gen = GetRandomMapGenerator and GetRandomMapGenerator(map)
 		R.generator_seed = tostring(gen and gen.Seed)
 		R.generator_preset = tostring(gen and gen.Id)
@@ -245,6 +268,19 @@ CreateRealTimeThread(function()
 		end
 		R.enrichment_digest, R.enrichment_count = digest(enrich)
 		R.enrichment_in_ring = ring_enrich
+		-- The mod's seed-derived placement stream (sbm_deposits.lua SeedDeterministicPlacement):
+		-- seed plus per-phase draw counts, so a digest match is attributable to the stream.
+		local function stream_report(m)
+			local rep = type(m) == "table" and rawget(m, "SuperBigMapPlacementSeedReport") or nil
+			if type(rep) ~= "table" then return "absent", "absent" end
+			local phases = {}
+			for _, entry in ipairs(rep) do
+				phases[#phases + 1] = tostring(entry.tag) .. ":" .. tostring(entry.calls)
+			end
+			return tostring(rep.seed), table.concat(phases, ",")
+		end
+		R.placement_seed, R.placement_phases = stream_report(map)
+		STREAM_REPORT = stream_report
 
 		------------------------------------------------------------------ gate 7: decor
 		local decor_stats = SBM and SBM.DecorTopUp and SBM.DecorTopUp.LastStats or {}
@@ -903,6 +939,9 @@ CreateRealTimeThread(function()
 				end)
 			end
 			R.ug_enrichment_digest, R.ug_enrichment_count = digest(ug_enrich)
+			if type(STREAM_REPORT) == "function" then
+				R.ug_placement_seed, R.ug_placement_phases = STREAM_REPORT(ug)
+			end
 
 			-- Underground reveal state, and the sector grid the passage records are labelled with.
 			local ug_sectors, ug_revealed, ug_sector_count = {}, {}, 0

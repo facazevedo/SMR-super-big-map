@@ -226,7 +226,63 @@ end
 
 local MapWorldSize = Engine.MapWorldSize
 
-local RandInt = Engine.RandInt
+-- Deterministic placement stream (rule `seed-parity`). Engine.RandInt prefers AsyncRand
+-- (sbm_engine.lua:184-191), whose sequence is reseeded per session, so every mod-added candidate
+-- position differed run to run from byte-identical terrain -- measured at 14N134W, ten same-seed
+-- cold runs produced ten distinct enrichment-marker digests -- and every draw also consumed the
+-- engine's shared stream at points vanilla never draws at. Derive placement randomness from the
+-- map's own generator seed instead, tagged per phase so phases do not share a sequence; on the
+-- underground that seed is the reservation the mod makes where vanilla makes it, so the same
+-- reserved seed reproduces the same underground marker set. Lehmer stream, the constants the
+-- decor stream uses. Reference: `main` a2ba28b.
+local EngineRandInt = Engine.RandInt
+local deterministic_placement_rng = nil
+local function SeedDeterministicPlacement(map, tag)
+	local generator = type(map) == "table" and map.RandomMapGenObject or nil
+	if type(generator) ~= "table" then
+		local get_generator = Global("GetRandomMapGenerator")
+		if type(get_generator) == "function" then generator = SafeCall(get_generator, map) end
+	end
+	local numeric = tonumber(type(generator) == "table" and generator.Seed or nil)
+	-- RandomMapGenObject is deliberately transient (see FindResourceRepulsionValues): deferred
+	-- underground passes can first run once it is gone, so keep the resolved seed on the map.
+	if type(map) == "table" then
+		if numeric then
+			map.SuperBigMapPlacementSeed = numeric
+		else
+			numeric = tonumber(map.SuperBigMapPlacementSeed)
+		end
+	end
+	if not numeric then
+		deterministic_placement_rng = nil
+		return false
+	end
+	local state = math.abs(math.floor(numeric)) % 2147483647
+	tag = tostring(tag or "")
+	for index = 1, #tag do
+		state = (state * 31 + string.byte(tag, index)) % 2147483647
+	end
+	if state == 0 then state = 1 end
+	deterministic_placement_rng = { state = state, calls = 0, tag = tag, seed = numeric }
+	if type(map) == "table" then
+		local report = type(map.SuperBigMapPlacementSeedReport) == "table"
+			and map.SuperBigMapPlacementSeedReport or { seed = numeric }
+		report.seed = numeric
+		if #report < 32 then report[#report + 1] = deterministic_placement_rng end
+		map.SuperBigMapPlacementSeedReport = report
+	end
+	return true
+end
+
+local function RandInt(limit)
+	local rng = deterministic_placement_rng
+	if type(rng) ~= "table" then return EngineRandInt(limit) end
+	limit = math.floor(tonumber(limit) or 0)
+	if limit <= 0 then return 0 end
+	rng.calls = rng.calls + 1
+	rng.state = (rng.state * 48271) % 2147483647
+	return rng.state % limit
+end
 
 local function RunPaused(reason, fn)
 	local pause = Global("PauseInfiniteLoopDetection")
@@ -3804,6 +3860,7 @@ function DepositRules.TopUpDeposits(map)
 	if cfg().TOPUP_RESOURCES ~= true then return end
 	if not ExpansionAdditionStagesReady("resource top-up") then return end
 	map = map or Global("CurrentMap")
+	SeedDeterministicPlacement(map, "deposits")
 	SetEnrichmentTopUpStatus(map, "resources", false, 0)
 	local point = Global("point")
 	local clone_fn = SuperBigMap.ObjectClone and SuperBigMap.ObjectClone.CloneObjectAtOffset
@@ -5358,6 +5415,7 @@ function DepositRules.TopUpAnomalies(map)
 	if cfg().TOPUP_ANOMALIES ~= true then return end
 	if not ExpansionAdditionStagesReady("anomaly top-up") then return end
 	map = map or Global("CurrentMap")
+	SeedDeterministicPlacement(map, "anomalies")
 	SetEnrichmentTopUpStatus(map, "anomalies", false, 0)
 	local point = Global("point")
 	local clone_fn = SuperBigMap.ObjectClone and SuperBigMap.ObjectClone.CloneObjectAtOffset
@@ -7370,6 +7428,7 @@ end
 function DepositRules.TopUpEffectDeposits(map)
 	if not ExpansionAdditionStagesReady("effect top-up") then return end
 	map = map or Global("CurrentMap")
+	SeedDeterministicPlacement(map, "effects")
 	SetEnrichmentTopUpStatus(map, "effects", false, 0)
 	local point = Global("point")
 	local clone_fn = SuperBigMap.ObjectClone and SuperBigMap.ObjectClone.CloneObjectAtOffset
@@ -8808,6 +8867,7 @@ end
 
 function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, repair_invalid)
 	map = map or Global("CurrentMap")
+	SeedDeterministicPlacement(map, "wonder_reachability")
 	local point_fn = Global("point")
 	local world_to_hex = Global("WorldToHex")
 	local hex_to_world = Global("HexToWorld")
@@ -9268,6 +9328,7 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 	if not map or type(map.MapForEach) ~= "function" or type(point) ~= "function" then
 		return false, { error = "map/MapForEach/point unavailable" }
 	end
+	SeedDeterministicPlacement(map, "enrichment_relocation")
 	local reachable_state = BuildUndergroundReachability(map)
 	if not reachable_state or reachable_state.available ~= true then
 		return false, { error = "entrance connectivity unavailable", seeds = reachable_state and #reachable_state.seeds or 0 }
