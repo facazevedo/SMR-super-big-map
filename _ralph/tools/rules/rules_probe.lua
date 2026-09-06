@@ -117,10 +117,13 @@ CreateRealTimeThread(function()
 			return x < band_x0 or x >= band_x1 or y < band_y0 or y >= band_y1
 		end
 
+		-- rawget: the debug build reports reading an undefined global in a mod env as a LUA ERROR,
+		-- and every foreign mod env would raise one here, polluting the no-errors gate's log scan.
 		local SBM
 		for i = 1, #(ModsLoaded or {}) do
 			local env = ModsLoaded[i] and ModsLoaded[i].env
-			if env and env.SuperBigMap then SBM = env.SuperBigMap end
+			local candidate = type(env) == "table" and rawget(env, "SuperBigMap")
+			if type(candidate) == "table" then SBM = candidate end
 		end
 		R.mod_found = SBM and true or false
 
