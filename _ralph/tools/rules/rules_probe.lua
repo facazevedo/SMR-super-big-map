@@ -280,7 +280,9 @@ CreateRealTimeThread(function()
 			return tostring(rep.seed), table.concat(phases, ",")
 		end
 		R.placement_seed, R.placement_phases = stream_report(map)
-		STREAM_REPORT = stream_report
+		-- rawset: a plain assignment creates a new global, which this debug build reports as a
+		-- [LUA ERROR] and would pollute gate 8's log scan.
+		rawset(_G, "STREAM_REPORT", stream_report)
 
 		------------------------------------------------------------------ gate 7: decor
 		local decor_stats = SBM and SBM.DecorTopUp and SBM.DecorTopUp.LastStats or {}
@@ -939,8 +941,9 @@ CreateRealTimeThread(function()
 				end)
 			end
 			R.ug_enrichment_digest, R.ug_enrichment_count = digest(ug_enrich)
-			if type(STREAM_REPORT) == "function" then
-				R.ug_placement_seed, R.ug_placement_phases = STREAM_REPORT(ug)
+			local ug_stream_report = rawget(_G, "STREAM_REPORT")
+			if type(ug_stream_report) == "function" then
+				R.ug_placement_seed, R.ug_placement_phases = ug_stream_report(ug)
 			end
 
 			-- Underground reveal state, and the sector grid the passage records are labelled with.
