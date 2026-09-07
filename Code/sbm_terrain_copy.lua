@@ -2529,14 +2529,7 @@ local function PrepareOuterResourceTerrain(map)
 	local native_weight_scale, native_height_scale = 4096, 256
 	local native_tile_step = math.floor(height_tile + 0.5)
 	local native_sample_step = 4
-	-- Grid cells are classified by their centers. The central 80% is therefore the exact
-	-- 16x16-sector no-write rectangle used by the retained raw-grid comparator.
-	local inner_x0 = math.ceil(width * 0.1 - 0.5)
-	local inner_y0 = math.ceil(height * 0.1 - 0.5)
-	local inner_x1 = math.ceil(width * 0.9 - 0.5) - 1
-	local inner_y1 = math.ceil(height * 0.9 - 0.5) - 1
 	local native_raster_cells, native_mask_samples = 0, 0
-	local native_inner_restored_patch_cells = 0
 	local modified_cells, shaped_patches = 0, 0
 
 	local function patch_sort()
@@ -2589,7 +2582,7 @@ local function PrepareOuterResourceTerrain(map)
 			end
 			return value
 		end
-		local ok, changed, raster_cells, mask_samples, inner_restored_patch_cells = pcall(function()
+		local ok, changed, raster_cells, mask_samples = pcall(function()
 			local base_transition = math.max(cells_per_hex * 2,
 				patch.outer_cells - patch.core_cells)
 			-- The angular warp is applied to transition width, not total pad radius. Therefore even
@@ -2726,19 +2719,8 @@ local function PrepareOuterResourceTerrain(map)
 				native_add(result, target_delta)
 			end
 
-			-- The physical inner 16x16-sector rectangle is a hard no-write zone. Restore it from the
-			-- patch snapshot after native interpolation, keeping any transition entirely on the ring side.
-			local restore_x0, restore_y0 = math.max(x0, inner_x0), math.max(y0, inner_y0)
-			local restore_x1, restore_y1 = math.min(x1, inner_x1), math.min(y1, inner_y1)
-			local restored_patch_cells = 0
-			if restore_x0 <= restore_x1 and restore_y0 <= restore_y1 then
-				local restore_box = box_fn(restore_x0 - x0, restore_y0 - y0,
-					restore_x1 - x0 + 1, restore_y1 - y0 + 1)
-				result:copyrect(height_grid, restore_box,
-					point_fn(restore_x0 - x0, restore_y0 - y0))
-				restored_patch_cells = (restore_x1 - restore_x0 + 1)
-					* (restore_y1 - restore_y0 + 1)
-			end
+			-- No inner-rectangle restore here: the pixel loop this replaces wrote every cell a patch
+			-- reached, and a core that straddles the ring boundary must stay flat to be buildable.
 
 			-- Native integer division truncates. Add half a fixed-point height unit first to retain the
 			-- legacy math.floor(value + 0.5) contract, then clamp to the U16 terrain range.
@@ -2752,35 +2734,32 @@ local function PrepareOuterResourceTerrain(map)
 			local packed_result = own(native_repack(result, native_is_compute(grid)))
 			assert(packed_result, "native result conversion failed")
 			grid:copyrect(packed_result, local_box, point_fn(x0, y0))
-			return changed_cells, local_width * local_height, samples, restored_patch_cells
+			return changed_cells, local_width * local_height, samples
 		end)
 		for index = #owned, 1, -1 do
 			local value = owned[index]
 			if value and type(value.free) == "function" then pcall(value.free, value) end
 		end
 		if not ok then error(changed, 0) end
-		return changed, raster_cells, mask_samples, inner_restored_patch_cells
+		return changed, raster_cells, mask_samples
 	end
 
 	local function apply_native_raster()
 		patch_sort()
 		for _, patch in ipairs(patches) do
 			shaped_patches = shaped_patches + 1
-			local changed, raster_cells, mask_samples, restored_patch_cells =
-				apply_native_patch(patch, false)
+			local changed, raster_cells, mask_samples = apply_native_patch(patch, false)
 			modified_cells = modified_cells + changed
 			native_raster_cells = native_raster_cells + raster_cells
 			native_mask_samples = native_mask_samples + mask_samples
-			native_inner_restored_patch_cells = native_inner_restored_patch_cells + restored_patch_cells
 		end
 		-- A second pass makes building footprints exact planes after nearby feather blends. Surface
 		-- collection cores instead retain their capped fitted grade, eliminating a level circular scar.
 		for patch_index, patch in ipairs(patches) do
 			if patch_index == #patches then break end
-			local changed, raster_cells, _, restored_patch_cells = apply_native_patch(patch, true)
+			local changed, raster_cells = apply_native_patch(patch, true)
 			modified_cells = modified_cells + changed
 			native_raster_cells = native_raster_cells + raster_cells
-			native_inner_restored_patch_cells = native_inner_restored_patch_cells + restored_patch_cells
 		end
 	end
 
@@ -2837,7 +2816,6 @@ local function PrepareOuterResourceTerrain(map)
 		native_raster_cells = native_raster_cells,
 		native_mask_samples = native_mask_samples,
 		native_sample_step = native_sample_step,
-		native_inner_restored_patch_cells = native_inner_restored_patch_cells,
 		error = not ok_apply and tostring(apply_error)
 			or not set_ok and tostring(set_error) or "",
 	}
@@ -2862,7 +2840,6 @@ local function PrepareOuterResourceTerrain(map)
 			.. " modified_cells=" .. tostring(report.modified_cells)
 			.. " native_cells=" .. tostring(report.native_raster_cells)
 			.. " native_samples=" .. tostring(report.native_mask_samples)
-			.. " native_inner_patch_restore=" .. tostring(report.native_inner_restored_patch_cells)
 			.. " error=" .. tostring(report.error))
 	end
 	return set_ok and modified_cells > 0, report

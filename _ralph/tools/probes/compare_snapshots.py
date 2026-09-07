@@ -25,7 +25,9 @@ def load_runs(tag):
         reports = {}
         rm = re.search(r"reports=(.*)", text, re.S)
         if rm:
-            for kv in rm.group(1).strip().split(";"):
+            body = rm.group(1).strip().strip('"')
+            body = body.replace('\\"', '"')
+            for kv in body.split(";"):
                 if "=" in kv:
                     k, v = kv.split("=", 1)
                     reports[k.strip()] = v.strip()

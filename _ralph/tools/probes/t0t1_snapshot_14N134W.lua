@@ -8,7 +8,8 @@
 --                 resource sites, rocket pads and passage glue records
 --   SNAP_LATTICE  comma-separated raw height-grid values on a 32-cell lattice over the whole map
 --                 (row-major, 256x256 for an 8192-tile map), plus SNAP_LATTICE_META "w=..,h=..,step=32"
-SNAP_T0T1, SNAP_REPORTS, SNAP_LATTICE, SNAP_LATTICE_META = nil, nil, nil, nil
+for _, name in ipairs({ "SNAP_T0T1", "SNAP_REPORTS", "SNAP_LATTICE", "SNAP_LATTICE_META" }) do rawset(_G, name, nil) end
+local function publish(name, value) rawset(_G, name, value) end
 CreateRealTimeThread(function()
 	local ok, err = xpcall(function()
 		DoneGame()
@@ -59,12 +60,12 @@ CreateRealTimeThread(function()
 		end
 
 		local m = CurrentMap
-		SNAP_T0T1 = string.format(
+		publish("SNAP_T0T1", string.format(
 			"t0_to_t1_ms=%s pre_generation_ms=%d generate_returned_ms=%d t1_map=%s map=%s hex=%sx%s seed=%s rough=%s revalidation_error=%s",
 			t1 and tostring(t1 - t0) or "TIMEOUT", t_gen0 - t0, t_return - t0,
 			tostring(t1_where), tostring(m and m.name), tostring(m and m.hex_width), tostring(m and m.hex_height),
 			tostring(seed), tostring(IsGameRuleActive("RoughTerrain")),
-			tostring(m and m.SuperBigMapSurfacePostPipelineRevalidationError))
+			tostring(m and m.SuperBigMapSurfacePostPipelineRevalidationError)))
 		printf("[SNAP] %s", tostring(SNAP_T0T1))
 
 		-- ===== clock stopped; scenario snapshot =====
@@ -111,7 +112,7 @@ CreateRealTimeThread(function()
 					tostring(g.twin_image_q), tostring(g.twin_image_r), tostring(g.twin_image_surface_reason))
 			end
 		end
-		SNAP_REPORTS = table.concat(parts, ";")
+		publish("SNAP_REPORTS", table.concat(parts, ";"))
 
 		-- raw height grid on a 32-cell lattice (values are the engine's U16 height cells)
 		local raw = terrain.GetHeightGrid(m)
@@ -126,17 +127,17 @@ CreateRealTimeThread(function()
 					values[n] = tostring(grid:get(x, y))
 				end
 			end
-			SNAP_LATTICE = table.concat(values, ",")
-			SNAP_LATTICE_META = string.format("w=%d,h=%d,step=%d,samples=%d", w, h, step, n)
+			publish("SNAP_LATTICE", table.concat(values, ","))
+			publish("SNAP_LATTICE_META", string.format("w=%d,h=%d,step=%d,samples=%d", w, h, step, n))
 			if grid ~= raw and type(grid.free) == "function" then pcall(grid.free, grid) end
 		else
-			SNAP_LATTICE, SNAP_LATTICE_META = "", "height grid unavailable"
+			publish("SNAP_LATTICE", "") publish("SNAP_LATTICE_META", "height grid unavailable")
 		end
 		printf("[SNAP] snapshot ready: %s; %d report fields", tostring(SNAP_LATTICE_META), #parts)
 	end, function(e) return tostring(e) .. "\n" .. debug.traceback() end)
 	if not ok then
-		SNAP_T0T1 = "FAILED " .. tostring(err)
-		SNAP_REPORTS, SNAP_LATTICE, SNAP_LATTICE_META = SNAP_REPORTS or "", SNAP_LATTICE or "", SNAP_LATTICE_META or "failed"
+		publish("SNAP_T0T1", "FAILED " .. tostring(err))
+		publish("SNAP_REPORTS", SNAP_REPORTS or "") publish("SNAP_LATTICE", SNAP_LATTICE or "") publish("SNAP_LATTICE_META", SNAP_LATTICE_META or "failed")
 		printf("[SNAP] %s", tostring(SNAP_T0T1))
 	end
 end)
