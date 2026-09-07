@@ -1233,6 +1233,42 @@ CreateRealTimeThread(function()
 			R.ug_imprints = #imprints
 			R.ug_imprint_records = table.concat(imprints, " | ")
 
+			-- The imprint decal is an auto-attachment of the SurfacePassage carrier, and vanilla's
+			-- ElevatorBase:LinkThroughPassage hides the CARRIER (Lua/Buildings/Elevator.lua:603)
+			-- while leaving every attachment's own efVisible flag alone. Reading the carrier beside
+			-- its decals makes one run tell "vanilla hid the carrier" from "the mod cleared the
+			-- decal", instead of inferring it from the decal census alone.
+			local carriers = {}
+			pcall(ug.MapForEach, ug, "map", "SurfacePassage", function(o)
+				local x, y = posxy(o)
+				local ok_e, ent = pcall(o.GetEntity, o)
+				local ok_o, op = pcall(o.GetOpacity, o)
+				local elevator = rawget(o, "elevator")
+				local kids = {}
+				local ok_a, attaches = pcall(o.GetAttaches, o)
+				if ok_a and type(attaches) == "table" then
+					for _, a in ipairs(attaches) do
+						local ok_ae, aent = pcall(a.GetEntity, a)
+						if ok_ae and tostring(aent)
+							== "ElevatorBuildIndicator_UndergroundPassageImprint" then
+							local ok_as, asc = pcall(a.GetScale, a)
+							local ok_ao, aop = pcall(a.GetOpacity, a)
+							kids[#kids + 1] = string.format("vis=%s scale=%s opacity=%s",
+								tostring(visible(a)), ok_as and tostring(asc) or "?",
+								ok_ao and tostring(aop) or "?")
+						end
+					end
+				end
+				carriers[#carriers + 1] = string.format(
+					"hex=%s entity=%s vis=%s opacity=%s elevator=%s decals=%d{%s}",
+					hexof(ug, x, y), ok_e and tostring(ent) or "?", tostring(visible(o)),
+					ok_o and tostring(op) or "?",
+					tostring(elevator ~= nil and IsValid(elevator) == true),
+					#kids, table.concat(kids, ","))
+			end)
+			R.ug_passage_carriers = #carriers
+			R.ug_passage_carrier_records = table.concat(carriers, " | ")
+
 			-- Gate 7 underground side: the pass now runs inside the first-access pipeline, so read
 			-- its own per-map record plus an independent census of the objects it left behind.
 			R.ug_decor_engine_pass_enabled = tostring(type(cfg) == "table"
@@ -1375,6 +1411,8 @@ CreateRealTimeThread(function()
 			tostring(R.ug_enrichment_digest), tostring(R.ug_enrichment_count),
 			tostring(R.ug_imprints), tostring(R.ug_imprint_records),
 			tostring(R.ug_revealed_count), tostring(R.ug_sector_count))
+		printf("[RULES] underground passage carriers: %s (%s)",
+			tostring(R.ug_passage_carriers), tostring(R.ug_passage_carrier_records))
 		RULES_STATUS = "complete"
 	end, function(e) return tostring(e) .. "\n" .. debug.traceback() end)
 	if not ok then

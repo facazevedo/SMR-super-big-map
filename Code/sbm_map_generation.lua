@@ -8264,7 +8264,9 @@ end
 -- obstruction class and must not be used as an attachment test. The stretch may move an attached
 -- child independently from its carrier, so rebuild the vanilla entity attachments only after the
 -- passage reaches its committed final position. Once an Elevator is linked, retain vanilla behavior:
--- the passage carrier and its marker attachments stay hidden beneath the completed building.
+-- vanilla's LinkThroughPassage hides the passage CARRIER and rebuilds nothing here, so leave the
+-- linked passage exactly as vanilla left it. Its decal keeps vanilla's own visibility (see
+-- vanilla_passage_decal_entities); the hidden carrier is what suppresses the artwork on screen.
 local function RefreshVanillaUndergroundPassageIndicators(map)
 	local auto_attach = Global("AutoAttachObjects")
 	local point_fn = Global("point")
@@ -8276,14 +8278,15 @@ local function RefreshVanillaUndergroundPassageIndicators(map)
 	local expected_decal_entity = "ElevatorBuildIndicator_UndergroundPassageImprint"
 	local stats = {
 		passages = #passages, rebuilt = 0, decals = 0,
-		built_markers = 0, built_hidden = 0, unbuilt_markers = 0,
+		built_markers = 0, built_carriers_hidden = 0, unbuilt_markers = 0,
 	}
 	for index, passage in ipairs(passages) do
 		local built = TraversalObjectValid(passage.elevator)
 		if built then
 			stats.built_markers = stats.built_markers + 1
+			-- Carrier only, exactly as vanilla's LinkThroughPassage does. Never the attachments.
 			if type(passage.SetVisible) == "function" then pcall(passage.SetVisible, passage, false) end
-			stats.built_hidden = stats.built_hidden + 1
+			stats.built_carriers_hidden = stats.built_carriers_hidden + 1
 			stats.rebuilt = stats.rebuilt + 1
 		else
 			stats.unbuilt_markers = stats.unbuilt_markers + 1
@@ -8431,6 +8434,19 @@ end
 
 local function HideCompletedPassageVisual(obj, force_marker_visual)
 	local entity = PassageObjectEntity(obj)
+	-- Vanilla's ground imprint decal is NOT suppressed when an Elevator completes. ElevatorBase:
+	-- LinkThroughPassage (Lua/Buildings/Elevator.lua:603) hides the passage CARRIER with
+	-- SetVisible(false) and leaves every attachment's own efVisible flag alone; on the underground
+	-- side it then swaps the carrier entity for ElevatorBuildIndicator_UndergroundImprint without
+	-- destroying attaches. The unexpanded control run at 14N134W measured exactly that: both
+	-- ElevatorBuildIndicator_UndergroundPassageImprint objects read vis=true scale=100 after the
+	-- paired Elevator was built (_ralph/runs/rules-parity-14n134w-v2/artifacts/iter008_ug_control).
+	-- Clearing the decal's flag is a deviation from vanilla, not a reproduction of it, and keeping
+	-- it is visually inert: the hidden carrier suppresses its whole attachment hierarchy.
+	-- Inlined rather than kept in a lookup table because this chunk is at Lua's 200-local limit.
+	if tostring(entity) == "ElevatorBuildIndicator_UndergroundPassageImprint" then
+		return false, false, false, true
+	end
 	local marker_rock = completed_passage_rock_entities[tostring(entity)] == true
 	local marker_visual = force_marker_visual == true or marker_rock
 	if not marker_visual then return marker_rock, false, false end
@@ -8467,8 +8483,11 @@ local function AuditAndHidePassageVisualTree(
 		if TraversalObjectValid(attach) and not seen[attach] then
 			stats.attachments = stats.attachments + 1
 			local before = PassageObjectVisible(attach)
-			local marker_rock, marker_visual, hide_ok = HideCompletedPassageVisual(
+			local marker_rock, marker_visual, hide_ok, preserved = HideCompletedPassageVisual(
 				attach, force_marker_visual)
+			if preserved then
+				stats.vanilla_decals_preserved = (stats.vanilla_decals_preserved or 0) + 1
+			end
 			if marker_rock then
 				stats.marker_rocks = stats.marker_rocks + 1
 			end
@@ -8560,6 +8579,7 @@ local function HideCompletedPassageRocks(passage, reason)
 		hidden = 0, marker_rocks = 0, marker_visuals = 0,
 		attachments = 0, attach_failures = 0,
 		cobjects = 0, nearby = 0, standalone = 0,
+		vanilla_decals_preserved = 0,
 	}
 	for _, class_name in ipairs({ "SurfacePassageRocks", "UndergroundPassageRocks" }) do
 		for _, rocks in ipairs(ArtefactMapGet(map, class_name)) do
@@ -8601,6 +8621,7 @@ local function HideCompletedPassageRocks(passage, reason)
 		marker_visuals = stats.marker_visuals,
 		standalone = stats.standalone, attachments = stats.attachments,
 		attach_failures = stats.attach_failures, cobjects = stats.cobjects,
+		vanilla_decals_preserved = stats.vanilla_decals_preserved,
 		nearby = stats.nearby, map_scan_ok = tostring(map_scan_ok),
 		visuals = table.concat(details, " | "),
 	}, map)
