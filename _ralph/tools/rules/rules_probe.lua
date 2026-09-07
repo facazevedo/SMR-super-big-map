@@ -571,7 +571,8 @@ CreateRealTimeThread(function()
 		-- read off the map instead of inferred from the log's timestamps.
 		local psw = map.SuperBigMapSurfaceStretchPassWindow
 		if type(psw) == "table" then
-			for _, k in ipairs({ "suspend_active", "suspend_game_time", "resume_source",
+			for _, k in ipairs({ "pause_hold", "pause_released",
+				"suspend_active", "suspend_game_time", "resume_source",
 				"resume_game_time", "resume_ignore_errors", "game_time_delta", "window_real_ms",
 				"assert_expected", "first_advance", "first_advance_game_time",
 				"first_advance_pause_reasons", "first_unpaused", "first_unpaused_pause_reasons",

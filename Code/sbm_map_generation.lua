@@ -11067,7 +11067,38 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				end
 				return game_time, real_time
 			end
+			-- MEASURED (v2 iteration 006, stretch_window_trace): this transaction opens with
+			-- GameTime() == 41 and pause reasons "none" -- the START loading screen has already closed,
+			-- so vanilla's Pause(dlg) no longer holds the clock, and the whole 3.3 s window runs with
+			-- game time free to advance. The engine consumes a named SuspendPassEdits reason only while
+			-- GameTime() is unchanged since the suspend, so the invariant held only as long as no phase
+			-- inside the window happened to yield a frame; the intermittent SuperBigMapSurfaceStretch
+			-- assert is exactly the runs where one did. Hold the clock for the duration, the way a
+			-- game_blocking loading screen holds it during vanilla's own pass-edit transactions, instead
+			-- of racing it. Pause/Resume are used exactly as LoadingScreenCreate/LoadingScreenClose use
+			-- them, so the sound reference count stays balanced.
+			local pause_fn = Global("Pause")
+			local resume_fn = Global("Resume")
+			local pause_batch_pause_reason = "SuperBigMapSurfaceStretchPassEdits"
+			local pause_held = false
+			local function HoldStretchGameTime()
+				if pause_held then return end
+				if type(pause_fn) ~= "function" or type(resume_fn) ~= "function" then
+					pass_window.pause_hold = "pause api unavailable"
+					return
+				end
+				local ok = pcall(pause_fn, pause_batch_pause_reason)
+				pause_held = ok == true
+				pass_window.pause_hold = tostring(pause_held)
+			end
+			local function ReleaseStretchGameTime()
+				if not pause_held then return end
+				pause_held = false
+				SafeCall(resume_fn, pause_batch_pause_reason)
+				pass_window.pause_released = "true"
+			end
 			if type(map.SuspendPassEdits) == "function" and type(map.ResumePassEdits) == "function" then
+				HoldStretchGameTime()
 				local suspend_ok, suspend_result = pcall(map.SuspendPassEdits, map, pass_batch_reason)
 				pass_batch_active = suspend_ok and suspend_result ~= false
 				pass_window.suspend_game_time = PassWindowNumber(game_time_fn)
@@ -11101,8 +11132,13 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				local resume_ok, resume_err = pcall(
 					map.ResumePassEdits, map, pass_batch_reason, ignore_errors == true)
 				-- The engine validates GameTime before consuming this reason. Keep ownership after an
-				-- exception so the outer cleanup can balance it with ignore_errors=true.
-				if resume_ok then pass_batch_active = false end
+				-- exception so the outer cleanup can balance it with ignore_errors=true, and keep the
+				-- game-time hold with it: releasing the clock while the transaction is still open would
+				-- let the balancing retry hit the same assert.
+				if resume_ok then
+					pass_batch_active = false
+					ReleaseStretchGameTime()
+				end
 				pass_window.samples[#pass_window.samples + 1] =
 					"resumed:" .. tostring(source) .. ",ok=" .. tostring(resume_ok)
 				pass_window.trace = table.concat(pass_window.samples, " | ")
@@ -11616,6 +11652,9 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 			}, ok_branch)
 			-- Balanced resume (always, even on error) so the loop detector is restored.
 			if type(resume_ild) == "function" then SafeCall(resume_ild, "SuperBigMapStretch") end
+			-- Same guarantee for the game-time hold: a leaked pause reason would freeze the clock for
+			-- the rest of the session, so release it on every exit path including the error path.
+			ReleaseStretchGameTime()
 			if type(ClearDecorRelief) == "function" then ClearDecorRelief(map) end
 			if ok_branch and map.SuperBigMapStretchPipelinePending == true then
 				FinalizeDeferredStretchState(map, "surface")
