@@ -1193,6 +1193,10 @@ local function ValleyScore(map, pt)
 end
 
 local DepositRules = {}
+-- Hex coordinates on an expanded map span roughly -1024..1024. The offset keeps the packed key
+-- positive and the stride exceeds any reachable row, so the mapping remains collision-free.
+local HEX_KEY_OFFSET = 32768
+local HEX_KEY_STRIDE = 131072
 
 -- ---------------------------------------------------------------------------------------
 -- Badge collision prevention.
@@ -2024,7 +2028,9 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers, capture_rej
 		if type(point_fn) ~= "function" or type(world_to_hex) ~= "function" then return nil end
 		local ok, q, r = pcall(world_to_hex, point_fn(x, y))
 		if not ok or type(q) ~= "number" or type(r) ~= "number" then return nil end
-		return q, r, tostring(q) .. ":" .. tostring(r)
+		-- can_place_minimum probes this table millions of times during surface top-up placement.
+		-- A packed integer preserves the exact coordinate identity without allocating a string.
+		return q, r, (q + HEX_KEY_OFFSET) * HEX_KEY_STRIDE + (r + HEX_KEY_OFFSET)
 	end
 
 	local function hex_key(x, y)
@@ -2149,12 +2155,16 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers, capture_rej
 			end
 			return false
 		end
-		local candidate_is_surface = profile.layer == "surf" and profile.resource ~= "Effects"
-		if not can_place_minimum(candidate, candidate_is_surface,
-			TopUpEnrichmentMinimumHexDistance()) then return false end
 		local profile_key = profile_cache_key(profile)
 		local cached = cached_verdict(candidate, profile_key)
 		if cached ~= nil then return cached end
+		local candidate_is_surface = profile.layer == "surf" and profile.resource ~= "Effects"
+		if not can_place_minimum(candidate, candidate_is_surface,
+			TopUpEnrichmentMinimumHexDistance()) then
+			-- Enrichment occupancy only grows during a pass, so a minimum-distance rejection cannot
+			-- later become an acceptance. Cache it like every other permanent negative verdict.
+			return remember_verdict(candidate, profile_key, false)
+		end
 		if occupied_hexes[hkey] then
 			stats.duplicate_hex_rejects = stats.duplicate_hex_rejects + 1
 			if capture_rejections == true then
@@ -2260,7 +2270,7 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers, capture_rej
 				local distance = math.max(math.abs(dq), math.abs(dr), math.abs(dq + dr))
 				if distance < minimum_distance then
 					local occupied = enrichment_hexes[
-						tostring(q + dq) .. ":" .. tostring(r + dr)]
+						(q + dq + HEX_KEY_OFFSET) * HEX_KEY_STRIDE + (r + dr + HEX_KEY_OFFSET)]
 					local surface_neighbours = distance > 0 and candidate_is_surface == true
 						and occupied and occupied.non_surface == 0
 					if occupied and not surface_neighbours then
