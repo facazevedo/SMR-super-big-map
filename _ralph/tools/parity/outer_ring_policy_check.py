@@ -453,9 +453,10 @@ static_checks = {
         and "inner_band_minimum" in census
         and "stats.inner_band_shortfall == 0" in census
     ),
-    "resource_cluster_count_is_six_to_ten": (
-        "config.OuterResourceClusterMinimumCount = 6" in CONFIG
-        and "config.OuterResourceRocketPadMaximumCount = 10" in CONFIG
+    "resource_cluster_count_is_eight_to_twelve": (
+        "config.OuterResourceClusterMinimumCount = 8" in CONFIG
+        and "config.OuterResourceClusterMaximumCount = 12" in CONFIG
+        and "config.OuterResourceRocketPadMaximumCount = 12" in CONFIG
         and "cluster_shortfall == 0 and cluster_excess == 0" in outer_resource_terrain
     ),
     "every_resource_cluster_requires_one_to_three_extractors": (

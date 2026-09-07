@@ -530,6 +530,26 @@ CreateRealTimeThread(function()
 		else
 			R.ring_reason = "no outer resource report on map"
 		end
+		-- The 8..12 count rule is proven from the plan record (the drawn count and the stream that
+		-- produced it) plus the final-terrain audit, not inferred from the placed total alone.
+		local ora = map.SuperBigMapOuterResourceTerrainAudit
+		if type(ora) == "table" then
+			for _, k in ipairs({ "resource_clusters", "rocket_pads", "cluster_minimum",
+				"cluster_maximum", "cluster_shortfall", "cluster_excess", "rocket_failures" }) do
+				R["ring_audit_" .. k] = tostring(ora[k])
+			end
+		else
+			R.ring_audit_resource_clusters = "no outer resource terrain audit on map"
+		end
+		local orp = map.SuperBigMapResourceClusterPlanDiagnostic
+		if type(orp) == "table" then
+			for _, k in ipairs({ "desired_clusters", "placed_clusters", "cluster_minimum",
+				"cluster_maximum", "cluster_count_stream", "stage", "error" }) do
+				R["ring_plan_" .. k] = tostring(orp[k])
+			end
+		else
+			R.ring_plan_desired_clusters = "no resource cluster plan diagnostic on map"
+		end
 		local apron = map.SuperBigMapNaturalMountainBaseApronReport
 		if type(apron) == "table" then
 			local ap = {}

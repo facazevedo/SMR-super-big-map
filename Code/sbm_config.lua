@@ -320,10 +320,15 @@ config.OuterResourceClusterMaximumExtractorDeposits = 3
 -- five members in one cluster.
 config.OuterResourceClusterMaximumTotalMembers = 5
 config.OuterResourceClusterRadiusHexes = 12
-config.OuterResourceClusterMinimumCount = 6
+-- The number of outer-ring resource clusters is drawn per map from the mod's private
+-- seed-derived placement stream, uniformly over this inclusive range, so the same map seed
+-- always yields the same count. Every cluster keeps its rocket landing pad, so the pad maximum
+-- must cover the cluster maximum.
+config.OuterResourceClusterMinimumCount = 8
+config.OuterResourceClusterMaximumCount = 12
 config.OuterResourceClusterMaximumAnomalies = 3
 config.OuterResourceRocketPadExtraFeatherHexes = 6
-config.OuterResourceRocketPadMaximumCount = 10
+config.OuterResourceRocketPadMaximumCount = 12
 -- A dome-effect top-up may enter the otherwise excluded perimeter only at a newly modified,
 -- engine-verified mountain rocket pad.  Ordinary perimeter terrain remains excluded.
 config.MountainRocketPadsAllowDomeEffects = true
@@ -945,13 +950,18 @@ C.OUTER_RESOURCE_CLUSTER_MAXIMUM_TOTAL_MEMBERS = math.max(
 C.OUTER_RESOURCE_CLUSTER_RADIUS_HEXES = math.max(4,
 	math.floor(as_number(config.OuterResourceClusterRadiusHexes, 12)))
 C.OUTER_RESOURCE_CLUSTER_MINIMUM_COUNT = math.max(0,
-	math.floor(as_number(config.OuterResourceClusterMinimumCount, 6)))
+	math.floor(as_number(config.OuterResourceClusterMinimumCount, 8)))
+C.OUTER_RESOURCE_CLUSTER_MAXIMUM_COUNT = math.max(
+	C.OUTER_RESOURCE_CLUSTER_MINIMUM_COUNT,
+	math.floor(as_number(config.OuterResourceClusterMaximumCount, 12)))
 C.OUTER_RESOURCE_CLUSTER_MAXIMUM_ANOMALIES = math.max(0,
 	math.floor(as_number(config.OuterResourceClusterMaximumAnomalies, 3)))
 C.OUTER_RESOURCE_ROCKET_PAD_EXTRA_FEATHER_HEXES = math.max(3,
 	as_number(config.OuterResourceRocketPadExtraFeatherHexes, 6))
-C.OUTER_RESOURCE_ROCKET_PAD_MAXIMUM_COUNT = math.max(0,
-	math.floor(as_number(config.OuterResourceRocketPadMaximumCount, 10)))
+-- One pad per cluster: the pad ceiling can never sit below the cluster ceiling.
+C.OUTER_RESOURCE_ROCKET_PAD_MAXIMUM_COUNT = math.max(
+	C.OUTER_RESOURCE_CLUSTER_MAXIMUM_COUNT,
+	math.floor(as_number(config.OuterResourceRocketPadMaximumCount, 12)))
 C.MOUNTAIN_ROCKET_PADS_ALLOW_DOME_EFFECTS =
 	as_bool(config.MountainRocketPadsAllowDomeEffects)
 C.DEPOSIT_COUNT_SCALE_OVERRIDE = (type(config.DepositCountScaleOverride) == "number" and config.DepositCountScaleOverride > 0)

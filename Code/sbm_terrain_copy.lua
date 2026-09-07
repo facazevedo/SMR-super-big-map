@@ -2189,8 +2189,10 @@ local function PrepareOuterResourceTerrain(map)
 			math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_MAXIMUM_EXTRACTOR_DEPOSITS", 3))))
 	local cluster_radius = math.max(4,
 		math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_RADIUS_HEXES", 12)))
-	local maximum_rocket_pads = math.max(0,
-		math.floor(cfg_number("OUTER_RESOURCE_ROCKET_PAD_MAXIMUM_COUNT", 10)))
+	-- One pad per cluster, so this ceiling may never sit below the cluster ceiling.
+	local maximum_rocket_pads = math.max(
+		math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_MAXIMUM_COUNT", 12)),
+		math.floor(cfg_number("OUTER_RESOURCE_ROCKET_PAD_MAXIMUM_COUNT", 12)))
 	local rocket_extra_feather = math.max(3,
 		cfg_number("OUTER_RESOURCE_ROCKET_PAD_EXTRA_FEATHER_HEXES", 6))
 	local radius_reference = resources[1]
@@ -2794,9 +2796,9 @@ local function AuditOuterResourceTerrain(map)
 	end
 	map.SuperBigMapVerifiedMountainRocketPads = verified_mountain_pads
 	local cluster_minimum = math.max(0,
-		math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_MINIMUM_COUNT", 6)))
+		math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_MINIMUM_COUNT", 8)))
 	local cluster_maximum = math.max(cluster_minimum,
-		math.floor(cfg_number("OUTER_RESOURCE_ROCKET_PAD_MAXIMUM_COUNT", 10)))
+		math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_MAXIMUM_COUNT", 12)))
 	local cluster_shortfall = math.max(0, cluster_minimum - #rocket_sites)
 	local cluster_excess = math.max(0, #rocket_sites - cluster_maximum)
 	local cluster_resource_minimum = math.max(1,

@@ -3894,13 +3894,24 @@ function DepositRules.TopUpDeposits(map)
 			and y <= map_h - surface_extractor_safe_margin
 	end
 	local resource_cluster_minimum_count = not IsUndergroundMap(map)
-		and math.max(0, math.floor(cfg().OUTER_RESOURCE_CLUSTER_MINIMUM_COUNT or 6)) or 0
+		and math.max(0, math.floor(cfg().OUTER_RESOURCE_CLUSTER_MINIMUM_COUNT or 8)) or 0
 	local resource_cluster_maximum_count = not IsUndergroundMap(map)
 		and math.max(resource_cluster_minimum_count,
-			math.floor(cfg().OUTER_RESOURCE_ROCKET_PAD_MAXIMUM_COUNT or 10)) or 0
+			math.floor(cfg().OUTER_RESOURCE_CLUSTER_MAXIMUM_COUNT or 12)) or 0
+	-- Rule `ring-content`: the count is uniform over [minimum, maximum] inclusive and is drawn from
+	-- the map-seed-derived placement stream seeded above, never from the engine RNG, so the same
+	-- seed reproduces the same count. Record the range and the stream position that produced it so
+	-- the gate is provable from the map record instead of inferred from the placed total.
 	local desired_resource_cluster_count = resource_cluster_minimum_count > 0
 		and (resource_cluster_minimum_count + RandInt(
 			resource_cluster_maximum_count - resource_cluster_minimum_count + 1)) or 0
+	local cluster_count_draw_stream = "none"
+	if resource_cluster_minimum_count > 0 then
+		local rng = deterministic_placement_rng
+		cluster_count_draw_stream = type(rng) == "table"
+			and (tostring(rng.tag) .. ":" .. tostring(rng.calls) .. ":seed=" .. tostring(rng.seed))
+			or "engine"
+	end
 	local resource_cluster_minimum_deposits = not IsUndergroundMap(map)
 		and math.max(1, math.floor(cfg().OUTER_RESOURCE_CLUSTER_MINIMUM_DEPOSITS or 1)) or 0
 	local resource_cluster_maximum_deposits = not IsUndergroundMap(map)
@@ -4900,6 +4911,9 @@ function DepositRules.TopUpDeposits(map)
 			results = "", strategy = "selector_local_v3",
 			desired_clusters = desired_resource_cluster_count, placed_clusters = 0,
 			plan_exhaustions = 0,
+			cluster_minimum = resource_cluster_minimum_count,
+			cluster_maximum = resource_cluster_maximum_count,
+			cluster_count_stream = cluster_count_draw_stream,
 		}
 		map.SuperBigMapResourceClusterPlanDiagnostic = cluster_plan_diagnostic
 		local function cluster_plan_fail(message)
@@ -5151,7 +5165,7 @@ function DepositRules.TopUpDeposits(map)
 			end
 		end
 
-		-- Create 6..10 compact clusters in the two-sector perimeter.  Planned members retain the
+		-- Create 8..12 compact clusters in the two-sector perimeter.  Planned members retain the
 		-- requested 60/40 outermost/inner-band distribution, but there is no fixed total-resource quota.
 		if not underground and desired_resource_cluster_count > 0 then
 			local required = math.min(surface_mountain_base_minimum, shortfall)
