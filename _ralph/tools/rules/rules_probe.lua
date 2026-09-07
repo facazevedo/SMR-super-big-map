@@ -7,7 +7,9 @@
 --
 -- Gate coverage in this file: seed-parity digests (1), entrance records (2), entrance sector
 -- position (3), ring census (4), start reveal (5), sign/deposit visibility (6), decor stats (7).
--- no-errors (8) is judged from the log.
+-- no-errors (8) is judged from the log.  Gate 6's after-scan half runs once the surface half is
+-- published: the sector holding a TerrainDeposit is scanned through vanilla's own completion call
+-- and the identical census is re-read (`scan_test_*`).
 --
 -- A second phase then performs underground-first-access (10) the way the player does: the vanilla
 -- construction controller places an Elevator snapped to a surface passage, the paired two-map
@@ -539,8 +541,10 @@ CreateRealTimeThread(function()
 				local mn, mx = a:min(), a:max()
 				local x0, y0 = mn:xy()
 				local x1, y1 = mx:xy()
+				-- `obj` is the live MapSector: gate 6's after-scan half completes a scan on it and
+				-- re-reads a status that this snapshot has by then made stale.
 				local rec = { id = tostring(sector.id), col = col, row = row, status = tostring(sector.status),
-					x0 = x0, y0 = y0, x1 = x1, y1 = y1 }
+					obj = sector, x0 = x0, y0 = y0, x1 = x1, y1 = y1 }
 				sectors[#sectors + 1] = rec
 				if rec.status ~= "unexplored" then
 					revealed[#revealed + 1] = rec.id .. "(" .. col .. "," .. row .. "):" .. rec.status
@@ -681,42 +685,78 @@ CreateRealTimeThread(function()
 		end
 
 		------------------------------------------------------------------ gate 6: signs and deposits
-		local signs = {}
-		local n_signs = 0
-		pcall(map.MapForEach, map, "map", "SurfaceUndergroundTunnelSign", function(o)
-			n_signs = n_signs + 1
-			local x, y = posxy(o)
-			local s = sector_at(x, y)
-			local oks, scale = pcall(o.GetScale, o)
-			signs[#signs + 1] = string.format("%s hex=%s vis=%s scale=%s sector=%s/%s",
-				tostring(o.class), hexof(map, x, y), tostring(visible(o)),
-				oks and tostring(scale) or "?",
-				s and s.id or "?", s and s.status or "?")
-		end)
-		R.sign_count = n_signs
-		R.sign_records = table.concat(signs, " | ")
-		R.sign_overview_scale_const = tostring(const and const.SignsOverviewCameraScaleUp)
-
-		local dep_hidden_unexplored, dep_visible_unexplored, dep_hidden_scanned, dep_visible_scanned, dep_total = 0, 0, 0, 0, 0
-		pcall(map.MapForEach, map, "map", "TerrainDeposit", function(o)
-			dep_total = dep_total + 1
-			local x, y = posxy(o)
-			local s = sector_at(x, y)
-			local v = visible(o)
-			local unexplored = (not s) or s.status == "unexplored"
-			if unexplored then
-				if v == true then dep_visible_unexplored = dep_visible_unexplored + 1
-				else dep_hidden_unexplored = dep_hidden_unexplored + 1 end
-			else
-				if v == true then dep_visible_scanned = dep_visible_scanned + 1
-				else dep_hidden_scanned = dep_hidden_scanned + 1 end
+		-- One census, read twice: gate 6 is judged before AND after a programmatic sector scan, and
+		-- the two readings only compare if identical code produced them. `prefix` is "" for the
+		-- pre-scan reading (the field names every earlier report already carries) and "scan_test_"
+		-- for the re-read. Sector status comes from the LIVE MapSector, not from the snapshot the
+		-- grid sweep recorded, because the scan changes it.
+		local function gate6_census(prefix)
+			local function live_at(x, y)
+				local s = sector_at(x, y)
+				if not s then return nil, nil end
+				return s, tostring((s.obj and s.obj.status) or s.status)
 			end
-		end)
-		R.terrain_deposits = dep_total
-		R.deposits_visible_in_unexplored = dep_visible_unexplored
-		R.deposits_hidden_in_unexplored = dep_hidden_unexplored
-		R.deposits_visible_in_scanned = dep_visible_scanned
-		R.deposits_hidden_in_scanned = dep_hidden_scanned
+			local recs, n = {}, 0
+			pcall(map.MapForEach, map, "map", "SurfaceUndergroundTunnelSign", function(o)
+				n = n + 1
+				local x, y = posxy(o)
+				local s, st = live_at(x, y)
+				local oks, scale = pcall(o.GetScale, o)
+				recs[#recs + 1] = string.format("%s hex=%s vis=%s scale=%s sector=%s/%s",
+					tostring(o.class), hexof(map, x, y), tostring(visible(o)),
+					oks and tostring(scale) or "?",
+					s and s.id or "?", tostring(st))
+			end)
+			R[prefix .. "sign_count"] = n
+			R[prefix .. "sign_records"] = table.concat(recs, " | ")
+
+			-- TerrainDeposit (concrete/regolith): hidden while its sector is unexplored, visible once
+			-- it is scanned. Each record carries the mod's own gate flag and vanilla's `revealed`
+			-- field, so a hidden badge can be attributed instead of guessed.
+			local hid_u, vis_u, hid_s, vis_s = 0, 0, 0, 0
+			recs, n = {}, 0
+			pcall(map.MapForEach, map, "map", "TerrainDeposit", function(o)
+				n = n + 1
+				local x, y = posxy(o)
+				local s, st = live_at(x, y)
+				local v = visible(o)
+				if st == nil or st == "unexplored" then
+					if v == true then vis_u = vis_u + 1 else hid_u = hid_u + 1 end
+				else
+					if v == true then vis_s = vis_s + 1 else hid_s = hid_s + 1 end
+				end
+				recs[#recs + 1] = string.format("%s hex=%s vis=%s sector=%s/%s revealed=%s gate=%s",
+					tostring(o.class), hexof(map, x, y), tostring(v),
+					s and s.id or "?", tostring(st), tostring(rawget(o, "revealed")),
+					tostring(rawget(o, "SuperBigMapOverviewHiddenUntilScan")))
+			end)
+			R[prefix .. "terrain_deposits"] = n
+			R[prefix .. "deposits_visible_in_unexplored"] = vis_u
+			R[prefix .. "deposits_hidden_in_unexplored"] = hid_u
+			R[prefix .. "deposits_visible_in_scanned"] = vis_s
+			R[prefix .. "deposits_hidden_in_scanned"] = hid_s
+			R[prefix .. "deposit_records"] = table.concat(recs, " | ")
+
+			-- "no other badge or deposit visual is shown in an unexplored sector": the mod's overview
+			-- scan gate covers subsurface deposits and anomalies too, so count their disclosures.
+			n, vis_u, vis_s = 0, 0, 0
+			for _, cls in ipairs({ "SubsurfaceDeposit", "SubsurfaceAnomaly" }) do
+				pcall(map.MapForEach, map, "map", cls, function(o)
+					n = n + 1
+					if visible(o) == true then
+						local x, y = posxy(o)
+						local _, st = live_at(x, y)
+						if st == nil or st == "unexplored" then vis_u = vis_u + 1
+						else vis_s = vis_s + 1 end
+					end
+				end)
+			end
+			R[prefix .. "subsurface_badges"] = n
+			R[prefix .. "subsurface_visible_in_unexplored"] = vis_u
+			R[prefix .. "subsurface_visible_in_scanned"] = vis_s
+		end
+		gate6_census("")
+		R.sign_overview_scale_const = tostring(const and const.SignsOverviewCameraScaleUp)
 
 		------------------------------------------------------------------ gate 4: ring content
 		local orr = map.SuperBigMapOuterResourceTerrainReport
@@ -826,6 +866,76 @@ CreateRealTimeThread(function()
 		rawset(_G, "RULES", R)
 		RULES_STATUS = "surface_complete"
 		printf("[RULES] surface half complete; starting first access")
+
+		------------------------------------------------------------------ gate 6: after-scan reveal
+		-- The contract proves "visible after scan" by scanning one sector programmatically and
+		-- re-reading. At 14N134W the site's single TerrainDeposit happened to sit in the start
+		-- sector, which generation already scanned, so the census alone showed it; at 15S67E it sits
+		-- in an unexplored sector and that half stays unexercised. Complete a scan on the sector
+		-- that CONTAINS a TerrainDeposit through vanilla's own completion call --
+		-- `MapSector:Scan("scanned")`, the exact call the exploration tick makes when a queued scan
+		-- finishes (Lua/Exploration.lua:809) -- then re-run the identical census. The surface half is
+		-- already published above, so this player action cannot disturb another gate's reading.
+		do
+			local is_overview = rawget(_G, "IsOverviewMode")
+			R.scan_test_overview = tostring(type(is_overview) == "function" and is_overview())
+			local target, dep = nil, nil
+			pcall(map.MapForEach, map, "map", "TerrainDeposit", function(o)
+				if target or not IsValid(o) then return end
+				local x, y = posxy(o)
+				local s = sector_at(x, y)
+				if s and s.obj and tostring(s.obj.status) == "unexplored" then target, dep = s, o end
+			end)
+			if not target then
+				R.scan_test_result = "no TerrainDeposit in an unexplored sector to scan"
+			else
+				local dx, dy = posxy(dep)
+				R.scan_test_sector = target.id .. "(" .. target.col .. "," .. target.row .. ")"
+				R.scan_test_sector_status_before = tostring(target.obj.status)
+				R.scan_test_deposit = tostring(dep.class) .. " hex=" .. hexof(map, dx, dy)
+				R.scan_test_deposit_visible_before = tostring(visible(dep))
+				R.scan_test_deposit_revealed_before = tostring(rawget(dep, "revealed"))
+				R.scan_test_deposit_gate_before =
+					tostring(rawget(dep, "SuperBigMapOverviewHiddenUntilScan"))
+				local ok_can, can = pcall(target.obj.CanBeScanned, target.obj)
+				R.scan_test_can_be_scanned = tostring(ok_can and can)
+				local ok_scan, scan_err = pcall(target.obj.Scan, target.obj, "scanned")
+				R.scan_test_scan_ok = tostring(ok_scan)
+				R.scan_test_scan_error = ok_scan and "none" or tostring(scan_err)
+				-- Vanilla's reveal path is deferred: MapSector:Scan queues
+				-- DelayedCall(0, OnDepositsSpawned), which in overview calls
+				-- OverviewModeDialog:ScaleSmallObjects(0, "up") -- the hook the mod's overview scan
+				-- gate rides on (sbm_sector_highlight.lua:644-664, itself deferring a second pass by
+				-- time+33 ms). Both are real-time threads, so a Sleep is all the settle this needs.
+				R.scan_test_settle_ms = 1500
+				Sleep(1500)
+				R.scan_test_sector_status_after = tostring(target.obj.status)
+				R.scan_test_deposit_valid_after = tostring(IsValid(dep))
+				R.scan_test_deposit_visible_after = tostring(IsValid(dep) and visible(dep))
+				R.scan_test_deposit_revealed_after = tostring(IsValid(dep) and rawget(dep, "revealed"))
+				R.scan_test_deposit_gate_after = tostring(IsValid(dep)
+					and rawget(dep, "SuperBigMapOverviewHiddenUntilScan"))
+				gate6_census("scan_test_")
+				local after = {}
+				if Grid and city then
+					Grid.ForEachSector(city, function(sector, col, row)
+						if tostring(sector.status) ~= "unexplored" then
+							after[#after + 1] = tostring(sector.id) .. "(" .. col .. ","
+								.. row .. "):" .. tostring(sector.status)
+						end
+					end)
+				end
+				R.scan_test_revealed_count = #after
+				R.scan_test_revealed_list = table.concat(after, " ")
+				R.scan_test_result = "scanned"
+			end
+			printf("[RULES] scan test: %s sector=%s status %s->%s deposit vis %s->%s gate %s->%s",
+				tostring(R.scan_test_result), tostring(R.scan_test_sector),
+				tostring(R.scan_test_sector_status_before), tostring(R.scan_test_sector_status_after),
+				tostring(R.scan_test_deposit_visible_before),
+				tostring(R.scan_test_deposit_visible_after),
+				tostring(R.scan_test_deposit_gate_before), tostring(R.scan_test_deposit_gate_after))
+		end
 
 		local function first_access()
 			if not ug then return "underground map is not loaded" end
