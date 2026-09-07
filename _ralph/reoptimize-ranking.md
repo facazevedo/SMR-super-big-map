@@ -153,6 +153,31 @@ an accidental run at 15N67E (`BlankBigTerraceCMix_04`, 8 clusters) was also clea
 entrances ring 8 / 7, 8 = 8 pads), with a pre-existing decor shortfall there (143/155; the decor pass
 runs before the raster, so it is not this step's).
 
+### Step 2 - #1 + #2 numeric top-up keys and cache-first verdicts (v928 `3819c29`, 2026-09-07)
+
+`NewTopUpRepulsionTracker` now packs `(q, r)` into collision-free integer keys for its hot
+neighbourhood table, checks the existing candidate/profile verdict cache before the 5x5
+minimum-distance scan, and caches minimum-distance rejections because occupancy only grows during
+the pass. This is the same output-preserving pair as `4fe9889` + `ca28e66`, adapted to the current
+rules-parity tracker without bringing over unrelated optimized-line code.
+
+Measured by the full rules probe at 14N134W with identical double pins and the START-boundary clock:
+
+| | v927 before | v928 after |
+|---|---|---|
+| T0->T1 | 228.283 / 220.803 / 222.379 s, **median 222.379 s** | 198.251 / 195.802 / 196.482 s, **median 196.482 s** (**-25.897 s, -11.6%**) |
+| surface enrichment | `527100097` / 701 in all runs | identical |
+| surface decor | `917959587` / 1292 in all runs | identical |
+| underground enrichment | `1609697062` / 251 in all runs | identical |
+| rules/logs | all gates green; zero Lua/optimization failures | same |
+
+The required 15S67E regression was also green and output-identical to v927: surface enrichment
+`1037565385`/592, decor `464485535`/2749, underground enrichment `1158028783`/265, one initial
+sector, 9 clusters = 9 pads, decor 99/99, and successful player-route first access. Its T0->T1 was
+189.353 s versus the preceding v927 run's 206.937 s. Evidence is under
+`_ralph/tmp/verification_v928_14n134w_run1|run2|run3` and
+`_ralph/tmp/verification_v928_15s67e`; deployment audited 37/37.
+
 ## Acceptance per step (same for every unit)
 
 - `rules_probe` at 14N134W: all ten gates green; for preserving units the three digests equal the
