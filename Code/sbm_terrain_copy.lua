@@ -60,6 +60,39 @@ local function LoadingStep(name, data, map)
 	end
 end
 
+-- Owner ruling (2026-09-07): ported optimizations have no silent fallback. When an optimized path
+-- cannot run or fails its own check, record it where the rules probe reads it, print it
+-- unconditionally, and show the player a message once the loading screen is gone. The caller still
+-- raises the error, so the run ends with a [LUA ERROR] instead of a quietly repaired map.
+local function OptimizationFailure(unit, reason, map)
+	local State = SuperBigMap.State or {}
+	SuperBigMap.State = State
+	State.optimization_failures = State.optimization_failures or {}
+	State.optimization_failures[#State.optimization_failures + 1] = {
+		unit = tostring(unit), reason = tostring(reason), map = map and tostring(map.name) or nil,
+	}
+	local print_fn = Global("print")
+	if type(print_fn) == "function" then
+		print_fn("[Super Big Map][OptimizationFailure] " .. tostring(unit) .. ": " .. tostring(reason))
+	end
+	local create_thread = Global("CreateRealTimeThread")
+	local create_box = Global("CreateMessageBox")
+	if type(create_thread) == "function" and type(create_box) == "function" then
+		create_thread(function()
+			local sleep = Global("Sleep")
+			local get_loading_screen = Global("GetLoadingScreenDialog")
+			for _ = 1, 1200 do
+				local ok_ls, ls = type(get_loading_screen) == "function" and pcall(get_loading_screen)
+				if not (ok_ls and ls) then break end
+				if type(sleep) == "function" then sleep(500) else break end
+			end
+			pcall(create_box, nil, "Super Big Map: map generation failed",
+				tostring(unit) .. "\n\n" .. tostring(reason)
+					.. "\n\nThis map is not valid. Please start a new game.")
+		end)
+	end
+end
+
 local function TerrainCreaseAudit(event, data, map)
 	local diagnostics = SuperBigMap.Diagnostics
 	if diagnostics and type(diagnostics.TerrainCreaseRepair) == "function" then
@@ -2439,19 +2472,75 @@ local function PrepareOuterResourceTerrain(map)
 			+ math.max(existing_transition, adaptive_transition)
 		patch.maximum_core_delta = maximum_core_delta
 	end
-	local function is_protected_ready_cell(x, y)
+	-- A patch can visit only cells inside its maximum radius. By triangle inequality, a protected
+	-- guard whose center is farther away than visit_radius + guard_radius cannot contain any visited
+	-- cell. Build that conservative subset once per patch, retaining the original guard order.
+	local function protected_ready_sites_near(cx, cy, visit_radius)
+		local nearby = {}
 		for _, protected in ipairs(protected_ready_sites) do
-			local dx, dy = x - protected.cx, y - protected.cy
-			if dx * dx + dy * dy <= protected.radius * protected.radius then return true end
+			local dx, dy = protected.cx - cx, protected.cy - cy
+			local reach = visit_radius + protected.radius
+			if dx * dx + dy * dy <= reach * reach then
+				nearby[#nearby + 1] = protected
+			end
 		end
-		return false
+		return nearby
 	end
-	local pause = Global("PauseInfiniteLoopDetection")
-	local resume = Global("ResumeInfiniteLoopDetection")
-	if type(pause) == "function" then pcall(pause, "SBMOuterResourceTerrain") end
+
+	-- Native raster (ported from the optimization line: adabf65, 217275b, caf42f4, 71b4948). The
+	-- organic feather is intentionally low-frequency: evaluate its trigonometric boundary on one
+	-- sample per four height cells, resample that bounded mask natively, keep the exact gameplay
+	-- core/protected circles native at full resolution, and apply the same fixed-order height formula
+	-- as the former pixel loop with native grid arithmetic on patch-local data. Terrain remains
+	-- untouched until the one SetHeightGrid below.
+	-- There is deliberately no scalar fallback. A missing primitive or a failed native step is an
+	-- optimization failure that must be seen (OptimizationFailure), never a quietly repaired map.
+	local native_new_grid = Global("NewComputeGrid")
+	local native_resample = Global("GridResample")
+	local native_mul_div_add = Global("GridMulDivAdd")
+	local native_add_mul_div = Global("GridAddMulDiv")
+	local native_add = Global("GridAdd")
+	local native_circle_set = Global("GridCircleSet")
+	local native_clamp = Global("GridClamp")
+	local native_abs = Global("GridAbs")
+	local native_count = Global("GridCount")
+	local native_repack = Global("GridRepack")
+	local native_is_compute = Global("IsComputeGrid")
+	local box_fn = Global("box")
+	local native_missing = {}
+	local function require_native(name, value)
+		if type(value) ~= "function" then native_missing[#native_missing + 1] = name end
+	end
+	require_native("NewComputeGrid", native_new_grid)
+	require_native("GridResample", native_resample)
+	require_native("GridMulDivAdd", native_mul_div_add)
+	require_native("GridAddMulDiv", native_add_mul_div)
+	require_native("GridAdd", native_add)
+	require_native("GridCircleSet", native_circle_set)
+	require_native("GridClamp", native_clamp)
+	require_native("GridAbs", native_abs)
+	require_native("GridCount", native_count)
+	require_native("GridRepack", native_repack)
+	require_native("IsComputeGrid", native_is_compute)
+	require_native("box", box_fn)
+	require_native("grid.copyrect", grid.copyrect)
+	require_native("grid.new_instance", grid.new_instance)
+	if grid == raw then require_native("grid.clone", grid.clone) end
+	local native_weight_scale, native_height_scale = 4096, 256
+	local native_tile_step = math.floor(height_tile + 0.5)
+	local native_sample_step = 4
+	-- Grid cells are classified by their centers. The central 80% is therefore the exact
+	-- 16x16-sector no-write rectangle used by the retained raw-grid comparator.
+	local inner_x0 = math.ceil(width * 0.1 - 0.5)
+	local inner_y0 = math.ceil(height * 0.1 - 0.5)
+	local inner_x1 = math.ceil(width * 0.9 - 0.5) - 1
+	local inner_y1 = math.ceil(height * 0.9 - 0.5) - 1
+	local native_raster_cells, native_mask_samples = 0, 0
+	local native_inner_restored_patch_cells = 0
 	local modified_cells, shaped_patches = 0, 0
-	local ok_apply, apply_error = pcall(function()
-		-- Resource access first, then rocket pads.  A rocket core therefore remains exactly level even
+
+	local function patch_sort()
+		-- Resource access first, then rocket pads. A rocket core therefore remains exactly level even
 		-- where its feather overlaps a smaller resource-access feather.
 		local patch_order = { surface = 1, extractor = 2, rocket = 3 }
 		table.sort(patches, function(a, b)
@@ -2463,109 +2552,271 @@ local function PrepareOuterResourceTerrain(map)
 			end
 			return a_order < b_order
 		end)
-		for _, patch in ipairs(patches) do
-			shaped_patches = shaped_patches + 1
+	end
+
+	local function aligned_native_bounds(patch, radius, margin, sample_step)
+		local x0 = math.max(0, math.floor(patch.cx - radius - margin))
+		local y0 = math.max(0, math.floor(patch.cy - radius - margin))
+		local x1 = math.min(width - 1, math.ceil(patch.cx + radius + margin))
+		local y1 = math.min(height - 1, math.ceil(patch.cy + radius + margin))
+		if sample_step > 1 then
+			x0 = math.max(0, math.floor(x0 / sample_step) * sample_step)
+			y0 = math.max(0, math.floor(y0 / sample_step) * sample_step)
+			x1 = math.min(width - 1, math.ceil(x1 / sample_step) * sample_step)
+			y1 = math.min(height - 1, math.ceil(y1 / sample_step) * sample_step)
+			local missing_x = (sample_step - ((x1 - x0) % sample_step)) % sample_step
+			local missing_y = (sample_step - ((y1 - y0) % sample_step)) % sample_step
+			if missing_x > 0 then
+				if x1 + missing_x <= width - 1 then x1 = x1 + missing_x
+				elseif x0 >= missing_x then x0 = x0 - missing_x
+				else sample_step = 1 end
+			end
+			if sample_step > 1 and missing_y > 0 then
+				if y1 + missing_y <= height - 1 then y1 = y1 + missing_y
+				elseif y0 >= missing_y then y0 = y0 - missing_y
+				else sample_step = 1 end
+			end
+		end
+		return x0, y0, x1, y1, sample_step
+	end
+
+	local function apply_native_patch(patch, core_only)
+		local owned, owned_lookup = {}, {}
+		local function own(value)
+			if value and not owned_lookup[value] then
+				owned_lookup[value] = true
+				owned[#owned + 1] = value
+			end
+			return value
+		end
+		local ok, changed, raster_cells, mask_samples, inner_restored_patch_cells = pcall(function()
 			local base_transition = math.max(cells_per_hex * 2,
 				patch.outer_cells - patch.core_cells)
-			-- The angular warp is applied to transition width, not total pad radius.  Therefore even the
-			-- narrowest inward lobe leaves the exact circular gameplay core wholly intact.
+			-- The angular warp is applied to transition width, not total pad radius. Therefore even
+			-- the narrowest inward lobe leaves the exact circular gameplay core wholly intact.
 			local maximum_width_scale = 1.35
-			local radius = patch.core_cells + base_transition * maximum_width_scale
-			local x0 = math.max(0, math.floor(patch.cx - radius - 2))
-			local y0 = math.max(0, math.floor(patch.cy - radius - 2))
-			local x1 = math.min(width - 1, math.ceil(patch.cx + radius + 2))
-			local y1 = math.min(height - 1, math.ceil(patch.cy + radius + 2))
-			for y = y0, y1 do
-				for x = x0, x1 do
-					local dx, dy = x - patch.cx, y - patch.cy
-					local distance = math.sqrt(dx * dx + dy * dy)
-					local angle = math.atan2 and math.atan2(dy, dx) or 0
-					local ux, uy = 1, 0
-					if distance > 0.0001 then ux, uy = dx / distance, dy / distance end
-					local along_relief = ux * patch.relief_x + uy * patch.relief_y
-					local harmonic = 0.52 * math.sin(3 * angle + patch.phase)
-						+ 0.30 * math.sin(5 * angle - patch.phase * 1.37)
-						+ 0.18 * math.sin(7 * angle + patch.phase * 0.73)
-					local width_scale = 1 + transition_irregularity * harmonic
-						+ 0.12 * (2 * along_relief * along_relief - 1)
-						- 0.06 * along_relief
-					width_scale = math.max(0.50, math.min(maximum_width_scale, width_scale))
-					local outer_radius = patch.core_cells + base_transition * width_scale
-					if distance < outer_radius and not is_protected_ready_cell(x, y) then
-						local weight
-						-- The guaranteed flat core is an exact circle and never participates in the
-						-- boundary warp, so live extractor/rocket edge hexes cannot straddle the blend.
+			local radius = core_only and patch.core_cells
+				or patch.core_cells + base_transition * maximum_width_scale
+			local margin = core_only and 1 or 2
+			local sample_step = core_only and 1 or native_sample_step
+			local x0, y0, x1, y1
+			x0, y0, x1, y1, sample_step =
+				aligned_native_bounds(patch, radius, margin, sample_step)
+			local local_width, local_height = x1 - x0 + 1, y1 - y0 + 1
+			assert(local_width > 0 and local_height > 0, "empty native patch bounds")
+			assert(sample_step == 1
+				or ((local_width - 1) % sample_step == 0
+					and (local_height - 1) % sample_step == 0),
+				"unaligned native mask bounds")
+			local local_box = box_fn(0, 0, local_width, local_height)
+			local source_box = box_fn(x0, y0, x1 + 1, y1 + 1)
+			local source_native = own(grid:new_instance(local_width, local_height))
+			assert(source_native and type(source_native.copyrect) == "function",
+				"native source allocation failed")
+			source_native:copyrect(grid, source_box, point_fn(0, 0))
+			local source = own(native_repack(source_native, "f", 32, true))
+			assert(source, "native signed source conversion failed")
+
+			local height_grid = own(source:clone())
+			native_mul_div_add(height_grid, native_height_scale, 1, 0)
+			local plane_seed = own(native_new_grid(2, 2, "f", 32))
+			assert(plane_seed, "native plane allocation failed")
+			local function scaled_plane(x, y)
+				local value = patch.target + patch.grade_x * (x - patch.cx)
+					+ patch.grade_y * (y - patch.cy)
+				return math.floor(value * native_height_scale + 0.5)
+			end
+			plane_seed:set(0, 0, scaled_plane(x0, y0))
+			plane_seed:set(1, 0, scaled_plane(x1, y0))
+			plane_seed:set(0, 1, scaled_plane(x0, y1))
+			plane_seed:set(1, 1, scaled_plane(x1, y1))
+			local plane = own(native_resample(plane_seed, local_width, local_height, true))
+			assert(plane, "native plane resample failed")
+
+			local mask, samples = nil, 0
+			local center_x = math.floor((patch.cx - x0) * height_tile + 0.5)
+			local center_y = math.floor((patch.cy - y0) * height_tile + 0.5)
+			local core_radius_world = math.floor(patch.core_cells * height_tile + 0.5)
+			if core_only then
+				mask = own(native_new_grid(local_width, local_height, "f", 32))
+				assert(mask, "native core-mask allocation failed")
+				native_circle_set(mask, native_weight_scale, center_x, center_y,
+					core_radius_world, 0, native_tile_step)
+			else
+				local coarse_width = math.floor((local_width - 1) / sample_step) + 1
+				local coarse_height = math.floor((local_height - 1) / sample_step) + 1
+				local coarse = own(native_new_grid(coarse_width, coarse_height, "f", 32))
+				assert(coarse, "native coarse-mask allocation failed")
+				for coarse_y = 0, coarse_height - 1 do
+					local y = y0 + coarse_y * sample_step
+					for coarse_x = 0, coarse_width - 1 do
+						local x = x0 + coarse_x * sample_step
+						local dx, dy = x - patch.cx, y - patch.cy
+						local distance = math.sqrt(dx * dx + dy * dy)
+						local angle = math.atan2 and math.atan2(dy, dx) or 0
+						local ux, uy = 1, 0
+						if distance > 0.0001 then ux, uy = dx / distance, dy / distance end
+						local along_relief = ux * patch.relief_x + uy * patch.relief_y
+						local harmonic = 0.52 * math.sin(3 * angle + patch.phase)
+							+ 0.30 * math.sin(5 * angle - patch.phase * 1.37)
+							+ 0.18 * math.sin(7 * angle + patch.phase * 0.73)
+						local width_scale = 1 + transition_irregularity * harmonic
+							+ 0.12 * (2 * along_relief * along_relief - 1)
+							- 0.06 * along_relief
+						width_scale = math.max(0.50,
+							math.min(maximum_width_scale, width_scale))
+						local outer_radius = patch.core_cells + base_transition * width_scale
+						local weight = 0
 						if distance <= patch.core_cells then
 							weight = 1
-						else
+						elseif distance < outer_radius then
 							local t = (distance - patch.core_cells)
 								/ math.max(0.0001, outer_radius - patch.core_cells)
 							t = math.max(0, math.min(1, t))
 							local smooth = t * t * t * (t * (t * 6 - 15) + 10)
 							weight = 1 - smooth
 						end
-						local old = grid:get(x, y)
-						if type(old) == "number" then
-							-- Blend the broad landform toward the pad elevation but return native
-							-- small-scale relief much faster than the low-frequency grade. This retains
-							-- the surrounding terrain's visual texture instead of exposing a smooth halo.
-							local local_plane = patch.target
-								+ patch.grade_x * dx + patch.grade_y * dy
-							local detail = old - local_plane
-							local detail_retention = 1 - weight * weight * weight
-							local shape_target = patch.kind == "surface"
-								and local_plane or patch.target
-							local value = math.floor(local_plane
-								+ (shape_target - local_plane) * weight
-								+ detail * detail_retention + 0.5)
-							value = math.max(0, math.min(65535, value))
-							if value ~= old then
-								grid:set(x, y, value)
-								modified_cells = modified_cells + 1
-							end
-						end
+						coarse:set(coarse_x, coarse_y,
+							math.floor(weight * native_weight_scale + 0.5))
 					end
 				end
+				samples = coarse_width * coarse_height
+				mask = own(native_resample(coarse, local_width, local_height, true))
+				assert(mask, "native mask resample failed")
+				native_clamp(mask, 0, native_weight_scale)
+				local support = own(native_new_grid(local_width, local_height, "f", 32))
+				assert(support, "native support-mask allocation failed")
+				native_circle_set(support, native_weight_scale, center_x, center_y,
+					math.ceil(radius * height_tile), 0, native_tile_step)
+				native_mul_div_add(mask, support, native_weight_scale, 0)
+				-- Resampling may soften the sampled core edge; restore its exact inclusive disk.
+				native_circle_set(mask, native_weight_scale, center_x, center_y,
+					core_radius_world, 0, native_tile_step)
 			end
+
+			-- Ready-before resource guards stay untouched: zero the mask over each protected disk.
+			local nearby_protected = protected_ready_sites_near(patch.cx, patch.cy, radius)
+			for _, protected in ipairs(nearby_protected) do
+				native_circle_set(mask, 0,
+					math.floor((protected.cx - x0) * height_tile + 0.5),
+					math.floor((protected.cy - y0) * height_tile + 0.5),
+					math.floor(protected.radius * height_tile + 0.5),
+					0, native_tile_step)
+			end
+			-- Blend the broad landform toward the pad elevation but return native small-scale relief
+			-- much faster than the low-frequency grade (detail retention 1 - w^3), as before.
+			local weight_cube = own(mask:clone())
+			if not core_only then
+				native_mul_div_add(weight_cube, mask, native_weight_scale, 0)
+				native_mul_div_add(weight_cube, mask, native_weight_scale, 0)
+			end
+			local inverse_cube = own(weight_cube:clone())
+			native_mul_div_add(inverse_cube, -1, 1, native_weight_scale)
+
+			local result = own(height_grid:clone())
+			native_mul_div_add(result, inverse_cube, native_weight_scale, 0)
+			local plane_term = own(plane:clone())
+			native_mul_div_add(plane_term, weight_cube, native_weight_scale, 0)
+			native_add(result, plane_term)
+			if patch.kind ~= "surface" then
+				local target_delta = own(plane:clone())
+				native_mul_div_add(target_delta, -1, 1,
+					math.floor(patch.target * native_height_scale + 0.5))
+				native_mul_div_add(target_delta, mask, native_weight_scale, 0)
+				native_add(result, target_delta)
+			end
+
+			-- The physical inner 16x16-sector rectangle is a hard no-write zone. Restore it from the
+			-- patch snapshot after native interpolation, keeping any transition entirely on the ring side.
+			local restore_x0, restore_y0 = math.max(x0, inner_x0), math.max(y0, inner_y0)
+			local restore_x1, restore_y1 = math.min(x1, inner_x1), math.min(y1, inner_y1)
+			local restored_patch_cells = 0
+			if restore_x0 <= restore_x1 and restore_y0 <= restore_y1 then
+				local restore_box = box_fn(restore_x0 - x0, restore_y0 - y0,
+					restore_x1 - x0 + 1, restore_y1 - y0 + 1)
+				result:copyrect(height_grid, restore_box,
+					point_fn(restore_x0 - x0, restore_y0 - y0))
+				restored_patch_cells = (restore_x1 - restore_x0 + 1)
+					* (restore_y1 - restore_y0 + 1)
+			end
+
+			-- Native integer division truncates. Add half a fixed-point height unit first to retain the
+			-- legacy math.floor(value + 0.5) contract, then clamp to the U16 terrain range.
+			native_mul_div_add(result, 1, 1, 128)
+			native_mul_div_add(result, 1, native_height_scale, 0)
+			native_clamp(result, 0, 65535)
+			local difference = own(result:clone())
+			native_add_mul_div(difference, source, -1)
+			native_abs(difference)
+			local changed_cells = native_count(difference, 1, 2147483647)
+			local packed_result = own(native_repack(result, native_is_compute(grid)))
+			assert(packed_result, "native result conversion failed")
+			grid:copyrect(packed_result, local_box, point_fn(x0, y0))
+			return changed_cells, local_width * local_height, samples, restored_patch_cells
+		end)
+		for index = #owned, 1, -1 do
+			local value = owned[index]
+			if value and type(value.free) == "function" then pcall(value.free, value) end
+		end
+		if not ok then error(changed, 0) end
+		return changed, raster_cells, mask_samples, inner_restored_patch_cells
+	end
+
+	local function apply_native_raster()
+		patch_sort()
+		for _, patch in ipairs(patches) do
+			shaped_patches = shaped_patches + 1
+			local changed, raster_cells, mask_samples, restored_patch_cells =
+				apply_native_patch(patch, false)
+			modified_cells = modified_cells + changed
+			native_raster_cells = native_raster_cells + raster_cells
+			native_mask_samples = native_mask_samples + mask_samples
+			native_inner_restored_patch_cells = native_inner_restored_patch_cells + restored_patch_cells
 		end
 		-- A second pass makes building footprints exact planes after nearby feather blends. Surface
 		-- collection cores instead retain their capped fitted grade, eliminating a level circular scar.
-		-- Ready-before resource guards remain untouched; rocket/resource core clearance prevents a
-		-- landing footprint from depending on any guarded cell.
-		for _, patch in ipairs(patches) do
-			local radius = patch.core_cells
-			local x0 = math.max(0, math.floor(patch.cx - radius - 1))
-			local y0 = math.max(0, math.floor(patch.cy - radius - 1))
-			local x1 = math.min(width - 1, math.ceil(patch.cx + radius + 1))
-			local y1 = math.min(height - 1, math.ceil(patch.cy + radius + 1))
-			for y = y0, y1 do
-				for x = x0, x1 do
-					local dx, dy = x - patch.cx, y - patch.cy
-					if dx * dx + dy * dy <= radius * radius
-						and not is_protected_ready_cell(x, y) then
-						local core_target = patch.kind == "surface"
-							and math.floor(patch.target + patch.grade_x * dx
-								+ patch.grade_y * dy + 0.5)
-							or patch.target
-						core_target = math.max(0, math.min(65535, core_target))
-						local old = grid:get(x, y)
-						if type(old) == "number" and old ~= core_target then
-							grid:set(x, y, core_target)
-							modified_cells = modified_cells + 1
-						end
-					end
-				end
-			end
+		for patch_index, patch in ipairs(patches) do
+			if patch_index == #patches then break end
+			local changed, raster_cells, _, restored_patch_cells = apply_native_patch(patch, true)
+			modified_cells = modified_cells + changed
+			native_raster_cells = native_raster_cells + raster_cells
+			native_inner_restored_patch_cells = native_inner_restored_patch_cells + restored_patch_cells
 		end
-	end)
+	end
+
+	local pause = Global("PauseInfiniteLoopDetection")
+	local resume = Global("ResumeInfiniteLoopDetection")
+	if type(pause) == "function" then pcall(pause, "SBMOuterResourceTerrain") end
+	local ok_apply, apply_error
+	if #native_missing > 0 then
+		ok_apply, apply_error = false,
+			"native grid primitives unavailable: " .. table.concat(native_missing, ", ")
+	else
+		local clone_ok, clone_error = true, nil
+		if grid == raw then
+			clone_ok, clone_error = pcall(function()
+				local working = grid:clone()
+				assert(working and working ~= raw, "native transactional clone unavailable")
+				grid = working
+			end)
+		end
+		if clone_ok then
+			ok_apply, apply_error = pcall(apply_native_raster)
+		else
+			ok_apply, apply_error = false, clone_error
+		end
+	end
 	if type(resume) == "function" then pcall(resume, "SBMOuterResourceTerrain") end
+	if not ok_apply then
+		OptimizationFailure("outer resource terrain native raster", tostring(apply_error), map)
+	end
 	local set_ok, set_error = false, "no terrain changes"
 	if ok_apply and modified_cells > 0 then
 		set_ok, set_error = pcall(terrain_api.SetHeightGrid, map, grid)
 	elseif ok_apply then
 		set_ok = true
 	end
-	if grid ~= raw and type(grid.free) == "function" then pcall(grid.free, grid) end
+	if grid and grid ~= raw and type(grid.free) == "function" then pcall(grid.free, grid) end
 
 	map.SuperBigMapOuterResourceTerrainSites = resource_sites
 	map.SuperBigMapOuterResourceRocketPads = rocket_sites
@@ -2583,6 +2834,10 @@ local function PrepareOuterResourceTerrain(map)
 		patches = shaped_patches, modified_cells = modified_cells,
 		ring_sectors = ring_sectors,
 		resource_clusters = #rocket_sites,
+		native_raster_cells = native_raster_cells,
+		native_mask_samples = native_mask_samples,
+		native_sample_step = native_sample_step,
+		native_inner_restored_patch_cells = native_inner_restored_patch_cells,
 		error = not ok_apply and tostring(apply_error)
 			or not set_ok and tostring(set_error) or "",
 	}
@@ -2605,6 +2860,9 @@ local function PrepareOuterResourceTerrain(map)
 			.. " rocket_shape_radius=" .. tostring(report.rocket_shape_radius)
 			.. " patches=" .. tostring(report.patches)
 			.. " modified_cells=" .. tostring(report.modified_cells)
+			.. " native_cells=" .. tostring(report.native_raster_cells)
+			.. " native_samples=" .. tostring(report.native_mask_samples)
+			.. " native_inner_patch_restore=" .. tostring(report.native_inner_restored_patch_cells)
 			.. " error=" .. tostring(report.error))
 	end
 	return set_ok and modified_cells > 0, report
