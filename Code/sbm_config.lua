@@ -548,10 +548,15 @@ config.StretchDecorEnginePassMaxPlacements = 4000
 -- type. Attempts are bounded per missing group.
 config.StretchDecorEnginePassSyntheticSites = true
 config.StretchDecorEnginePassSyntheticAttemptsPerGroup = 120
--- Drop a template after this many consecutive misses on the mountain (obstruct) circles, so
--- attempts go where the map has room. Only obstruct misses count.
+-- After this many consecutive no-room misses (the mountain obstruct circles, or ground already
+-- decorated) a template's search WIDENS instead of the template being dropped: its jitter reach
+-- doubles and the counter resets, so a hemmed-in template escapes its apron and a saturated one
+-- reaches open ground. It is retired only once its reach is already at the cap below -- otherwise a
+-- decor-dense site retires nearly every template and the whole attempt budget falls on the few
+-- survivors' saturated annuli (15S67E: 135 of 136 templates retired, 67 of 99 groups placed).
 config.StretchDecorEnginePassSyntheticTemplatePatience = 24
 config.StretchDecorEnginePassSyntheticJitterMaxPercent = 350
+config.StretchDecorEnginePassSyntheticJitterReachCapPercent = 2800
 -- LOADING OPTIMIZATIONS. Defer the provisional blank-map buildability
 -- calculation until native ResolveBuildable has generated terrain, and defer MapGenerated's
 -- full-map bounds/buildable/passability rebuild because the stretch changes those grids moments
@@ -1092,6 +1097,8 @@ C.STRETCH_DECOR_ENGINE_PASS_SYNTHETIC_TEMPLATE_PATIENCE =
 	as_number(config.StretchDecorEnginePassSyntheticTemplatePatience, 24)
 C.STRETCH_DECOR_ENGINE_PASS_SYNTHETIC_JITTER_MAX_PERCENT =
 	as_number(config.StretchDecorEnginePassSyntheticJitterMaxPercent, 350)
+C.STRETCH_DECOR_ENGINE_PASS_SYNTHETIC_JITTER_REACH_CAP_PERCENT =
+	as_number(config.StretchDecorEnginePassSyntheticJitterReachCapPercent, 2800)
 C.OPTIMIZE_STRETCH_DEFERRED_REBUILDS = as_bool(config.OptimizeStretchDeferredRebuilds)
 C.OPTIMIZE_STRETCH_REVALIDATION = as_bool(config.OptimizeStretchRevalidation)
 C.OPTIMIZE_STRETCH_DECOR_TRAVERSAL = as_bool(config.OptimizeStretchDecorTraversal)

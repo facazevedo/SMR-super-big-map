@@ -571,7 +571,8 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 		--    that vanilla's own obstruct grid rejects, and vanilla had consumed nearly every placeable
 		--    one (7 remained).  So once the authored sites run out, borrow the filters of a used site
 		--    -- the group is then one vanilla would put in exactly that context -- and try a seeded
-		--    position around it, between 1x and JITTER_MAX x its radius away and on the same terrain
+		--    position around it, between 1x and its current reach x its radius away (JITTER_MAX to
+		--    start, widened as the template runs out of room, see below) and on the same terrain
 		--    type.  Only the site is the mod's; matcher, weights, spacing and stamp stay vanilla's.
 		local placed_synthetic = 0
 		if placed < target and cfg_bool("STRETCH_DECOR_ENGINE_PASS_SYNTHETIC_SITES", true) then
@@ -617,19 +618,28 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 			local rejected = { obstruct = 0, decorated = 0, no_match = 0, bounds = 0, failed = 0,
 				terrain = 0, band = 0 }
 			-- A template hemmed in by mountain masses fails every draw on the obstruct circles (1,021
-			-- of 1,320 rejections in v903).  Drop a template after `patience` consecutive OBSTRUCT
-			-- misses so the remaining attempts go where the map has room; a success resets its count.
-			-- Only obstruct misses count: a crowded template (existing stamps) or an off-type draw is
-			-- not hopeless.  v904 counted every miss with patience 12 and drained all 58 templates
-			-- after 789 of 3,960 attempts at a ~3% per-attempt success rate.
+			-- of 1,320 rejections in v903), and one whose annulus is already full fails every draw on
+			-- the decorated circles.  Both mean "no room at this reach", so after `patience`
+			-- consecutive no-room misses WIDEN that template instead of retiring it: double its jitter
+			-- reach and reset its counter, and retire it only once the reach is already at the cap.  A
+			-- success resets the counter too.  Retiring outright is what v921 did (obstruct misses
+			-- only), and on a decor-dense site it dismantles the pool: at 15S67E 135 of 136 templates
+			-- retired -- 135 x 24 = 3,240 of the 3,527 obstruct rejections were retirement streaks --
+			-- and 65% of the budget then fell on the one survivor's saturated annulus, so the pass
+			-- placed 67 of 99.  Bounds, terrain and no-match misses still count for nothing: widening
+			-- would not help those.
 			local patience = math.max(1, math.floor(
 				cfg_number("STRETCH_DECOR_ENGINE_PASS_SYNTHETIC_TEMPLATE_PATIENCE", 24)))
-			local template_fail, exhausted = {}, 0
+			local reach_cap = math.max(jitter_max, math.floor(
+				cfg_number("STRETCH_DECOR_ENGINE_PASS_SYNTHETIC_JITTER_REACH_CAP_PERCENT", 2800)))
+			local template_fail, template_reach, exhausted, escalations = {}, {}, 0, 0
+			local max_reach = jitter_max
 			while placed < target and attempts < budget and #templates > 0 do
 				attempts = attempts + 1
 				local ti = stream.rand(#templates) + 1
 				local template = templates[ti]
-				local extra = math.max(1, math.floor(template.radius * (jitter_max - 100) / 100))
+				local reach = template_reach[template] or jitter_max
+				local extra = math.max(1, math.floor(template.radius * (reach - 100) / 100))
 				local dist = math.floor(template.radius) + stream.rand(extra)
 				local dx, dy = rotate_radius(dist, stream.rand(MAX_ROTATION), point20, true)
 				local sx, sy = template.x + (tonumber(dx) or 0), template.y + (tonumber(dy) or 0)
@@ -647,17 +657,29 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 					template_fail[template] = 0
 				else
 					rejected[outcome] = (rejected[outcome] or 0) + 1
-					if outcome == "obstruct" then
+					if outcome == "obstruct" or outcome == "decorated" then
 						local misses = (template_fail[template] or 0) + 1
 						template_fail[template] = misses
 						if misses >= patience then
-							table.remove(templates, ti)
-							exhausted = exhausted + 1
+							template_fail[template] = 0
+							if reach < reach_cap then
+								local wider = math.min(reach_cap, reach * 2)
+								template_reach[template] = wider
+								escalations = escalations + 1
+								if wider > max_reach then max_reach = wider end
+							else
+								table.remove(templates, ti)
+								exhausted = exhausted + 1
+							end
 						end
 					end
 				end
 			end
 			stats.synthetic_templates_exhausted = exhausted
+			stats.synthetic_escalations = escalations
+			stats.synthetic_reach_cap_percent = reach_cap
+			stats.synthetic_max_reach_percent = max_reach
+			stats.synthetic_templates_left = #templates
 			stats.synthetic_attempts = attempts
 			stats.synthetic_budget = budget
 			for k, v in pairs(rejected) do stats["synthetic_rejected_" .. k] = v end
