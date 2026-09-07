@@ -152,6 +152,45 @@ CreateRealTimeThread(function()
 			end
 		end
 
+		------------------------------------------------------- gate 8: reachability audit capture
+		-- Gate 8's arrival red (iter 001) is a caught [LUA ERROR] raised by the underground
+		-- enrichment reachability audit; the audit's own `invalid_details`/`unresolved_details`
+		-- reach only the LoadingTiming channel, which the payload keeps disabled, so the log shows
+		-- the count and nothing about the cause.  Wrap the audit here -- probe side only, no mod
+		-- change, no RNG draw, capture and forward only -- so every call's scalar stats reach the
+		-- report.  The sink lives in _G rather than a local: this chunk is one long function and
+		-- top-level local slots are scarce.
+		rawset(_G, "RULES_REACH", {})
+		rawset(_G, "RULES_REACH_HOOK", "mod_not_found")
+		for i = 1, #(ModsLoaded or {}) do
+			local env = ModsLoaded[i] and ModsLoaded[i].env
+			local candidate = type(env) == "table" and rawget(env, "SuperBigMap")
+			local dep = type(candidate) == "table" and rawget(candidate, "DepositRules") or nil
+			local original = type(dep) == "table"
+				and rawget(dep, "RelocateUnreachableUndergroundEnrichments") or nil
+			if type(original) == "function" then
+				dep.RelocateUnreachableUndergroundEnrichments = function(...)
+					local audit_ok, stats = original(...)
+					local parts = { "ok=" .. tostring(audit_ok) }
+					if type(stats) == "table" then
+						for k, v in pairs(stats) do
+							if type(v) ~= "table" and type(v) ~= "function" then
+								parts[#parts + 1] = tostring(k) .. "=" .. tostring(v)
+							end
+						end
+					else
+						parts[#parts + 1] = "stats_type=" .. type(stats)
+					end
+					table.sort(parts)
+					local sink = rawget(_G, "RULES_REACH")
+					sink[#sink + 1] = "call" .. tostring(#sink + 1)
+						.. "{" .. table.concat(parts, " ") .. "}"
+					return audit_ok, stats
+				end
+				rawset(_G, "RULES_REACH_HOOK", "installed")
+			end
+		end
+
 		------------------------------------------------------------------ START press
 		RULES_STATUS = "generating"
 		local t0 = GetPreciseTicks()
@@ -1353,6 +1392,12 @@ CreateRealTimeThread(function()
 		R.ug_first_access_error = fa_ok and tostring(fa_result or "none") or tostring(fa_result)
 		R.ug_first_access_ok = tostring(fa_ok and fa_result == nil)
 
+		-- Gate 8: whatever the reachability audit measured, even when first access failed.
+		R.ug_reach_hook = tostring(rawget(_G, "RULES_REACH_HOOK"))
+		R.ug_reach_calls = #rawget(_G, "RULES_REACH")
+		R.ug_reach_records = #rawget(_G, "RULES_REACH") > 0
+			and table.concat(rawget(_G, "RULES_REACH"), " || ") or "none"
+
 		rawset(_G, "RULES", R)
 		RULES_LINE = string.format(
 			"t0t1=%s hex=%sx%s enrich=%s/%s decor=%s/%s ring_decor=%s sectors=%s revealed=%s passages=%s signs=%s deps=%s vis_unexp=%s glued=%s/%s max_ring=%s",
@@ -1406,6 +1451,9 @@ CreateRealTimeThread(function()
 		printf("[RULES] underground after access: passages: %s", tostring(R.ug_post_passage_records))
 		printf("[RULES] underground wonder reachability (%s calls): %s",
 			tostring(R.ug_wonder_calls), tostring(R.ug_wonder_report))
+		printf("[RULES] underground enrichment reachability audit (hook=%s, %s calls): %s",
+			tostring(R.ug_reach_hook), tostring(R.ug_reach_calls),
+			tostring(R.ug_reach_records))
 		printf("[RULES] underground decor: enabled=%s src=%s reason=%s target=%s placed=%s "
 			.. "(auth=%s synth=%s) objects=%s ring=%s/%s dropped=%s/%s sites=%s used=%s "
 			.. "gen=%s passes=%s ratio=%s seed=%s(%s) area=%s cosmetic=%s ring_cosmetic=%s",
