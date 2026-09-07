@@ -465,6 +465,31 @@ local function Install()
 			return r1, r2
 		end
 	end
+	-- Resource badges appear only after their sector is revealed: ApplyOverviewResourceScanGate
+	-- hides them while the sector is unexplored, and the only path that clears that hide is
+	-- OnDepositsSpawned -> ScaleSmallObjects("up"), which MapSector:Scan defers ONLY when the scan
+	-- actually placed a deposit (Lua/Exploration.lua:264).  On the expanded map the stretch already
+	-- placed the sector's markers, so a scan there spawns nothing and the badge stays hidden for the
+	-- rest of the session.  Re-run the gate the moment the sector's own status leaves "unexplored".
+	-- Synchronous on purpose: Msg("SectorScanned") is raised from a game-time notification thread
+	-- (Lua/Exploration.lua:88-104), so it is not a reliable trigger for a visual the player sees the
+	-- instant the scan completes.
+	if map_sector_class and type(map_sector_class.Scan) == "function" then
+		local original_sector_scan = State.original_map_sector_scan or map_sector_class.Scan
+		State.original_map_sector_scan = original_sector_scan
+		map_sector_class.Scan = function(self, ...)
+			local status_before = self.status
+			local r1, r2 = original_sector_scan(self, ...)
+			if self.status ~= status_before and self.status ~= "unexplored" then
+				local ok_map, map = pcall(function() return self:GetMap() end)
+				map = ok_map and map or Engine.Global("CurrentMap")
+				if IsModMap(map) then
+					ApplyOverviewResourceScanGate(map, nil, "MapSector:Scan")
+				end
+			end
+			return r1, r2
+		end
+	end
 	if map_sector_class and type(map_sector_class.QueueForExploration) == "function" then
 		local original_queue = State.original_sector_queue_for_exploration or map_sector_class.QueueForExploration
 		State.original_sector_queue_for_exploration = original_queue
@@ -707,12 +732,16 @@ function SectorHighlight.RestoreVanillaBehavior()
 	if map_sector_class and State and type(State.original_map_sector_set_scan_fx) == "function" then
 		map_sector_class.SetScanFx = State.original_map_sector_set_scan_fx
 	end
+	if map_sector_class and State and type(State.original_map_sector_scan) == "function" then
+		map_sector_class.Scan = State.original_map_sector_scan
+	end
 	if State then
 		State.original_overview_select_sector = nil
 		State.original_overview_generate_rollover = nil
 		State.original_sector_queue_for_exploration = nil
 		State.original_map_sector_update_decal = nil
 		State.original_map_sector_set_scan_fx = nil
+		State.original_map_sector_scan = nil
 		State.scale_small_objects_wrapper = nil
 		State.original_scale_small_objects = nil
 		State.overview_highlight_patch_version = nil
