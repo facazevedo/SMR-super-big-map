@@ -42,9 +42,11 @@
 -- passes moved every site, before the authoritative resume).  The underground runs long after
 -- generation, so the generator holder may be gone: the seed then comes from the seed the mod keeps
 -- on the map and the matching/weight properties from the authored RandomMapPreset, and the record
--- names which source each came from.  Every result is published on the map itself
--- (SuperBigMapDecorEnginePassReport / ...Objects) because one LastStats slot cannot represent two
--- maps in one session.
+-- names which source each came from.  The stats record is published on the map itself
+-- (SuperBigMapDecorEnginePassReport) because one LastStats slot cannot represent two maps in one
+-- session; the list of placed OBJECTS is per map too, but it lives in this module's weak-keyed
+-- registry (DecorTopUp.PassObjects) rather than on a map field, so live object references are
+-- never attached to engine state that a save or a map teardown might carry.
 
 local SuperBigMap = rawget(_G, "SuperBigMap")
 if type(SuperBigMap) ~= "table" then
@@ -63,9 +65,20 @@ local ObjectScalesWithTerrain = ObjectClone and ObjectClone.ObjectScalesWithTerr
 local DecorTopUp = {}
 SuperBigMap.DecorTopUp = DecorTopUp
 
-DecorTopUp.VERSION = 7
+DecorTopUp.VERSION = 8
 DecorTopUp.SEED_TAG = "SuperBigMapDecorEnginePass"
 DecorTopUp.LastStats = nil
+
+-- Per-map list of the objects this pass placed, keyed weakly on the map table: the pass runs on
+-- two maps in one session, and the reader needs the list of the map it asks about.  Weak keys so a
+-- discarded map takes its list with it, and a module registry rather than a map field so no live
+-- object reference is ever stored on engine state.
+local pass_objects_by_map = setmetatable({}, { __mode = "k" })
+
+function DecorTopUp.PassObjects(map)
+	local list = type(map) == "table" and pass_objects_by_map[map] or nil
+	return type(list) == "table" and list or nil
+end
 
 local function cfg_bool(key, default)
 	local value = (SuperBigMap.Config or {})[key]
@@ -378,7 +391,7 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 
 		local defs_cache, raster_cache = {}, {}
 		local placed_list = {}
-		map.SuperBigMapDecorEnginePassObjects = placed_list
+		pass_objects_by_map[map] = placed_list
 		local unused = {}
 		for _, site in ipairs(sites) do
 			if not site.used then unused[#unused + 1] = site end

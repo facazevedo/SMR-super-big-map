@@ -333,10 +333,9 @@ CreateRealTimeThread(function()
 		local sbm_cfg = SBM and rawget(SBM, "Config") or {}
 		R.gate_cfg_step01 = tostring(sbm_cfg.EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE)
 		R.gate_cfg_step02 = tostring(sbm_cfg.EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE)
-		local gate_trace = type(sbm_state_t1) == "table"
-			and rawget(sbm_state_t1, "underground_access_gate_trace") or nil
-		R.gate_trace_count = type(gate_trace) == "table" and #gate_trace or -1
-		R.gate_trace = type(gate_trace) == "table" and table.concat(gate_trace, " || ") or "absent"
+		-- The gate's install/reuse/removal trace was temporary instrumentation, removed from the mod
+		-- at v920 once gate 10 was proven by the player route; the wrapper facts above are the
+		-- evidence that the gate is installed and is the function the switch calls.
 
 		------------------------------------------------------------------ gate 1: enrichment digest
 		local enrich, ring_enrich = {}, 0
@@ -386,14 +385,22 @@ CreateRealTimeThread(function()
 				"decoration_passes", "decoration_ratio", "area_factor", "ms" }) do
 				R[prefix .. k] = tostring(st[k])
 			end
-			local objs = type(m) == "table" and rawget(m, "SuperBigMapDecorEnginePassObjects") or nil
+			-- v920: the placed-object list moved off the map field into the module's weak-keyed
+			-- per-map registry, so ask the module for THIS map's list.
+			local top = SBM and SBM.DecorTopUp or nil
+			local objs = (top and type(top.PassObjects) == "function") and top.PassObjects(m) or nil
+			R[prefix .. "objects_source"] = objs and "module_registry" or "none"
 			if type(objs) ~= "table" then
 				-- Only fall back to the module slot when the RECORD came from there too. A map that
 				-- has its own record and no object list placed nothing (the pass returns before it
 				-- creates the list), and borrowing the other map's list made iter 007 run 1 report
 				-- the surface digest and 1292 objects as the underground's.
-				objs = R[prefix .. "record_source"] == "module_lastfields"
-					and (SBM and SBM.DecorTopUp and SBM.DecorTopUp.LastObjects or {}) or {}
+				if R[prefix .. "record_source"] == "module_lastfields" then
+					objs = top and top.LastObjects or {}
+					R[prefix .. "objects_source"] = "module_lastobjects"
+				else
+					objs = {}
+				end
 			end
 			local list, ring, classes = {}, 0, {}
 			for _, o in ipairs(objs) do
@@ -1045,17 +1052,12 @@ CreateRealTimeThread(function()
 			R.ug_switch_is_mod_gate = tostring(type(sbm_state) == "table"
 				and change == rawget(sbm_state, "change_current_map_slot_wrapper"))
 			R.ug_switch_pre_state = ug_state_snapshot()
-			-- The same facts as at T1, now at the moment of the switch: a wrapper that
-			-- disappeared between the two timestamps has a removal entry in the trace.
+			-- The same facts as at T1, now at the moment of the switch, so a wrapper that
+			-- disappeared between the two timestamps shows up as a type change here.
 			R.ug_gate_wrapper_type = tostring(type(sbm_state) == "table"
 				and type(rawget(sbm_state, "change_current_map_slot_wrapper")) or "no-state")
 			R.ug_gate_patch_version = tostring(type(sbm_state) == "table"
 				and rawget(sbm_state, "underground_access_patch_version"))
-			local switch_trace = type(sbm_state) == "table"
-				and rawget(sbm_state, "underground_access_gate_trace") or nil
-			R.ug_gate_trace_count = type(switch_trace) == "table" and #switch_trace or -1
-			R.ug_gate_trace = type(switch_trace) == "table"
-				and table.concat(switch_trace, " || ") or "absent"
 			local switch_t0 = GetPreciseTicks()
 			switch_win_t0 = switch_t0
 			-- Same argument list as the HUD's OnPress (sbm_map_generation.lua:13214).
@@ -1155,12 +1157,6 @@ CreateRealTimeThread(function()
 					.. ",ms=" .. tostring(settle.rebuild_ms)
 					.. ",count=" .. tostring(settle.rebuild_count))
 				or "absent"
-				-- v913 (temporary): the deferred spawn's own search boundary — the marker's logical
-				-- vs visual start position, the start-hex predicates, a fingerprint of the buildable
-				-- and passability grids over the window the spiral can walk, and the returned hex.
-				local search_trace = rawget(ug, "SuperBigMapWonderSpawnSearchTrace")
-				R.ug_wonder_spawn_trace = (type(search_trace) == "string" and search_trace ~= "")
-					and search_trace or "absent"
 
 			-- Underground reveal state, and the sector grid the passage records are labelled with.
 			local ug_sectors, ug_revealed, ug_sector_count = {}, {}, 0
@@ -1311,6 +1307,7 @@ CreateRealTimeThread(function()
 			-- (`Lua/_EntityData.generated.lua`, no DefineClass), so an `Object` sweep sees none of
 			-- them and reported 0 in iter 007 run 1 on a map that was never measured.
 			local ug_cosmetic, ug_cosmetic_ring, ug_cos_classes = 0, 0, {}
+			local ug_cos_ring_records = {}
 			local COSMETIC_PREFIXES = { "Cliff", "Dec", "Rocks", "Stones", "Underground_Arch" }
 			pcall(ug.MapForEach, ug, "map", "CObject", function(o)
 				local name = tostring(o.class or "")
@@ -1319,7 +1316,22 @@ CreateRealTimeThread(function()
 					if name:sub(1, #p) == p then
 						ug_cosmetic = ug_cosmetic + 1
 						local x, y = posxy(o)
-						if ug_in_ring(x, y) then ug_cosmetic_ring = ug_cosmetic_ring + 1 end
+						if ug_in_ring(x, y) then
+							ug_cosmetic_ring = ug_cosmetic_ring + 1
+							-- Name every band object and its provenance instead of reporting a bare
+							-- count: SuperBigMapNativeSourceScale is written only by the stretch when
+							-- it captures a pre-existing object, so its presence identifies vanilla
+							-- prefab-baked decor that the proportional stretch moved (band membership
+							-- is a fractional position, which the stretch preserves) rather than a
+							-- placement of the decor pass, whose own object list is read separately.
+							if #ug_cos_ring_records < 24 then
+								ug_cos_ring_records[#ug_cos_ring_records + 1] = name
+									.. "@" .. hexof(ug, x, y)
+									.. ":native_scale=" .. tostring(rawget(o, "SuperBigMapNativeSourceScale"))
+									.. ":scale=" .. tostring(type(o.GetScale) == "function"
+										and select(2, pcall(o.GetScale, o)) or "?")
+							end
+						end
 						ug_cos_classes[name] = (ug_cos_classes[name] or 0) + 1
 						return
 					end
@@ -1327,6 +1339,8 @@ CreateRealTimeThread(function()
 			end)
 			R.ug_cosmetic_objects = ug_cosmetic
 			R.ug_cosmetic_objects_in_ring = ug_cosmetic_ring
+			R.ug_cosmetic_ring_records = #ug_cos_ring_records > 0
+				and table.concat(ug_cos_ring_records, " | ") or "none"
 			local ug_cc = {}
 			for c, n in pairs(ug_cos_classes) do ug_cc[#ug_cc + 1] = c .. ":" .. n end
 			table.sort(ug_cc)
@@ -1407,6 +1421,7 @@ CreateRealTimeThread(function()
 			tostring(R.ug_decor_area_factor), tostring(R.ug_cosmetic_objects),
 			tostring(R.ug_cosmetic_objects_in_ring))
 		printf("[RULES] underground decor classes: %s", tostring(R.ug_decor_class_census))
+		printf("[RULES] underground band cosmetics: %s", tostring(R.ug_cosmetic_ring_records))
 		printf("[RULES] underground after access: enrich=%s/%s imprints=%s (%s) revealed=%s/%s",
 			tostring(R.ug_enrichment_digest), tostring(R.ug_enrichment_count),
 			tostring(R.ug_imprints), tostring(R.ug_imprint_records),

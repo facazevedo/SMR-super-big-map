@@ -7811,224 +7811,6 @@ function WonderVerticalDiagnostics.LinkedWonderAnomalies(map)
 	return linked
 end
 
--- TEMPORARY DIAGNOSTIC for gate 1's underground half; remove before DONE.md.
--- MEASURED: four cold runs on one pinned underground seed produced four different arrival hexes
--- for BottomlessPit's rare anomaly (180,330 / 221,321 / 173,353 / 208,318 around spawner 212,325)
--- while the pre-spawn passability digest was byte-identical in the pinned pair and every seeded
--- placement phase drew identically. Vanilla's search is deterministic and RNG-free
--- (SpawnsOnCityInit:Spawn -> FindUnobstructedDepositPos -> FindBuildableAround), so the differing
--- input must be either the search's START POSITION -- DepositMarker.lua:67 reads
--- marker:GetVisualPosXYZ(), the render-interpolated value, not the logical position Spawn set one
--- line earlier -- or the object/buildable grids the spiral reads, which no digest has covered yet.
--- Wrap the global for the duration of the deferred spawn only and record both, so one cold pair
--- decides between them. All collection is pcall-guarded: a diagnostic failure must never disturb
--- the spawn or gate 8.
---
--- v913 run 1 produced NO trace entries, which the record could not tell apart from "never
--- installed". v914 therefore (a) writes an install line immediately, so the next run distinguishes
--- the two, (b) adds a second, independent observer as a class-method patch on the spawned marker
--- class's GetVisualPosXYZ -- the exact value DepositMarker.lua:67 reads -- because a _G wrap is not
--- guaranteed to be seen by engine-internal call sites, and (c) digests the buildable grid, whose
--- determinism no measurement has covered yet (the settle digests passability only).
-function WonderVerticalDiagnostics.InstallWonderSpawnSearchTrace(map)
-	local original = Global("FindUnobstructedDepositPos")
-	if type(original) ~= "function" or type(map) ~= "table" then return false end
-	local world_to_hex = Global("WorldToHex")
-	local hex_to_world = Global("HexToWorld")
-	local point_ctor = Global("point")
-	local terrain_api = Global("terrain")
-	local is_passable = type(terrain_api) == "table" and terrain_api.IsPassable or nil
-	local is_deposit_obstructed = Global("IsDepositObstructed")
-	local const_tbl = Global("const")
-	local hex_size = type(const_tbl) == "table" and tonumber(const_tbl.HexSize) or 0
-	local buildable = map.buildable
-	local get_z = buildable and buildable.GetZ or nil
-	local object_hex_grid = map.object_hex_grid
-	local build_unbuildable = Global("buildUnbuildableZ")
-	local sentinel_ok, sentinel = false, nil
-	if type(build_unbuildable) == "function" then
-		sentinel_ok, sentinel = pcall(build_unbuildable)
-	end
-	if not sentinel_ok then sentinel = nil end
-	local entries = {}
-
-	local function hex_of(x, y)
-		if type(world_to_hex) ~= "function" or type(point_ctor) ~= "function"
-			or type(x) ~= "number" or type(y) ~= "number" then return nil, nil end
-		local ok_h, q, r = pcall(world_to_hex, point_ctor(x, y))
-		if not ok_h or type(q) ~= "number" then return nil, nil end
-		return q, r
-	end
-
-	-- Fingerprint of the two grids the spiral actually reads, sampled over the window it can walk
-	-- (the widest observed arrival was 39 hexes out). A stable digest with a moving arrival hex
-	-- rules the grids out; a moving digest names them.
-	local function window_digest(q0, r0)
-		if type(q0) ~= "number" or type(r0) ~= "number" or type(get_z) ~= "function"
-			or type(hex_to_world) ~= "function" then return "unavailable" end
-		local build_hash, pass_hash, samples = 5381, 5381, 0
-		for dq = -56, 56, 4 do
-			for dr = -56, 56, 4 do
-				local q, r = q0 + dq, r0 + dr
-				local ok_z, z = pcall(get_z, buildable, q, r)
-				local zv = (ok_z and type(z) == "number") and z or -1
-				build_hash = (build_hash * 33 + zv) % 1000000007
-				local pv = 0
-				local ok_w, wx, wy = pcall(hex_to_world, q, r)
-				if ok_w and type(wx) == "number" and type(is_passable) == "function" then
-					local ok_p, p = pcall(is_passable, map, wx, wy)
-					pv = (ok_p and p) and 1 or 0
-				end
-				pass_hash = (pass_hash * 33 + pv) % 1000000007
-				samples = samples + 1
-			end
-		end
-		return tostring(build_hash) .. "/" .. tostring(pass_hash) .. "/" .. tostring(samples)
-	end
-
-	local function prelude(marker)
-		local spawner = marker and marker.spawner or nil
-		local mx, my = PointXY(Engine.ObjectPos(marker))
-		local vx, vy = SafeCall(marker.GetVisualPosXYZ, marker)
-		local sx, sy, svx, svy
-		if spawner then
-			sx, sy = PointXY(Engine.ObjectPos(spawner))
-			svx, svy = SafeCall(spawner.GetVisualPosXYZ, spawner)
-		end
-		local radius = SafeCall(marker.GetObstructionRadius, marker)
-		local passable, start_obstructed, start_blocked, start_z
-		if type(vx) == "number" and type(vy) == "number" then
-			if type(is_passable) == "function" then
-				local ok_p, p = pcall(is_passable, map, vx, vy)
-				passable = ok_p and p == true
-			end
-			if type(is_deposit_obstructed) == "function" and object_hex_grid then
-				local ok_o, o = pcall(is_deposit_obstructed, object_hex_grid, vx, vy, radius)
-				start_obstructed = ok_o and o == true
-			end
-			if type(marker.MapHasAny) == "function" and type(point_ctor) == "function" then
-				local block_range = IsKindOfSafe(marker, "SurfaceDepositMarker") and 1 or 2
-				local ok_b, b = pcall(marker.MapHasAny, marker, point_ctor(vx, vy),
-					hex_size * block_range, "Deposit", "SurfaceUndergroundTunnelMarker")
-				start_blocked = ok_b and b == true
-			end
-		end
-		local sq, sr = hex_of(vx, vy)
-		if type(sq) == "number" and type(get_z) == "function" then
-			local ok_z, z = pcall(get_z, buildable, sq, sr)
-			start_z = ok_z and z or nil
-		end
-		return "class=" .. tostring(marker and marker.class)
-			.. ":spawner=" .. tostring(spawner and spawner.class)
-			.. ":marker_pos=" .. tostring(mx) .. "," .. tostring(my)
-			.. ":marker_visual=" .. tostring(vx) .. "," .. tostring(vy)
-			.. ":visual_equals_pos=" .. tostring(mx == vx and my == vy)
-			.. ":spawner_pos=" .. tostring(sx) .. "," .. tostring(sy)
-			.. ":spawner_visual=" .. tostring(svx) .. "," .. tostring(svy)
-			.. ":start_hex=" .. tostring(sq) .. "," .. tostring(sr)
-			.. ":start_passable=" .. tostring(passable)
-			.. ":start_deposit_obstructed=" .. tostring(start_obstructed)
-			.. ":start_blocked_by_deposit=" .. tostring(start_blocked)
-			.. ":start_buildable_z=" .. tostring(start_z)
-			.. ":unbuildable_z=" .. tostring(sentinel)
-			.. ":obstruction_radius=" .. tostring(radius)
-			.. ":window=" .. window_digest(sq, sr)
-	end
-
-	local function postlude(x, y, obstructed, moved)
-		local rq, rr = hex_of(x, y)
-		return "result=" .. tostring(x) .. "," .. tostring(y)
-			.. ":result_hex=" .. tostring(rq) .. "," .. tostring(rr)
-			.. ":obstructed=" .. tostring(obstructed)
-			.. ":moved=" .. tostring(moved)
-	end
-
-	local wrapper
-	wrapper = function(marker, dont_move_if_obstruct)
-		local ok_pre, pre = pcall(prelude, marker)
-		local x, y, obstructed, moved = original(marker, dont_move_if_obstruct)
-		local ok_post, post = pcall(postlude, x, y, obstructed, moved)
-		entries[#entries + 1] = "observer=global:"
-			.. (ok_pre and pre or ("prelude_error=" .. tostring(pre)))
-			.. ":" .. (ok_post and post or ("postlude_error=" .. tostring(post)))
-		return x, y, obstructed, moved
-	end
-	rawset(_G, "FindUnobstructedDepositPos", wrapper)
-
-	-- Second observer, independent of the _G wrap: the marker class's own GetVisualPosXYZ is the
-	-- value FindUnobstructedDepositPos starts its spiral from. A class-method patch is seen by
-	-- engine-internal call sites that a global wrap can miss.
-	local marker_class = Engine.ClassTable("SubsurfaceSpecialAnomalyMarker")
-	local class_visual = type(marker_class) == "table" and marker_class.GetVisualPosXYZ or nil
-	local class_had_own = type(marker_class) == "table"
-		and rawget(marker_class, "GetVisualPosXYZ") ~= nil
-	local class_wrapper
-	if type(class_visual) == "function" then
-		class_wrapper = function(self, ...)
-			local x, y, z = class_visual(self, ...)
-			if #entries < 24 then
-				local ok_line, line = pcall(function()
-					local px, py = PointXY(Engine.ObjectPos(self))
-					local q, r = hex_of(x, y)
-					return "observer=class_visual:marker_visual=" .. tostring(x) .. "," .. tostring(y)
-						.. ":marker_pos=" .. tostring(px) .. "," .. tostring(py)
-						.. ":visual_equals_pos=" .. tostring(px == x and py == y)
-						.. ":visual_hex=" .. tostring(q) .. "," .. tostring(r)
-						.. ":spawner=" .. tostring(self and self.spawner and self.spawner.class)
-				end)
-				entries[#entries + 1] = ok_line and line
-					or ("observer=class_visual:error=" .. tostring(line))
-			end
-			return x, y, z
-		end
-		rawset(marker_class, "GetVisualPosXYZ", class_wrapper)
-	end
-
-	-- Written immediately so the next run can tell "installed but never called" from "never
-	-- installed", and so the buildable/passability window around the spawner is on record before
-	-- any marker exists.
-	local wonders = WonderVerticalDiagnostics.LiveDeferredUndergroundWonders(map) or {}
-	local spawner_lines = {}
-	for _, wonder in ipairs(wonders) do
-		local wx, wy = PointXY(Engine.ObjectPos(wonder))
-		local wq, wr = hex_of(wx, wy)
-		local vwx, vwy = SafeCall(wonder.GetVisualPosXYZ, wonder)
-		spawner_lines[#spawner_lines + 1] = tostring(wonder.class)
-			.. "@" .. tostring(wx) .. "," .. tostring(wy)
-			.. ":visual=" .. tostring(vwx) .. "," .. tostring(vwy)
-			.. ":hex=" .. tostring(wq) .. "," .. tostring(wr)
-			.. ":window=" .. window_digest(wq, wr)
-	end
-	local install_line = "observer=install:global_wrapped=true"
-		.. ":class_wrapped=" .. tostring(class_wrapper ~= nil)
-		.. ":class_had_own=" .. tostring(class_had_own)
-		.. ":wonders=" .. tostring(#wonders)
-		.. ":spawners=" .. table.concat(spawner_lines, "|")
-	map.SuperBigMapWonderSpawnSearchTrace = install_line
-
-	return {
-		entries = entries,
-		restore = function(summary)
-			if Global("FindUnobstructedDepositPos") == wrapper then
-				rawset(_G, "FindUnobstructedDepositPos", original)
-			end
-			if class_wrapper and type(marker_class) == "table"
-				and rawget(marker_class, "GetVisualPosXYZ") == class_wrapper then
-				rawset(marker_class, "GetVisualPosXYZ", class_had_own and class_visual or nil)
-			end
-			local text = install_line .. ":calls=" .. tostring(#entries)
-				.. ":" .. tostring(summary or "")
-			if #entries > 0 then text = text .. " || " .. table.concat(entries, " || ") end
-			local previous = map.SuperBigMapWonderSpawnSearchTraceHistory
-			map.SuperBigMapWonderSpawnSearchTraceHistory =
-				(type(previous) == "string" and previous ~= "") and (previous .. " ## " .. text)
-				or text
-			map.SuperBigMapWonderSpawnSearchTrace =
-				map.SuperBigMapWonderSpawnSearchTraceHistory
-		end,
-	}
-end
-
 function WonderVerticalDiagnostics.AuditDeferredUndergroundWonderAnomalies(
 	map, spawn_missing, reason)
 	local wonders, allowed = WonderVerticalDiagnostics.LiveDeferredUndergroundWonders(map)
@@ -8050,9 +7832,6 @@ function WonderVerticalDiagnostics.AuditDeferredUndergroundWonderAnomalies(
 	end
 
 	local linked = WonderVerticalDiagnostics.LinkedWonderAnomalies(map)
-	-- Temporary: only the spawning call needs the search trace; see InstallWonderSpawnSearchTrace.
-	local search_trace = spawn_missing == true
-		and WonderVerticalDiagnostics.InstallWonderSpawnSearchTrace(map) or nil
 	for _, wonder in ipairs(wonders) do
 		local class_name = tostring(wonder.class or "?")
 		class_counts[class_name] = (class_counts[class_name] or 0) + 1
@@ -8130,15 +7909,6 @@ function WonderVerticalDiagnostics.AuditDeferredUndergroundWonderAnomalies(
 			marker_details[#marker_details + 1] = class_name .. "@"
 				.. tostring(x) .. "," .. tostring(y)
 		end
-	end
-
-	if search_trace then
-		SafeCall(search_trace.restore, "audit_reason=" .. tostring(reason)
-			.. ":wonders=" .. tostring(#wonders)
-			.. ":spawned=" .. tostring(stats.spawned)
-			.. ":existing=" .. tostring(stats.existing)
-			.. ":linked=" .. tostring(stats.linked_markers))
-		stats.search_trace = #search_trace.entries
 	end
 
 	local classes = {}
@@ -13654,33 +13424,6 @@ local function PatchDeferredUndergroundHudAccess(source)
 	return true
 end
 
--- Temporary instrumentation (rules-parity gate 10): every install, reuse and removal of the
--- first-access gate is recorded with its caller and with whether the write actually reached the
--- global the engine calls. A bounded in-memory ring on State, so it adds no log volume; a cold
--- run reads it to attribute a missing wrapper instead of guessing. Remove once gate 10 is green.
-function SuperBigMap.TraceUndergroundAccessGate(action, source, detail)
-	local State = SuperBigMap.State
-	if type(State) ~= "table" then return end
-	local trace = State.underground_access_gate_trace
-	if type(trace) ~= "table" then
-		trace = {}
-		State.underground_access_gate_trace = trace
-	end
-	if #trace >= 48 then return end
-	local ticks = Global("GetPreciseTicks")
-	ticks = type(ticks) == "function" and ticks() or -1
-	local stack = "no stack source"
-	local get_stack = Global("GetStack")
-	if type(get_stack) == "function" then
-		local ok, text = pcall(get_stack, 2, false, 5)
-		if ok and type(text) == "string" then
-			stack = string.sub(string.gsub(string.gsub(text, "\r", ""), "\n%s*", " <- "), 1, 240)
-		end
-	end
-	trace[#trace + 1] = string.format("%s src=%s @%s %s | %s", tostring(action),
-		tostring(source or "?"), tostring(ticks), tostring(detail or ""), stack)
-end
-
 -- FIRST-ACCESS GATE. Every vanilla HUD/object route that changes between already-loaded map
 -- slots funnels through ChangeCurrentMapSlot. Hold that one call before it emits CurrentMapChange
 -- or exposes the target map, run the complete deferred underground pipeline, and switch only on
@@ -13689,7 +13432,6 @@ end
 -- native passage-pad preparation runs; final alignment never turns an invalid candidate into one.
 local function PatchDeferredUndergroundAccess(source)
 	if not cfg_bool("EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE", false) then
-		SuperBigMap.TraceUndergroundAccessGate("skip-config", source)
 		return false
 	end
 	PatchSupplyGridOverlayCopyGuard(source)
@@ -13704,7 +13446,6 @@ local function PatchDeferredUndergroundAccess(source)
 	local State = SuperBigMap.State
 	local current = Global("ChangeCurrentMapSlot")
 	if type(current) ~= "function" then
-		SuperBigMap.TraceUndergroundAccessGate("skip-no-global", source)
 		PatchDeferredUndergroundHudAccess(source)
 		RestoreDeferredUndergroundElevatorAccess()
 		reapply_removed_diagnostics()
@@ -13712,17 +13453,11 @@ local function PatchDeferredUndergroundAccess(source)
 	end
 	if current == State.change_current_map_slot_wrapper
 		and State.underground_access_patch_version == GENERATOR_PATCH_VERSION then
-		SuperBigMap.TraceUndergroundAccessGate("reuse", source)
 		PatchDeferredUndergroundHudAccess(source)
 		PatchDeferredUndergroundElevatorAccess(source)
 		reapply_removed_diagnostics()
 		return true
 	end
-	SuperBigMap.TraceUndergroundAccessGate("install-begin", source, string.format(
-		"had_wrapper=%s global_is_wrapper=%s version=%s",
-		tostring(State.change_current_map_slot_wrapper ~= nil),
-		tostring(current == State.change_current_map_slot_wrapper),
-		tostring(State.underground_access_patch_version)))
 	-- Hot-reload upgrade: unwrap our previous closure before capturing the vanilla original.
 	if current == State.change_current_map_slot_wrapper
 		and type(State.original_change_current_map_slot) == "function" then
@@ -13913,8 +13648,6 @@ local function PatchDeferredUndergroundAccess(source)
 	rawset(_G, "ChangeCurrentMapSlot", wrapper)
 	State.change_current_map_slot_wrapper = wrapper
 	State.underground_access_patch_version = GENERATOR_PATCH_VERSION
-	SuperBigMap.TraceUndergroundAccessGate("install-done", source, string.format(
-		"global_is_wrapper=%s", tostring(Global("ChangeCurrentMapSlot") == wrapper)))
 	PatchDeferredUndergroundHudAccess(source)
 	PatchDeferredUndergroundElevatorAccess(source)
 	reapply_removed_diagnostics()
@@ -14184,14 +13917,6 @@ function MapGeneration.RestoreVanillaBehavior()
 	State.original_elevator_link_through_passage = nil
 	State.persistent_passage_marker_wrapper = nil
 	State.persistent_passage_marker_patch_version = nil
-	if State.change_current_map_slot_wrapper ~= nil
-		or State.underground_access_patch_version ~= nil then
-		SuperBigMap.TraceUndergroundAccessGate("restore", "MapGeneration.RestoreVanillaBehavior", string.format(
-			"had_wrapper=%s global_is_wrapper=%s version=%s",
-			tostring(State.change_current_map_slot_wrapper ~= nil),
-			tostring(Global("ChangeCurrentMapSlot") == State.change_current_map_slot_wrapper),
-			tostring(State.underground_access_patch_version)))
-	end
 	if State.change_current_map_slot_wrapper
 		and Global("ChangeCurrentMapSlot") == State.change_current_map_slot_wrapper
 		and type(State.original_change_current_map_slot) == "function" then

@@ -4505,12 +4505,42 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 	local unresolved_z = 0
 	local setpos_failures = 0
 	local topup_clones = 0
-	-- DECOR TOP-UP (config STRETCH_DECOR_TOPUP): the stretch spreads the ORIGINAL decoration count
-	-- over area_factor (~1.78x) more area, thinning density. Give each moved decoration an
-	-- (area_factor - 1) chance to spawn ONE jittered clone nearby (within ~0.75 sector), restoring
-	-- per-area density while keeping the generator's local clustering character.
-	local rand_fn = Global("AsyncRand")
-	local topup_on = cfg_bool("STRETCH_DECOR_TOPUP", true) and type(rand_fn) == "function"
+	-- DECOR TOP-UP (config STRETCH_DECOR_TOPUP, OFF by default): the stretch spreads the ORIGINAL
+	-- decoration count over area_factor (~1.78x) more area, thinning density. Give each moved
+	-- decoration an (area_factor - 1) chance to spawn ONE jittered clone nearby (within ~0.75
+	-- sector), restoring per-area density while keeping the generator's local clustering character.
+	-- RULE seed-parity: the clone is a MOD-ADDED placement, so its randomness must come from a
+	-- private stream derived from the map's own generator seed -- never from the engine's shared
+	-- AsyncRand sequence, which is reseeded per session (so the same seed placed different decor
+	-- every run) and which would also consume draws at points vanilla never draws at. Lehmer
+	-- stream with the constants sbm_deposits uses, tagged so this phase cannot share a sequence
+	-- with another phase. No seed means no stream and the top-up stays off rather than falling
+	-- back to the engine RNG.
+	local topup_seed = tonumber(map.SuperBigMapPlacementSeed)
+	if not topup_seed then
+		local generator = type(map.RandomMapGenObject) == "table" and map.RandomMapGenObject or nil
+		if not generator then
+			local get_generator = Global("GetRandomMapGenerator")
+			if type(get_generator) == "function" then generator = SafeCall(get_generator, map) end
+		end
+		topup_seed = tonumber(type(generator) == "table" and generator.Seed or nil)
+	end
+	local topup_state
+	if topup_seed then
+		local seed_tag = "SuperBigMapStretchDecorTopUp"
+		topup_state = math.abs(math.floor(topup_seed)) % 2147483647
+		for tag_index = 1, #seed_tag do
+			topup_state = (topup_state * 31 + string.byte(seed_tag, tag_index)) % 2147483647
+		end
+		if topup_state == 0 then topup_state = 1 end
+	end
+	local function rand_fn(limit)
+		limit = math.floor(tonumber(limit) or 0)
+		if limit <= 0 or topup_state == nil then return 0 end
+		topup_state = (topup_state * 48271) % 2147483647
+		return topup_state % limit
+	end
+	local topup_on = cfg_bool("STRETCH_DECOR_TOPUP", true) and topup_state ~= nil
 		and type(CloneObjectAtOffset) == "function"
 	local area_factor_permille = math.floor(scale_x * scale_y * 1000 + 0.5) -- e.g. 1778
 	local topup_permille = math.max(0, area_factor_permille - 1000)         -- e.g. 778
