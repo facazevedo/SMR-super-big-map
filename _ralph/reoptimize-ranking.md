@@ -102,6 +102,36 @@ Skip: rank-then-filter (`86767a7`, no measured gain); everything in the record's
 6. #19 crease translation/feather with the wall fixes, border profile checked.
 7. #20 in-place generation only after a crash-free soak; #21/#22 only with a new design.
 
+## Step log
+
+### Step 1 — #13 native raster, outer resource terrain (v925 `c2ab491` → v926 `9fcdef0`, 2026-09-07)
+
+Measured at 14N134W with `t0t1_snapshot_14N134W.lua` (3 cold runs per side, Start-boundary clock):
+
+| | before v924 | after v926 |
+|---|---|---|
+| T0→T1 | 406.9 / 408.9 / 400.9 s, **median 406.9 s** | 213.1 / 220.4 / 218.3 s, **median 218.3 s** (**−188.6 s, −46%**) |
+| run-to-run terrain | 0 of 65,536 lattice samples vary | 0 of 65,536 vary |
+| Lua errors / OptimizationFailure | 0 | 0 |
+| audit | 7 extractor failures → 0 after one repair pass | same (7 → 0), 24/24 extractors buildable, 39 surface passable |
+| resource sites (63) | — | identical kind/resource/hex/modified/verified |
+| rocket pads (12) | — | 9 identical, **3 moved by one hex** (pads 6, 11, 12) |
+| entrances | ring 13 / ring 0 | identical |
+| height lattice, outer ring | — | 4.6% of samples differ; median 8 cm, p90 3.6 m, max 19 m (around the moved pads) |
+| height lattice, interior | — | 0.2% differ, max 6.4 m (ring-boundary feathers, written by both versions) |
+
+Why pads move: the repair pass re-plans every landing footprint from the height field the first pass
+produced; the native feather (one mask sample per four cells, fixed-point blend) differs slightly from
+the pixel loop, so 3 of 12 candidate scores flipped to an adjacent hex. Clusters and deposits are
+untouched.
+
+Lesson recorded in v926: the optimization line's per-patch restore of the central 16×16-sector
+rectangle is **not** part of this unit. With it, an extractor 19 cells outside the rectangle lost half
+its flattened core every pass and the audit failed loudly (`resource_failures=2`, v925). The pixel
+loop never had that rule; the ring-only placement companions (`046f0aa`, `1a57f4e`) belong with it.
+
+Not yet done for this step: 15S67E regression run; full rules-probe gate table on v926.
+
 ## Acceptance per step (same for every unit)
 
 - `rules_probe` at 14N134W: all ten gates green; for preserving units the three digests equal the
