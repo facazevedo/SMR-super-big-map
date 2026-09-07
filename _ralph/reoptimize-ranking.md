@@ -130,7 +130,28 @@ rectangle is **not** part of this unit. With it, an extractor 19 cells outside t
 its flattened core every pass and the audit failed loudly (`resource_failures=2`, v925). The pixel
 loop never had that rule; the ring-only placement companions (`046f0aa`, `1a57f4e`) belong with it.
 
-Not yet done for this step: 15S67E regression run; full rules-probe gate table on v926.
+Rules-probe verification of v926 (`_ralph/tmp/rules_v926_*`), two double-pinned runs per site with
+the floor runs' pins, zero `LUA ERROR` in every log:
+
+| gate | 14N134W | 15S67E |
+|---|---|---|
+| 1 seed parity | digests identical across the pair: enrichment `527100097`/701, decor `917959587`, ug `1609697062` / `5381` | identical across the pair: enrichment `1037565385`/592, decor `464485535`, ug `1158028783` / `5381` |
+| 2–3 entrances | ring 13 / ring 0, same hexes as the floor, none in the ring | ring 17 / ring 29, same hexes as the floor |
+| 4 ring content | 12 clusters = 12 pads, 0 failures | 9 = 9, 0 failures |
+| 5 single reveal | `>13` only | `D10` only |
+| 6 badges | 2 signs @550 in unexplored sectors, 0 deposits visible in unexplored | same; scan test `scanned` |
+| 7 decor | 40/40, 0 in ring; ug 0/0 | 99/99, 0 in ring; ug 0/0 |
+| 8 no errors | 0 | 0 |
+| 9 process | v926 `9fcdef0`, deployed, audit 37/37 | same payload |
+| 10 first access | player route, 1 display | same |
+| T0→T1 (probe) | 224.9 / 218.8 s (floor 400.1) | 201.0 / 198.7 s (floor 297.4) |
+
+Only two generation fields differ from the floors at either site: the surface enrichment digest
+(anomaly and effect top-ups run after the raster and read its terrain, so a few of them move; counts
+unchanged) and `ring_modified_cells` (the native repair pass touches fewer cells). Bonus scenario:
+an accidental run at 15N67E (`BlankBigTerraceCMix_04`, 8 clusters) was also clean (0 errors,
+entrances ring 8 / 7, 8 = 8 pads), with a pre-existing decor shortfall there (143/155; the decor pass
+runs before the raster, so it is not this step's).
 
 ## Acceptance per step (same for every unit)
 
