@@ -456,6 +456,64 @@ CreateRealTimeThread(function()
 			for c, n in pairs(classes) do cl[#cl + 1] = c .. ":" .. n end
 			table.sort(cl)
 			R[prefix .. "class_census"] = table.concat(cl, ",")
+			-- Everything else the pass recorded, verbatim.  The named list above was chosen for the
+			-- gate table; the pass also counts WHICH predicate refused each candidate
+			-- (skipped_by_obstruct / skipped_by_decorated, synthetic_rejected_*), how many spacing
+			-- circles it rebuilt, and whether the synthetic budget or the template pool ran out --
+			-- the only evidence that can tell a site-acceptance defect from an attempt budget too
+			-- small for this site.  Published generically so a stat added later needs no probe change.
+			local named, extra = {}, {}
+			for _, k in ipairs({ "enabled", "reason", "error", "environment", "target", "placed",
+				"objects", "ring_objects", "dropped_non_cosmetic", "dropped_out_of_band",
+				"skipped_band", "skipped_bounds", "placed_authored", "placed_synthetic",
+				"decor_sites", "vanilla_decor_groups", "unused_sites", "synthetic_templates",
+				"synthetic_attempts", "seed", "seed_source", "generator_present", "preset",
+				"decoration_passes", "decoration_ratio", "area_factor", "ms" }) do
+				named[k] = true
+			end
+			for k, v in pairs(st) do
+				if not named[k] and type(v) ~= "table" and type(v) ~= "function" then
+					extra[#extra + 1] = tostring(k) .. "=" .. tostring(v)
+				end
+			end
+			table.sort(extra)
+			R[prefix .. "extra"] = table.concat(extra, ",")
+			-- Site geometry, read from the markers themselves.  The spacing rule is vanilla's -- a
+			-- candidate is refused when any stamp circle intersects the SITE's radius -- so how big
+			-- the authored zones are next to the gaps between them decides how much room the top-up
+			-- can find at all.  15S67E authors 578 sites where 14N134W authors 203; this says
+			-- whether they are simply smaller and packed tighter here.
+			local pts, radii, nn = {}, {}, {}
+			pcall(m.MapForEach, m, "map", "PrefabDecorMarker", function(mk)
+				local mx, my = posxy(mk)
+				if type(mx) ~= "number" then return end
+				pts[#pts + 1] = { x = mx, y = my, r = tonumber(mk.DecorRadius) or 0 }
+			end)
+			for i = 1, #pts do
+				radii[#radii + 1] = pts[i].r
+				local best = -1
+				for j = 1, #pts do
+					if j ~= i then
+						local dx, dy = pts[i].x - pts[j].x, pts[i].y - pts[j].y
+						local d2 = dx * dx + dy * dy
+						if best < 0 or d2 < best then best = d2 end
+					end
+				end
+				nn[#nn + 1] = best >= 0 and math.floor(math.sqrt(best)) or -1
+			end
+			local function pctile(list, p)
+				if #list == 0 then return -1 end
+				table.sort(list)
+				local i = math.floor(#list * p / 100) + 1
+				if i > #list then i = #list end
+				return list[i]
+			end
+			R[prefix .. "site_census_count"] = #pts
+			R[prefix .. "site_radius_p10"] = pctile(radii, 10)
+			R[prefix .. "site_radius_p50"] = pctile(radii, 50)
+			R[prefix .. "site_radius_p90"] = pctile(radii, 90)
+			R[prefix .. "site_nn_dist_p10"] = pctile(nn, 10)
+			R[prefix .. "site_nn_dist_p50"] = pctile(nn, 50)
 		end
 		decor_report(map, "decor_", in_ring)
 		-- rawset for the same reason as STREAM_REPORT: the underground half runs inside a later
@@ -1424,6 +1482,16 @@ CreateRealTimeThread(function()
 				tostring(R["glue" .. gi .. "_twin_image_surface_reason"]),
 				tostring(R["glue" .. gi .. "_candidates_rejected"]))
 		end
+		printf("[RULES] surface decor: target=%s placed=%s (auth=%s synth=%s) sites=%s used=%s unused=%s "
+			.. "templates=%s attempts=%s ms=%s radius=%s/%s/%s nn=%s/%s",
+			tostring(R.decor_target), tostring(R.decor_placed), tostring(R.decor_placed_authored),
+			tostring(R.decor_placed_synthetic), tostring(R.decor_decor_sites),
+			tostring(R.decor_vanilla_decor_groups), tostring(R.decor_unused_sites),
+			tostring(R.decor_synthetic_templates), tostring(R.decor_synthetic_attempts),
+			tostring(R.decor_ms), tostring(R.decor_site_radius_p10),
+			tostring(R.decor_site_radius_p50), tostring(R.decor_site_radius_p90),
+			tostring(R.decor_site_nn_dist_p10), tostring(R.decor_site_nn_dist_p50))
+		printf("[RULES] surface decor detail: %s", tostring(R.decor_extra))
 		printf("[RULES] underground passages: %s", tostring(R.underground_passage_records))
 		printf("[RULES] signs: %s", tostring(R.sign_records))
 		printf("[RULES] revealed: %s start=%s", tostring(R.revealed_list), tostring(R.start_sector))
