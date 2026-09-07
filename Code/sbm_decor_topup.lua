@@ -36,6 +36,15 @@
 --
 -- This replenishes the decor-pass share only.  Decor baked into the terrain prefabs stays at
 -- 1/area_factor density; nothing short of re-laying the map can change that.
+--
+-- BOTH MAPS.  The pass runs on the surface during its stretch and on the underground during
+-- first-access preparation, at the same point of each pipeline (after the decoration and marker
+-- passes moved every site, before the authoritative resume).  The underground runs long after
+-- generation, so the generator holder may be gone: the seed then comes from the seed the mod keeps
+-- on the map and the matching/weight properties from the authored RandomMapPreset, and the record
+-- names which source each came from.  Every result is published on the map itself
+-- (SuperBigMapDecorEnginePassReport / ...Objects) because one LastStats slot cannot represent two
+-- maps in one session.
 
 local SuperBigMap = rawget(_G, "SuperBigMap")
 if type(SuperBigMap) ~= "table" then
@@ -54,7 +63,7 @@ local ObjectScalesWithTerrain = ObjectClone and ObjectClone.ObjectScalesWithTerr
 local DecorTopUp = {}
 SuperBigMap.DecorTopUp = DecorTopUp
 
-DecorTopUp.VERSION = 6
+DecorTopUp.VERSION = 7
 DecorTopUp.SEED_TAG = "SuperBigMapDecorEnginePass"
 DecorTopUp.LastStats = nil
 
@@ -142,6 +151,9 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 	DecorTopUp.LastStats = stats
 	local ok, err = pcall(function()
 		if not map or type(map.MapForEach) ~= "function" then error("no live map") end
+		-- Publish the live record before the first early return, so a disabled, geometry-less or
+		-- zero-deficit run is still readable per map instead of collapsing into one shared slot.
+		map.SuperBigMapDecorEnginePassReport = stats
 		local mapdata = map.mapdata
 		local environment = type(mapdata) == "table" and tostring(mapdata.Environment or "") or ""
 		stats.environment = environment
@@ -171,8 +183,35 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 		if type(generator) ~= "table" and type(get_generator) == "function" then
 			generator = SafeCall(get_generator, map)
 		end
+		-- RandomMapGenObject is deliberately transient (sbm_deposits.lua states the same rule for the
+		-- placement stream): the underground pass first runs at first access, long after generation.
+		-- Fall back to the seed the mod keeps on the map, and to the authored RandomMapPreset for the
+		-- generator's matching and weight properties -- the same source vanilla configured it from.
+		local random_presets = Global("RandomMapPresets")
+		local preset = type(random_presets) == "table"
+			and random_presets[type(mapdata) == "table" and tostring(mapdata.RandomMapPreset or "") or ""]
+			or nil
+		local function gen_prop(key)
+			if type(generator) == "table" and generator[key] ~= nil then return generator[key] end
+			if type(preset) == "table" then return preset[key] end
+			return nil
+		end
+		stats.generator_present = type(generator) == "table"
+		stats.preset = type(preset) == "table" and tostring(preset.id or preset.Id or "") or "absent"
 		local seed = type(generator) == "table" and tonumber(generator.Seed) or nil
+		stats.seed_source = seed and "generator" or nil
+		if not seed then
+			seed = tonumber(map.SuperBigMapPlacementSeed)
+			stats.seed_source = seed and "map_placement_seed" or "unavailable"
+		end
 		if not seed then error("map generator seed unavailable") end
+		stats.seed = seed
+		-- The census that decides whether this map has a decor-pass share at all: the pass replays
+		-- vanilla's decor STAGE, and that stage is `for i=1,self.DecorationPasses` in
+		-- Proc_PlaceDecors, so a preset with DecorationPasses == 0 never places a decor group and
+		-- therefore has no decor-pass deficit for this pass to restore.
+		stats.decoration_passes = tonumber(gen_prop("DecorationPasses"))
+		stats.decoration_ratio = tonumber(gen_prop("DecorationRatio"))
 
 		local place_prefab = Global("PlacePrefab")
 		local prefab_preload = Global("PrefabPreload")
@@ -209,9 +248,9 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 
 		-- Vanilla's revision/version gate for matching (RandomMapGenerator.lua:1044-1045).
 		local max_int = Global("max_int") or 2147483647
-		local prefab_version = tonumber(generator.PrefabVersion) or 0
+		local prefab_version = tonumber(gen_prop("PrefabVersion")) or 0
 		local version = prefab_version > 0 and prefab_version or max_int
-		local revision = generator.AssetsRevision or Global("AssetsRevision") or 0
+		local revision = gen_prop("AssetsRevision") or Global("AssetsRevision") or 0
 
 		-- 1. Census.  Decor sites vanilla used carry DecorTestPrefab (the placed prefab's name);
 		--    unused ones still have the default "".  D = used sites = vanilla's decor-group count.
@@ -320,7 +359,7 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 		end
 
 		-- 3. Vanilla's decor weight: prefab weight with repeat reduction, scaled by radius.
-		local repeat_reduct = tonumber(generator.RepeatReductOther) or 0
+		local repeat_reduct = tonumber(gen_prop("RepeatReductOther")) or 0
 		local rstep = repeat_reduct / 10
 		local prefabs_count = {}
 		local function prefab_weight_decor(prefab)
@@ -339,6 +378,7 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 
 		local defs_cache, raster_cache = {}, {}
 		local placed_list = {}
+		map.SuperBigMapDecorEnginePassObjects = placed_list
 		local unused = {}
 		for _, site in ipairs(sites) do
 			if not site.used then unused[#unused + 1] = site end
@@ -352,12 +392,27 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 			local ok_size, w, h = pcall(terrain_api.GetMapSize, map)
 			if ok_size and type(w) == "number" then map_w, map_h = w, h or w end
 		end
+		-- The outer band (outer 10 % per axis, the same band the ring census measures) is off limits
+		-- to this pass on BOTH maps.  Vanilla's decor stage has no such rule -- it ran before any
+		-- expansion existed and its sites are authored content that the stretch merely moved -- so
+		-- this is the mod's own constraint on the mod's own additions.  Integer division is intended:
+		-- the same expression the census uses, so the two cannot disagree about the boundary.
+		local band_x0, band_x1, band_y0, band_y1
+		if map_w and map_h then
+			band_x0, band_x1 = map_w / 10, map_w - map_w / 10
+			band_y0, band_y1 = map_h / 10, map_h - map_h / 10
+		end
+		local function in_band(x, y)
+			if not band_x0 then return false end
+			return x < band_x0 or x >= band_x1 or y < band_y0 or y >= band_y1
+		end
+		stats.band_known = band_x0 ~= nil
 
 		-- 4. One stamp attempt.  Filters come from `marker`, the site is (sx, sy) with radius
 		--    site_radius; everything else is vanilla's decor loop: obstruct check, decor check,
 		--    weighted pick, jittered stamp inside the site, spacing circles recorded afterwards.
 		--    Returns "placed" (plus the prefab name) or the reason it did not place.
-		local dropped_non_cosmetic = 0
+		local dropped_non_cosmetic, dropped_out_of_band = 0, 0
 		local function try_stamp(marker, sx, sy, site_radius)
 			local prefabs = SafeCall(marker.GetMatchingMarkers, marker, revision, version)
 			if type(prefabs) ~= "table" or #prefabs == 0 then return "no_match" end
@@ -372,6 +427,7 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 			local dx, dy = rotate_radius(stream.rand(max_offset), stream.rand(MAX_ROTATION), point20, true)
 			local cx, cy = sx + (tonumber(dx) or 0), sy + (tonumber(dy) or 0)
 			if map_w and (cx < 0 or cy < 0 or cx >= map_w or cy >= map_h) then return "bounds" end
+			if in_band(cx, cy) then return "band" end
 			local defs = defs_cache[name]
 			if defs == nil and type(get_prefab_defs) == "function" then
 				local derr, d = get_prefab_defs(name)
@@ -408,6 +464,9 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 					local nx = cx + (ox - cx) * length_scale
 					local ny = cy + (oy - cy) * length_scale
 					local outside = map_w and (nx < 0 or ny < 0 or nx >= map_w or ny >= map_h)
+					-- The centre was already refused inside the band; the similarity about that centre
+					-- can still push a single object of an edge-of-band group across the boundary.
+					local banded = not outside and in_band(nx, ny)
 					-- Only cosmetic scatter may come out of this pass.  A decor prefab is authored art,
 					-- but anything gameplay-bearing that rode along -- deposit, anomaly or feature
 					-- markers, nested decor sites -- is removed rather than left as an orphan a later
@@ -423,11 +482,19 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 						or class_name:find("Marker", 1, true) ~= nil
 						or IsKindOfSafe(obj, "Deposit") or IsKindOfSafe(obj, "DepositMarker")
 						or IsKindOfSafe(obj, "SubsurfaceAnomaly") or IsKindOfSafe(obj, "SubsurfaceAnomalyMarker")
-						or IsKindOfSafe(obj, "EffectDepositMarker") or IsKindOfSafe(obj, "Building"))
+						or IsKindOfSafe(obj, "EffectDepositMarker") or IsKindOfSafe(obj, "Building")
+						-- `RubbleBase` is named explicitly even though it already parents `Building`:
+						-- the underground's cave-ins and collapsed tunnels (`CaveInRubble`,
+						-- `TunnelBlockerRubble`) are gameplay obstacles this pass must never create,
+						-- and `ObjectScalesWithTerrain` deliberately answers TRUE for them
+						-- (sbm_object_clone scale_stretch_allowlist), so the denial must not rest on
+						-- one inherited kind test.
+						or IsKindOfSafe(obj, "RubbleBase"))
 					local cosmetic = not denied and (is_stamp_marker
 						or (type(ObjectScalesWithTerrain) == "function" and ObjectScalesWithTerrain(obj) == true))
-					if (outside or not cosmetic) and type(done_object) == "function" then
-						if not outside then dropped_non_cosmetic = dropped_non_cosmetic + 1 end
+					if (outside or banded or not cosmetic) and type(done_object) == "function" then
+						if banded then dropped_out_of_band = dropped_out_of_band + 1
+						elseif not outside then dropped_non_cosmetic = dropped_non_cosmetic + 1 end
 						pcall(done_object, obj)
 					else
 						if is_stamp_marker then obj.zone = ZONE_DECOR end
@@ -460,7 +527,7 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 		end
 
 		-- 5. Vanilla's loop over the sites it left unused, until the deficit is met.
-		local placed_authored, skipped_bounds = 0, 0
+		local placed_authored, skipped_bounds, skipped_band = 0, 0, 0
 		local guard = #unused * 2 + 8
 		while placed < target and #unused > 0 and guard > 0 do
 			guard = guard - 1
@@ -479,6 +546,7 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 					stats.skipped_by_decorated = (stats.skipped_by_decorated or 0) + 1
 				elseif outcome == "no_match" then skipped_no_match = skipped_no_match + 1
 				elseif outcome == "bounds" then skipped_bounds = skipped_bounds + 1
+				elseif outcome == "band" then skipped_band = skipped_band + 1
 				else failed = failed + 1 end
 			end
 		end
@@ -533,7 +601,8 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 			for _, site in ipairs(templates) do allow(terrain_type_at(site.x, site.y)) end
 			stats.synthetic_allowed_types = allowed_count
 			local attempts, budget = 0, (target - placed) * per_group
-			local rejected = { obstruct = 0, decorated = 0, no_match = 0, bounds = 0, failed = 0, terrain = 0 }
+			local rejected = { obstruct = 0, decorated = 0, no_match = 0, bounds = 0, failed = 0,
+				terrain = 0, band = 0 }
 			-- A template hemmed in by mountain masses fails every draw on the obstruct circles (1,021
 			-- of 1,320 rejections in v903).  Drop a template after `patience` consecutive OBSTRUCT
 			-- misses so the remaining attempts go where the map has room; a success resets its count.
@@ -584,7 +653,20 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 		stats.placed, stats.objects = placed, objects
 		stats.skipped_obstructed, stats.skipped_no_match, stats.failed = skipped_obstructed, skipped_no_match, failed
 		stats.skipped_bounds = skipped_bounds
+		stats.skipped_band = skipped_band
 		stats.dropped_non_cosmetic = dropped_non_cosmetic
+		stats.dropped_out_of_band = dropped_out_of_band
+		-- Measured, not assumed: re-read every surviving object's final position and count the ones
+		-- inside the outer band.  This is the field the ring rule is judged on, so it must come from
+		-- the objects themselves rather than from the refusals above.
+		local ring_objects = 0
+		for _, obj in ipairs(placed_list) do
+			local ox, oy = PointXY(ObjectPosition(obj))
+			if type(ox) == "number" and type(oy) == "number" and in_band(ox, oy) then
+				ring_objects = ring_objects + 1
+			end
+		end
+		stats.ring_objects = ring_objects
 		stats.ms = (SafeCall(Global("GetPreciseTicks")) or 0) - started_ms
 		DecorTopUp.LastObjects = placed_list
 	end)

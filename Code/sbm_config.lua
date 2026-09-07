@@ -539,7 +539,9 @@ config.StretchDecorTopUp = false
 -- never touched. Restores the decor-pass share to vanilla density; decor baked into terrain
 -- prefabs stays spread. Surface only unless the underground switch is on.
 config.StretchDecorEnginePass = true
-config.StretchDecorEnginePassUnderground = false
+-- The same pass on the stretched underground, at the same point of the first-access pipeline. It
+-- restores the same share it restores on the surface: whatever vanilla's decor STAGE placed there.
+config.StretchDecorEnginePassUnderground = true
 config.StretchDecorEnginePassMaxPlacements = 4000
 -- Synthetic sites for the same pass: when the authored sites run out, borrow a used site's filters
 -- and stamp at a seeded position 100%-JitterMaxPercent% of its radius away on the same terrain

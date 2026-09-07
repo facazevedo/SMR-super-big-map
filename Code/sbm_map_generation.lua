@@ -12204,6 +12204,19 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 					end
 				end
 			end
+			-- The engine's own decor stage, re-run on the stretched underground exactly where the
+			-- surface runs it (config StretchDecorEnginePassUnderground, sbm_decor_topup): after the
+			-- decoration and marker passes moved every decor site, and before the resume below, so
+			-- any new group lands in the same authoritative passability rebuild. Cosmetic: a failure
+			-- is recorded, not fatal. The module holds the same rules on both maps and publishes its
+			-- own per-map record, so the underground result is readable independently of the surface.
+			local ug_decor_topup = SuperBigMap.DecorTopUp
+			if ug_decor_topup and type(ug_decor_topup.Run) == "function" then
+				SetLoadingPhase("Restoring underground decoration density")
+				local ug_decor_token = LoadingBegin("underground engine decor pass", map)
+				local ug_decor_ok, ug_decor_stats = ug_decor_topup.Run(map, transform_pass_batch_active)
+				LoadingEnd(ug_decor_token, ug_decor_stats, ug_decor_ok == true)
+			end
 			if transform_pass_batch_active then
 				local resume_token = LoadingBegin("underground resume combined pass edits", map)
 				local resume_ok, resume_err = ResumeUndergroundTransformPassEdits()

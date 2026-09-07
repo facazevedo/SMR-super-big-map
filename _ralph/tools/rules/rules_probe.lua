@@ -307,27 +307,50 @@ CreateRealTimeThread(function()
 		rawset(_G, "STREAM_REPORT", stream_report)
 
 		------------------------------------------------------------------ gate 7: decor
-		local decor_stats = SBM and SBM.DecorTopUp and SBM.DecorTopUp.LastStats or {}
-		for _, k in ipairs({ "enabled", "reason", "error", "target", "placed", "objects", "ring_objects",
-			"dropped_non_cosmetic", "placed_authored", "placed_synthetic", "ms" }) do
-			R["decor_" .. k] = tostring(decor_stats[k])
-		end
-		local decor_objs = SBM and SBM.DecorTopUp and SBM.DecorTopUp.LastObjects or {}
-		local decor_list, decor_ring, decor_classes = {}, 0, {}
-		for _, o in ipairs(decor_objs) do
-			if IsValid(o) then
-				local x, y = posxy(o)
-				decor_list[#decor_list + 1] = tostring(o.class) .. "@" .. hexof(map, x, y)
-				if in_ring(x, y) then decor_ring = decor_ring + 1 end
-				decor_classes[tostring(o.class)] = (decor_classes[tostring(o.class)] or 0) + 1
+		-- v918 publishes the pass's record on the map it ran on, because the same pass now runs on
+		-- both maps in one session and a single LastStats slot cannot represent two maps.  One
+		-- reader serves both halves: the per-map record plus an independent census (digest, outer
+		-- band count, class histogram) taken from the surviving objects themselves.
+		local function decor_report(m, prefix, band_test)
+			local st = type(m) == "table" and rawget(m, "SuperBigMapDecorEnginePassReport") or nil
+			if type(st) ~= "table" then
+				st = SBM and SBM.DecorTopUp and SBM.DecorTopUp.LastStats or {}
+				R[prefix .. "record_source"] = "module_lastfields"
+			else
+				R[prefix .. "record_source"] = "map_record"
 			end
+			for _, k in ipairs({ "enabled", "reason", "error", "environment", "target", "placed",
+				"objects", "ring_objects", "dropped_non_cosmetic", "dropped_out_of_band",
+				"skipped_band", "skipped_bounds", "placed_authored", "placed_synthetic",
+				"decor_sites", "vanilla_decor_groups", "unused_sites", "synthetic_templates",
+				"synthetic_attempts", "seed", "seed_source", "generator_present", "preset",
+				"decoration_passes", "decoration_ratio", "area_factor", "ms" }) do
+				R[prefix .. k] = tostring(st[k])
+			end
+			local objs = type(m) == "table" and rawget(m, "SuperBigMapDecorEnginePassObjects") or nil
+			if type(objs) ~= "table" then
+				objs = SBM and SBM.DecorTopUp and SBM.DecorTopUp.LastObjects or {}
+			end
+			local list, ring, classes = {}, 0, {}
+			for _, o in ipairs(objs) do
+				if IsValid(o) then
+					local x, y = posxy(o)
+					list[#list + 1] = tostring(o.class) .. "@" .. hexof(m, x, y)
+					if band_test(x, y) then ring = ring + 1 end
+					classes[tostring(o.class)] = (classes[tostring(o.class)] or 0) + 1
+				end
+			end
+			R[prefix .. "digest"], R[prefix .. "alive"] = digest(list)
+			R[prefix .. "ring_objects_measured"] = ring
+			local cl = {}
+			for c, n in pairs(classes) do cl[#cl + 1] = c .. ":" .. n end
+			table.sort(cl)
+			R[prefix .. "class_census"] = table.concat(cl, ",")
 		end
-		R.decor_digest, R.decor_alive = digest(decor_list)
-		R.decor_ring_objects_measured = decor_ring
-		local cl = {}
-		for c, n in pairs(decor_classes) do cl[#cl + 1] = c .. ":" .. n end
-		table.sort(cl)
-		R.decor_class_census = table.concat(cl, ",")
+		decor_report(map, "decor_", in_ring)
+		-- rawset for the same reason as STREAM_REPORT: the underground half runs inside a later
+		-- closure and a plain global assignment is a [LUA ERROR] in this debug build.
+		rawset(_G, "DECOR_REPORT", decor_report)
 
 		------------------------------------------------------------------ sector grid
 		local city = map.City
@@ -1126,10 +1149,65 @@ CreateRealTimeThread(function()
 			R.ug_imprints = #imprints
 			R.ug_imprint_records = table.concat(imprints, " | ")
 
-			-- Gate 7 underground side is gated off by configuration on this line; record the switch
-			-- rather than pretending a census proves anything.
+			-- Gate 7 underground side: the pass now runs inside the first-access pipeline, so read
+			-- its own per-map record plus an independent census of the objects it left behind.
 			R.ug_decor_engine_pass_enabled = tostring(type(cfg) == "table"
 				and cfg.STRETCH_DECOR_ENGINE_PASS_UNDERGROUND)
+			local decor_reader = rawget(_G, "DECOR_REPORT")
+			if type(decor_reader) == "function" then
+				decor_reader(ug, "ug_decor_", ug_in_ring)
+			end
+			-- Vanilla's decor STAGE is what that pass replays, so the site census is the evidence
+			-- that decides how large its underground share can be: every PrefabDecorMarker the
+			-- underground prefabs authored, and how many vanilla itself consumed (a consumed site
+			-- carries the placed prefab's name in DecorTestPrefab).
+			local ug_sites, ug_sites_used, ug_site_names = 0, 0, {}
+			pcall(ug.MapForEach, ug, "map", "PrefabDecorMarker", function(o)
+				ug_sites = ug_sites + 1
+				if tostring(rawget(o, "DecorTestPrefab") or "") ~= "" then
+					ug_sites_used = ug_sites_used + 1
+					if #ug_site_names < 12 then
+						ug_site_names[#ug_site_names + 1] = tostring(rawget(o, "DecorTestPrefab"))
+					end
+				end
+			end)
+			R.ug_decor_marker_sites = ug_sites
+			R.ug_decor_marker_sites_used = ug_sites_used
+			R.ug_decor_marker_used_names = table.concat(ug_site_names, ",")
+			local ug_gen = GetRandomMapGenerator and GetRandomMapGenerator(ug)
+			R.ug_generator_present = tostring(type(ug_gen) == "table")
+			R.ug_generator_seed = tostring(type(ug_gen) == "table" and ug_gen.Seed)
+			R.ug_generator_preset = tostring(type(ug_gen) == "table" and ug_gen.Id)
+			R.ug_generator_decoration_passes = tostring(type(ug_gen) == "table"
+				and ug_gen.DecorationPasses)
+			R.ug_generator_decoration_ratio = tostring(type(ug_gen) == "table"
+				and ug_gen.DecorationRatio)
+			R.ug_mapdata_preset = tostring(ug.mapdata and ug.mapdata.RandomMapPreset)
+			-- The cosmetic decor population actually present underground, so the thinning claim and
+			-- the "cosmetic classes only" clause are both measurable rather than asserted.
+			-- One traversal, every prefix checked inline: five class-filtered sweeps over the root
+			-- class would walk the whole 8192 population five times.
+			local ug_cosmetic, ug_cosmetic_ring, ug_cos_classes = 0, 0, {}
+			local COSMETIC_PREFIXES = { "Cliff", "Dec", "Rocks", "Stones", "Underground_Arch" }
+			pcall(ug.MapForEach, ug, "map", "Object", function(o)
+				local name = tostring(o.class or "")
+				for i = 1, #COSMETIC_PREFIXES do
+					local p = COSMETIC_PREFIXES[i]
+					if name:sub(1, #p) == p then
+						ug_cosmetic = ug_cosmetic + 1
+						local x, y = posxy(o)
+						if ug_in_ring(x, y) then ug_cosmetic_ring = ug_cosmetic_ring + 1 end
+						ug_cos_classes[name] = (ug_cos_classes[name] or 0) + 1
+						return
+					end
+				end
+			end)
+			R.ug_cosmetic_objects = ug_cosmetic
+			R.ug_cosmetic_objects_in_ring = ug_cosmetic_ring
+			local ug_cc = {}
+			for c, n in pairs(ug_cos_classes) do ug_cc[#ug_cc + 1] = c .. ":" .. n end
+			table.sort(ug_cc)
+			R.ug_cosmetic_class_census = table.concat(ug_cc, ",")
 			return nil
 		end
 
@@ -1187,6 +1265,21 @@ CreateRealTimeThread(function()
 		printf("[RULES] underground after access: passages: %s", tostring(R.ug_post_passage_records))
 		printf("[RULES] underground wonder reachability (%s calls): %s",
 			tostring(R.ug_wonder_calls), tostring(R.ug_wonder_report))
+		printf("[RULES] underground decor: enabled=%s src=%s reason=%s target=%s placed=%s "
+			.. "(auth=%s synth=%s) objects=%s ring=%s/%s dropped=%s/%s sites=%s used=%s "
+			.. "gen=%s passes=%s ratio=%s seed=%s(%s) area=%s cosmetic=%s ring_cosmetic=%s",
+			tostring(R.ug_decor_engine_pass_enabled), tostring(R.ug_decor_record_source),
+			tostring(R.ug_decor_reason), tostring(R.ug_decor_target), tostring(R.ug_decor_placed),
+			tostring(R.ug_decor_placed_authored), tostring(R.ug_decor_placed_synthetic),
+			tostring(R.ug_decor_objects), tostring(R.ug_decor_ring_objects),
+			tostring(R.ug_decor_ring_objects_measured), tostring(R.ug_decor_dropped_non_cosmetic),
+			tostring(R.ug_decor_dropped_out_of_band), tostring(R.ug_decor_marker_sites),
+			tostring(R.ug_decor_marker_sites_used), tostring(R.ug_generator_present),
+			tostring(R.ug_generator_decoration_passes), tostring(R.ug_generator_decoration_ratio),
+			tostring(R.ug_decor_seed), tostring(R.ug_decor_seed_source),
+			tostring(R.ug_decor_area_factor), tostring(R.ug_cosmetic_objects),
+			tostring(R.ug_cosmetic_objects_in_ring))
+		printf("[RULES] underground decor classes: %s", tostring(R.ug_decor_class_census))
 		printf("[RULES] underground after access: enrich=%s/%s imprints=%s (%s) revealed=%s/%s",
 			tostring(R.ug_enrichment_digest), tostring(R.ug_enrichment_count),
 			tostring(R.ug_imprints), tostring(R.ug_imprint_records),
