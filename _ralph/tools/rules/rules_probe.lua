@@ -94,7 +94,41 @@ CreateRealTimeThread(function()
 		params.map = ""
 		GetOverlayValues(__LAT__, __LON__)
 		params.rocket_name, params.rocket_name_base = GenerateRocketName(true)
-		params.SuperBigMapExpandMap = true
+
+		-- Gate 6's underground half is judged against vanilla's own behaviour at this site, so the
+		-- driver can run this same probe with EXPAND MAP off (`--expand-map off`).  `false`
+		-- reproduces the landing screen's OFF path exactly: the params flag is left nil
+		-- (sbm_pregame_toggle.lua:44), the START action's disarm runs, and its vanilla branch
+		-- (`Lifecycle.BeginVanillaSession`, sbm_pregame_toggle.lua:483) uninstalls every mod patch
+		-- before the generation that follows.  Nothing else in the probe changes shape.
+		local expand_map = __EXPAND_MAP__
+		params.SuperBigMapExpandMap = expand_map and true or nil
+		local control_vanilla_session = "not_requested"
+		if not expand_map then
+			control_vanilla_session = "mod_not_found"
+			for i = 1, #(ModsLoaded or {}) do
+				local env = ModsLoaded[i] and ModsLoaded[i].env
+				local candidate = type(env) == "table" and rawget(env, "SuperBigMap")
+				local tog = type(candidate) == "table" and rawget(candidate, "PregameToggle") or nil
+				local lc = type(candidate) == "table" and rawget(candidate, "Lifecycle") or nil
+				if type(tog) == "table" and type(tog.SetStartArmed) == "function" then
+					pcall(tog.SetStartArmed, false, "rules probe control run")
+				end
+				if type(lc) == "table" and type(lc.BeginVanillaSession) == "function" then
+					local vs_ok = pcall(lc.BeginVanillaSession,
+						"rules probe control: START without EXPAND MAP", false)
+					-- Lua's `cond and x or y` cannot carry a false result, so read IsActive
+					-- explicitly: "active=false" is the verdict this control run needs.
+					local active = "?"
+					if type(lc.IsActive) == "function" then
+						local a_ok, a = pcall(lc.IsActive)
+						if a_ok then active = tostring(a) end
+					end
+					control_vanilla_session = vs_ok
+						and ("vanilla_session active=" .. active) or "refused"
+				end
+			end
+		end
 		local surface_seed = params.Seed
 
 		-- Seed-parity pair (gate 1, underground half): vanilla itself draws the underground
@@ -147,12 +181,33 @@ CreateRealTimeThread(function()
 		RULES_STATUS = "waiting_t1"
 		local map, t1 = nil, nil
 		local deadline = t0 + 900000
-		while GetPreciseTicks() < deadline do
-			map = scan()
-			if map then t1 = GetPreciseTicks() break end
-			Sleep(100)
+		local control_settle_ms = 0
+		if expand_map then
+			while GetPreciseTicks() < deadline do
+				map = scan()
+				if map then t1 = GetPreciseTicks() break end
+				Sleep(100)
+			end
+			if not map then error("T1 never reached within 900 s") end
+		else
+			-- The control run never sets the mod's stretch flags, so its "generation complete"
+			-- boundary is vanilla's own: GenerateCurrentRandomMap has returned and the city's
+			-- sector grid exists.  A fixed settle follows so city-init spawns are on the map
+			-- before it is read; it is reported, not hidden, so the read point is on record.
+			while GetPreciseTicks() < deadline do
+				local m = CurrentMap
+				local city = m and m.City
+				local grid = city and city.MapSectors
+				if type(grid) == "table" and #grid > 0 then map = m break end
+				Sleep(100)
+			end
+			if not map then
+				error("the control run's city sector grid never appeared within 900 s")
+			end
+			control_settle_ms = 5000
+			Sleep(control_settle_ms)
+			t1 = GetPreciseTicks()
 		end
-		if not map then error("T1 never reached within 900 s") end
 
 		RULES_STATUS = "reading"
 		local R = {}
@@ -163,6 +218,10 @@ CreateRealTimeThread(function()
 		R.surface_seed = tostring(surface_seed)
 		R.pin_ug_seed = tostring(pin_ug_seed)
 		R.pin_ug_result = pin_ug_result
+		-- Which run this is: the expanded subject or vanilla's unexpanded control.
+		R.expand_map = tostring(expand_map)
+		R.control_vanilla_session = control_vanilla_session
+		R.control_settle_ms = control_settle_ms
 		-- The game-seed pin's own proof: the text asked for, the text the game kept, and the two
 		-- GameVars derived from it. `GameSeed` must equal `xxhash(seed_text)` for a pinned run and
 		-- must be identical across the pinned pair.
@@ -415,8 +474,15 @@ CreateRealTimeThread(function()
 		end
 		local ratio = tiles_ratio("SuperBigMapDesiredWidthTiles", "SuperBigMapGeneratorWidthTiles")
 			or tiles_ratio("SuperBigMapDesiredWidthTiles", "SuperBigMapSourceWidthTiles")
-		R.stretch_ratio_source = ratio and "surface tile metadata" or "fallback 4/3"
-		ratio = ratio or (4.0 / 3.0)
+		if not expand_map then
+			-- Control run: nothing is stretched, so a twin's "image" is its own position and the
+			-- expanded run's 4/3 fallback would fabricate a distance that cannot exist here.
+			ratio = 1.0
+			R.stretch_ratio_source = "control: EXPAND MAP off, no stretch"
+		else
+			R.stretch_ratio_source = ratio and "surface tile metadata" or "fallback 4/3"
+			ratio = ratio or (4.0 / 3.0)
+		end
 		R.stretch_ratio = tostring(ratio)
 
 		local function stamped(o, field)
@@ -998,8 +1064,18 @@ CreateRealTimeThread(function()
 			R.ug_switch_error = tostring(sw_ok and "none" or sw_err)
 			local sdl = GetPreciseTicks() + 900000
 			while GetPreciseTicks() < sdl do
-				if CurrentMap == ug and ug.SuperBigMapUndergroundStretchDone == true then break end
+				-- The control run has no mod preparation to wait for: vanilla's switch is complete
+				-- when the underground is the current map.
+				if CurrentMap == ug
+					and (not expand_map or ug.SuperBigMapUndergroundStretchDone == true) then
+					break
+				end
 				Sleep(200)
+			end
+			if not expand_map and CurrentMap == ug then
+				-- Let vanilla's own CurrentMapChangeDone handlers finish before the imprint and
+				-- reveal census that is this run's whole purpose.
+				Sleep(control_settle_ms)
 			end
 			switch_win_t1 = GetPreciseTicks()
 			R.ug_switch_ms = switch_win_t1 - switch_t0
@@ -1008,7 +1084,10 @@ CreateRealTimeThread(function()
 			R.ug_prepared_after = tostring(ug.SuperBigMapUndergroundPrepared)
 			R.ug_stretch_failed = tostring(ug.SuperBigMapUndergroundStretchFailed)
 			restore_counters()
-			if CurrentMap ~= ug or ug.SuperBigMapUndergroundStretchDone ~= true then
+			if CurrentMap ~= ug then
+				return "first access did not switch to the underground map within 900 s"
+			end
+			if expand_map and ug.SuperBigMapUndergroundStretchDone ~= true then
 				return "first access did not produce a prepared underground within 900 s"
 			end
 
@@ -1238,6 +1317,10 @@ CreateRealTimeThread(function()
 			tostring(R.surface_seed), tostring(R.pin_ug_seed), tostring(R.pin_ug_result),
 			tostring(R.pin_game_seed_text), tostring(R.game_seed_text), tostring(R.game_seed),
 			tostring(R.game_seed_matches_pin))
+		printf("[RULES] mode: expand_map=%s lifecycle=%s settle=%sms ratio=%s (%s)",
+			tostring(R.expand_map), tostring(R.control_vanilla_session),
+			tostring(R.control_settle_ms), tostring(R.stretch_ratio),
+			tostring(R.stretch_ratio_source))
 		printf("[RULES] passages: %s", tostring(R.passage_records))
 		for gi = 1, (R.glue_records or 0) do
 			printf("[RULES] glue %d: ring=%s algorithm=%s anchor_reason=%s rejected=%s",

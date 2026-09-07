@@ -6,6 +6,7 @@ then dumps RULES as JSON plus the [RULES]/[SuperBigMap]/error log excerpt into t
 
 Usage: python _ralph/tools/rules/run_rules.py --out <artifact_dir> [--lat -840] [--lon -8040]
                                               [--site 14N134W] [--keep-alive]
+                                              [--expand-map on|off]
 Coordinates are arc-minutes in the game's internal convention (north and west negative).
 """
 
@@ -74,6 +75,10 @@ def main():
     ap.add_argument("--pin-ug-seed", type=int, default=0,
                     help="pin the reserved underground seed (gate 1's pair); 0 leaves the "
                          "production AsyncRand reservation in place")
+    ap.add_argument("--expand-map", choices=("on", "off"), default="on",
+                    help="'off' runs the unexpanded control: the probe leaves the EXPAND MAP "
+                         "params flag nil and takes the landing screen's vanilla START branch, "
+                         "so the run establishes vanilla's own behaviour at this site")
     ap.add_argument("--pin-game-seed", default="",
                     help="pin vanilla's per-game seed by passing this text as Game.seed_text to "
                          "NewGame (gate 1's pair; vanilla's own new-game seed field). Empty leaves "
@@ -94,11 +99,13 @@ def main():
                   .replace("__LON__", str(args.lon))
                   .replace("__SITE__", args.site)
                   .replace("__UG_SEED__", str(args.pin_ug_seed))
+                  .replace("__EXPAND_MAP__", "true" if args.expand_map == "on" else "false")
                   .replace("__GAME_SEED_TEXT__", args.pin_game_seed))
     inst = TMP / ".tmp_rules_probe_instance.lua"
     inst.write_text(chunk, encoding="utf-8")
 
     print(f"[run_rules] site={args.site} lat={args.lat} lon={args.lon} "
+          f"expand_map={args.expand_map} "
           f"pin_ug_seed={args.pin_ug_seed} pin_game_seed={args.pin_game_seed or '(none)'}")
     print("[run_rules] starting hidden daemon")
     proc = cli("daemon", "start", "--hidden", "--timeout", "300", timeout=420)
@@ -129,6 +136,7 @@ def main():
         time.sleep(10)
 
     result = {"site": args.site, "lat": args.lat, "lon": args.lon, "status": status,
+              "expand_map": args.expand_map,
               "pin_ug_seed": args.pin_ug_seed, "pin_game_seed": args.pin_game_seed,
               "elapsed_s": round(time.time() - started, 1)}
     payload, raw = state_json("RULES", timeout=180)
