@@ -329,7 +329,12 @@ CreateRealTimeThread(function()
 			end
 			local objs = type(m) == "table" and rawget(m, "SuperBigMapDecorEnginePassObjects") or nil
 			if type(objs) ~= "table" then
-				objs = SBM and SBM.DecorTopUp and SBM.DecorTopUp.LastObjects or {}
+				-- Only fall back to the module slot when the RECORD came from there too. A map that
+				-- has its own record and no object list placed nothing (the pass returns before it
+				-- creates the list), and borrowing the other map's list made iter 007 run 1 report
+				-- the surface digest and 1292 objects as the underground's.
+				objs = R[prefix .. "record_source"] == "module_lastfields"
+					and (SBM and SBM.DecorTopUp and SBM.DecorTopUp.LastObjects or {}) or {}
 			end
 			local list, ring, classes = {}, 0, {}
 			for _, o in ipairs(objs) do
@@ -1186,10 +1191,13 @@ CreateRealTimeThread(function()
 			-- The cosmetic decor population actually present underground, so the thinning claim and
 			-- the "cosmetic classes only" clause are both measurable rather than asserted.
 			-- One traversal, every prefix checked inline: five class-filtered sweeps over the root
-			-- class would walk the whole 8192 population five times.
+			-- class would walk the whole 8192 population five times.  The filter must be `CObject`,
+			-- not `Object`: these decor classes exist only as entity classes
+			-- (`Lua/_EntityData.generated.lua`, no DefineClass), so an `Object` sweep sees none of
+			-- them and reported 0 in iter 007 run 1 on a map that was never measured.
 			local ug_cosmetic, ug_cosmetic_ring, ug_cos_classes = 0, 0, {}
 			local COSMETIC_PREFIXES = { "Cliff", "Dec", "Rocks", "Stones", "Underground_Arch" }
-			pcall(ug.MapForEach, ug, "map", "Object", function(o)
+			pcall(ug.MapForEach, ug, "map", "CObject", function(o)
 				local name = tostring(o.class or "")
 				for i = 1, #COSMETIC_PREFIXES do
 					local p = COSMETIC_PREFIXES[i]
