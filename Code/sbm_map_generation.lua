@@ -11005,17 +11005,107 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 			-- passability before the stretch's authoritative final revalidation.
 			local pass_batch_reason = "SuperBigMapSurfaceStretch"
 			local pass_batch_active = false
+			-- The stock ResumePassEdits consumes a named reason only while GameTime() still equals the
+			-- value SuspendPassEdits stored for it, or is exactly 0 (CommonLua/Core/map.lua:757-767).
+			-- That assert fires intermittently for THIS reason, so measure the window instead of
+			-- assuming it: a game_blocking loading screen holds Pause(dlg)
+			-- (CommonLua/UI/LoadingScreen.lua LoadingScreenCreate / LoadingScreenClose), so if the last
+			-- such screen closes while the transaction is open the clock restarts and any yield inside
+			-- the window moves GameTime. Sample game time, real time and the live pause reasons at the
+			-- suspend, at every phase boundary inside the window and at each resume attempt, so the
+			-- phase that first sees the clock move is named by measurement.
+			local game_time_fn = Global("GameTime")
+			local precise_ticks_fn = Global("GetPreciseTicks")
+			local paused_fn = Global("IsPaused")
+			local pause_reasons_fn = Global("_GetPauseReasonsStr")
+			local function PassWindowNumber(fn)
+				if type(fn) ~= "function" then return -1 end
+				local ok, value = pcall(fn)
+				if ok and type(value) == "number" then return value end
+				return -1
+			end
+			local function PassWindowPauseReasons()
+				if type(pause_reasons_fn) ~= "function" then return "unavailable" end
+				local ok, value = pcall(pause_reasons_fn)
+				if not ok then return "unavailable" end
+				if type(value) ~= "string" or value == "" then return "none" end
+				return value
+			end
+			local function PassWindowPaused()
+				if type(paused_fn) ~= "function" then return "unavailable" end
+				local ok, value = pcall(paused_fn)
+				if not ok then return "unavailable" end
+				return tostring(value and true or false)
+			end
+			local pass_window = { samples = {} }
+			-- Published before the suspend so an interrupted pipeline still leaves the window's
+			-- opening state on the map.
+			map.SuperBigMapSurfaceStretchPassWindow = pass_window
+			local function SamplePassWindow(phase)
+				local game_time = PassWindowNumber(game_time_fn)
+				local real_time = PassWindowNumber(precise_ticks_fn)
+				local paused = PassWindowPaused()
+				local reasons = PassWindowPauseReasons()
+				pass_window.samples[#pass_window.samples + 1] = table.concat({
+					tostring(phase),
+					"gt=" .. tostring(game_time),
+					"rt+" .. tostring(real_time - (pass_window.suspend_real_time or real_time)),
+					"paused=" .. paused,
+					"reasons=[" .. reasons .. "]",
+				}, ",")
+				pass_window.trace = table.concat(pass_window.samples, " | ")
+				if pass_window.suspend_game_time
+					and game_time ~= pass_window.suspend_game_time
+					and not pass_window.first_advance then
+					pass_window.first_advance = tostring(phase)
+					pass_window.first_advance_game_time = game_time
+					pass_window.first_advance_pause_reasons = reasons
+				end
+				if paused == "false" and not pass_window.first_unpaused then
+					pass_window.first_unpaused = tostring(phase)
+					pass_window.first_unpaused_pause_reasons = reasons
+				end
+				return game_time, real_time
+			end
 			if type(map.SuspendPassEdits) == "function" and type(map.ResumePassEdits) == "function" then
 				local suspend_ok, suspend_result = pcall(map.SuspendPassEdits, map, pass_batch_reason)
 				pass_batch_active = suspend_ok and suspend_result ~= false
+				pass_window.suspend_game_time = PassWindowNumber(game_time_fn)
+				pass_window.suspend_real_time = PassWindowNumber(precise_ticks_fn)
+				pass_window.suspend_active = tostring(pass_batch_active)
+				SamplePassWindow("suspend")
+			else
+				pass_window.suspend_active = "pass edit api unavailable"
 			end
 			local function ResumeCombinedPassEdits(source, ignore_errors)
 				if not pass_batch_active then return true end
+				-- Record the window's closing state BEFORE the engine judges it, so a fired assert and
+				-- a clean resume are distinguishable from the durable record alone. Only the first
+				-- attempt fills the summary fields; the balancing cleanup resume must not overwrite the
+				-- attempt that failed.
+				local resume_game_time, resume_real_time = SamplePassWindow(
+					"resume:" .. tostring(source))
+				if not pass_window.resume_source then
+					pass_window.resume_source = tostring(source)
+					pass_window.resume_game_time = resume_game_time
+					pass_window.resume_ignore_errors = tostring(ignore_errors == true)
+					pass_window.window_real_ms =
+						resume_real_time - (pass_window.suspend_real_time or resume_real_time)
+					pass_window.game_time_delta =
+						resume_game_time - (pass_window.suspend_game_time or resume_game_time)
+					-- The exact condition the engine asserts on, evaluated from this side.
+					pass_window.assert_expected = tostring(ignore_errors ~= true
+						and resume_game_time ~= 0
+						and resume_game_time ~= pass_window.suspend_game_time)
+				end
 				local resume_ok, resume_err = pcall(
 					map.ResumePassEdits, map, pass_batch_reason, ignore_errors == true)
 				-- The engine validates GameTime before consuming this reason. Keep ownership after an
 				-- exception so the outer cleanup can balance it with ignore_errors=true.
 				if resume_ok then pass_batch_active = false end
+				pass_window.samples[#pass_window.samples + 1] =
+					"resumed:" .. tostring(source) .. ",ok=" .. tostring(resume_ok)
+				pass_window.trace = table.concat(pass_window.samples, " | ")
 				return resume_ok, resume_err
 			end
 			local ok_branch, branch_err = pcall(function()
@@ -11028,6 +11118,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					elseif map.SuperBigMapDecorReliefCapturedFromTemporarySource == true then
 						LoadingStep("using decor relief captured from temporary source", nil, map)
 					end
+					SamplePassWindow("decor_relief")
 					if cfg_bool("EXPANSION_STEP_07_STRETCH_TERRAIN", true) then
 						-- The next call mutates terrain heights, so the native source-grid buildability
 						-- snapshot is no longer current until the explicit final rebuild below succeeds.
@@ -11037,6 +11128,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						ok_stretch, n_grids = true, 0
 					end
 				end
+				SamplePassWindow("terrain_stretch")
 				-- The source map's enrichment OBJECTS were deliberately not transferred: their owning map
 				-- slot has been unloaded. Stage 01 retained constructor-safe value records instead.
 				-- Recreate them only now, after final terrain resampling, so every marker is born on its
@@ -11054,11 +11146,13 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					SetLoadingPhase("Repositioning surface rocks and decorations")
 					ScaleDecorationsToFull(map, pass_batch_active)
 				end
+				SamplePassWindow("decor_scale")
 				local feature_ok, feature_stats = RestoreTransferredPrefabFeatureGameLogic(map)
 				if feature_ok ~= true then
 					error("surface prefab feature correspondence failed: "
 						.. tostring(feature_stats and feature_stats.error or "unknown error"))
 				end
+				SamplePassWindow("prefab_features")
 				if has_staged_records then
 					if ok_stretch ~= true then
 						error("cannot recreate staged native enrichments before a successful terrain stretch")
@@ -11081,6 +11175,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 							.. tostring(breakthrough_stats and breakthrough_stats.error or "unknown"))
 					end
 				end
+				SamplePassWindow("native_enrichments")
 				-- Step 3: move the deposit/anomaly/effect markers to their scaled spots too
 				-- (config STRETCH_SCALE_MARKERS) -- same transform, positions only.
 				if type(ScaleMarkersToFull) == "function" then
@@ -11104,6 +11199,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						end
 					end
 				end
+				SamplePassWindow("marker_scale")
 				-- Step 3b: the engine's own decor stage, re-run over the stretched surface and sized to
 				-- the density deficit (config StretchDecorEnginePass, sbm_decor_topup). It stamps decor
 				-- prefabs at the authored sites vanilla left unused, so it must run after the marker
@@ -11116,6 +11212,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					local decor_ok, decor_stats = decor_topup.Run(map, pass_batch_active)
 					LoadingEnd(decor_token, decor_stats, decor_ok == true)
 				end
+				SamplePassWindow("decor_pass")
 				-- This ResumePassEdits is the surface's sole authoritative passability rebuild after
 				-- replacing the complete height/type terrain grids. The engine exposes no transformed
 				-- passability-grid setter, so this cannot be omitted or narrowed without leaving stale

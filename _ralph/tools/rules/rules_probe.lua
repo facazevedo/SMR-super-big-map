@@ -564,6 +564,24 @@ CreateRealTimeThread(function()
 		local cfg = SBM and SBM.Config
 		R.full_map_playable = tostring(type(cfg) == "table" and cfg.FULL_MAP_PLAYABLE)
 
+		------------------------------------------------------------------ gate 8: pass-edit window
+		-- The intermittent SuspendPassEdits/Resume assert for reason SuperBigMapSurfaceStretch fires
+		-- only when GameTime() moved between the suspend and the resume. This record measures both
+		-- ends plus every phase boundary inside the window, so the phase that lets the clock move is
+		-- read off the map instead of inferred from the log's timestamps.
+		local psw = map.SuperBigMapSurfaceStretchPassWindow
+		if type(psw) == "table" then
+			for _, k in ipairs({ "suspend_active", "suspend_game_time", "resume_source",
+				"resume_game_time", "resume_ignore_errors", "game_time_delta", "window_real_ms",
+				"assert_expected", "first_advance", "first_advance_game_time",
+				"first_advance_pause_reasons", "first_unpaused", "first_unpaused_pause_reasons",
+				"trace" }) do
+				R["stretch_window_" .. k] = tostring(psw[k])
+			end
+		else
+			R.stretch_window_suspend_active = "no surface stretch pass window on map"
+		end
+
 		------------------------------------------------------------------ underground presence
 		local ug
 		local ug_pre_image_hexes, ug_pre_images = {}, {}
