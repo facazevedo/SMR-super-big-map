@@ -9585,15 +9585,23 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 			append_candidate(candidate.x, candidate.y, candidate.q, candidate.r)
 		end
 	end
-	local pool_reused = #candidates
-	local target_pool = math.min(512, math.max(pool_reused, 64, #invalid * 32))
-	local max_samples = math.max(2048, target_pool * 30)
-	for _ = 1, max_samples do
-		if #candidates >= target_pool then break end
-		local x, y = margin + RandInt(span_x), margin + RandInt(span_y)
-		append_candidate(x, y)
+	-- Sampling draws from the private per-phase stream seeded above, never the engine RNG, so the
+	-- pool can be grown later without shifting any other phase's sequence. A saturated underground
+	-- needs far more than the first fill: at 15S67E on underground seed 1770951850272975454 every
+	-- one of the 160 initial candidates was rejected for enrichment repulsion alone.
+	local function fill_pool(target)
+		local before = #candidates
+		for _ = 1, math.max(2048, target * 30) do
+			if #candidates >= target then break end
+			local x, y = margin + RandInt(span_x), margin + RandInt(span_y)
+			append_candidate(x, y)
+		end
+		return #candidates - before
 	end
+	local pool_reused = #candidates
+	fill_pool(math.min(512, math.max(pool_reused, 64, #invalid * 32)))
 	local pool_built = #candidates
+	local pool_refills, pool_refilled = 0, 0
 
 	-- Reachability relocation runs after the density fallbacks were selected. Preserve their
 	-- preferred six-hex clearance while moving another enrichment. When the terrain/repulsion
@@ -9650,28 +9658,40 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 		return true
 	end
 
-	local function take_near(pos, moving_marker)
-		if #candidates == 0 then return nil end
+	-- Candidate selection must not consume the pool: a candidate rejected for one marker's
+	-- repulsion is still perfectly good for the next marker. Handing every pick to table.remove
+	-- starved the tail of the invalid list -- at 15S67E on underground seed 1770951850272975454 the
+	-- four markers got 64, 64, 29 and 1 attempts before the pool hit zero, with no terrain
+	-- rejection anywhere. Rank the pool once per marker instead, in the same order the old
+	-- one-at-a-time pick produced (clearance first, then proximity to the old position); the
+	-- clearance values only change when a move commits, which ends that marker's search anyway.
+	local function ranked_candidates(pool, pos, moving_marker)
 		local ox, oy
 		if pos and type(pos.xy) == "function" then ox, oy = pos:xy() end
-		local best_i, best_clearance, best_d
-		for i = 1, #candidates do
-			local c = candidates[i]
+		local ranked = {}
+		for i = 1, #pool do
+			local c = pool[i]
 			local clearance = fallback_clearance_hex(c, moving_marker)
-			clearance = type(clearance) == "number" and clearance or -1
 			local d = 0
 			if type(ox) == "number" then
 				local dx, dy = c.x - ox, c.y - oy
 				d = dx * dx + dy * dy
 			end
-			if best_clearance == nil or clearance > best_clearance
-				or (clearance == best_clearance and (best_d == nil or d < best_d)) then
-				best_i, best_clearance, best_d = i, clearance, d
-			end
+			ranked[i] = {
+				candidate = c,
+				clearance = type(clearance) == "number" and clearance or -1,
+				distance = d,
+			}
 		end
-		local selected = table.remove(candidates, best_i)
-		if selected then selected._sbm_relocation_fallback_clearance_hex = best_clearance end
-		return selected
+		-- Candidates are unique hexes, so clearance/distance/x/y is a total order and the sort is
+		-- reproducible for a given seed.
+		table.sort(ranked, function(a, b)
+			if a.clearance ~= b.clearance then return a.clearance > b.clearance end
+			if a.distance ~= b.distance then return a.distance < b.distance end
+			if a.candidate.x ~= b.candidate.x then return a.candidate.x < b.candidate.x end
+			return a.candidate.y < b.candidate.y
+		end)
+		return ranked
 	end
 
 	local moved, unresolved = 0, 0
@@ -9712,7 +9732,7 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 	local repulsion_rejected, missing_repulsion_profile = 0, 0
 	local fallback_clearance_relaxed_moves = 0
 	local fallback_clearance_minimum_move
-	for invalid_i, item in ipairs(invalid) do
+	for _, item in ipairs(invalid) do
 		local marker, old_pos = item.marker, item.pos
 		local class = tostring(marker and marker.class or "?")
 		local resource = tostring(marker and marker.resource or "?")
@@ -9737,22 +9757,42 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 			unresolved_details[#unresolved_details + 1] = diagnostic_prefix
 				.. ":failure=missing_repulsion_profile"
 		else
-			-- Leave at least one candidate for every marker still to process. A candidate was
-			-- reachable when sampled, but terrain-Z snapping or SetPos can alter the effective
-			-- point. The old single-attempt path therefore produced a false unresolved result
-			-- despite hundreds of alternatives remaining in the pool.
-			local later_markers = #invalid - invalid_i
-			local max_attempts = math.min(64, math.max(0, #candidates - later_markers))
+			-- A candidate was reachable when sampled, but terrain-Z snapping or SetPos can alter the
+			-- effective point, so one attempt per marker is not enough. Walk the whole pool ranked
+			-- for this marker and, when it runs out, sample more reachable positions instead of
+			-- reporting the marker unresolved with the search barely started. The spacing rule is
+			-- never relaxed; only the search widens.
+			local max_attempts = 2048
+			local ranked = ranked_candidates(candidates, old_pos, marker)
+			local ranked_i, refills = 0, 0
 			local attempts, success = 0, false
 			local successful_pos, successful_candidate, successful_fallback_clearance
-			local last_reason = max_attempts > 0 and "no candidate attempted" or "candidate pool exhausted"
+			local last_reason = #ranked > 0 and "no candidate attempted" or "candidate pool exhausted"
 			local last_candidate = "none"
 			local last_repulsion_detail = ""
 			local item_snapped_rejected, item_repulsion_rejected = 0, 0
 			local item_setpos_failed, item_postmove_rejected = 0, 0
 			local candidates_before = #candidates
+			local function next_candidate()
+				ranked_i = ranked_i + 1
+				local entry = ranked[ranked_i]
+				if entry then return entry.candidate end
+				if refills >= 6 or #candidates >= 1792 then return nil end
+				refills = refills + 1
+				pool_refills = pool_refills + 1
+				local added = fill_pool(math.min(1792, #candidates + 256))
+				pool_refilled = pool_refilled + added
+				if added <= 0 then return nil end
+				local fresh = {}
+				for pool_i = #candidates - added + 1, #candidates do
+					fresh[#fresh + 1] = candidates[pool_i]
+				end
+				ranked, ranked_i = ranked_candidates(fresh, old_pos, marker), 1
+				entry = ranked[1]
+				return entry and entry.candidate
+			end
 			while attempts < max_attempts and not success do
-				local c = take_near(old_pos, marker)
+				local c = next_candidate()
 				if not c then
 					last_reason = "candidate pool exhausted"
 					break
@@ -9760,41 +9800,43 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 				attempts = attempts + 1
 				relocation_attempts = relocation_attempts + 1
 				if attempts > 1 then relocation_retries = relocation_retries + 1 end
-				local new_pos = point(c.x, c.y)
-				if type(new_pos.SetTerrainZ) == "function" then
-					local ok_z, snapped = pcall(new_pos.SetTerrainZ, new_pos, map)
-					if ok_z and snapped then new_pos = snapped end
-				end
-				local nx, ny
-				if new_pos and type(new_pos.xy) == "function" then nx, ny = new_pos:xy() end
-				last_candidate = "world=" .. tostring(nx) .. "," .. tostring(ny)
-					.. ":sample_hex=" .. tostring(c.q) .. "," .. tostring(c.r)
-				if not CanReceiveDeposit(map, new_pos, validation_context) then
-					snapped_rejected = snapped_rejected + 1
-					item_snapped_rejected = item_snapped_rejected + 1
-					last_reason = "terrain-snapped candidate not reachable/buildable/unobstructed"
+				-- Terrain-Z snapping preserves x and y, so the spacing verdict is the same before
+				-- and after it. Take it first: at a saturated site nearly every candidate is
+				-- rejected here, and the tracker memoises the verdict per candidate table, so the
+				-- later markers of a cluster reuse it instead of re-probing terrain.
+				local spacing_ok, active_repulsion
+				if density_fallback then
+					active_repulsion = strict_repulsion
+					spacing_ok = strict_repulsion.CanPlaceUnique(c)
+				elseif marker_is_topup then
+					active_repulsion = strict_repulsion
+					spacing_ok = strict_repulsion.CanPlace(c, profile)
 				else
-					local candidate = { x = nx, y = ny }
-					local _, candidate_q, candidate_r =
-						fallback_clearance_hex(candidate, marker)
-					candidate.q, candidate.r = candidate_q, candidate_r
-					local spacing_ok, active_repulsion
-					if density_fallback then
-						active_repulsion = strict_repulsion
-						spacing_ok = strict_repulsion.CanPlaceUnique(candidate)
-					elseif marker_is_topup then
-						active_repulsion = strict_repulsion
-						spacing_ok = strict_repulsion.CanPlace(candidate, profile)
-					else
-						active_repulsion = topup_only_repulsion
-						spacing_ok = topup_only_repulsion.CanPlace(candidate, profile)
+					active_repulsion = topup_only_repulsion
+					spacing_ok = topup_only_repulsion.CanPlace(c, profile)
+				end
+				if not spacing_ok then
+					repulsion_rejected = repulsion_rejected + 1
+					item_repulsion_rejected = item_repulsion_rejected + 1
+					last_candidate = "world=" .. tostring(c.x) .. "," .. tostring(c.y)
+						.. ":sample_hex=" .. tostring(c.q) .. "," .. tostring(c.r)
+					last_repulsion_detail = tostring(
+						active_repulsion and active_repulsion.Stats().last_rejection or "")
+					last_reason = "candidate violates enrichment repulsion"
+				else
+					local new_pos = point(c.x, c.y)
+					if type(new_pos.SetTerrainZ) == "function" then
+						local ok_z, snapped = pcall(new_pos.SetTerrainZ, new_pos, map)
+						if ok_z and snapped then new_pos = snapped end
 					end
-					if not spacing_ok then
-						repulsion_rejected = repulsion_rejected + 1
-						item_repulsion_rejected = item_repulsion_rejected + 1
-						last_repulsion_detail = tostring(
-							active_repulsion and active_repulsion.Stats().last_rejection or "")
-						last_reason = "candidate violates enrichment repulsion"
+					local nx, ny
+					if new_pos and type(new_pos.xy) == "function" then nx, ny = new_pos:xy() end
+					last_candidate = "world=" .. tostring(nx) .. "," .. tostring(ny)
+						.. ":sample_hex=" .. tostring(c.q) .. "," .. tostring(c.r)
+					if not CanReceiveDeposit(map, new_pos, validation_context) then
+						snapped_rejected = snapped_rejected + 1
+						item_snapped_rejected = item_snapped_rejected + 1
+						last_reason = "terrain-snapped candidate not reachable/buildable/unobstructed"
 					else
 						local ok_move, move_error = pcall(marker.SetPos, marker, new_pos)
 						if not ok_move then
@@ -9811,7 +9853,9 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 							local actual_fallback_clearance, actual_q, actual_r =
 								fallback_clearance_hex(actual_candidate, marker)
 							actual_candidate.q, actual_candidate.r = actual_q, actual_r
-							local actual_spacing_ok = ax == nx and ay == ny
+							-- The spacing verdict above only covers the point it was taken at, so
+							-- re-check whenever snapping or SetPos landed the marker elsewhere.
+							local actual_spacing_ok = ax == c.x and ay == c.y
 							if not actual_spacing_ok and type(ax) == "number" then
 								if density_fallback then
 									actual_spacing_ok = strict_repulsion.CanPlaceUnique(actual_candidate)
@@ -9830,13 +9874,22 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 								successful_pos = actual_pos
 								successful_candidate = actual_candidate
 								successful_fallback_clearance = actual_fallback_clearance
+								-- A committed position leaves the shared pool: a density fallback
+								-- commits nothing to either tracker, so this removal is what stops
+								-- a later marker from reusing the same hex.
+								for pool_i = 1, #candidates do
+									if candidates[pool_i] == c then
+										table.remove(candidates, pool_i)
+										break
+									end
+								end
 							else
 								postmove_rejected = postmove_rejected + 1
 								item_postmove_rejected = item_postmove_rejected + 1
 								if not actual_spacing_ok then
 									repulsion_rejected = repulsion_rejected + 1
 									item_repulsion_rejected = item_repulsion_rejected + 1
-									local active_repulsion = density_fallback
+									active_repulsion = density_fallback
 										and strict_repulsion or marker_is_topup
 										and strict_repulsion or topup_only_repulsion
 									last_repulsion_detail = tostring(
@@ -9902,6 +9955,7 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 					.. ":failure=" .. tostring(last_reason)
 					.. ":attempts=" .. tostring(attempts)
 					.. ":max_attempts=" .. tostring(max_attempts)
+					.. ":refills=" .. tostring(refills)
 					.. ":candidates_before=" .. tostring(candidates_before)
 					.. ":candidates_after=" .. tostring(#candidates)
 					.. ":last_candidate=" .. tostring(last_candidate)
@@ -9919,6 +9973,7 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 		unrevealed_placed = unrevealed_placed,
 		unresolved = unresolved, candidates_built = pool_built,
 		candidates_reused = pool_reused,
+		pool_refills = pool_refills, candidates_refilled = pool_refilled,
 		relocation_attempts = relocation_attempts, relocation_retries = relocation_retries,
 		snapped_rejected = snapped_rejected, setpos_failed = setpos_failed,
 		postmove_rejected = postmove_rejected, repulsion_rejected = repulsion_rejected,
