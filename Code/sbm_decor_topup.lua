@@ -584,7 +584,7 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 			end
 			stats.synthetic_templates = #templates
 			local per_group = math.max(1, math.floor(
-				cfg_number("STRETCH_DECOR_ENGINE_PASS_SYNTHETIC_ATTEMPTS_PER_GROUP", 120)))
+				cfg_number("STRETCH_DECOR_ENGINE_PASS_SYNTHETIC_ATTEMPTS_PER_GROUP", 200)))
 			local jitter_max = math.max(100, math.floor(
 				cfg_number("STRETCH_DECOR_ENGINE_PASS_SYNTHETIC_JITTER_MAX_PERCENT", 350)))
 			local get_type = terrain_api.GetTerrainType

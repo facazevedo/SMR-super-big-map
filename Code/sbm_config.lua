@@ -545,9 +545,12 @@ config.StretchDecorEnginePassUnderground = true
 config.StretchDecorEnginePassMaxPlacements = 4000
 -- Synthetic sites for the same pass: when the authored sites run out, borrow a used site's filters
 -- and stamp at a seeded position 100%-JitterMaxPercent% of its radius away on the same terrain
--- type. Attempts are bounded per missing group.
+-- type. Attempts are bounded per missing group. The search stops the moment the target is reached,
+-- so this bound only ever spends time on a site the pass cannot otherwise fill: at 14N134W it takes
+-- 687 of its 3,960 attempts, while 15S67E spent all 10,800 at 120/group and finished one group
+-- short (98 of 99) at an 0.82% success rate. 200 buys that group and costs nothing elsewhere.
 config.StretchDecorEnginePassSyntheticSites = true
-config.StretchDecorEnginePassSyntheticAttemptsPerGroup = 120
+config.StretchDecorEnginePassSyntheticAttemptsPerGroup = 200
 -- After this many consecutive no-room misses (the mountain obstruct circles, or ground already
 -- decorated) a template's search WIDENS instead of the template being dropped: its jitter reach
 -- doubles and the counter resets, so a hemmed-in template escapes its apron and a saturated one
@@ -1092,7 +1095,7 @@ C.STRETCH_DECOR_ENGINE_PASS_UNDERGROUND = as_bool(config.StretchDecorEnginePassU
 C.STRETCH_DECOR_ENGINE_PASS_MAX_PLACEMENTS = as_number(config.StretchDecorEnginePassMaxPlacements, 4000)
 C.STRETCH_DECOR_ENGINE_PASS_SYNTHETIC_SITES = as_bool(config.StretchDecorEnginePassSyntheticSites)
 C.STRETCH_DECOR_ENGINE_PASS_SYNTHETIC_ATTEMPTS_PER_GROUP =
-	as_number(config.StretchDecorEnginePassSyntheticAttemptsPerGroup, 120)
+	as_number(config.StretchDecorEnginePassSyntheticAttemptsPerGroup, 200)
 C.STRETCH_DECOR_ENGINE_PASS_SYNTHETIC_TEMPLATE_PATIENCE =
 	as_number(config.StretchDecorEnginePassSyntheticTemplatePatience, 24)
 C.STRETCH_DECOR_ENGINE_PASS_SYNTHETIC_JITTER_MAX_PERCENT =
