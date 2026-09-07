@@ -10391,8 +10391,8 @@ function DepositRules.EnforceScanGateAfterStretch(map)
 	local fx1 = tonumber(map.SuperBigMapStartFootprintX1)
 	local fy1 = tonumber(map.SuperBigMapStartFootprintY1)
 	local footprint_ok = fx0 ~= nil and fy0 ~= nil and fx1 ~= nil and fy1 ~= nil
-	-- Vanilla's fallback initial reveal scans a second, nearest-concrete sector; its
-	-- stretched image is a second exempt footprint (SuperBigMapStartFootprint2*).
+	-- Older expanded generations could publish a second fallback footprint. New generations clear
+	-- it to enforce one initial reveal, but honoring it here preserves compatibility with old saves.
 	local gx0 = tonumber(map.SuperBigMapStartFootprint2X0)
 	local gy0 = tonumber(map.SuperBigMapStartFootprint2Y0)
 	local gx1 = tonumber(map.SuperBigMapStartFootprint2X1)

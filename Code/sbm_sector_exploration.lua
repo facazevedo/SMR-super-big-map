@@ -1401,7 +1401,9 @@ local function VanillaStartPick(city, map)
 	-- taken under exactly the geometry vanilla's own scan would have used.
 	local staged, staged_stats, staged_error
 	if ok_pick and type(revealed) == "table" and #revealed > 0 then
-		local ok_stage, result, extra = pcall(StageNativeStartSpawns, map, revealed, spawn_positions)
+		-- The expanded-map contract reveals exactly one initial sector. Vanilla may return an
+		-- auxiliary fallback sector, but importing it would silently reveal a second sector.
+		local ok_stage, result, extra = pcall(StageNativeStartSpawns, map, { revealed[1] }, spawn_positions)
 		if ok_stage and type(result) == "table" then
 			staged, staged_stats = result, extra
 		else
@@ -1415,17 +1417,13 @@ local function VanillaStartPick(city, map)
 	if not (ok_pick and type(revealed) == "table" and #revealed > 0) then
 		return nil, "InitialReveal failed: " .. tostring(revealed)
 	end
-	-- Vanilla can return a second, nearest-concrete sector in its fallback branch, and it SCANS
-	-- that sector, so its content spawns. Capture every winner: the first stays the transform
-	-- anchor, the second drives the auxiliary reveal (its absence measured as b2-04's missing
-	-- TerrainDepositConcrete).
-	local winners = {}
-	for _, sec in ipairs(revealed) do
-		local mn, mx = sec.area:min(), sec.area:max()
-		local x0, y0 = mn:xy()
-		local x1, y1 = mx:xy()
-		winners[#winners + 1] = { x0 = x0, y0 = y0, x1 = x1, y1 = y1, id = sec.id }
-	end
+	-- Preserve only the deterministic primary anchor. This keeps destination initialization at the
+	-- rule-required single revealed sector even when vanilla's fallback returns an auxiliary one.
+	local sec = revealed[1]
+	local mn, mx = sec.area:min(), sec.area:max()
+	local x0, y0 = mn:xy()
+	local x1, y1 = mx:xy()
+	local winners = { { x0 = x0, y0 = y0, x1 = x1, y1 = y1, id = sec.id } }
 	if type(staged) ~= "table" then
 		error("native start spawn staging failed: " .. tostring(staged_error))
 	end
@@ -1464,14 +1462,16 @@ local function StageVanillaStartSelection(map, selection, reason)
 	map.SuperBigMapVanillaStartSourceY0 = winner.y0
 	map.SuperBigMapVanillaStartSourceX1 = winner.x1
 	map.SuperBigMapVanillaStartSourceY1 = winner.y1
-	-- Vanilla's InitialReveal fallback also reveals the nearest concrete sector (revealed[2],
-	-- Exploration.lua:971-976). Its content spawns in vanilla, so it must spawn here too.
-	local second = selection.winners[2]
-	map.SuperBigMapVanillaStartSource2Sector = second and second.id or nil
-	map.SuperBigMapVanillaStartSource2X0 = second and second.x0 or nil
-	map.SuperBigMapVanillaStartSource2Y0 = second and second.y0 or nil
-	map.SuperBigMapVanillaStartSource2X1 = second and second.x1 or nil
-	map.SuperBigMapVanillaStartSource2Y1 = second and second.y1 or nil
+	-- Clear obsolete auxiliary annotations in case this path is re-entered after a Lua reload.
+	map.SuperBigMapVanillaStartSource2Sector = nil
+	map.SuperBigMapVanillaStartSource2X0 = nil
+	map.SuperBigMapVanillaStartSource2Y0 = nil
+	map.SuperBigMapVanillaStartSource2X1 = nil
+	map.SuperBigMapVanillaStartSource2Y1 = nil
+	map.SuperBigMapStartFootprint2X0 = nil
+	map.SuperBigMapStartFootprint2Y0 = nil
+	map.SuperBigMapStartFootprint2X1 = nil
+	map.SuperBigMapStartFootprint2Y1 = nil
 	-- The staged native spawn set travels with the destination map: it is the single source of
 	-- truth for what the initial reveal may spawn, and the parity dump reads it back as evidence.
 	if type(selection.staged) ~= "table" then
@@ -1836,42 +1836,9 @@ local function RevealVanillaStartSectors(map)
 		error("vanilla InitialReveal failed for transformed start candidates: " .. tostring(revealed))
 	end
 	local selected = revealed[1]
-	-- Vanilla's fallback branch returns an auxiliary nearest-concrete sector (revealed[2]) and
-	-- SCANS it, so its content spawns. The anchor (camera, InitialSector) stays vanilla's first
-	-- winner, but the scan set must be the whole revealed set or the auxiliary sector's deposits
-	-- are missing from the expanded map (measured: b2-04's TerrainDepositConcrete).
+	-- The expanded-map rule contract permits exactly one initial reveal. InitialReveal may return
+	-- more than one candidate in a vanilla fallback, but only its primary winner is scanned here.
 	local reveal_targets = { selected }
-	local winner2 = data.winners and data.winners[2]
-	if winner2 then
-		local w2cx = math.floor(origin_x + ((winner2.x0 + winner2.x1) * 0.5 - origin_x) * scale_x + 0.5)
-		local w2cy = math.floor(origin_y + ((winner2.y0 + winner2.y1) * 0.5 - origin_y) * scale_y + 0.5)
-		local w2_sector
-		Grid.ForEachSector(city, function(sector)
-			local a = sector and sector.area
-			if not a or w2_sector then return end
-			local mn, mx = a:min(), a:max()
-			local ax0, ay0 = mn:xy()
-			local ax1, ay1 = mx:xy()
-			if w2cx >= ax0 and w2cx < ax1 and w2cy >= ay0 and w2cy < ay1 then w2_sector = sector end
-		end)
-		if not w2_sector then
-			error("no expanded sector contains the transformed auxiliary concrete sector center")
-		end
-		if w2_sector ~= selected then
-			reveal_targets[#reveal_targets + 1] = w2_sector
-			-- InitialReveal precomputed CanPlaceDeposit spawn positions only for the first
-			-- winner's candidate sectors; replicate its inner loop for the auxiliary sector
-			-- (Exploration.lua:900-906) so its surface markers spawn exactly the same way.
-			for j = 1, #(w2_sector.markers and w2_sector.markers.surface or "") do
-				local marker = w2_sector.markers.surface[j]
-				if marker and not spawn_positions[marker]
-					and type(marker.CanPlaceDeposit) == "function" then
-					local ok_sp, sp = pcall(marker.CanPlaceDeposit, marker)
-					if ok_sp and sp then spawn_positions[marker] = sp end
-				end
-			end
-		end
-	end
 	-- This is still initial generation: remove any accidental destination reveal produced while the
 	-- class wrapper was being reclaimed, then persist only vanilla's selected initial winner.
 	local done_object = Global("DoneObject")
@@ -2006,7 +1973,7 @@ local function RevealVanillaStartSectors(map)
 		end
 		-- The scan gate (DepositRules.EnforceScanGateAfterStretch) despawns deposits in unscanned
 		-- sectors. Part of vanilla's own start footprint necessarily lands in one, so the stretched
-		-- winner rects travel with the map exactly as the footprint path published them.
+		-- winner rect travels with the map exactly as the footprint path published it.
 		map.SuperBigMapStartFootprintX0 = x0
 		map.SuperBigMapStartFootprintY0 = y0
 		map.SuperBigMapStartFootprintX1 = x1
@@ -2014,12 +1981,6 @@ local function RevealVanillaStartSectors(map)
 		map.SuperBigMapStartFootprintBox = string.format("%s,%s,%s,%s", tostring(x0), tostring(y0),
 			tostring(x1), tostring(y1))
 		map.SuperBigMapStartFootprintSectors = #overlaps
-		if winner2 then
-			map.SuperBigMapStartFootprint2X0 = math.floor(origin_x + (winner2.x0 - origin_x) * scale_x + 0.5)
-			map.SuperBigMapStartFootprint2Y0 = math.floor(origin_y + (winner2.y0 - origin_y) * scale_y + 0.5)
-			map.SuperBigMapStartFootprint2X1 = math.floor(origin_x + (winner2.x1 - origin_x) * scale_x + 0.5)
-			map.SuperBigMapStartFootprint2Y1 = math.floor(origin_y + (winner2.y1 - origin_y) * scale_y + 0.5)
-		end
 		-- Evidence for the parity dump: every staged record must resolve and place, and the sweep
 		-- reports how much destination-side placement it had to undo.
 		map.SuperBigMapStartReplayRecords = stats.records
@@ -2200,12 +2161,6 @@ local function RevealVanillaStartSectors(map)
 		map.SuperBigMapStartFootprintPending = pending_total
 		map.SuperBigMapStartFootprintDeposits = placed_extra
 		map.SuperBigMapStartFootprintDespawned = despawned
-		if winner2 then
-			map.SuperBigMapStartFootprint2X0 = math.floor(origin_x + (winner2.x0 - origin_x) * scale_x + 0.5)
-			map.SuperBigMapStartFootprint2Y0 = math.floor(origin_y + (winner2.y0 - origin_y) * scale_y + 0.5)
-			map.SuperBigMapStartFootprint2X1 = math.floor(origin_x + (winner2.x1 - origin_x) * scale_x + 0.5)
-			map.SuperBigMapStartFootprint2Y1 = math.floor(origin_y + (winner2.y1 - origin_y) * scale_y + 0.5)
-		end
 	end
 
 	if selected then

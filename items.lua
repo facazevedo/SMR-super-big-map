@@ -64,8 +64,16 @@ return {
 		'CodeFileName', "Code/sbm_object_clone.lua",
 	}),
 	PlaceObj('ModItemCode', {
+		'name', "sbm_provenance",
+		'CodeFileName', "Code/sbm_provenance.lua",
+	}),
+	PlaceObj('ModItemCode', {
 		'name', "sbm_terrain_copy",
 		'CodeFileName', "Code/sbm_terrain_copy.lua",
+	}),
+	PlaceObj('ModItemCode', {
+		'name', "sbm_decor_topup",
+		'CodeFileName', "Code/sbm_decor_topup.lua",
 	}),
 	PlaceObj('ModItemCode', {
 		'name', "sbm_pass_border",
@@ -74,6 +82,10 @@ return {
 	PlaceObj('ModItemCode', {
 		'name', "sbm_map_generation",
 		'CodeFileName', "Code/sbm_map_generation.lua",
+	}),
+	PlaceObj('ModItemCode', {
+		'name', "sbm_elevator_debug",
+		'CodeFileName', "Code/sbm_elevator_debug.lua",
 	}),
 	PlaceObj('ModItemCode', {
 		'name', "sbm_place_elevator_button",

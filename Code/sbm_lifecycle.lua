@@ -1331,23 +1331,58 @@ RegisterOnce("SectorScanned", function(status, sector, _old_status)
 	if not active() then
 		return
 	end
-	local sector_map = sector and type(sector.GetMap) == "function"
-		and SafeCall(sector.GetMap, sector) or Global("CurrentMap")
+	-- Engine builds have exposed this message as either (status, sector, old_status) or
+	-- (status, col, row). Only dereference the second argument when it is a sector object.
+	local sector_obj = type(sector) == "table" and sector or nil
+	local event_col = sector_obj and sector_obj.col or sector
+	local event_row = sector_obj and sector_obj.row or _old_status
+	if not sector_obj and type(event_col) == "number" and type(event_row) == "number" then
+		local city = Global("UICity") or Global("MainCity")
+		local sectors_col = city and type(city.MapSectors) == "table" and city.MapSectors[event_col]
+		sector_obj = type(sectors_col) == "table" and sectors_col[event_row] or nil
+	end
+	local sector_map = sector_obj and type(sector_obj.GetMap) == "function"
+		and SafeCall(sector_obj.GetMap, sector_obj) or Global("CurrentMap")
 	if not IsModMap(sector_map) then return end
 	-- Reveal cloned subsurface deposits/anomalies now that their sector is scanned.
 	local deposits = SuperBigMap.DepositRules
 	if deposits and type(deposits.OnSectorScanned) == "function" then
-		deposits.OnSectorScanned(status, sector)
+		deposits.OnSectorScanned(status, sector_obj)
 	end
 	-- Revealing an underground entrance completes a vanilla scenario that may create or refresh
 	-- its sign. Re-assert the exact post-expansion starting XYZ after the reveal has run.
 	local gen = SuperBigMap.MapGeneration
 	if gen and type(gen.RestoreEntranceBadgePositions) == "function" then
 		local map = sector_map
-		if not map and sector and sector.city and type(sector.city.GetMap) == "function" then
-			map = SafeCall(sector.city.GetMap, sector.city)
+		if not map and sector_obj and sector_obj.city and type(sector_obj.city.GetMap) == "function" then
+			map = SafeCall(sector_obj.city.GetMap, sector_obj.city)
 		end
 		SafeCall(gen.RestoreEntranceBadgePositions, map or Global("CurrentMap"), "SectorScanned")
+	end
+	-- RegisterOnce stores one callback per message name, so sector-visual maintenance must share
+	-- this handler with the gameplay work above instead of registering a second SectorScanned body.
+	if editor_active() then return end
+	local sectors = SuperBigMap.SectorExploration
+	if sectors and type(sectors.RepairSectorVisualGeometry) == "function" then
+		local city = Global("UICity") or Global("MainCity")
+		local repairs = sectors.RepairSectorVisualGeometry(city)
+		local orphan_count, _, orphan_samples = 0, 0, "unavailable"
+		if type(sectors.PruneOrphanSectorDecals) == "function" then
+			orphan_count, _, orphan_samples = sectors.PruneOrphanSectorDecals(city, sector_map)
+		end
+		if type(sectors.AuditOverviewGridVisuals) == "function" then
+			sectors.AuditOverviewGridVisuals(city, "SectorScanned", {
+				scanned_status = tostring(status),
+				scanned_col = tostring(event_col),
+				scanned_row = tostring(event_row),
+				repaired_sector_positions = tostring(repairs.sector_positions),
+				repaired_decal_positions = tostring(repairs.decal_positions),
+				repaired_decal_scales = tostring(repairs.decal_scales),
+				repaired_scan_positions = tostring(repairs.scan_positions),
+				pruned_orphan_decals = tostring(orphan_count),
+				pruned_orphan_samples = tostring(orphan_samples),
+			})
+		end
 	end
 end)
 
@@ -1596,34 +1631,6 @@ RegisterOnce("NewHour", function(hour)
 			pruned_orphan_decals = tostring(orphan_count),
 			pruned_orphan_samples = tostring(orphan_samples),
 		})
-	end
-end)
-
-RegisterOnce("SectorScanned", function(status, col, row)
-	if not active() or editor_active() then return end
-	local map = Global("CurrentMap")
-	if not IsModMap(map) then return end
-	local sectors = SuperBigMap.SectorExploration
-	if sectors and type(sectors.RepairSectorVisualGeometry) == "function" then
-		local city = Global("UICity") or Global("MainCity")
-		local repairs = sectors.RepairSectorVisualGeometry(city)
-		local orphan_count, _, orphan_samples = 0, 0, "unavailable"
-		if type(sectors.PruneOrphanSectorDecals) == "function" then
-			orphan_count, _, orphan_samples = sectors.PruneOrphanSectorDecals(city, map)
-		end
-		if type(sectors.AuditOverviewGridVisuals) == "function" then
-			sectors.AuditOverviewGridVisuals(city, "SectorScanned", {
-				scanned_status = tostring(status),
-				scanned_col = tostring(col),
-				scanned_row = tostring(row),
-				repaired_sector_positions = tostring(repairs.sector_positions),
-				repaired_decal_positions = tostring(repairs.decal_positions),
-				repaired_decal_scales = tostring(repairs.decal_scales),
-				repaired_scan_positions = tostring(repairs.scan_positions),
-				pruned_orphan_decals = tostring(orphan_count),
-				pruned_orphan_samples = tostring(orphan_samples),
-			})
-		end
 	end
 end)
 
