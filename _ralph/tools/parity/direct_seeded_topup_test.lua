@@ -392,6 +392,41 @@ assert(repaired[1].candidates[1].q == 102 and repaired[1].candidates[2].q == 105
 	"an unbuildable seed suppressed its legal neighbours")
 
 local new_guide = environment.DepositRules.NewDirectSeededBuildableGuide
+local band_regions = environment.DepositRules.DirectSeededBandRegions
+for _, band in ipairs({"outer", "inner"}) do
+	for _, bounds in ipairs({{x0 = 0, y0 = 0, x1 = 200, y1 = 160},
+		{x0 = 5, y0 = 7, x1 = 197, y1 = 155}}) do
+		local regions = band_regions(bounds, 200, 160, 2, band, 3)
+		for x = 0, 199 do for y = 0, 159 do
+			local outer = x < 10 or x >= 190 or y < 8 or y >= 152
+			local inner = (x < 20 or x >= 180 or y < 16 or y >= 144) and not outer
+			local expected = (band == "outer" and outer or band == "inner" and inner)
+				and x >= 3 and x < 197 and y >= 3 and y < 157
+				and x >= bounds.x0 and x < bounds.x1 and y >= bounds.y0 and y < bounds.y1
+			local matches = 0
+			for _, rect in ipairs(regions) do
+				if x >= rect.x0 and x < rect.x1 and y >= rect.y0 and y < rect.y1 then matches = matches + 1 end
+			end
+			assert(matches == (expected and 1 or 0), "physical band clipping dropped/duplicated a point")
+		end end
+	end
+end
+
+local fair_sources = {}
+for i = 1, 20 do fair_sources[#fair_sources + 1] = {q = i * 100, r = 0, band = "outer", priority = "preferred"} end
+fair_sources[#fair_sources + 1] = {q = 3000, r = 0, band = "outer", priority = "general"}
+local fair, fair_error, fair_stats = planner({
+	centers = fair_sources, offsets = {{dq = 0, dr = 0}}, specs = {{resource_target = 1}},
+	outer_count = 1, center_attempt_budget = 2, candidate_attempt_budget = 2,
+	rand_int = function() return 0 end,
+	classify_center = function(c) return c.band end,
+	center_priority = function(c) return c.priority end,
+	build_candidate = function(c) return {q = c.q, r = c.r} end,
+	validate_static = function(c) return c.q == 3000 end,
+	validate_dynamic = function() return true end,
+})
+assert(fair and fair_stats.candidate_attempts == 2, fair_error)
+
 local function check_guide(points)
 	local draws = new_rng(17)
 	local guide = new_guide({leaf_size = 4, rand_int = draws, has_buildable = function(rect)
@@ -482,7 +517,7 @@ require_policy(topup:find('kind = "sector"', 1, true)
 	and topup:find("center_priority = function(center)", 1, true)
 	and topup:find("anchor_first = true", 1, true)
 	and topup:find("require_valid_anchor = false", 1, true)
-	and topup:find("guide.Sample(center.buildable_region)", 1, true)
+	and topup:find("guide.Sample(regions[", 1, true)
 	and topup:find("direct_context.build_unbuildable_z, 10000", 1, true),
 	"apron-first on-demand physical-band sampling is missing")
 require_policy(topup:find("center_attempt_id", 1, true),

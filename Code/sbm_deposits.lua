@@ -4044,6 +4044,29 @@ end
 -- Breakthrough anomalies are preserved exactly from the vanilla source record set.
 
 -- DIRECT_SEEDED_CLUSTER_PLANNER_BEGIN
+-- Disjoint physical band rectangles, clipped to the source and existing safe map margin.
+function DepositRules.DirectSeededBandRegions(bounds, width, height, ring_sectors, band, margin)
+	local bx, by = width / 20, height / 20
+	local inset = band == "inner" and 1 or 0
+	local extent = band == "inner" and ring_sectors or 1
+	local x0, y0 = math.max(margin, inset * bx), math.max(margin, inset * by)
+	local x1, y1 = math.min(width - margin, width - inset * bx),
+		math.min(height - margin, height - inset * by)
+	local left, right = extent * bx, width - extent * bx
+	local top, bottom = extent * by, height - extent * by
+	local result = {}
+	local function append(a, b, c, d)
+		a, b = math.ceil(math.max(a, bounds.x0)), math.ceil(math.max(b, bounds.y0))
+		c, d = math.floor(math.min(c, bounds.x1)), math.floor(math.min(d, bounds.y1))
+		if c > a and d > b then result[#result + 1] = {x0 = a, y0 = b, x1 = c, y1 = d} end
+	end
+	append(x0, y0, math.min(left, x1), y1)
+	append(math.max(right, x0), y0, x1, y1)
+	append(math.max(left, x0), y0, math.min(right, x1), math.min(top, y1))
+	append(math.max(left, x0), math.max(bottom, y0), math.min(right, x1), y1)
+	return result
+end
+
 -- A lazy tree of native buildable-region presence, not a pool of terrain candidates.
 -- Unknown API results stay eligible; every sampled point still needs the full validator.
 function DepositRules.NewDirectSeededBuildableGuide(options)
@@ -5129,21 +5152,36 @@ function DepositRules.TopUpDeposits(map)
 						local center_hex = center_hexes[center_key]
 						if center_hex == nil then
 							local center_x, center_y = center.x, center.y
-							if center.kind == "sector" then
-								local descriptor = center.descriptor
-								if not center.buildable_region then
-									center.buildable_region = {
-										x0 = math.ceil(math.max(descriptor.area_x0, surface_extractor_safe_margin)),
-										y0 = math.ceil(math.max(descriptor.area_y0, surface_extractor_safe_margin)),
-										x1 = math.floor(math.min(descriptor.area_x1, map_w - surface_extractor_safe_margin)),
-										y1 = math.floor(math.min(descriptor.area_y1, map_h - surface_extractor_safe_margin)),
-									}
+							if not center.buildable_regions then
+								local bounds
+								if center.kind == "sector" then
+									local descriptor = center.descriptor
+									bounds = {x0 = descriptor.area_x0, y0 = descriptor.area_y0,
+										x1 = descriptor.area_x1, y1 = descriptor.area_y1}
+								else
+									local reach = resource_cluster_radius * surface_hex_size
+									bounds = {x0 = center.x - reach, y0 = center.y - reach,
+										x1 = center.x + reach, y1 = center.y + reach}
+									local ok, q, r = pcall(world_to_hex, point(center.x, center.y))
+									if not ok or type(q) ~= "number" or type(r) ~= "number" then return false end
+									center.apron_origin = {q = q, r = r}
 								end
-								center_x, center_y = guide.Sample(center.buildable_region)
-								if not center_x then
-									center_hexes[center_key] = false
-									return false
+								center.buildable_regions = DepositRules.DirectSeededBandRegions(
+									bounds, map_w, map_h, surface_mountain_base_ring_sectors,
+									band, surface_extractor_safe_margin)
+							end
+							center_x, center_y = nil, nil
+							local regions = center.buildable_regions
+							if #regions > 0 then
+								local start = RandInt(#regions)
+								for offset_index = 0, #regions - 1 do
+									center_x, center_y = guide.Sample(regions[(start + offset_index) % #regions + 1])
+									if center_x then break end
 								end
+							end
+							if not center_x then
+								center_hexes[center_key] = false
+								return false
 							end
 							local ok_hex, q, r = pcall(world_to_hex, point(center_x, center_y))
 							center_hex = ok_hex and type(q) == "number" and type(r) == "number"
@@ -5153,6 +5191,10 @@ function DepositRules.TopUpDeposits(map)
 						if not center_hex then return false end
 						local q = center_hex.q + offset.dq
 						local r = center_hex.r + offset.dr
+						if center.apron_origin and (AxialHexDistance(center.apron_origin.q,
+							center.apron_origin.r, q, r) or math.huge) > resource_cluster_radius then
+							return nil
+						end
 						local ok_world, x, y = pcall(hex_to_world, q, r)
 						if not ok_world or type(x) ~= "number" or type(y) ~= "number" then
 							return nil
