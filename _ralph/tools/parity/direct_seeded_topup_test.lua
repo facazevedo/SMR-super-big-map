@@ -71,7 +71,7 @@ local specs = {
 
 local function run(seed)
 	local rand_int, rng_calls = new_rng(seed)
-	local validation_calls = 0
+	local validation_calls, static_calls, dynamic_calls = 0, 0, 0
 	local plans, planner_error, stats = planner({
 		centers = centers, offsets = offsets, specs = specs, outer_count = 2,
 		cluster_radius = 12, minimum_member_distance = 3,
@@ -86,6 +86,14 @@ local function run(seed)
 				center = center_index, band = band,
 			}
 		end,
+		validate_static = function(candidate)
+			static_calls = static_calls + 1
+			return candidate.q ~= nil and candidate.r ~= nil
+		end,
+		validate_dynamic = function(candidate)
+			dynamic_calls = dynamic_calls + 1
+			return candidate.q ~= nil and candidate.r ~= nil
+		end,
 	})
 	assert(plans, planner_error)
 	assert(#plans == #specs and stats.plans == #specs)
@@ -93,6 +101,13 @@ local function run(seed)
 	assert(stats.centers_attempted == #specs)
 	assert(stats.candidate_attempts == validation_calls)
 	assert(validation_calls == 14, "planner retained more than exact cluster demand")
+	assert(stats.static_validations == static_calls and static_calls == 14,
+		"planner did not count exact-coordinate static validations")
+	assert(stats.static_cache_reuses == 0, "planner reported unexpected static-cache reuse")
+	assert(stats.dynamic_validations == dynamic_calls and dynamic_calls == 14,
+		"planner did not count mutable placement validations")
+	assert(stats.accepted_candidates == 14 and stats.rejected_candidates == 0,
+		"planner did not separate attempted/rejected/accepted counts")
 	assert(stats.candidate_attempts <= #specs * stats.candidate_attempt_budget)
 	local encoded = {}
 	for index, plan in ipairs(plans) do
@@ -114,6 +129,37 @@ local different = run(918274)
 assert(first == repeat_result, "same private seed did not reproduce plans")
 assert(first_rng_calls == repeat_rng_calls, "same private seed changed draw count")
 assert(first ~= different, "different private seed did not change candidate order")
+
+local cache_static_calls, cache_dynamic_calls = 0, 0
+local cache_plans, cache_error, cache_stats = planner({
+	centers = { { band = "outer", q = 100, r = 200 } },
+	offsets = { { dq = 0, dr = 0 }, { dq = 0, dr = 0 }, { dq = 3, dr = 0 } },
+	specs = { { resource_target = 2 } }, outer_count = 1,
+	cluster_radius = 12, minimum_member_distance = 3,
+	center_attempt_budget = 1, candidate_attempt_budget = 3,
+	rand_int = function(limit) return limit - 1 end,
+	classify_center = function(center) return center.band end,
+	build_candidate = function(center, _, offset)
+		return { q = center.q + offset.dq, r = center.r + offset.dr }
+	end,
+	validate_static = function()
+		cache_static_calls = cache_static_calls + 1
+		return true
+	end,
+	validate_dynamic = function()
+		cache_dynamic_calls = cache_dynamic_calls + 1
+		return true
+	end,
+})
+assert(cache_plans, cache_error)
+assert(cache_stats.candidate_attempts == 3 and cache_stats.rejected_candidates == 1
+	and cache_stats.accepted_candidates == 2,
+	"duplicate draw did not preserve attempted/rejected/accepted counts")
+assert(cache_static_calls == 2 and cache_stats.static_validations == 2
+	and cache_stats.static_cache_reuses == 1,
+	"exact-coordinate static verdict was not cached")
+assert(cache_dynamic_calls == 2 and cache_stats.dynamic_validations == 2,
+	"duplicate draw repeated mutable validation before uniqueness rejection")
 
 local fail_rng = new_rng(7)
 local failed, failure, failure_stats = planner({
@@ -144,12 +190,25 @@ require_policy(topup:find("rand_int = RandInt", 1, true),
 require_policy(topup:find("center_attempt_budget = 64", 1, true)
 	and topup:find("candidate_attempt_budget = 384", 1, true),
 	"production attempt budgets are missing")
-require_policy(topup:find("CanReceiveDeposit(", 1, true)
+require_policy(topup:find("validate_static = function(candidate)", 1, true)
+	and topup:find("CanReceiveDepositTerrain(", 1, true)
 	and topup:find("TerrainTypeAt(map, pt, direct_context)", 1, true)
-	and topup:find("surface_extractor_footprint_within_map(candidate)", 1, true)
+	and topup:find("surface_extractor_footprint_within_map(candidate)", 1, true),
+	"lazy exact-coordinate terrain/buildable validation is missing")
+require_policy(topup:find("validate_dynamic = function(candidate)", 1, true)
+	and topup:find("IsUnobstructedAt(map, pt, true, direct_context", 1, true)
 	and topup:find("direct_cluster_repulsion.CanPlaceUnique(candidate)", 1, true)
 	and topup:find("direct_cluster_repulsion.CanPlaceMinimum(candidate", 1, true),
-	"complete production terrain/buildable/spacing validation is missing")
+	"mutable occupancy/spacing validation is missing")
+require_policy(topup:find("placement_dynamic_validations", 1, true)
+	and topup:find("placement_dynamic_rejections", 1, true),
+	"clone-boundary mutable validation counters are missing")
+require_policy(planner_source:find("static_cache_reuses", 1, true)
+	and planner_source:find("accepted_candidates", 1, true)
+	and planner_source:find("rejected_candidates", 1, true),
+	"planner does not expose required cache/accepted/rejected instrumentation")
+require_policy(not planner_source:find("local function shuffled_copy", 1, true),
+	"planner still materializes fully shuffled candidate lists")
 require_policy(topup:find('OptimizationFailure("direct seeded surface clusters"', 1, true),
 	"exhaustion is not fail-loud")
 require_policy(config_source:find("config.OptimizeDirectSeededSurfaceClusters = true", 1, true)
@@ -167,6 +226,11 @@ local findings = {
 	"exact_candidates_retained=" .. tostring(first_stats.valid_candidates),
 	"center_attempts=" .. tostring(first_stats.centers_attempted),
 	"candidate_attempts=" .. tostring(first_stats.candidate_attempts),
+	"rejected_candidates=" .. tostring(first_stats.rejected_candidates),
+	"static_validations=" .. tostring(first_stats.static_validations),
+	"static_cache_reuses=" .. tostring(first_stats.static_cache_reuses),
+	"dynamic_validations=" .. tostring(first_stats.dynamic_validations),
+	"accepted_candidates=" .. tostring(first_stats.accepted_candidates),
 	"rng_calls=" .. tostring(first_rng_calls),
 	"bounded_exhaustion=true",
 	"violation_count=" .. tostring(#violations),
