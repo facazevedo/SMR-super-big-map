@@ -4073,7 +4073,8 @@ function DepositRules.DirectSeededLeafLimit(bounds, leaf_size)
 	local function axis(size)
 		if size <= 0 then return 0 end
 		local count = 1
-		while size > leaf_size do size, count = math.ceil(size / 2), count * 2 end
+		-- The game divides integer operands as integers; ceil(size / 2) loses odd cells.
+		while size > leaf_size do size, count = math.floor((size + 1) / 2), count * 2 end
 		return count
 	end
 	return axis(bounds.x1 - bounds.x0) * axis(bounds.y1 - bounds.y0)
@@ -4470,10 +4471,10 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 			if chosen then break end
 		end
 		if not chosen then
-			local next_band = spec_index + 1 <= outer_count and "outer" or "inner"
-			local at_band_end = spec_index == #specs or next_band ~= band
 			local remaining_specs = #specs - spec_index
-			if not at_band_end or #plans + remaining_specs < minimum_plans then
+			-- An exhausted outer band must not prevent the inner band from satisfying
+			-- the existing8..12 rule. Keep only complete plans, as the prior planner did.
+			if #plans + remaining_specs < minimum_plans then
 				return nil, "cluster " .. tostring(spec_index) .. " " .. band
 					.. " search exhausted: centers=" .. tostring(centers_attempted)
 					.. " candidates=" .. tostring(candidate_attempts)

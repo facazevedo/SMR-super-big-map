@@ -238,6 +238,23 @@ local partial_minimum_safe = partial_plans ~= nil and partial_error == nil
 	and #partial_plans == 2 and partial_plans[1].id == 1
 	and partial_plans[2].id == 3 and partial_stats.plan_exhaustions == 1
 
+--24S has enough complete clusters across both bands, but not all requested outer
+-- clusters. Exhausting that band mid-list must still try the remaining inner specs.
+local sparse_centers, sparse_specs = {}, {}
+for i = 1, 8 do sparse_centers[i] = {q = i * 100, r = 0, band = i <= 3 and "outer" or "inner"} end
+for i = 1, 11 do sparse_specs[i] = {resource_target = 1} end
+local sparse, sparse_error, sparse_stats = planner({
+	centers = sparse_centers, specs = sparse_specs, offsets = {{dq = 0, dr = 0}},
+	outer_count = 6, minimum_plans = 8, cluster_radius = 12, minimum_member_distance = 3,
+	rand_int = function() return 0 end,
+	classify_center = function(c) return c.band end,
+	build_candidate = function(c) return {q = c.q, r = c.r} end,
+	validate_static = function() return true end, validate_dynamic = function() return true end,
+})
+assert(sparse and #sparse == 8 and sparse_stats.plan_exhaustions == 3, sparse_error)
+assert(sparse_stats.outer_plans == 3 and sparse_stats.inner_plans == 5)
+assert(sparse[4].id == 7, "band continuation reassigned the seeded composition specs")
+
 -- A coordinate may be reached from either side of the physical outer/inner boundary.
 -- Static terrain/buildability can be cached by coordinate, but band eligibility cannot.
 local false_positive_plans, false_positive_error = planner({
@@ -386,6 +403,17 @@ assert(repaired[1].candidates[1].q == 102 and repaired[1].candidates[2].q == 105
 
 local new_guide = environment.DepositRules.NewDirectSeededBuildableGuide
 local band_regions = environment.DepositRules.DirectSeededBandRegions
+for width = 1, 33 do for height = 1, 17 do
+	local rect = {x0 = 0, y0 = 0, x1 = width, y1 = height}
+	local guide = new_guide({leaf_size = 4, rand_int = function() return 0 end,
+		has_buildable = function() return true end})
+	local limit = environment.DepositRules.DirectSeededLeafLimit(rect, 4)
+	local count = 0
+	while guide.Sample(rect) do count = count + 1 end
+	assert(count <= limit, "odd-sized rectangle exceeded geometry safety limit")
+end end
+assert(planner_source:find("math.floor((size + 1) / 2)", 1, true),
+	"finite ceiling must preserve odd cells under the game's integer division")
 for _, band in ipairs({"outer", "inner"}) do
 	for _, bounds in ipairs({{x0 = 0, y0 = 0, x1 = 200, y1 = 160},
 		{x0 = 5, y0 = 7, x1 = 197, y1 = 155}}) do
