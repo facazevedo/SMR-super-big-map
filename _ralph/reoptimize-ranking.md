@@ -178,6 +178,46 @@ sector, 9 clusters = 9 pads, decor 99/99, and successful player-route first acce
 `_ralph/tmp/verification_v928_14n134w_run1|run2|run3` and
 `_ralph/tmp/verification_v928_15s67e`; deployment audited 37/37.
 
+### Step 3 - #3 bind apron raster math primitives (v934 `fb890e1`, restored at `c2d117c`, 2026-09-08)
+
+`CreateNaturalMountainBaseBuildableAprons` now binds `math.floor`, `ceil`, `min`,
+`max`, and `sqrt` once before its candidate-discovery and scalar raster hot paths.
+This is the output-preserving unit from `b617030`, adapted without changing the
+current scalar apron algorithm or adopting the optimized line's native raster.
+
+Measured by the full rules probe at 14N134W with identical double pins and the
+START-boundary clock (all samples retain full grids and incident-matched logs):
+
+| | v933 before | v934 after |
+|---|---|---|
+| T0->T1 | 200.065 / 199.590 / 199.916 s, **median 199.916 s**, range 0.475 s | 194.171 / 196.363 / 197.156 s, **median 196.363 s**, range 2.985 s (**-3.553 s, -1.78%**) |
+| first access | 41.396 / 41.156 / 40.977 s | 41.376 / 41.100 / 41.108 s |
+| surface enrichment | `857148281` / 701 in every run | identical |
+| surface decor | `917959587` / 1292 in every run | identical |
+| underground enrichment | `1609697062` / 251 in every run | identical |
+| terrain/pass grids | surface height `-897814779083946979`, UG height `8297061474709185495`, surface pass `-5282798222489378698`; exact pair judgments report zero differences | identical; exact pair judgments report zero differences |
+| rules/logs | all directly judged gates green; zero Lua/optimization/native failures | same |
+
+The required pinned 15S67E regression is also green: T0->T1 161.370 s, surface
+enrichment `666958567`/592, decor `464485535`/2749, underground enrichment
+`1158028783`/265, underground decor `5381`, one initial sector, 9 clusters = 9
+pads, successful player-route first access, zero final terrain/optimization/log
+failures. Against corrected v932's natural-seed 15S report, all compared surface,
+placement, entrance, apron, reveal and census fields match; only the expected
+game/underground-seed fields differ.
+
+Visual verdict: output-preserving. The production-function regression proves exact
+complete output and ordered-write equivalence on nine fixtures, including edited
+rasters with 209620 and 252488 writes; all 14N full terrain/pass hashes are exact
+before/after. Therefore the accepted corrected terrain pixels are unchanged, and
+no replacement visual capture was required for this pure math unit.
+
+Evidence: `_ralph/runs/reoptimize-under-70s/artifacts/iter011_apron_math_red/`,
+`iter012_apron_math_green/`, `iter009_uninstrumented_cold/`,
+`iter016_v933_14n_before2/`, `iter017_v933_14n_before3/`,
+`iter013_v934_14n_after1/`, `iter014_v934_14n_after2/`,
+`iter015_v934_14n_after3/`, and `iter018_v934_15s_regression/`.
+
 ## Acceptance per step (same for every unit)
 
 - `rules_probe` at 14N134W: all ten gates green; preserving units must match the immediately
