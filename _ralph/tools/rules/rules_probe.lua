@@ -846,7 +846,7 @@ CreateRealTimeThread(function()
 		if type(orp) == "table" then
 			for _, k in ipairs({ "desired_clusters", "placed_clusters", "cluster_minimum",
 				"cluster_maximum", "cluster_count_stream", "terrain_candidate_entries",
-				"candidate_attempts", "rejected_candidates", "static_validations",
+				"sampling_source_entries", "candidate_attempts", "rejected_candidates", "static_validations",
 				"static_cache_reuses", "static_rejections", "dynamic_validations",
 				"dynamic_rejections", "accepted_candidates", "placement_dynamic_validations",
 				"placement_dynamic_rejections", "placement_accepted", "stage", "error" }) do

@@ -161,6 +161,30 @@ assert(cache_static_calls == 2 and cache_stats.static_validations == 2
 assert(cache_dynamic_calls == 2 and cache_stats.dynamic_validations == 2,
 	"duplicate draw repeated mutable validation before uniqueness rejection")
 
+local source_plans, source_error, source_stats = planner({
+	centers = {
+		{ band = "outer", preferred = true, valid = false, q = 0, r = 0 },
+		{ band = "outer", preferred = false, valid = true, q = 100, r = 200 },
+	},
+	offsets = { { dq = 0, dr = 0 }, { dq = 3, dr = 0 }, { dq = 6, dr = 0 } },
+	specs = { { resource_target = 2 } }, outer_count = 1,
+	cluster_radius = 12, minimum_member_distance = 3,
+	center_attempt_budget = 2, candidate_attempt_budget = 4,
+	anchor_first = true, require_valid_anchor = true,
+	rand_int = function() return 0 end,
+	classify_center = function(center) return center.band end,
+	center_priority = function(center) return center.preferred and "preferred" or "general" end,
+	build_candidate = function(center, _, offset)
+		return { q = center.q + offset.dq, r = center.r + offset.dr, valid = center.valid }
+	end,
+	validate_static = function(candidate) return candidate.valid end,
+	validate_dynamic = function() return true end,
+})
+assert(source_plans, source_error)
+assert(source_stats.centers_attempted == 2 and source_stats.candidate_attempts == 3
+	and source_stats.accepted_candidates == 2 and source_stats.rejected_candidates == 1,
+	"invalid preferred anchor did not advance directly to the general on-demand source")
+
 local fail_rng = new_rng(7)
 local failed, failure, failure_stats = planner({
 	centers = { { band = "outer", q = 0, r = 0 } },
@@ -211,13 +235,22 @@ require_policy(planner_source:find("static_cache_reuses", 1, true)
 	"planner does not expose required cache/accepted/rejected instrumentation")
 require_policy(not planner_source:find("local function shuffled_copy", 1, true),
 	"planner still materializes fully shuffled candidate lists")
+require_policy(topup:find('kind = "sector"', 1, true)
+	and topup:find("center_priority = function(center)", 1, true)
+	and topup:find("anchor_first = true", 1, true)
+	and topup:find("require_valid_anchor = true", 1, true)
+	and topup:find("first_x + RandInt(past_x - first_x)", 1, true),
+	"apron-first on-demand physical-band sampling is missing")
+require_policy(topup:find("terrain_candidate_entries =", 1, true)
+	and topup:find("sampling_source_entries =", 1, true),
+	"published terrain-list and on-demand source counts are not separated")
 require_policy(topup:find('OptimizationFailure("direct seeded surface clusters"', 1, true),
 	"exhaustion is not fail-loud")
 require_policy(config_source:find("config.OptimizeDirectSeededSurfaceClusters = true", 1, true)
 	and config_source:find("C.OPTIMIZE_DIRECT_SEEDED_SURFACE_CLUSTERS", 1, true),
 	"direct planner config is not enabled and compiled")
-require_policy(metadata_source:find("'version', 938", 1, true),
-	"behavior-change version is not 938")
+require_policy(metadata_source:find("'version', 939", 1, true),
+	"behavior-change version is not 939")
 
 local findings = {
 	"DIRECT_SEEDED_TOPUP_BEHAVIOR",

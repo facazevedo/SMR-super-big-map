@@ -4055,6 +4055,7 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 	local specs = options.specs
 	local rand_int = options.rand_int
 	local classify_center = options.classify_center
+	local center_priority = options.center_priority
 	local build_candidate = options.build_candidate
 	local validate_static = options.validate_static
 	local validate_dynamic = options.validate_dynamic
@@ -4082,10 +4083,14 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 		math.floor(tonumber(options.center_attempt_budget) or 32))
 	local candidate_attempt_budget = math.max(1,
 		math.floor(tonumber(options.candidate_attempt_budget) or 256))
+	local anchor_first = options.anchor_first == true
+	local require_valid_anchor = options.require_valid_anchor == true
 	local stats = {
 		strategy = "direct_seeded_cluster_v1", centers_available = #centers,
 		centers_attempted = 0, candidate_attempts = 0, valid_candidates = 0,
-		terrain_candidate_entries = #centers, static_validations = 0,
+		terrain_candidate_entries = math.max(0,
+			math.floor(tonumber(options.terrain_candidate_entries) or #centers)),
+		sampling_source_entries = #centers, static_validations = 0,
 		static_cache_reuses = 0, static_rejections = 0,
 		dynamic_validations = 0, dynamic_rejections = 0,
 		accepted_candidates = 0, rejected_candidates = 0,
@@ -4126,11 +4131,17 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 		end
 	end
 
-	local bands = { outer = {}, inner = {} }
+	local bands = {
+		outer = { preferred = {}, general = {} },
+		inner = { preferred = {}, general = {} },
+	}
 	for index, center in ipairs(centers) do
 		local band = classify_center(center)
 		if band == "outer" or band == "inner" then
-			bands[band][#bands[band] + 1] = { center = center, index = index }
+			local priority = type(center_priority) == "function"
+				and center_priority(center) == "preferred" and "preferred" or "general"
+			local bucket = bands[band][priority]
+			bucket[#bucket + 1] = { center = center, index = index }
 		end
 	end
 	local band_orders = {}
@@ -4151,21 +4162,40 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 		local source = bands[band]
 		local next_center = band_orders[band]
 		if not next_center then
-			local order_error
-			next_center, order_error = seeded_permutation(#source)
-			if not next_center then return nil, order_error, finish_stats() end
+			local next_preferred, order_error = seeded_permutation(#source.preferred)
+			if not next_preferred then return nil, order_error, finish_stats() end
+			local next_general
+			next_general, order_error = seeded_permutation(#source.general)
+			if not next_general then return nil, order_error, finish_stats() end
+			next_center = function()
+				local index = next_preferred()
+				if index then return source.preferred[index] end
+				index = next_general()
+				return index and source.general[index] or nil
+			end
 			band_orders[band] = next_center
 		end
 		local centers_attempted, candidate_attempts = 0, 0
 		local chosen
 		while centers_attempted < center_attempt_budget
 			and candidate_attempts < candidate_attempt_budget do
-			local center_index = next_center()
-			if not center_index then break end
-			local center_entry = source[center_index]
+			local center_entry = next_center()
+			if not center_entry then break end
 			centers_attempted = centers_attempted + 1
 			stats.centers_attempted = stats.centers_attempted + 1
-			local next_offset, order_error = seeded_permutation(#offsets)
+			local next_offset, order_error
+			if anchor_first then
+				local first = true
+				local next_tail
+				next_tail, order_error = seeded_permutation(#offsets - 1)
+				next_offset = next_tail and function()
+					if first then first = false return 1 end
+					local index = next_tail()
+					return index and index + 1 or nil
+				end or nil
+			else
+				next_offset, order_error = seeded_permutation(#offsets)
+			end
 			if not next_offset then return nil, order_error, finish_stats() end
 			local trial, trial_hexes = {}, {}
 			while true do
@@ -4175,6 +4205,7 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 				local offset = offsets[offset_index]
 				candidate_attempts = candidate_attempts + 1
 				stats.candidate_attempts = stats.candidate_attempts + 1
+				local attempt_accepted = false
 				local candidate = build_candidate(center_entry.center, center_entry.index,
 					offset, band, spec, spec_index)
 				if candidate and type(candidate.q) == "number" and type(candidate.r) == "number" then
@@ -4217,9 +4248,13 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 							end
 						end
 					end
+					if clear and #trial > 0 and distance(candidate, trial[1]) > cluster_radius then
+						clear = false
+					end
 					if clear then
 						trial_hexes[key] = true
 						trial[#trial + 1] = candidate
+						attempt_accepted = true
 						stats.valid_candidates = stats.valid_candidates + 1
 						if #trial == target then
 							chosen = trial
@@ -4227,6 +4262,7 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 						end
 					end
 				end
+				if require_valid_anchor and offset_index == 1 and not attempt_accepted then break end
 			end
 			if chosen then break end
 		end
@@ -4756,6 +4792,7 @@ function DepositRules.TopUpDeposits(map)
 			candidate_attempts = 0, valid_candidates = 0, plans = 0,
 			outer_plans = 0, inner_plans = 0, rng_draws = 0,
 			terrain_candidate_entries = 0, static_validations = 0,
+			sampling_source_entries = 0,
 			static_cache_reuses = 0, static_rejections = 0,
 			dynamic_validations = 0, dynamic_rejections = 0,
 			accepted_candidates = 0, rejected_candidates = 0,
@@ -4769,10 +4806,52 @@ function DepositRules.TopUpDeposits(map)
 				OptimizationFailure("direct seeded surface clusters", reason, map)
 				error(reason)
 			end
-			local centers = map.SuperBigMapNaturalMountainBaseApronCenters
+			local apron_centers = map.SuperBigMapNaturalMountainBaseApronCenters
+			local centers = {}
+			for apron_index, center in ipairs(type(apron_centers) == "table"
+				and apron_centers or {}) do
+				if type(center) == "table" and type(center.x) == "number"
+					and type(center.y) == "number" then
+					centers[#centers + 1] = {
+						kind = "apron", source = center, x = center.x, y = center.y,
+						apron_index = apron_index,
+					}
+				end
+			end
+			local edge_ctx = type(BuildTopUpEdgeContext) == "function"
+				and BuildTopUpEdgeContext(map) or nil
+			if type(edge_ctx) == "table" and type(edge_ctx.sectors) == "table"
+				and type(edge_ctx.min_col) == "number" and type(edge_ctx.max_col) == "number"
+				and type(edge_ctx.min_row) == "number" and type(edge_ctx.max_row) == "number" then
+				for _, descriptor in ipairs(edge_ctx.sectors) do
+					local sector = descriptor.sector_ref
+					local in_ring = descriptor.col <= edge_ctx.min_col
+							+ surface_mountain_base_ring_sectors - 1
+						or descriptor.col >= edge_ctx.max_col
+							- surface_mountain_base_ring_sectors + 1
+						or descriptor.row <= edge_ctx.min_row
+							+ surface_mountain_base_ring_sectors - 1
+						or descriptor.row >= edge_ctx.max_row
+							- surface_mountain_base_ring_sectors + 1
+					if in_ring and sector and not SectorIsScanned(sector)
+						and type(descriptor.area_x0) == "number"
+						and type(descriptor.area_y0) == "number"
+						and type(descriptor.area_x1) == "number"
+						and type(descriptor.area_y1) == "number" then
+						local outermost = descriptor.col == edge_ctx.min_col
+							or descriptor.col == edge_ctx.max_col
+							or descriptor.row == edge_ctx.min_row
+							or descriptor.row == edge_ctx.max_row
+						centers[#centers + 1] = {
+							kind = "sector", descriptor = descriptor,
+							sector = sector, band = outermost and "outer" or "inner",
+						}
+					end
+				end
+			end
 			local hex_to_world = Global("HexToWorld")
 			local world_to_hex = Global("WorldToHex")
-			if type(centers) ~= "table" or #centers == 0
+			if #centers == 0
 				or type(hex_to_world) ~= "function" or type(world_to_hex) ~= "function" then
 				local reason = "direct seeded surface cluster geometry unavailable"
 				OptimizationFailure("direct seeded surface clusters", reason, map)
@@ -4792,13 +4871,13 @@ function DepositRules.TopUpDeposits(map)
 			end
 			local resource_cluster_radius = math.max(4,
 				math.floor(cfg().OUTER_RESOURCE_CLUSTER_RADIUS_HEXES or 12))
-			local offsets = {}
+			local offsets = { { dq = 0, dr = 0 } }
 			for dq = -resource_cluster_radius, resource_cluster_radius,
 				surface_quota_minimum_hex_distance do
 				for dr = -resource_cluster_radius, resource_cluster_radius,
 					surface_quota_minimum_hex_distance do
 					if (AxialHexDistance(0, 0, dq, dr) or math.huge)
-						<= resource_cluster_radius then
+						<= resource_cluster_radius and (dq ~= 0 or dr ~= 0) then
 						offsets[#offsets + 1] = { dq = dq, dr = dr }
 					end
 				end
@@ -4813,26 +4892,46 @@ function DepositRules.TopUpDeposits(map)
 					centers = centers,
 					offsets = offsets,
 					specs = planned_resource_cluster_specs,
+					terrain_candidate_entries = type(apron_centers) == "table"
+						and #apron_centers or 0,
 					outer_count = outer_count,
 					cluster_radius = resource_cluster_radius,
 					minimum_member_distance = surface_quota_minimum_hex_distance,
 					center_attempt_budget = 64,
 					candidate_attempt_budget = 384,
+					anchor_first = true,
+					require_valid_anchor = true,
 					rand_int = RandInt,
 					classify_center = function(center)
-						if type(center) ~= "table" or type(center.x) ~= "number"
-							or type(center.y) ~= "number"
+						if type(center) ~= "table" then return nil end
+						if center.kind == "sector" then return center.band end
+						if type(center.x) ~= "number" or type(center.y) ~= "number"
 							or not IsInFinalOuterResourceWorldBand(map, center.x, center.y,
-								surface_mountain_base_ring_sectors) then
-							return nil
-						end
+								surface_mountain_base_ring_sectors) then return nil end
 						return IsInFinalOuterResourceWorldBand(map, center.x, center.y, 1)
 							and "outer" or "inner"
+					end,
+					center_priority = function(center)
+						return center.kind == "apron" and "preferred" or "general"
 					end,
 					build_candidate = function(center, center_index, offset, band)
 						local center_hex = center_hexes[center]
 						if center_hex == nil then
-							local ok_hex, q, r = pcall(world_to_hex, point(center.x, center.y))
+							local center_x, center_y = center.x, center.y
+							if center.kind == "sector" then
+								local descriptor = center.descriptor
+								local first_x = math.floor(descriptor.area_x0)
+								local first_y = math.floor(descriptor.area_y0)
+								local past_x = math.floor(descriptor.area_x1)
+								local past_y = math.floor(descriptor.area_y1)
+								if past_x <= first_x or past_y <= first_y then
+									center_hexes[center] = false
+									return nil
+								end
+								center_x = first_x + RandInt(past_x - first_x)
+								center_y = first_y + RandInt(past_y - first_y)
+							end
+							local ok_hex, q, r = pcall(world_to_hex, point(center_x, center_y))
 							center_hex = ok_hex and type(q) == "number" and type(r) == "number"
 								and { q = q, r = r } or false
 							center_hexes[center] = center_hex
@@ -4848,9 +4947,10 @@ function DepositRules.TopUpDeposits(map)
 						return {
 							x = x, y = y, q = q, r = r, sector = sector,
 							sector_id = sector and sector.id, band = band,
-							_sbm_mountain_base_apron = true,
-							_sbm_mountain_base_natural = true,
-							_sbm_mountain_base_center_index = center_index,
+							_sbm_mountain_base_apron = center.kind == "apron" or nil,
+							_sbm_mountain_base_natural = center.kind == "apron" or nil,
+							_sbm_mountain_base_center_index = center.kind == "apron"
+								and center.apron_index or nil,
 						}
 					end,
 					validate_static = function(candidate)
@@ -4891,7 +4991,8 @@ function DepositRules.TopUpDeposits(map)
 				OptimizationFailure("direct seeded surface clusters", reason, map)
 				error(reason)
 			end
-			surface_mountain_base_centers = #centers
+			surface_mountain_base_centers = type(apron_centers) == "table"
+				and #apron_centers or 0
 			surface_mountain_base_sample_attempts = direct_cluster_stats.candidate_attempts or 0
 			for _, plan in ipairs(plans) do
 				local destination = plan.outermost
@@ -4918,10 +5019,12 @@ function DepositRules.TopUpDeposits(map)
 					candidate._sbm_resource_cluster_reward_capacity = plan.reward_capacity
 					plan.candidates[member_index] = candidate
 					surface_resource_quota_candidates = surface_resource_quota_candidates + 1
-					surface_mountain_base_valid_candidates =
-						surface_mountain_base_valid_candidates + 1
-					surface_mountain_base_sampled_candidates =
-						surface_mountain_base_sampled_candidates + 1
+					if record._sbm_mountain_base_apron == true then
+						surface_mountain_base_valid_candidates =
+							surface_mountain_base_valid_candidates + 1
+						surface_mountain_base_sampled_candidates =
+							surface_mountain_base_sampled_candidates + 1
+					end
 				end
 			end
 		end
@@ -5303,6 +5406,7 @@ function DepositRules.TopUpDeposits(map)
 			center_attempt_budget = direct_cluster_stats.center_attempt_budget or 0,
 			candidate_attempt_budget = direct_cluster_stats.candidate_attempt_budget or 0,
 			terrain_candidate_entries = direct_cluster_stats.terrain_candidate_entries or 0,
+			sampling_source_entries = direct_cluster_stats.sampling_source_entries or 0,
 			centers_attempted = direct_cluster_stats.centers_attempted or 0,
 			candidate_attempts = direct_cluster_stats.candidate_attempts or 0,
 			rejected_candidates = direct_cluster_stats.rejected_candidates or 0,
