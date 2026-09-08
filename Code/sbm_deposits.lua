@@ -4154,6 +4154,8 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 		math.floor(tonumber(options.candidate_attempt_budget) or 256))
 	local center_candidate_budget = math.max(1,
 		math.floor(tonumber(options.center_candidate_budget) or #offsets))
+	local center_member_budget = math.max(center_candidate_budget,
+		math.floor(tonumber(options.center_member_budget) or center_candidate_budget))
 	local anchor_first = options.anchor_first == true
 	local require_valid_anchor = options.require_valid_anchor == true
 	local stats = {
@@ -4218,6 +4220,17 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 		end
 	end
 	local band_orders = {}
+	local offset_rings, maximum_offset_ring = {}, 0
+	if options.near_seed_first then
+		for index, offset in ipairs(offsets) do
+			local radius = math.max(math.abs(offset.dq), math.abs(offset.dr),
+				math.abs(offset.dq + offset.dr))
+			local ring = offset_rings[radius] or {}
+			ring[#ring + 1] = index
+			offset_rings[radius] = ring
+			maximum_offset_ring = math.max(maximum_offset_ring, radius)
+		end
+	end
 	local static_verdicts = {}
 	local reserved, plans = {}, {}
 	local function finish_stats()
@@ -4240,9 +4253,16 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 			local next_general
 			next_general, order_error = seeded_permutation(#source.general)
 			if not next_general then return nil, order_error, finish_stats() end
+			local prefer_next = true
 			next_center = function()
-				local index = next_preferred()
-				if index then return source.preferred[index] end
+				local index
+				-- Neither source family may consume the entire search budget before the other
+				-- gets a turn. A prepared apron center can still be unbuildable after settlement.
+				if prefer_next then
+					index = next_preferred()
+					prefer_next = false
+					if index then return source.preferred[index] end
+				end
 				index = next_general()
 				if not index and #source.general > 0 then
 					local cycle_error
@@ -4250,7 +4270,10 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 					if not next_general then return nil, cycle_error end
 					index = next_general()
 				end
-				return index and source.general[index] or nil
+				prefer_next = true
+				if index then return source.general[index] end
+				index = next_preferred()
+				return index and source.preferred[index] or nil
 			end
 			band_orders[band] = next_center
 		end
@@ -4264,7 +4287,22 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 			centers_attempted = centers_attempted + 1
 			stats.centers_attempted = stats.centers_attempted + 1
 			local next_offset, order_error
-			if anchor_first then
+			if options.near_seed_first then
+				local radius, next_ring = -1, nil
+				next_offset = function()
+					while true do
+						if next_ring then
+							local index = next_ring()
+							if index then return offset_rings[radius][index] end
+						end
+						radius = radius + 1
+						if radius > maximum_offset_ring then return nil end
+						local ring = offset_rings[radius] or {}
+						next_ring, order_error = seeded_permutation(#ring)
+						if not next_ring then return nil, order_error end
+					end
+				end
+			elseif anchor_first then
 				local first = true
 				local next_tail
 				next_tail, order_error = seeded_permutation(#offsets - 1)
@@ -4281,8 +4319,10 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 			local center_candidates = 0
 			while true do
 				if candidate_attempts >= candidate_attempt_budget
-					or center_candidates >= center_candidate_budget then break end
-				local offset_index = next_offset()
+					or center_candidates >= (#trial > 0 and center_member_budget
+						or center_candidate_budget) then break end
+				local offset_index, offset_error = next_offset()
+				if offset_error then return nil, offset_error, finish_stats() end
 				if not offset_index then break end
 				local offset = offsets[offset_index]
 				candidate_attempts = candidate_attempts + 1
@@ -5064,6 +5104,8 @@ function DepositRules.TopUpDeposits(map)
 					center_attempt_budget = 384,
 					candidate_attempt_budget = 384,
 					center_candidate_budget = 32,
+					center_member_budget = 128,
+					near_seed_first = true,
 					anchor_first = true,
 					-- An apron/sector seed guides the search; it is not a required member.
 					require_valid_anchor = false,

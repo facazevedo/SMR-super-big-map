@@ -374,15 +374,17 @@ for _ in pairs(residues) do residue_count = residue_count + 1 end
 assert(residue_count == 9, "local sampler excludes legal axial residue classes")
 local repaired, repaired_error = planner({
 	centers = {{ q = 100, r = 100, band = "outer" }},
-	offsets = {{dq = 0, dr = 0}, {dq = 2, dr = 0}, {dq = 5, dr = 0}},
+	offsets = complete_offsets,
 	specs = {{resource_target = 2}}, outer_count = 1,
 	cluster_radius = 12, minimum_member_distance = 3,
-	center_attempt_budget = 1, candidate_attempt_budget = 10, center_candidate_budget = 3,
+	center_attempt_budget = 384, candidate_attempt_budget = 384, center_candidate_budget = 32,
+	center_member_budget = 128, near_seed_first = true,
 	anchor_first = true, require_valid_anchor = false,
 	rand_int = function() return 0 end,
 	classify_center = function(c) return c.band end,
-	build_candidate = function(c, _, offset) return {q = c.q + offset.dq, r = c.r} end,
-	validate_static = function(c) return c.q == 102 or c.q == 105 end,
+	center_priority = function() return "preferred" end,
+	build_candidate = function(c, _, offset) return {q = c.q + offset.dq, r = c.r + offset.dr} end,
+	validate_static = function(c) return c.r == 100 and (c.q == 102 or c.q == 105) end,
 	validate_dynamic = function() return true end,
 })
 assert(repaired, repaired_error)
