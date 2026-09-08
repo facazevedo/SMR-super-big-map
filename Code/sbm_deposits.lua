@@ -5456,8 +5456,12 @@ function DepositRules.TopUpDeposits(map)
 						consumed[candidate] = true
 						direct_cluster_stats.placement_dynamic_validations =
 							(direct_cluster_stats.placement_dynamic_validations or 0) + 1
+						-- The plan's explicit three-hex member spacing is the applicable
+						-- intra-cluster rule. Recheck mutable obstruction, occupancy, and that
+						-- minimum here without reapplying ordinary profile repulsion between
+						-- deliberate members after their anchor has committed.
 						if direct_cluster_dynamic_validator
-							and direct_cluster_dynamic_validator(candidate, profile) then
+							and direct_cluster_dynamic_validator(candidate, nil) then
 							return candidate
 						end
 						direct_cluster_stats.placement_dynamic_rejections =

@@ -252,8 +252,8 @@ require_policy(topup:find('OptimizationFailure("direct seeded surface clusters"'
 require_policy(config_source:find("config.OptimizeDirectSeededSurfaceClusters = true", 1, true)
 	and config_source:find("C.OPTIMIZE_DIRECT_SEEDED_SURFACE_CLUSTERS", 1, true),
 	"direct planner config is not enabled and compiled")
-require_policy(metadata_source:find("'version', 939", 1, true),
-	"behavior-change version is not 939")
+require_policy(metadata_source:find("'version', 940", 1, true),
+	"behavior-change version is not 940")
 
 local findings = {
 	"DIRECT_SEEDED_TOPUP_BEHAVIOR",
