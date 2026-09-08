@@ -599,10 +599,6 @@ config.OptimizeTopUpPlacementPools = true
 -- Every selected coordinate still runs the complete terrain, obstruction, and vanilla-repulsion
 -- checks.
 config.OptimizeSurfaceResourceSectorSampling = true
--- Build each guaranteed surface resource cluster from a bounded number of candidates drawn from
--- the map-seeded private placement stream. Exhaustion is a loud generation failure; the removed
--- eager perimeter-pool planner is never used as a fallback.
-config.OptimizeDirectSeededSurfaceClusters = true
 -- The sequential surface resource pass changes sector loads only when it commits a clone. Keep
 -- that table live across selector rebuilds instead of rescanning every DepositMarker per clone.
 config.OptimizeSurfaceResourceSelectorLoadCache = true
@@ -1122,8 +1118,6 @@ C.OPTIMIZE_DIRECT_SOURCE_TERRAIN_STRETCH =
 C.OPTIMIZE_TOPUP_PLACEMENT_POOLS = as_bool(config.OptimizeTopUpPlacementPools)
 C.OPTIMIZE_SURFACE_RESOURCE_SECTOR_SAMPLING =
 	as_bool(config.OptimizeSurfaceResourceSectorSampling)
-C.OPTIMIZE_DIRECT_SEEDED_SURFACE_CLUSTERS =
-	as_bool(config.OptimizeDirectSeededSurfaceClusters)
 C.OPTIMIZE_SURFACE_RESOURCE_SELECTOR_LOAD_CACHE =
 	as_bool(config.OptimizeSurfaceResourceSelectorLoadCache)
 C.OPTIMIZE_ANOMALY_CANDIDATE_SEARCH = as_bool(config.OptimizeAnomalyCandidateSearch)
