@@ -241,6 +241,54 @@ assert(false_negative_plans, false_negative_error)
 local false_negative_safe = false_negative_plans[2].candidates[1].q == 0
 	and false_negative_plans[2].candidates[2].q == -3
 
+local selector_behavior_safe = false
+local selector_builder = environment.DepositRules.BuildDirectSeededClusterSelector
+if type(selector_builder) == "function" then
+	local occupied, obstructed = {}, {}
+	local selector_stats = {
+		placement_dynamic_validations = 0,
+		placement_dynamic_rejections = 0,
+	}
+	local selector = selector_builder({
+		candidates = {
+			{ q = 0, r = 0, terrain_type = 1 },
+			{ q = 3, r = 0, terrain_type = 1 },
+			{ q = 0, r = 0, terrain_type = 1 },
+			{ q = 2, r = 0, terrain_type = 1 },
+			{ q = 6, r = 0, terrain_type = 1 },
+			{ q = 9, r = 0, terrain_type = 1 },
+		},
+		stats = selector_stats,
+		validate_dynamic = function(candidate)
+			local key = tostring(candidate.q) .. ":" .. tostring(candidate.r)
+			if obstructed[key] or occupied[key] then return false end
+			for _, prior in pairs(occupied) do
+				local dq, dr = candidate.q - prior.q, candidate.r - prior.r
+				if math.max(math.abs(dq), math.abs(dr), math.abs(dq + dr)) < 3 then
+					return false
+				end
+			end
+			return true
+		end,
+		on_commit = function(candidate)
+			occupied[tostring(candidate.q) .. ":" .. tostring(candidate.r)] = candidate
+		end,
+	})
+	local first_member = selector.Take(1, { ordinary_profile = true })
+	selector.Commit(first_member)
+	local legal_member = selector.Take(1, { ordinary_profile = true })
+	selector.Commit(legal_member)
+	obstructed["6:0"] = true
+	local after_mutations = selector.Take(1, { ordinary_profile = true })
+	selector.Commit(after_mutations)
+	selector_behavior_safe = first_member and first_member.q == 0
+		and legal_member and legal_member.q == 3
+		and after_mutations and after_mutations.q == 9
+		and selector.Remaining() == 0
+		and selector_stats.placement_dynamic_validations == 6
+		and selector_stats.placement_dynamic_rejections == 3
+end
+
 local fail_rng = new_rng(7)
 local failed, failure, failure_stats = planner({
 	centers = { { band = "outer", q = 0, r = 0 } },
@@ -265,6 +313,8 @@ require_policy(false_positive_safe,
 	"cross-band positive static cache reuse accepted a member in the wrong physical band")
 require_policy(false_negative_safe,
 	"cross-band negative static cache reuse poisoned a later valid-band candidate")
+require_policy(selector_behavior_safe,
+	"production cluster selector lacks executable clone-boundary mutation behavior coverage")
 require_policy(not topup:find("local perimeter_quota_candidates = {}", 1, true),
 	"eager perimeter candidate pool remains")
 require_policy(not topup:find("local MAX_FINAL_QUOTA_CANDIDATES = 4096", 1, true),
@@ -312,8 +362,8 @@ require_policy(topup:find('OptimizationFailure("direct seeded surface clusters"'
 require_policy(config_source:find("config.OptimizeDirectSeededSurfaceClusters = true", 1, true)
 	and config_source:find("C.OPTIMIZE_DIRECT_SEEDED_SURFACE_CLUSTERS", 1, true),
 	"direct planner config is not enabled and compiled")
-require_policy(metadata_source:find("'version', 940", 1, true),
-	"behavior-change version is not 940")
+require_policy(metadata_source:find("'version', 941", 1, true),
+	"behavior-change version is not 941")
 
 local findings = {
 	"DIRECT_SEEDED_TOPUP_BEHAVIOR",
@@ -331,6 +381,8 @@ local findings = {
 	"accepted_candidates=" .. tostring(first_stats.accepted_candidates),
 	"rng_calls=" .. tostring(first_rng_calls),
 	"bounded_exhaustion=true",
+	"cross_band_cache_guard=" .. tostring(false_positive_safe and false_negative_safe),
+	"clone_boundary_selector_behavior=" .. tostring(selector_behavior_safe),
 	"violation_count=" .. tostring(#violations),
 }
 for index, message in ipairs(violations) do
