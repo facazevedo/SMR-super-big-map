@@ -701,6 +701,89 @@ end
 -- visibly flattened mountains produced by reserving a five-metre floor.
 local Z_FLOOR_WU = 1000
 
+-- Resource raster shaping can leave the final THREE samples above the terrain that immediately
+-- precedes them. These samples are rendered; repairing the earlier stretch grid cannot catch a
+-- defect introduced by this later writer. Do not taper the map border: remove only a coherent positive
+-- terminal step, by continuing its adjacent interior slope across those three samples.
+-- Detection is read-only and orientation-independent; normal slopes, downward skirts, isolated
+-- peaks, and every sample farther than three cells from the boundary remain untouched.
+local function RepairRaisedTerminalHeightStrips(grid)
+	local w, h = grid:size()
+	if w < 16 or h < 16 then return false, { reason = "height grid too small", modified = 0 } end
+	local mn, mx = Global("GridMinMax")(grid)
+	local threshold = math.max(128, math.floor((mx - mn) * 0.002 + 0.5))
+	local plans = {}
+	local sides = {
+		{ name = "left", n = h, x = 0, y = 0, dx = 1, dy = 0, ax = 0, ay = 1 },
+		{ name = "right", n = h, x = w - 1, y = 0, dx = -1, dy = 0, ax = 0, ay = 1 },
+		{ name = "top", n = w, x = 0, y = 0, dx = 0, dy = 1, ax = 1, ay = 0 },
+		{ name = "bottom", n = w, x = 0, y = h - 1, dx = 0, dy = -1, ax = 1, ay = 0 },
+	}
+	for _, side in ipairs(sides) do
+		local rows = {}
+		for along = 0, side.n - 1 do
+			local x, y = side.x + along * side.ax, side.y + along * side.ay
+			local function at(depth) return grid:get(x + depth * side.dx, y + depth * side.dy) end
+			local anchor = at(3)
+			local slope = anchor - at(4) -- outward slope of the untouched interior
+			local outer_slope = at(1) - at(2)
+			local flank = math.max(1, math.abs(slope), math.abs(outer_slope), math.abs(at(4) - at(5)))
+			local excess = at(2) - anchor - slope
+			-- A true terminal strip has an abrupt entry followed by a smooth outer flank.
+			local smooth_outer = math.abs(at(0) - at(1) - outer_slope) <= math.max(4, flank / 4)
+			rows[along] = { x = x, y = y, anchor = anchor, slope = slope,
+				weak = smooth_outer and excess > 8,
+				strong = smooth_outer and excess >= threshold and excess >= flank * 4 }
+		end
+		local first, last, strong, misses
+		local function finish()
+			if first and strong >= 16 and last - first + 1 >= 32 then
+				plans[#plans + 1] = { side = side, rows = rows, first = first, last = last }
+			end
+			first, last, strong, misses = nil, nil, 0, 0
+		end
+		finish()
+		for along = 0, side.n - 1 do
+			local row = rows[along]
+			if row.weak then
+				first, last, misses = first or along, along, 0
+				if row.strong then strong = strong + 1 end
+			elseif first then
+				misses = misses + 1
+				if misses >= 4 then finish() end
+			end
+		end
+		finish()
+	end
+	local modified, max_drop, spans = 0, 0, {}
+	for _, plan in ipairs(plans) do
+		local side = plan.side
+		spans[#spans + 1] = side.name .. ":" .. plan.first .. "-" .. plan.last
+		for along = plan.first, plan.last do
+			local row = plan.rows[along]
+			-- Fade the small tail residual to zero; no hard end-cap at the detection threshold.
+			local t = math.min(1,
+				plan.first == 0 and 1 or (along - plan.first) / 8.0,
+				plan.last == side.n - 1 and 1 or (plan.last - along) / 8.0)
+			local alpha = t * t * (3 - 2 * t)
+			for depth = 0, 2 do
+				local x, y = row.x + depth * side.dx, row.y + depth * side.dy
+				local old = grid:get(x, y)
+				local target = math.max(0, row.anchor + row.slope * (3 - depth))
+				local drop = math.floor(math.max(0, old - target) * alpha + 0.5)
+				if drop > 0 then
+					grid:set(x, y, old - drop)
+					modified = modified + 1
+					max_drop = math.max(max_drop, drop)
+				end
+			end
+		end
+	end
+	return modified > 0, { reason = modified > 0 and "raised three-cell terminal strips lowered"
+		or "no coherent raised terminal strip", modified = modified, max_drop = max_drop,
+		width = 3, spans = table.concat(spans, ","), threshold = threshold }
+end
+
 -- A few vanilla height fields contain long one-cell discontinuities in their perimeter terrain.
 -- Resampling makes those bad source edges much easier to see as striped vertical walls. Detect
 -- coherent steps facing any grid edge within the two-sector outer ring. Qualified wide-ring tracks
@@ -764,10 +847,11 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 	end
 
 	local function feather_join(axis, along, lo, hi)
-		-- Blend two locally extrapolated terrain slopes with a quintic weight. The weight has zero
-		-- first and second derivatives at both ends, so the repaired strip meets the untouched high
-		-- terrain and translated low terrain without a lighting/curvature seam. Only the narrow
-		-- cross-skirt join is resynthesized; relative relief on either side remains intact.
+		-- A quintic Hermite join preserves compatible endpoint slopes and has zero endpoint
+		-- curvature. Blending unbounded extrapolated lines instead can turn opposing/steep
+		-- endpoint slopes into an artificial peak inside this narrow band (15S67E edge spikes).
+		-- Limit only those incompatible tangents: the equivalent Bezier controls must stay ordered,
+		-- which guarantees a monotone join inside the endpoint height range. No wider rim is shaped.
 		if hi - lo < 4 then return 0 end
 		local v0, v0_prev = at(axis, lo, along), at(axis, lo - 1, along)
 		local v1, v1_next = at(axis, hi, along), at(axis, hi + 1, along)
@@ -775,13 +859,27 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 			or type(v1) ~= "number" or type(v1_next) ~= "number" then return 0 end
 		local slope0, slope1 = v0 - v0_prev, v1_next - v1
 		local span, changed = hi - lo, 0
+		local delta = v1 - v0
+		local sign = delta < 0 and -1 or 1
+		local m0, m1 = math.max(0, sign * slope0 * span), math.max(0, sign * slope1 * span)
+		-- With zero endpoint curvature, the inner Bezier controls are v0+2*m0/5 and v1-2*m1/5.
+		-- Keeping them ordered bounds the sum of the normalized tangents by 5*abs(delta)/2.
+		local budget = math.abs(delta) * 2.5
+		if m0 + m1 > budget then
+			local scale = budget / (m0 + m1 + 0.0)
+			m0, m1 = m0 * scale, m1 * scale
+		end
+		m0, m1 = sign * m0, sign * m1
+		local lower, upper = math.min(v0, v1), math.max(v0, v1)
 		for p = lo + 1, hi - 1 do
 			local t = (p - lo + 0.0) / span
-			local smooth = t * t * t * (t * (t * 6 - 15) + 10)
-			local left = v0 + slope0 * (p - lo)
-			local right = v1 + slope1 * (p - hi)
-			local value = math.floor(left + (right - left) * smooth + 0.5)
-			put(axis, p, along, math.max(0, math.min(mx, value)))
+			local t3 = t * t * t
+			local t4, t5 = t3 * t, t3 * t * t
+			local smooth = 10 * t3 - 15 * t4 + 6 * t5
+			local value = math.floor(v0 + delta * smooth
+				+ m0 * (t - 6 * t3 + 8 * t4 - 3 * t5)
+				+ m1 * (-4 * t3 + 7 * t4 - 3 * t5) + 0.5)
+			put(axis, p, along, math.max(lower, math.min(upper, value)))
 			changed = changed + 1
 		end
 		return changed
@@ -1784,6 +1882,16 @@ end
 -- byte-for-byte unchanged; only failed footprints are shaped. Building gameplay cores remain exact
 -- planes, while surface collection cores retain a safe fitted grade. A slope-aligned, irregular-width
 -- C2 quintic feather prevents either transition from reading as a stamped circular terrace.
+-- A protected, already-usable deposit must keep its original footprint, but a hard zero in a
+-- neighboring pad's deformation mask cuts a circular wall around that footprint. Fade the
+-- DEFORMATION (not the source terrain) to zero with matching slope/curvature at both ends.
+local function ProtectedTerrainBlendWeight(distance, radius, transition)
+	if distance <= radius then return 0 end
+	if transition <= 0 or distance >= radius + transition then return 1 end
+	local t = (distance - radius) / (transition + 0.0)
+	return t * t * t * (t * (t * 6 - 15) + 10)
+end
+
 local function PrepareOuterResourceTerrain(map)
 	if not cfg_bool("PREPARE_OUTER_RESOURCE_TERRAIN", true) then
 		return false, { reason = "disabled", resources = 0, patches = 0 }
@@ -2440,7 +2548,12 @@ local function PrepareOuterResourceTerrain(map)
 		table.sort(targets)
 		local target = targets[math.floor((#targets + 1) / 2)]
 		for index, patch in ipairs(patches) do
-			if root(index) == group then patch.target = target end
+			if root(index) == group then
+				patch.target = target
+				-- Touching footprints must share the whole plane, not just its center height.
+				-- Otherwise restoring a sloped pile inside a level extractor cuts another rim.
+				if #targets > 1 then patch.grade_x, patch.grade_y = 0, 0 end
+			end
 		end
 	end
 
@@ -2472,18 +2585,20 @@ local function PrepareOuterResourceTerrain(map)
 			+ math.max(existing_transition, adaptive_transition)
 		patch.maximum_core_delta = maximum_core_delta
 	end
-	-- A patch can visit only cells inside its maximum radius. By triangle inequality, a protected
-	-- guard whose center is farther away than visit_radius + guard_radius cannot contain any visited
-	-- cell. Build that conservative subset once per patch, retaining the original guard order.
-	local function protected_ready_sites_near(cx, cy, visit_radius)
+	-- Later feathers must preserve earlier gameplay cores as well as native-ready footprints.
+	-- This lets one smooth pass satisfy every core without a hard-edged restoration pass afterward.
+	local completed_patch_cores = {}
+	local function protected_ready_sites_near(cx, cy, visit_radius, transition)
 		local nearby = {}
-		for _, protected in ipairs(protected_ready_sites) do
+		local function consider(protected)
 			local dx, dy = protected.cx - cx, protected.cy - cy
-			local reach = visit_radius + protected.radius
+			local reach = visit_radius + protected.radius + (transition or 0)
 			if dx * dx + dy * dy <= reach * reach then
 				nearby[#nearby + 1] = protected
 			end
 		end
+		for _, protected in ipairs(protected_ready_sites) do consider(protected) end
+		for _, protected in ipairs(completed_patch_cores) do consider(protected) end
 		return nearby
 	end
 
@@ -2573,7 +2688,7 @@ local function PrepareOuterResourceTerrain(map)
 		return x0, y0, x1, y1, sample_step
 	end
 
-	local function apply_native_patch(patch, core_only)
+	local function apply_native_patch(patch)
 		local owned, owned_lookup = {}, {}
 		local function own(value)
 			if value and not owned_lookup[value] then
@@ -2588,10 +2703,23 @@ local function PrepareOuterResourceTerrain(map)
 			-- The angular warp is applied to transition width, not total pad radius. Therefore even
 			-- the narrowest inward lobe leaves the exact circular gameplay core wholly intact.
 			local maximum_width_scale = 1.35
-			local radius = core_only and patch.core_cells
-				or patch.core_cells + base_transition * maximum_width_scale
-			local margin = core_only and 1 or 2
-			local sample_step = core_only and 1 or native_sample_step
+			local radius = patch.core_cells + base_transition * maximum_width_scale
+			local margin = 2
+			local sample_step = native_sample_step
+			local protection_transition = transition_minimum_width * cells_per_hex
+			local nearby_protected = protected_ready_sites_near(patch.cx, patch.cy, radius,
+				protection_transition)
+			local protection_blends = {}
+			for _, protected in ipairs(nearby_protected) do
+				local dx, dy = patch.cx - protected.cx, patch.cy - protected.cy
+				-- Never attenuate the new exact gameplay core. Intersecting guards were already
+				-- promoted and harmonized above; the remaining gap bounds this transition.
+				local gap = math.sqrt(dx * dx + dy * dy) - protected.radius - patch.core_cells
+				protection_blends[#protection_blends + 1] = {
+					cx = protected.cx, cy = protected.cy, radius = protected.radius,
+					transition = math.min(protection_transition, math.max(0, gap)),
+				}
+			end
 			local x0, y0, x1, y1
 			x0, y0, x1, y1, sample_step =
 				aligned_native_bounds(patch, radius, margin, sample_step)
@@ -2630,12 +2758,7 @@ local function PrepareOuterResourceTerrain(map)
 			local center_x = math.floor((patch.cx - x0) * height_tile + 0.5)
 			local center_y = math.floor((patch.cy - y0) * height_tile + 0.5)
 			local core_radius_world = math.floor(patch.core_cells * height_tile + 0.5)
-			if core_only then
-				mask = own(native_new_grid(local_width, local_height, "f", 32))
-				assert(mask, "native core-mask allocation failed")
-				native_circle_set(mask, native_weight_scale, center_x, center_y,
-					core_radius_world, 0, native_tile_step)
-			else
+			do
 				local coarse_width = math.floor((local_width - 1) / sample_step) + 1
 				local coarse_height = math.floor((local_height - 1) / sample_step) + 1
 				local coarse = own(native_new_grid(coarse_width, coarse_height, "f", 32))
@@ -2669,6 +2792,11 @@ local function PrepareOuterResourceTerrain(map)
 							local smooth = t * t * t * (t * (t * 6 - 15) + 10)
 							weight = 1 - smooth
 						end
+						for _, protected in ipairs(protection_blends) do
+							local px, py = x - protected.cx, y - protected.cy
+							weight = weight * ProtectedTerrainBlendWeight(math.sqrt(px * px + py * py),
+								protected.radius, protected.transition)
+						end
 						coarse:set(coarse_x, coarse_y,
 							math.floor(weight * native_weight_scale + 0.5))
 					end
@@ -2687,8 +2815,8 @@ local function PrepareOuterResourceTerrain(map)
 					core_radius_world, 0, native_tile_step)
 			end
 
-			-- Ready-before resource guards stay untouched: zero the mask over each protected disk.
-			local nearby_protected = protected_ready_sites_near(patch.cx, patch.cy, radius)
+			-- The coarse field now meets every protected footprint smoothly. Enforce exact zero
+			-- inside it after resampling, so no interpolation leakage can invalidate a ready site.
 			for _, protected in ipairs(nearby_protected) do
 				native_circle_set(mask, 0,
 					math.floor((protected.cx - x0) * height_tile + 0.5),
@@ -2699,10 +2827,8 @@ local function PrepareOuterResourceTerrain(map)
 			-- Blend the broad landform toward the pad elevation but return native small-scale relief
 			-- much faster than the low-frequency grade (detail retention 1 - w^3), as before.
 			local weight_cube = own(mask:clone())
-			if not core_only then
-				native_mul_div_add(weight_cube, mask, native_weight_scale, 0)
-				native_mul_div_add(weight_cube, mask, native_weight_scale, 0)
-			end
+			native_mul_div_add(weight_cube, mask, native_weight_scale, 0)
+			native_mul_div_add(weight_cube, mask, native_weight_scale, 0)
 			local inverse_cube = own(weight_cube:clone())
 			native_mul_div_add(inverse_cube, -1, 1, native_weight_scale)
 
@@ -2748,19 +2874,22 @@ local function PrepareOuterResourceTerrain(map)
 		patch_sort()
 		for _, patch in ipairs(patches) do
 			shaped_patches = shaped_patches + 1
-			local changed, raster_cells, mask_samples = apply_native_patch(patch, false)
+			local changed, raster_cells, mask_samples = apply_native_patch(patch)
 			modified_cells = modified_cells + changed
 			native_raster_cells = native_raster_cells + raster_cells
 			native_mask_samples = native_mask_samples + mask_samples
+			completed_patch_cores[#completed_patch_cores + 1] = {
+				cx = patch.cx, cy = patch.cy, radius = patch.core_cells,
+			}
 		end
-		-- A second pass makes building footprints exact planes after nearby feather blends. Surface
-		-- collection cores instead retain their capped fitted grade, eliminating a level circular scar.
-		for patch_index, patch in ipairs(patches) do
-			if patch_index == #patches then break end
-			local changed, raster_cells = apply_native_patch(patch, true)
-			modified_cells = modified_cells + changed
-			native_raster_cells = native_raster_cells + raster_cells
+		-- Inspect the completed raster, not the earlier stretch input. Keep this in the existing
+		-- transactional grid before its single installation and the subsequent gameplay rebuild.
+		local repaired, report = RepairRaisedTerminalHeightStrips(grid)
+		if repaired or not map.SuperBigMapTerminalHeightStripReport then
+			map.SuperBigMapTerminalHeightStripReport = report
 		end
+		modified_cells = modified_cells + report.modified
+		TerrainCreaseAudit(repaired and "TERMINAL_STRIP_REPAIRED" or "TERMINAL_STRIP_SKIPPED", report, map)
 	end
 
 	local pause = Global("PauseInfiniteLoopDetection")
