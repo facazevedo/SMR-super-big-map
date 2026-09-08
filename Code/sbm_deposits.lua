@@ -78,9 +78,18 @@ local underground_reachability_by_map = setmetatable({}, { __mode = "k" })
 local underground_topup_sampling_by_map = setmetatable({}, { __mode = "k" })
 -- Stage 01 cannot keep the generated marker OBJECTS alive: they belong to the temporary vanilla
 -- map slot and are destroyed when that slot is unloaded. Retain an independent value-only record
--- set until stage 02 has stretched the destination terrain and recreated the markers there. Weak
--- map keys ensure an abandoned generation cannot leak the (potentially large) property snapshots.
-local pending_native_enrichment_records_by_map = setmetatable({}, { __mode = "k" })
+-- set until stage 02 has stretched the destination terrain and recreated the markers there. The
+-- running pipeline can hold an old DepositRules instance across a module reload, so keep this
+-- weak-keyed cache in shared mod state. Both module instances then verify and clear the same
+-- records, while abandoned maps still release their (potentially large) property snapshots.
+SuperBigMap.State = SuperBigMap.State or {}
+local pending_native_enrichment_records_by_map =
+	SuperBigMap.State.pending_native_enrichment_records_by_map
+if type(pending_native_enrichment_records_by_map) ~= "table" then
+	pending_native_enrichment_records_by_map = setmetatable({}, { __mode = "k" })
+	SuperBigMap.State.pending_native_enrichment_records_by_map =
+		pending_native_enrichment_records_by_map
+end
 -- Buried wonders are selected while the vanilla underground still exists but are materialized
 -- only after the terrain and native enrichments have been transformed. Cache their final scaled
 -- visual footprints up front so both native reconstruction and all three top-up families can
@@ -88,7 +97,6 @@ local pending_native_enrichment_records_by_map = setmetatable({}, { __mode = "k"
 -- a game/module class rebuild inside first-access preparation: that rebuild replaces
 -- SuperBigMap.DepositRules while the running pipeline still holds the preceding module instance.
 -- Keep the weak-keyed table in shared mod state so both instances resolve the same reservation.
-SuperBigMap.State = SuperBigMap.State or {}
 local underground_wonder_reserved_hexes_by_map =
 	SuperBigMap.State.underground_wonder_reserved_hexes_by_map
 if type(underground_wonder_reserved_hexes_by_map) ~= "table" then
