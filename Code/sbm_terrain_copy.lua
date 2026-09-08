@@ -1535,11 +1535,16 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 		or width < 512 or height < 512 then
 		return false, { reason = "destination height grid too small", created = 0, modified = 0 }
 	end
+	-- Candidate discovery and the scalar raster repeat these pure numeric primitives across the
+	-- complete outer-sector opportunity set. Bind them once so the hot paths avoid global table
+	-- lookups without changing arguments, call order, grid operations, or rounding.
+	local apron_floor, apron_ceil = math.floor, math.ceil
+	local apron_min, apron_max, apron_sqrt = math.min, math.max, math.sqrt
 
-	local ring_sectors = math.max(0,
-		math.floor(cfg_number("MOUNTAIN_BASE_APRON_OUTER_RING_SECTORS", 2)))
-	local maximum_count = math.max(0,
-		math.floor(cfg_number("MOUNTAIN_BASE_APRON_MAXIMUM_COUNT", 288)))
+	local ring_sectors = apron_max(0,
+		apron_floor(cfg_number("MOUNTAIN_BASE_APRON_OUTER_RING_SECTORS", 2)))
+	local maximum_count = apron_max(0,
+		apron_floor(cfg_number("MOUNTAIN_BASE_APRON_MAXIMUM_COUNT", 288)))
 	if ring_sectors <= 0 or maximum_count <= 0 then
 		return false, { reason = "empty apron policy", created = 0, modified = 0 }
 	end
@@ -1552,30 +1557,30 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 		and type(const_tbl.HexSize) == "number" and const_tbl.HexSize > 0)
 		and const_tbl.HexSize or 1000
 	local guim_v = tonumber(Global("guim")) or 100
-	local cells_per_hex = math.max(1, (hex_size + 0.0) / height_tile)
-	local core_hexes = math.max(2,
+	local cells_per_hex = apron_max(1, (hex_size + 0.0) / height_tile)
+	local core_hexes = apron_max(2,
 		cfg_number("MOUNTAIN_BASE_APRON_CORE_RADIUS_HEXES", 4))
-	local feather_hexes = math.max(core_hexes + 2,
+	local feather_hexes = apron_max(core_hexes + 2,
 		cfg_number("MOUNTAIN_BASE_APRON_FEATHER_RADIUS_HEXES", 12))
-	local core_fraction = math.min(0.75, math.max(0.20,
+	local core_fraction = apron_min(0.75, apron_max(0.20,
 		(core_hexes + 0.0) / feather_hexes))
 	local outer_short = feather_hexes * cells_per_hex
 	local outer_long = outer_short * 1.35
-	local edge_margin = math.ceil(outer_long + cells_per_hex * 2)
+	local edge_margin = apron_ceil(outer_long + cells_per_hex * 2)
 
 	-- A sector remains the vanilla 409.6 height tiles wide. Derive the final count from the grid
 	-- rather than reading process-global const.SectorCount, which can temporarily describe the
 	-- other map during paired surface/underground generation.
 	local vanilla_sector_tiles = (4096 + 0.0) / 10
-	local count_x = math.max(10, math.floor(width / vanilla_sector_tiles + 0.5))
-	local count_y = math.max(10, math.floor(height / vanilla_sector_tiles + 0.5))
-	ring_sectors = math.min(ring_sectors, math.floor(math.min(count_x, count_y) / 2))
+	local count_x = apron_max(10, apron_floor(width / vanilla_sector_tiles + 0.5))
+	local count_y = apron_max(10, apron_floor(height / vanilla_sector_tiles + 0.5))
+	ring_sectors = apron_min(ring_sectors, apron_floor(apron_min(count_x, count_y) / 2))
 	local sector_w = (width + 0.0) / count_x
 	local sector_h = (height + 0.0) / count_y
 
 	local function sample(x, y)
-		x = math.max(0, math.min(width - 1, math.floor(x + 0.5)))
-		y = math.max(0, math.min(height - 1, math.floor(y + 0.5)))
+		x = apron_max(0, apron_min(width - 1, apron_floor(x + 0.5)))
+		y = apron_max(0, apron_min(height - 1, apron_floor(y + 0.5)))
 		local value = grid:get(x, y)
 		return type(value) == "number" and value or nil
 	end
@@ -1590,8 +1595,8 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 		{ 8 * cells_per_hex, 2 },
 		{ 12 * cells_per_hex, 1 },
 	}
-	local fit_radius = math.max(2, math.floor(2 * cells_per_hex + 0.5))
-	local minimum_rise = math.max(5 * guim_v, 400)
+	local fit_radius = apron_max(2, apron_floor(2 * cells_per_hex + 0.5))
+	local minimum_rise = apron_max(5 * guim_v, 400)
 	-- Eight irregular interior samples per axis expose narrow foothill bands without ever touching
 	-- the sector boundary. The resulting opportunity set is ranked by minimum terrain work first
 	-- and a coordinate hash second, giving reproducible pseudorandom choices without consuming or
@@ -1611,12 +1616,12 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 
 		local gx = (right - left + 0.0) / (2 * fit_radius)
 		local gy = (bottom - top + 0.0) / (2 * fit_radius)
-		local maximum_local_slope = math.max(math.abs(gx), math.abs(gy))
+		local maximum_local_slope = apron_max(math.abs(gx), math.abs(gy))
 		for _, direction in ipairs(directions) do
 			local z = sample(cx + direction[1] * fit_radius,
 				cy + direction[2] * fit_radius)
 			if z then
-				maximum_local_slope = math.max(maximum_local_slope,
+				maximum_local_slope = apron_max(maximum_local_slope,
 					math.abs(z - center) / fit_radius)
 			end
 		end
@@ -1639,7 +1644,7 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 					if rise <= -minimum_rise then lower_samples = lower_samples + 1 end
 					if rise > 0 then
 						relief_score = relief_score + rise * ring[2]
-						maximum_rise = math.max(maximum_rise, rise)
+						maximum_rise = apron_max(maximum_rise, rise)
 						mountain_x = mountain_x + direction[1] * rise * ring[2]
 						mountain_y = mountain_y + direction[2] * rise * ring[2]
 					end
@@ -1651,27 +1656,27 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 			return nil
 		end
 
-		local mountain_length = math.sqrt(mountain_x * mountain_x + mountain_y * mountain_y)
+		local mountain_length = apron_sqrt(mountain_x * mountain_x + mountain_y * mountain_y)
 		if mountain_length < 1 then
 			mountain_x, mountain_y = gx, gy
-			mountain_length = math.sqrt(mountain_x * mountain_x + mountain_y * mountain_y)
+			mountain_length = apron_sqrt(mountain_x * mountain_x + mountain_y * mountain_y)
 		end
 		if mountain_length < 1 then mountain_x, mountain_y, mountain_length = 1, 0, 1 end
 		mountain_x, mountain_y = mountain_x / mountain_length, mountain_y / mountain_length
 
 		-- Leave a gentle natural grade in the core. Four height units per 100-wu tile is well under
 		-- the top-up suite's five-degree terrain-normal ceiling, even diagonally.
-		local gradient_length = math.sqrt(gx * gx + gy * gy)
+		local gradient_length = apron_sqrt(gx * gx + gy * gy)
 		if gradient_length > 4 then
 			gx, gy = gx * 4 / gradient_length, gy * 4 / gradient_length
 		end
 		local edit_tier = maximum_local_slope < 9 and 0
-			or math.max(1, math.ceil((maximum_local_slope - 8) / 4))
-		local pseudorandom_rank = (math.floor(cx + 0.5) * 73856093
-			+ math.floor(cy + 0.5) * 19349663
+			or apron_max(1, apron_ceil((maximum_local_slope - 8) / 4))
+		local pseudorandom_rank = (apron_floor(cx + 0.5) * 73856093
+			+ apron_floor(cy + 0.5) * 19349663
 			+ sx * 83492791 + sy * 2654435761) % 2147483647
 		return {
-			x = math.floor(cx + 0.5), y = math.floor(cy + 0.5),
+			x = apron_floor(cx + 0.5), y = apron_floor(cy + 0.5),
 			sector_x = sx, sector_y = sy, center = center,
 			gx = gx, gy = gy, mountain_x = mountain_x, mountain_y = mountain_y,
 			score = relief_score - maximum_local_slope * guim_v * 2
@@ -1748,17 +1753,17 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 					+ index * 13) % 9) - 4
 				local short_radius = outer_short * (1 + variant * 0.012)
 				local long_radius = outer_long * (1 - variant * 0.009)
-				local x0 = math.max(0, math.floor(candidate.x - long_radius - 2))
-				local y0 = math.max(0, math.floor(candidate.y - long_radius - 2))
-				local x1 = math.min(width - 1, math.ceil(candidate.x + long_radius + 2))
-				local y1 = math.min(height - 1, math.ceil(candidate.y + long_radius + 2))
+				local x0 = apron_max(0, apron_floor(candidate.x - long_radius - 2))
+				local y0 = apron_max(0, apron_floor(candidate.y - long_radius - 2))
+				local x1 = apron_min(width - 1, apron_ceil(candidate.x + long_radius + 2))
+				local y1 = apron_min(height - 1, apron_ceil(candidate.y + long_radius + 2))
 				for y = y0, y1 do
 					for x = x0, x1 do
 						local dx, dy = x - candidate.x, y - candidate.y
 						local u = dx * candidate.mountain_x + dy * candidate.mountain_y
 						local v = -dx * candidate.mountain_y + dy * candidate.mountain_x
 						local ru, rv = u / short_radius, v / long_radius
-						local radius = math.sqrt(ru * ru + rv * rv)
+						local radius = apron_sqrt(ru * ru + rv * rv)
 						if radius < 1.12 then
 							local nx, ny = 1, 0
 							if radius > 0.0001 then nx, ny = ru / radius, rv / radius end
@@ -1781,9 +1786,9 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 										+ candidate.gx * dx + candidate.gy * dy
 									local detail = old - target
 									local detail_retention = 1 - weight * weight * weight
-									local value = math.floor(target
+									local value = apron_floor(target
 										+ detail * detail_retention + 0.5)
-									value = math.max(0, math.min(65535, value))
+									value = apron_max(0, apron_min(65535, value))
 									if value ~= old then
 										grid:set(x, y, value)
 										modified = modified + 1
@@ -1802,8 +1807,8 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 	if ok_apply then
 		for _, candidate in ipairs(selected) do
 			centers[#centers + 1] = {
-				x = math.floor(candidate.x * height_tile + 0.5),
-				y = math.floor(candidate.y * height_tile + 0.5),
+				x = apron_floor(candidate.x * height_tile + 0.5),
+				y = apron_floor(candidate.y * height_tile + 0.5),
 				sector_x = candidate.sector_x, sector_y = candidate.sector_y,
 				maximum_rise = candidate.maximum_rise,
 				original_local_slope = candidate.local_slope,
