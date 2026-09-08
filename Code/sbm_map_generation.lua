@@ -5357,26 +5357,52 @@ local function ArtefactClearObstructions(object, obj_prefab_marker, landscape_po
 		landscape_pos, flatten_shape)
 end
 
+function SuperBigMap.PrepareProvisionalSurfacePassageBuildable(object, shape)
+	-- Only the source-space buildable bridge is needed by the next native search.
+	-- ClearObstructions also permanently deletes rocks and entire prefab collections
+	-- at this provisional pose, which the final entrance does not occupy. SessionRandom
+	-- fallback poses vary between runs, so that obsolete deletion damages native terrain
+	-- and makes the final pass grid nondeterministic. Retain the native mark/repair/finish
+	-- transaction, but leave every surface object in place. Final commitment still uses
+	-- AlignPassagePairsToSharedHex's full candidate and footprint checks.
+	local map, pos = object:GetMap(), object:GetPos()
+	Global("LandscapeMarkCancel")()
+	local landscape = Global("LandscapeMarkStart")(map, pos)
+	if not landscape then error("provisional passage landscape is unavailable"); return false end
+	local ok, err = pcall(function()
+		local primes, bbox = Global("Landscape_MarkShape")(map, landscape.mark, shape,
+			pos, object:GetAngle(), map.landscape_grid, map.object_hex_grid)
+		if not primes then error("provisional passage shape marking failed"); return false end
+		landscape.bbox = Global("Extend")(landscape.bbox, bbox)
+		landscape.primes = landscape.primes + primes
+		Global("Landscape_FixBuildable")(landscape, landscape.grid, map.buildable.z_grid,
+			Global("buildUnbuildableZ")(), Global("guim") / 3)
+		return true
+	end)
+	local finish_ok, finish_err = pcall(Global("LandscapeFinish"), landscape.mark)
+	if not ok or err ~= true or not finish_ok then
+		error("provisional passage buildable repair failed: " .. tostring(
+			not ok and err or not finish_ok and finish_err or "shape marking failed"))
+		return false
+	end
+	return true
+end
+
 local function DeferredArtefactPreflight(map)
 	local required = {
-		PlaceBuildingIn = Global("PlaceBuildingIn"),
-		SpawnUndergroundPassage = Global("SpawnUndergroundPassage"),
-		ClearObstructions = Global("ClearObstructions"),
-		GetExtendedSpawnShape = Global("GetExtendedSpawnShape"),
-		GetEnclosedShape = Global("GetEnclosedShape"),
-		GetEntityOutlineShape = Global("GetEntityOutlineShape"),
-		ShrinkShape = Global("ShrinkShape"),
-		FlattenTerrainInBuildShape = Global("FlattenTerrainInBuildShape"),
-		HexShapeForEach = Global("HexShapeForEach"),
-		HexToWorld = Global("HexToWorld"),
-		WorldToHex = Global("WorldToHex"),
-		buildUnbuildableZ = Global("buildUnbuildableZ"),
-		DoneObject = Global("DoneObject"),
-		point = Global("point"),
-		RGB = Global("RGB"),
+		"PlaceBuildingIn", "SpawnUndergroundPassage", "ClearObstructions",
+		"LandscapeMarkCancel", "LandscapeMarkStart", "Landscape_MarkShape",
+		"Landscape_FixBuildable", "LandscapeFinish", "Extend", "GetExtendedSpawnShape",
+		"GetEnclosedShape", "GetEntityOutlineShape", "ShrinkShape", "FlattenTerrainInBuildShape",
+		"HexShapeForEach", "HexToWorld", "WorldToHex", "buildUnbuildableZ", "DoneObject",
+		"point", "RGB",
 	}
-	for name, fn in pairs(required) do
-		if type(fn) ~= "function" then return false, name .. " is unavailable" end
+	for _, name in ipairs(required) do
+		if type(Global(name)) ~= "function" then return false, name .. " is unavailable" end
+	end
+	local guim_value = Global("guim")
+	if type(guim_value) ~= "number" or not (guim_value > 0 and guim_value < math.huge) then
+		return false, "guim is unavailable"
 	end
 	if not map or type(map.MapGet) ~= "function"
 		or type(map.SuspendPassEdits) ~= "function" or type(map.ResumePassEdits) ~= "function"
@@ -6061,8 +6087,9 @@ local function BootstrapPassagesAndDeferWonders(env)
 					SafeCall(provenance.RecordNativeSpawn, surface_anchor,
 						"native_spawn", "SpawnUndergroundPassage")
 				end
-				ArtefactClearObstructions(surface_anchor, surface_map.obj_prefab_marker,
-					surface_anchor:GetPos(), surface_shape)
+				if not SuperBigMap.PrepareProvisionalSurfacePassageBuildable(surface_anchor, surface_shape) then
+					return "provisional surface passage buildable repair did not complete"
+				end
 				local underground_anchor = ArtefactSpawnMarkerBuilding(marker, "SurfacePassage", map)
 				if provenance and type(provenance.RecordNativeSpawn) == "function" then
 					SafeCall(provenance.RecordNativeSpawn, underground_anchor,
@@ -6097,13 +6124,14 @@ local function BootstrapPassagesAndDeferWonders(env)
 			end
 		end
 		for _, marker in ipairs(passage_markers) do done_object(marker) end
+		return true
 	end)
 	local resume_ok, resume_err = pcall(map.ResumePassEdits, map, "SuperBigMap_PassageBootstrap")
 	RestoreSurfaceBuildableBridge()
-	if not ok or not resume_ok then
+	if not ok or err ~= true or not resume_ok then
 		for _, wonder in ipairs(native_wonders) do pcall(done_object, wonder) end
-		if not ok then error("passage-only artefact bootstrap failed: " .. tostring(err)) end
-		error("passage bootstrap ResumePassEdits failed: " .. tostring(resume_err))
+		return false, "passage-only artefact bootstrap failed: "
+			.. tostring(not resume_ok and resume_err or err)
 	end
 	-- Stock actual wonders remain live through the later PlaceAnomalies and PlaceObstructions
 	-- procedures. Keep these temporary source-domain objects until the ProcInvoke wrapper consumes
@@ -9616,25 +9644,19 @@ local function PatchRandomMapGenerator()
 							local details = bootstrap_results[3]
 							LoadingEnd(bootstrap_token, type(details) == "table" and details or {
 								reason = tostring(details),
-							}, bootstrap_results[1] == true)
-							if not bootstrap_results[1] then error(bootstrap_results[2]) end
+							}, bootstrap_ok)
 							if bootstrap_ok ~= true then
-								local stock_results = PackValues(func())
-								local stock_passages = ArtefactMapGet(map, "SurfacePassage")
-								local plan_ok, plan_stats = AlignPassagePairsToSharedHex(map,
-									{ source_bootstrap = true })
-								if plan_ok ~= true then
-									error("stock PlaceArtefacts passage planning failed after "
-										.. tostring(details) .. ": "
-										.. tostring(plan_stats and plan_stats.error or "unknown error"))
-								end
-								if not VerifyBootstrapPassages(map, stock_passages, 2) then
-									error("stock PlaceArtefacts did not create two valid linked Elevator anchors after "
-										.. tostring(details))
-								end
-								map.SuperBigMapPassageBootstrapComplete = true
-								map.SuperBigMapPassageBootstrapCount = #stock_passages
-								return Unpack(stock_results, 1, stock_results.n)
+								-- The engine's error() can log and continue. Never rerun stock
+								-- clearance or publish success after a failed native transaction.
+								local reason = tostring(bootstrap_results[1] and details or bootstrap_results[2])
+								local state = SuperBigMap.State
+								state.optimization_failures = state.optimization_failures or {}
+								state.optimization_failures[#state.optimization_failures + 1] = {
+									unit = "native passage bootstrap", reason = reason, map = tostring(map),
+								}
+								map.SuperBigMapPassageBootstrapComplete = false
+								error("[OptimizationFailure] native passage bootstrap: " .. reason)
+								return false
 							end
 							return details
 						end, randless)

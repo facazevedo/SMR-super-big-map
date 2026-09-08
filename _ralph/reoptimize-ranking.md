@@ -585,3 +585,56 @@ Native verification now covers the fixed five15S/24S/45S/61N/17S: expanded runs,
 seed replays and same-site controls, with START-boundary T0 and completed surface
 pipeline T1. Fix any failures and finish incomplete checks; no waivers or scenario
 substitution. Temporary diagnostic wrappers are not loaded in timing runs.
+
+v954 `60a9578` verification in progress, fixed five-scenario matrix (no debug
+wrappers; single A samples so far, seed replays/controls follow):
+
+| Scenario | START-to-T1 A | Decor pass | Density | Clusters/pads |
+|---|---:|---:|---:|---:|
+| 15S67E | 153.414s | 1.816s | 99/99 | 9/9 |
+| 24S74W | 146.936s | 6.686s | 171/171 | 8/8 |
+| 45S120W | 135.502s | 0.955s | 53/53 | 8/8 |
+| 61N136W | 217.915s | 54.543s | 190/190 | 11/11 |
+| 17S11W | 143.235s | 1.060s | 72/72 | 8/8 |
+
+All five completed with no available numerical failures, canonical snapshots,
+flushed logs and clean exact-PID teardown. Their 26/24/24/30/24 base visual captures
+have been reviewed; matched shadow comparisons resolve the angular dark boundaries.
+15S native raw heights confirm the old one-sample bottom-edge notch is repaired.
+61N preserves the diagnostic's exact decor/enrichment digests, object count and
+727247 synthetic attempts while decor falls from the instrumented 512.940s to
+54.543s. The diagnostic is not a clean matched timing baseline; do not claim a
+statistically accepted saving from that comparison. 17S drops 61 non-cosmetic
+objects and still fills all 72 cosmetic groups.
+
+Same-seed expanded replays and unexpanded controls are in progress on the same
+immutable commit. 15S replay is 153.678s, with identical parity fields and full
+Surface/Underground height/pass-grid/site/pad snapshots; its control passes.
+24S replay completed at147.876s, and its control passed, but the stronger native
+snapshot comparison caught different Surface.pass_grids already at T1 despite
+identical height, placement and ordinary parity fields. The finite phase stopped
+after clean teardown; the last three pairs/controls are not run yet. Read-only
+review led to a confirmed cause: native raw U8 grids differ in 1615 cells and
+exact object censuses differ only by 21 rocks/stones/crater objects near the
+discarded provisional entrance poses (`v954_pass_debug2`). Native heights and
+final entrance poses match. No all-five acceptance verdict or waiver.
+
+### v955: preserve native objects at provisional entrance poses
+
+The bootstrap now performs only native landscape mark/buildable-repair/finish at
+the provisional surface pose. It no longer deletes rocks or prefab collections
+there. Underground authored clearance and final surface candidate validation are
+unchanged; no scenario tests or coordinate constants were added. A missing API
+or failed transaction now fails explicitly, without the old stock-clearance
+fallback or false completion flag. Temporary UI buttons are unchanged.
+
+Native diagnostic `v955_clear_equivalence` ran the production helper on a cloned
+pre-clear bridge, then stock clearance on the original from the same object state.
+Both nontrivial bridge outputs were byte-identical; both object counts and fallback
+query counts were unchanged by the helper. This instrumented stock-v954 session
+is diagnostic evidence, not a v955 timing sample. The new production regression
+covers source/underground sequencing, unchanged native objects, repair arguments,
+missing APIs and thrown/logging-only failure cleanup. Fresh five-site timing,
+replay/control and final native-grid verification follow on the v955 checkpoint.
+All52offline commands pass in `v955_offline`; final narrow review found no
+remaining actionable issue after correcting the failure phase's log verdict.
