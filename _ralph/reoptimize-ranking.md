@@ -180,10 +180,30 @@ sector, 9 clusters = 9 pads, decor 99/99, and successful player-route first acce
 
 ## Acceptance per step (same for every unit)
 
-- `rules_probe` at 14N134W: all ten gates green; for preserving units the three digests equal the
-  v924 floor (`enrichment 1108181949/701`, `decor 917959587/1292`, `ug_enrichment 1609697062/251`).
+- `rules_probe` at 14N134W: all ten gates green; preserving units must match the immediately
+  preceding accepted, corrected baseline, not the superseded v924 terrain/enrichment floor.
+  The v932 terrain fixes intentionally changed surface terrain and some enrichment positions.
 - T0→T1 with the Start-boundary stopwatch, n ≥ 3, recorded next to the step.
 - 15S67E regression run whenever generation code changed.
 - Version bump, commit, `deploy.py sync` + `audit`, short hash recorded.
 - `SuperBigMap.State.optimization_failures` empty in every run; any entry is a red result for the
   step, not something to be rescued.
+
+### Owner update - unattended continuation (2026-09-08 UTC)
+
+Continue the remaining worthwhile ports one at a time, then new profiling-guided optimizations
+until START-to-T1 is below 70 seconds without breaking any rule or prior optimization. Use the
+project-local Ralph loop, not Pursuing Goal. Normal model Sol High; plateau escalation Sol Extra
+High then Astra High. The immutable current contract is
+`_ralph/tasks/reoptimize-under-70s.md`, workspace `_ralph/runs/reoptimize-under-70s`.
+
+Every successful optimization MUST receive its own factual local commit and an entry here with
+version/short hash, before/after individual cold START-to-T1 samples (n>=3), medians, savings,
+rule/digest/visual verdicts and evidence paths. Checkpoint commits made before testing are
+candidates, not successes. Report failures and rejected units honestly; never weaken gates.
+
+Starting corrected terrain checkpoint: v932 `fde100f`. Full rules baseline is **not yet green**:
+first pinned14N cold run START-to-T1 204.256s and final resource audits clean; the second failed
+the native-enrichment migration verification before T1. Two diagnostic retries passed but do
+not establish a fix. No additional optimization has been accepted since Step2 above. Root-cause
+that intermittent baseline failure before claiming a safe performance improvement.

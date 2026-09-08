@@ -72,6 +72,8 @@ def main():
     ap.add_argument("--wait", type=int, default=2400,
                     help="seconds to wait for the probe (surface T1 plus underground first access)")
     ap.add_argument("--keep-alive", action="store_true", help="do not quit the game at the end")
+    ap.add_argument("--setup-probe", type=pathlib.Path,
+                    help="optional diagnostic chunk installed before generation; not an acceptance run")
     ap.add_argument("--pin-ug-seed", type=int, default=0,
                     help="pin the reserved underground seed (gate 1's pair); 0 leaves the "
                          "production AsyncRand reservation in place")
@@ -114,6 +116,11 @@ def main():
         return 3
 
     started = time.time()
+    if args.setup_probe:
+        proc = cli("run-file", str(args.setup_probe.resolve()), "--json", timeout=180)
+        print("[run_rules] diagnostic setup:", proc.stdout.strip()[:400])
+        if proc.returncode != 0:
+            return 2
     proc = cli("run-file", str(inst), "--json", timeout=180)
     print("[run_rules] run-file:", proc.stdout.strip()[:400])
     if proc.returncode != 0:
@@ -133,12 +140,24 @@ def main():
                 last = status
             if status in ("complete", "error"):
                 break
+        # Generation errors in this engine can log and continue rather than raising through
+        # xpcall. Do not wait 15 minutes for a T1 that a failed migration cannot reach.
+        daemon = pathlib.Path(r"D:\PROJS\SMR\smr-harness\.daemon.json")
+        if daemon.exists():
+            log_path = pathlib.Path(json.loads(daemon.read_text())["log"])
+            log_text = log_path.read_text(encoding="utf-8", errors="replace") if log_path.exists() else ""
+            if "[LUA ERROR]" in log_text or "[OptimizationFailure]" in log_text:
+                status = "engine_error"
+                print("[run_rules] engine error detected; ending the unsuccessful T1 wait")
+                break
         time.sleep(10)
 
     result = {"site": args.site, "lat": args.lat, "lon": args.lon, "status": status,
               "expand_map": args.expand_map,
               "pin_ug_seed": args.pin_ug_seed, "pin_game_seed": args.pin_game_seed,
               "elapsed_s": round(time.time() - started, 1)}
+    if args.setup_probe:
+        result["diagnostic_setup_probe"] = str(args.setup_probe.resolve())
     payload, raw = state_json("RULES", timeout=180)
     result["rules"] = payload.get("value", payload) if payload else {"raw": raw.stdout[-4000:]}
     payload, raw = state_json("RULES_ERR", timeout=120)
