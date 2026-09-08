@@ -7,6 +7,7 @@ The historical filename is retained so existing harness commands keep working.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -17,6 +18,8 @@ CONFIG = (ROOT / "Code" / "sbm_config.lua").read_text(encoding="utf-8")
 GENERATION = (ROOT / "Code" / "sbm_map_generation.lua").read_text(encoding="utf-8")
 TERRAIN = (ROOT / "Code" / "sbm_terrain_copy.lua").read_text(encoding="utf-8")
 METADATA = (ROOT / "metadata.lua").read_text(encoding="utf-8")
+METADATA_VERSION_MATCH = re.search(r"'version',\s*(\d+)", METADATA)
+METADATA_VERSION = int(METADATA_VERSION_MATCH.group(1)) if METADATA_VERSION_MATCH else None
 
 
 def section(text: str, start: str, end: str) -> str:
@@ -264,23 +267,29 @@ static_checks = {
         and "patches[a].support_cells + patches[b].support_cells" in outer_resource_terrain
     ),
     "resource_terrain_preserves_native_transition_detail": (
-        "local local_plane = patch.target" in outer_resource_terrain
-        and "local detail = old - local_plane" in outer_resource_terrain
-        and "local detail_retention = 1 - weight * weight * weight" in outer_resource_terrain
-        and "detail * detail_retention" in outer_resource_terrain
+        "local weight_cube = own(mask:clone())" in outer_resource_terrain
+        and outer_resource_terrain.count(
+            "native_mul_div_add(weight_cube, mask, native_weight_scale, 0)"
+        ) == 2
+        and "local inverse_cube = own(weight_cube:clone())" in outer_resource_terrain
+        and "native_mul_div_add(result, inverse_cube, native_weight_scale, 0)"
+        in outer_resource_terrain
+        and "native_mul_div_add(plane_term, weight_cube, native_weight_scale, 0)"
+        in outer_resource_terrain
     ),
     "surface_resource_repairs_retain_a_safe_local_grade": (
         'if kind == "surface" then' in outer_resource_terrain
         and "if grade_length > 3 then" in outer_resource_terrain
-        and 'local shape_target = patch.kind == "surface"' in outer_resource_terrain
-        and 'local core_target = patch.kind == "surface"' in outer_resource_terrain
+        and "local function scaled_plane(x, y)" in outer_resource_terrain
+        and "patch.target + patch.grade_x * (x - patch.cx)" in outer_resource_terrain
+        and 'if patch.kind ~= "surface" then' in outer_resource_terrain
     ),
     "resource_terrain_rebuild_precedes_anomaly_effect_placement": (
         GENERATION.index('"surface prepare outer resource terrain"')
+        < GENERATION.index("TerrainCopy.RebuildOuterResourceTerrainRegions(map, resource_terrain_stats")
+        < GENERATION.index("TerrainCopy.AuditOuterResourceTerrain(map)")
         < GENERATION.index('"surface top-up anomalies"')
         < GENERATION.index('"surface top-up effect deposits"')
-        and 'RebuildFinal(\n\t\t\t\t\t\t\t\tmap, "after outer resource terrain preparation")'
-        in GENERATION
     ),
     "resource_terrain_audit_is_fail_closed": (
         "outer resource terrain audit failed" in GENERATION
@@ -518,7 +527,9 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_887": "'version', 887" in METADATA,
+    "metadata_version_is_v936_or_newer": (
+        METADATA_VERSION is not None and METADATA_VERSION >= 936
+    ),
 }
 
 case_results = []

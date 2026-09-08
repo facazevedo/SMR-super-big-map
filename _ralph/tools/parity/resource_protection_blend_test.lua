@@ -3,6 +3,47 @@ local file = assert(io.open("Code/sbm_terrain_copy.lua", "rb"))
 local source = file:read("*a"); file:close()
 local helper = assert(source:match("(local function ProtectedTerrainBlendWeight.-)\nlocal function PrepareOuterResourceTerrain"))
 local weight = assert(load(helper .. "\nreturn ProtectedTerrainBlendWeight"))()
+
+-- Execute the current production grade limiter rather than pinning the retired scalar-raster
+-- variable names. The extracted block is the one used when each production patch is built.
+local grade_block = assert(source:match(
+    "(local grade_x = relief_x /.-\n\t\tend)\n\t\tlocal relief_length"),
+    "production surface-grade block not found")
+local grade = assert(load("return function(relief_x, relief_y, relief_probe, kind)\n"
+    .. grade_block .. "\nreturn grade_x, grade_y\nend"))()
+
+-- Execute the fixed-point native blend statements with scalar grid doubles. This proves the
+-- current shipped arithmetic: surface cores follow their fitted plane, building cores are level,
+-- and transition detail returns according to 1-w^3.
+local native_blend_block = assert(source:match(
+    "(local weight_cube = own%(mask:clone%(%)%).-)\n\n\t\t\t%-%- No inner%-rectangle restore here"),
+    "production native blend block not found")
+local function scalar_grid(value)
+    local grid = { value = value }
+    function grid:clone() return scalar_grid(self.value) end
+    return grid
+end
+local function native_mul_div_add(grid, factor, divisor, add)
+    local multiplier = type(factor) == "table" and factor.value or factor
+    grid.value = grid.value * multiplier / divisor + add
+end
+local function native_add(grid, other) grid.value = grid.value + other.value end
+local native_blend = assert(load("return function(old, plane_value, mask_value, kind, target)\n"
+    .. "local native_weight_scale, native_height_scale = 4096, 256\n"
+    .. "local source = scalar_grid(old * native_height_scale)\n"
+    .. "local height_grid = source:clone()\n"
+    .. "local plane = scalar_grid(plane_value * native_height_scale)\n"
+    .. "local mask = scalar_grid(mask_value)\n"
+    .. "local patch = { kind = kind, target = target }\n"
+    .. "local function own(value) return value end\n"
+    .. native_blend_block
+    .. "\nreturn result.value / native_height_scale\nend", "production-native-blend", "t", {
+        scalar_grid = scalar_grid,
+        native_mul_div_add = native_mul_div_add,
+        native_add = native_add,
+        type = type,
+        math = math,
+    }))()
 local passed = 0
 local function check(name, fn) fn(); passed = passed + 1; print("PASS " .. name) end
 check("protected terrain is exactly unchanged", function()
@@ -77,5 +118,24 @@ check("sequential blends preserve earlier cores and satisfy later cores", functi
         -- Including the zero-gap, common-plane case: no jump at the protected core boundary.
         assert(math.abs(final(core + 0.0001) - final(core)) < 1e-6)
     end
+end)
+check("surface repair grade is capped without flattening", function()
+    local gx, gy = grade(80, 60, 10, "surface")
+    assert(math.abs(gx - 2.4) < 1e-12 and math.abs(gy - 1.8) < 1e-12)
+    assert(math.abs(math.sqrt(gx * gx + gy * gy) - 3) < 1e-12)
+end)
+check("surface repair keeps an already safe local grade", function()
+    local gx, gy = grade(20, -10, 10, "surface")
+    assert(gx == 1 and gy == -0.5)
+end)
+check("surface core follows the fitted production plane", function()
+    assert(native_blend(120, 82, 4096, "surface", 80) == 82)
+end)
+check("building core remains an exact level target", function()
+    assert(native_blend(120, 82, 4096, "extractor", 80) == 80)
+end)
+check("native transition restores detail by one minus weight cubed", function()
+    local actual = native_blend(120, 80, 2048, "surface", 80)
+    assert(math.abs(actual - 115) < 1e-12)
 end)
 print(string.format("%d resource protection blend checks passed", passed))

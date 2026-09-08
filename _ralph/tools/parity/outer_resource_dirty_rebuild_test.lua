@@ -29,6 +29,16 @@ assert(not map_source:find(
 	'SuperBigMap.GenerationGrids.RebuildFinal(map,\n\t\t\t\t\t\t\t\t"after outer resource terrain repair "',
 	1, true), "repair still uses whole-map RebuildFinal")
 
+local prepare_at = assert(map_source:find('"surface prepare outer resource terrain"', 1, true))
+local rebuild_at = assert(map_source:find(
+	"TerrainCopy.RebuildOuterResourceTerrainRegions(map, resource_terrain_stats", prepare_at, true))
+local audit_at = assert(map_source:find("TerrainCopy.AuditOuterResourceTerrain(map)", rebuild_at, true))
+local anomaly_at = assert(map_source:find('"surface top-up anomalies"', audit_at, true))
+local effect_at = assert(map_source:find('"surface top-up effect deposits"', anomaly_at, true))
+assert(prepare_at < rebuild_at and rebuild_at < audit_at
+	and audit_at < anomaly_at and anomaly_at < effect_at,
+	"scoped resource-terrain rebuild/audit must precede anomaly and effect placement")
+
 local production_block = assert(terrain_source:match(
 	"(local function RebuildOuterResourceTerrainRegions.-)\n%-%- Run only after the engine has rebuilt"),
 	"production dirty-region rebuild helper not found")
