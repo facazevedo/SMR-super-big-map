@@ -18,7 +18,7 @@ def value(query):
     return payload["value"]
 
 
-def capture(out, pid, failed=False, diagnostic_query=None):
+def capture(out, pid, failed=False, diagnostic_query=None, before_quit=None):
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     metadata = json.loads((HARNESS / ".daemon.json").read_text())
@@ -38,6 +38,9 @@ def capture(out, pid, failed=False, diagnostic_query=None):
         if status != "complete":
             raise RuntimeError(f"Snapshot {status}: {value('POST_RULES_ERROR')}")
         (out / "post_rules_snapshot.json").write_text(json.dumps(value("POST_RULES_SNAPSHOT"), indent=2))
+    # Optional post-census visual work must not overwrite the canonical grid snapshot.
+    if before_quit is not None:
+        before_quit(out)
     # The engine log's timestamp corresponds to this daemon's local launch time.
     from datetime import datetime, timedelta
     started = datetime.fromisoformat(metadata["started_utc"].replace("Z", "+00:00"))

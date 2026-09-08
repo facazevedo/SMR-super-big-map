@@ -10,6 +10,34 @@ def run(rules=None, status="complete", log="", snapshot=None):
 
 
 class EvidenceJudgeTests(unittest.TestCase):
+    def test_cluster_range_uses_completed_plans_not_search_target(self):
+        rules = {'ring_audit_resource_clusters': 8, 'ring_audit_rocket_pads': 8,
+                 'ring_plan_placed_clusters': 8, 'ring_plan_desired_clusters': 10,
+                 'ring_plan_cluster_count_stream': 'deposits:1:seed=123',
+                 'full_map_playable': True, 'enrichment_in_ring': 1,
+                 'apron_report': 'error= ring_sectors=2'}
+        audit = dict.fromkeys(('resource_failures', 'rocket_failures', 'cluster_anchor_failures',
+                              'cluster_shortfall', 'cluster_excess', 'cluster_premium_excess',
+                              'cluster_extractor_shortfall', 'cluster_extractor_excess',
+                              'cluster_resource_shortfall', 'cluster_resource_excess',
+                              'cluster_weighted_composition_failures'), 0)
+        snapshot = {'optimization_failures': [], 'maps': {'Surface': {'audit': audit}}}
+        self.assertEqual(judge_run(run(rules, snapshot=snapshot))['ring-content']['verdict'], 'pass')
+        accepted_v936_counts = dict(rules, ring_audit_resource_clusters=9,
+                                   ring_audit_rocket_pads=9, ring_plan_placed_clusters=9)
+        self.assertEqual(judge_run(run(accepted_v936_counts, snapshot=snapshot))['ring-content']['verdict'], 'pass')
+        for field, value in (('ring_audit_resource_clusters', 7), ('ring_audit_resource_clusters', 13),
+                             ('ring_audit_rocket_pads', 9), ('ring_plan_placed_clusters', 9),
+                             ('ring_plan_desired_clusters', 7), ('ring_plan_desired_clusters', 13),
+                             ('ring_plan_desired_clusters', None), ('ring_plan_cluster_count_stream', 'engine')):
+            with self.subTest(field=field, value=value):
+                changed = dict(rules, **{field: value})
+                self.assertEqual(judge_run(run(changed, snapshot=snapshot))['ring-content']['verdict'], 'fail')
+        for field in audit:
+            changed_audit = dict(audit, **{field: 1})
+            bad = {'optimization_failures': [], 'maps': {'Surface': {'audit': changed_audit}}}
+            self.assertEqual(judge_run(run(rules, snapshot=bad))['ring-content']['verdict'], 'fail')
+
     def test_absent_run_never_green(self):
         verdicts = judge_run({"report": None})
         self.assertEqual(set(verdicts), set(GATES))

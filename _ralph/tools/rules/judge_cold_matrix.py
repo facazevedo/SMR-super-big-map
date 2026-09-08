@@ -85,8 +85,16 @@ def judge_run(run, control=None):
               label + " endpoints not both outside ring")
     count = number(r.get("ring_audit_resource_clusters"))
     check("ring-content", count is not None and 8 <= count <= 12, "cluster count outside 8..12")
-    check("ring-content", count == number(r.get("ring_audit_rocket_pads")) == number(r.get("ring_plan_desired_clusters")),
-          "planned clusters, final clusters, and pads disagree")
+    # Owner rule: final count in8..12, one pad per completed cluster, seed-pair stable.
+    # The desired count is a search target, not an exact-output requirement: the accepted
+    # 15S ruling already permits9 final clusters from a10-cluster target (DONE.md gate4).
+    check("ring-content", count == number(r.get("ring_audit_rocket_pads")) == number(r.get("ring_plan_placed_clusters")),
+          "completed plans, final clusters, and pads disagree")
+    desired = number(r.get("ring_plan_desired_clusters"))
+    check("ring-content", desired is not None and 8 <= desired <= 12
+          and count is not None and count <= desired, "invalid seeded cluster search target")
+    check("ring-content", str(r.get("ring_plan_cluster_count_stream", "")).startswith("deposits:1:seed="),
+          "cluster target was not drawn from the private seeded stream")
     check("ring-content", truth(r.get("full_map_playable")) and (number(r.get("enrichment_in_ring")) or 0) > 0,
           "full-map playability or ring enrichment missing")
     check("ring-content", "error= " in r.get("apron_report", "") and "ring_sectors=2" in r.get("apron_report", ""),
