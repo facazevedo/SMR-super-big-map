@@ -185,6 +185,33 @@ assert(source_stats.centers_attempted == 2 and source_stats.candidate_attempts =
 	and source_stats.accepted_candidates == 2 and source_stats.rejected_candidates == 1,
 	"invalid preferred anchor did not advance directly to the general on-demand source")
 
+local repeat_anchor_draws = 0
+local repeated_source_plans, repeated_source_error, repeated_source_stats = planner({
+	centers = { { band = "outer", preferred = false, q = 0, r = 0 } },
+	offsets = { { dq = 0, dr = 0 }, { dq = 3, dr = 0 } },
+	specs = { { resource_target = 2 } }, outer_count = 1,
+	cluster_radius = 12, minimum_member_distance = 3,
+	center_attempt_budget = 3, candidate_attempt_budget = 4,
+	anchor_first = true, require_valid_anchor = true,
+	rand_int = function() return 0 end,
+	classify_center = function(center) return center.band end,
+	center_priority = function() return "general" end,
+	build_candidate = function(_, _, offset)
+		if offset.dq == 0 then repeat_anchor_draws = repeat_anchor_draws + 1 end
+		return {
+			q = repeat_anchor_draws * 100 + offset.dq, r = 0,
+			valid = repeat_anchor_draws >= 2,
+		}
+	end,
+	validate_static = function(candidate) return candidate.valid end,
+	validate_dynamic = function() return true end,
+})
+local repeated_source_safe = repeated_source_plans ~= nil
+	and repeated_source_error == nil and repeat_anchor_draws == 2
+	and repeated_source_stats.centers_attempted == 2
+	and repeated_source_stats.candidate_attempts == 3
+	and repeated_source_stats.accepted_candidates == 2
+
 -- A coordinate may be reached from either side of the physical outer/inner boundary.
 -- Static terrain/buildability can be cached by coordinate, but band eligibility cannot.
 local false_positive_plans, false_positive_error = planner({
@@ -315,6 +342,8 @@ require_policy(false_negative_safe,
 	"cross-band negative static cache reuse poisoned a later valid-band candidate")
 require_policy(selector_behavior_safe,
 	"production cluster selector lacks executable clone-boundary mutation behavior coverage")
+require_policy(repeated_source_safe,
+	"general sector descriptors cannot provide bounded repeated on-demand anchor draws")
 require_policy(not topup:find("local perimeter_quota_candidates = {}", 1, true),
 	"eager perimeter candidate pool remains")
 require_policy(not topup:find("local MAX_FINAL_QUOTA_CANDIDATES = 4096", 1, true),
@@ -323,7 +352,7 @@ require_policy(not topup:find("local function build_quota_cluster_plans", 1, tru
 	"whole-pool cluster planner remains")
 require_policy(topup:find("rand_int = RandInt", 1, true),
 	"planner is not driven by the existing private placement stream")
-require_policy(topup:find("center_attempt_budget = 64", 1, true)
+require_policy(topup:find("center_attempt_budget = 384", 1, true)
 	and topup:find("candidate_attempt_budget = 384", 1, true),
 	"production attempt budgets are missing")
 require_policy(topup:find("validate_static = function(candidate)", 1, true)
@@ -354,6 +383,8 @@ require_policy(topup:find('kind = "sector"', 1, true)
 	and topup:find("require_valid_anchor = true", 1, true)
 	and topup:find("first_x + RandInt(past_x - first_x)", 1, true),
 	"apron-first on-demand physical-band sampling is missing")
+require_policy(topup:find("center_attempt_id", 1, true),
+	"repeated general-sector attempts do not draw a fresh physical anchor")
 require_policy(topup:find("terrain_candidate_entries =", 1, true)
 	and topup:find("sampling_source_entries =", 1, true),
 	"published terrain-list and on-demand source counts are not separated")
