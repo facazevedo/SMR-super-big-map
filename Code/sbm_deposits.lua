@@ -4209,7 +4209,12 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 				local candidate = build_candidate(center_entry.center, center_entry.index,
 					offset, band, spec, spec_index)
 				if candidate and type(candidate.q) == "number" and type(candidate.r) == "number" then
+					-- Terrain/buildability is coordinate-stable during this transaction,
+					-- but the complete static callback also enforces the requested physical
+					-- band. Keep that dependency in the cache key so an abandoned outer
+					-- trial cannot certify or poison the same hex for an inner plan.
 					local key = tostring(candidate.q) .. ":" .. tostring(candidate.r)
+						.. ":" .. tostring(candidate.band or band)
 					local cached = static_verdicts[key]
 					if cached then
 						stats.static_cache_reuses = stats.static_cache_reuses + 1
@@ -4287,6 +4292,55 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 		for _, candidate in ipairs(chosen) do reserved[#reserved + 1] = candidate end
 	end
 	return plans, nil, finish_stats()
+end
+
+-- Keep the exact clone-boundary selection state directly testable. Deliberate
+-- cluster members use the nil-profile dynamic path: current obstruction, unique
+-- occupancy, and universal minimum spacing remain live, while ordinary profile
+-- repulsion does not reinterpret one planned cluster as independent deposits.
+function DepositRules.BuildDirectSeededClusterSelector(options)
+	if type(options) ~= "table" or type(options.candidates) ~= "table"
+		or type(options.validate_dynamic) ~= "function" then
+		return nil, "selector options unavailable"
+	end
+	local candidates = options.candidates
+	local validate_dynamic = options.validate_dynamic
+	local stats = type(options.stats) == "table" and options.stats or {}
+	local on_commit = options.on_commit
+	local consumed = {}
+	local function remaining()
+		local count = 0
+		for _, candidate in ipairs(candidates) do
+			if not consumed[candidate] then count = count + 1 end
+		end
+		return count
+	end
+	local function take(terrain_type)
+		for _, candidate in ipairs(candidates) do
+			if not consumed[candidate]
+				and (terrain_type == nil or candidate.terrain_type == terrain_type) then
+				consumed[candidate] = true
+				stats.placement_dynamic_validations =
+					(stats.placement_dynamic_validations or 0) + 1
+				if validate_dynamic(candidate, nil) then return candidate end
+				stats.placement_dynamic_rejections =
+					(stats.placement_dynamic_rejections or 0) + 1
+			end
+		end
+		return nil
+	end
+	local function commit(candidate)
+		if not candidate then return false end
+		candidate.used = true
+		if type(on_commit) == "function" then on_commit(candidate) end
+		return true
+	end
+	return {
+		Take = take,
+		Commit = commit,
+		Remaining = remaining,
+		Stats = function() return { remaining_candidates = remaining() } end,
+	}
 end
 -- DIRECT_SEEDED_CLUSTER_PLANNER_END
 
@@ -5436,52 +5490,11 @@ function DepositRules.TopUpDeposits(map)
 			math.min(resource_cluster_maximum_deposits,
 				math.floor(cfg().OUTER_RESOURCE_CLUSTER_MAXIMUM_EXTRACTOR_DEPOSITS or 3)))
 		local function new_planned_cluster_selector(candidates)
-			-- Keep attempt state in this selector. Candidate tables are shared with the legacy
-			-- pool and can retain transient fields from its validation passes. The complete plan was
-			-- already checked against native occupancy and reserved with three-hex member spacing plus
-			-- inter-cluster separation; reapplying the mutable global tracker here can invalidate a later
-			-- plan after an earlier planned clone commits even though their reserved hexes are disjoint.
-			local consumed = {}
-			local function remaining()
-				local count = 0
-				for _, candidate in ipairs(candidates or {}) do
-					if not consumed[candidate] then count = count + 1 end
-				end
-				return count
-			end
-			local function take(terrain_type, profile)
-				for _, candidate in ipairs(candidates or {}) do
-					if not consumed[candidate]
-						and (terrain_type == nil or candidate.terrain_type == terrain_type) then
-						consumed[candidate] = true
-						direct_cluster_stats.placement_dynamic_validations =
-							(direct_cluster_stats.placement_dynamic_validations or 0) + 1
-						-- The plan's explicit three-hex member spacing is the applicable
-						-- intra-cluster rule. Recheck mutable obstruction, occupancy, and that
-						-- minimum here without reapplying ordinary profile repulsion between
-						-- deliberate members after their anchor has committed.
-						if direct_cluster_dynamic_validator
-							and direct_cluster_dynamic_validator(candidate, nil) then
-							return candidate
-						end
-						direct_cluster_stats.placement_dynamic_rejections =
-							(direct_cluster_stats.placement_dynamic_rejections or 0) + 1
-					end
-				end
-				return nil
-			end
-			local function commit(candidate)
-				-- Candidate.used belongs to the legacy selectors. Publish it only after cloning
-				-- succeeds; pool-building may set it speculatively before this deliberate plan runs.
-				if candidate then candidate.used = true end
-				return candidate ~= nil
-			end
-			return {
-				Take = take,
-				Commit = commit,
-				Remaining = remaining,
-				Stats = function() return { remaining_candidates = remaining() } end,
-			}
+			return DepositRules.BuildDirectSeededClusterSelector({
+				candidates = candidates,
+				stats = direct_cluster_stats,
+				validate_dynamic = direct_cluster_dynamic_validator,
+			})
 		end
 		local function place_quota_cluster_plans(plans, outermost, inner_band, label)
 			for _, plan in ipairs(plans) do
