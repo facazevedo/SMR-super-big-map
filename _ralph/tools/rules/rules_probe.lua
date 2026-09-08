@@ -258,6 +258,7 @@ CreateRealTimeThread(function()
 		-- dimensions/size/hash/equality into RULES.  All reads happen after T1, so
 		-- diagnostic serialization cost cannot contaminate START-to-T1 timing.
 		local surface_pass_stage_blobs = {}
+		local surface_pass_previous_stage = nil
 		local function capture_surface_pass_stage(stage)
 			if type(stage) ~= "string" or stage == "" then
 				error("surface pass stage name is required")
@@ -273,7 +274,11 @@ CreateRealTimeThread(function()
 			end
 			local blobs, summary = {}, {}
 			local t1_blobs = surface_pass_stage_blobs.t1
+			local previous_blobs = surface_pass_previous_stage
+				and surface_pass_stage_blobs[surface_pass_previous_stage] or nil
 			R["surface_pass_" .. stage .. "_count"] = count
+			R["surface_pass_" .. stage .. "_previous_stage"] =
+				surface_pass_previous_stage or "none"
 			for index = 0, count - 1 do
 				local grid = terrain.GetPassGrid(map, index)
 				if not grid or not IsGrid(grid) then
@@ -298,11 +303,15 @@ CreateRealTimeThread(function()
 				R[prefix .. "_hash"] = hash
 				R[prefix .. "_repeat_equal"] = tostring(blob == repeat_blob)
 				R[prefix .. "_matches_t1"] = t1_blobs and tostring(blob == t1_blobs[index]) or "self"
+				R[prefix .. "_matches_previous"] = previous_blobs
+					and tostring(blob == previous_blobs[index]) or "self"
 				blobs[index] = blob
-				summary[#summary + 1] = string.format("%d:%s/%d/t1=%s", index, hash, #blob,
-					t1_blobs and tostring(blob == t1_blobs[index]) or "self")
+				summary[#summary + 1] = string.format("%d:%s/%d/t1=%s/prev=%s", index, hash, #blob,
+					t1_blobs and tostring(blob == t1_blobs[index]) or "self",
+					previous_blobs and tostring(blob == previous_blobs[index]) or "self")
 			end
 			surface_pass_stage_blobs[stage] = blobs
+			surface_pass_previous_stage = stage
 			R["surface_pass_" .. stage .. "_summary"] = table.concat(summary, " ")
 		end
 		capture_surface_pass_stage("t1")
@@ -1235,6 +1244,7 @@ CreateRealTimeThread(function()
 					return "Elevator placement failed: " .. tostring(ext)
 				end
 			end
+			capture_surface_pass_stage("after_place")
 			-- ConstructionModeDialog:Close order: Deactivate the controller, then restore the flag.
 			pcall(ctrl.Deactivate, ctrl)
 			set_cascade(true)
@@ -1273,7 +1283,7 @@ CreateRealTimeThread(function()
 				restore_counters()
 				return "the paired Elevator quick-build failed: " .. build_err
 			end
-			capture_surface_pass_stage("after_quick_build")
+			capture_surface_pass_stage("after_complete")
 
 			local twin_passage = rawget(target_passage, "other")
 			local ldl = GetPreciseTicks() + 120000
@@ -1287,6 +1297,7 @@ CreateRealTimeThread(function()
 			end
 			R.ug_elevator_linked = tostring(IsValid(first_elevator) and IsValid(second_elevator)
 				and rawget(first_elevator, "other") == second_elevator)
+			capture_surface_pass_stage("after_link")
 
 			------------------------------------------------------------ switch maps
 			-- The HUD map-switch button's own handler calls
@@ -1347,7 +1358,20 @@ CreateRealTimeThread(function()
 			R.ug_stretch_done = tostring(ug.SuperBigMapUndergroundStretchDone)
 			R.ug_prepared_after = tostring(ug.SuperBigMapUndergroundPrepared)
 			R.ug_stretch_failed = tostring(ug.SuperBigMapUndergroundStretchFailed)
+			local pass_settle_t0 = GetPreciseTicks()
+			R.surface_pass_after_switch_elapsed_ms = 0
 			capture_surface_pass_stage("after_switch")
+			for _, settle in ipairs({
+				{ stage = "after_switch_settle_250", delay = 250 },
+				{ stage = "after_switch_settle_1000", delay = 1000 },
+				{ stage = "after_switch_settle_5000", delay = 5000 },
+			}) do
+				Sleep(settle.delay)
+				R["surface_pass_" .. settle.stage .. "_requested_delay_ms"] = settle.delay
+				R["surface_pass_" .. settle.stage .. "_elapsed_ms"] =
+					GetPreciseTicks() - pass_settle_t0
+				capture_surface_pass_stage(settle.stage)
+			end
 			restore_counters()
 			if CurrentMap ~= ug then
 				return "first access did not switch to the underground map within 900 s"
