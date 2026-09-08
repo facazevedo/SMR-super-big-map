@@ -229,6 +229,9 @@ require_policy(topup:find("validate_dynamic = function(candidate)", 1, true)
 require_policy(topup:find("placement_dynamic_validations", 1, true)
 	and topup:find("placement_dynamic_rejections", 1, true),
 	"clone-boundary mutable validation counters are missing")
+require_policy(topup:find("direct_cluster_dynamic_validator(candidate, nil)", 1, true)
+	and not topup:find("direct_cluster_dynamic_validator(candidate, profile)", 1, true),
+	"clone-boundary cluster validation reapplies ordinary profile repulsion to deliberate cluster members")
 require_policy(planner_source:find("static_cache_reuses", 1, true)
 	and planner_source:find("accepted_candidates", 1, true)
 	and planner_source:find("rejected_candidates", 1, true),
