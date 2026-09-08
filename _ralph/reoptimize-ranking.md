@@ -109,8 +109,8 @@ steps and their evidence are below. Final all-scenario sign-off remains pending.
 
 | Priority | Optimization to try | Concrete change | Status / acceptance condition |
 |---|---|---|---|
-| 1 | Direct seeded top-up sampling and streaming clusters (#17/#18) | Draw candidates on demand around eligible terrain opportunities; accept enough valid members for each required cluster and stop at its count. Remove the 4,096-entry perimeter pool, full-pool sorting, and repeated anchor/neighbour scans. | Implementing. Preserve composition, quantities, spacing, 8..12 clusters and one usable pad each; prove repeatable new positions and seamless terrain. |
-| 2 | Reuse candidate terrain validation | Validate only sampled candidate locations. Cache a static result for the exact coordinate/footprint while its terrain/buildable/protection state is unchanged; reuse existing trustworthy candidate records. | Required companion to #1. Apron centers alone are not certified placement footprints. Keep occupancy/spacing/composition checks current; invalidate affected cached results after relevant changes. |
+| 1 | Direct seeded top-up sampling and streaming clusters (#17/#18) | Draw candidates on demand around eligible terrain opportunities; accept enough valid members for each required cluster and stop at its count. Remove the 4,096-entry perimeter pool, full-pool sorting, and repeated anchor/neighbour scans. | **Rejected at v943 `ec70d99`; rollback `113e3fc`.** 14N improved, but mandatory 15S deterministically exhausted outer cluster 5 and failed cluster/pad rules. |
+| 2 | Reuse candidate terrain validation | Validate only sampled candidate locations. Cache a static result for the exact coordinate/footprint while its terrain/buildable/protection state is unchanged; reuse existing trustworthy candidate records. | Rejected with #1. Its lazy exact-coordinate/band cache passed focused tests, but cannot be retained without the rejected planner. |
 | 3 | Demand-driven selection for remaining top-up phases | Profile ordinary resources, anomalies and effects for remaining pool rescans; consume valid entries or generate the next candidate only until the remaining target is satisfied. | Planned audit; keep existing demand-driven paths and numeric/cache-first optimizations. Change only work still measured as redundant. |
 | 4 | Native buildable-hex snap (#6) | Guide a sampled candidate to a nearby valid buildable hex using a bounded native query, before expensive placement checks. | Try if rejection counts remain high. Candidate-only work; preserve geometry restrictions and deterministic placement. |
 | 5 | Defer rocket relief scoring (#7) | Evaluate expensive surrounding-relief samples only for candidates whose score can still win. | Planned. Preserve the selected pad and every footprint rule. |
@@ -142,6 +142,18 @@ It measured 184.677 / 184.429 s but changed native surface passability output;
 evidence, not unchanged retries. Coarser terrain masks (#12) are deferred because
 their fidelity risk directly touches the no-visible-marks requirement. Historical
 rank-then-filter (`86767a7`) has no demonstrated saving and stays deprioritized.
+
+Rejected: direct seeded top-up sampling/streaming (#17/#18 plus candidate
+validation companion #2), final candidate v943 `ec70d99`, rollback `113e3fc`.
+Three valid 14N samples were 153.960 / 151.329 / 151.672 s, median151.672 s,
+range2.631 s, saving35.877 s/19.13% versus v936. The mandatory pinned15S run
+remained rule-red through v943: outer cluster5 exhausted its bounded search,
+published0 clusters/pads, and produced shortfall8. Candidate timings from failed
+15S runs are invalid. Evidence:
+`artifacts/iter048_v941_14n_timing_review/timing_review.md`,
+`artifacts/iter048_v943_15s_regression/`, and
+`artifacts/iter048_strategy_rejection_rollback/`. Next strategy: priority3,
+demand-driven selection for remaining top-up phases.
 
 For every successful unit: separate implementation commit, before/after cold
 START-to-T1 samples (at least three at 14N), median/range/saving, rule and visual
