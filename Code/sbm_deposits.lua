@@ -4076,6 +4076,8 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 
 	local outer_count = math.max(0, math.min(#specs,
 		math.floor(tonumber(options.outer_count) or 0)))
+	local minimum_plans = math.max(1, math.min(#specs,
+		math.floor(tonumber(options.minimum_plans) or #specs)))
 	local cluster_radius = math.max(1, math.floor(tonumber(options.cluster_radius) or 1))
 	local minimum_member_distance = math.max(1,
 		math.floor(tonumber(options.minimum_member_distance) or 1))
@@ -4094,7 +4096,7 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 		static_cache_reuses = 0, static_rejections = 0,
 		dynamic_validations = 0, dynamic_rejections = 0,
 		accepted_candidates = 0, rejected_candidates = 0,
-		plans = 0, outer_plans = 0, inner_plans = 0,
+		plans = 0, outer_plans = 0, inner_plans = 0, plan_exhaustions = 0,
 		center_attempt_budget = center_attempt_budget,
 		candidate_attempt_budget = candidate_attempt_budget,
 	}
@@ -4279,24 +4281,35 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 			if chosen then break end
 		end
 		if not chosen then
-			return nil, "cluster " .. tostring(spec_index) .. " " .. band
-				.. " search exhausted: centers=" .. tostring(centers_attempted)
-				.. "/" .. tostring(center_attempt_budget)
-				.. " candidates=" .. tostring(candidate_attempts)
-				.. "/" .. tostring(candidate_attempt_budget), finish_stats()
+			local next_band = spec_index + 1 <= outer_count and "outer" or "inner"
+			local at_band_end = spec_index == #specs or next_band ~= band
+			local remaining_specs = #specs - spec_index
+			if not at_band_end or #plans + remaining_specs < minimum_plans then
+				return nil, "cluster " .. tostring(spec_index) .. " " .. band
+					.. " search exhausted: centers=" .. tostring(centers_attempted)
+					.. "/" .. tostring(center_attempt_budget)
+					.. " candidates=" .. tostring(candidate_attempts)
+					.. "/" .. tostring(candidate_attempt_budget), finish_stats()
+			end
+			stats.plan_exhaustions = stats.plan_exhaustions + 1
+		else
+			local plan = {
+				id = spec_index, target = target, extractor_target = spec.extractor_target,
+				strength = spec.strength, anomaly_capacity = spec.anomaly_capacity,
+				reward_capacity = spec.reward_capacity, candidates = chosen,
+				outermost = band == "outer",
+			}
+			plans[#plans + 1] = plan
+			stats.plans = stats.plans + 1
+			if plan.outermost then stats.outer_plans = stats.outer_plans + 1
+			else stats.inner_plans = stats.inner_plans + 1 end
+			stats.accepted_candidates = stats.accepted_candidates + #chosen
+			for _, candidate in ipairs(chosen) do reserved[#reserved + 1] = candidate end
 		end
-		local plan = {
-			id = spec_index, target = target, extractor_target = spec.extractor_target,
-			strength = spec.strength, anomaly_capacity = spec.anomaly_capacity,
-			reward_capacity = spec.reward_capacity, candidates = chosen,
-			outermost = band == "outer",
-		}
-		plans[#plans + 1] = plan
-		stats.plans = stats.plans + 1
-		if plan.outermost then stats.outer_plans = stats.outer_plans + 1
-		else stats.inner_plans = stats.inner_plans + 1 end
-		stats.accepted_candidates = stats.accepted_candidates + #chosen
-		for _, candidate in ipairs(chosen) do reserved[#reserved + 1] = candidate end
+	end
+	if #plans < minimum_plans then
+		return nil, "complete cluster minimum unavailable: plans=" .. tostring(#plans)
+			.. "/" .. tostring(minimum_plans), finish_stats()
 	end
 	return plans, nil, finish_stats()
 end
@@ -4956,6 +4969,7 @@ function DepositRules.TopUpDeposits(map)
 					terrain_candidate_entries = type(apron_centers) == "table"
 						and #apron_centers or 0,
 					outer_count = outer_count,
+					minimum_plans = resource_cluster_minimum_count,
 					cluster_radius = resource_cluster_radius,
 					minimum_member_distance = surface_quota_minimum_hex_distance,
 					center_attempt_budget = 384,
@@ -5463,7 +5477,7 @@ function DepositRules.TopUpDeposits(map)
 			stage = "initializing", error = "", quota = 0, outermost = 0, inner_band = 0,
 			results = "", strategy = "direct_seeded_cluster_v1",
 			desired_clusters = desired_resource_cluster_count, placed_clusters = 0,
-			plan_exhaustions = 0,
+			plan_exhaustions = direct_cluster_stats.plan_exhaustions or 0,
 			cluster_minimum = resource_cluster_minimum_count,
 			cluster_maximum = resource_cluster_maximum_count,
 			cluster_count_stream = cluster_count_draw_stream,
