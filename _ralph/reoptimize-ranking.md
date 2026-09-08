@@ -404,6 +404,23 @@ version/short hash, before/after individual cold START-to-T1 samples (n>=3), med
 rule/digest/visual verdicts and evidence paths. Checkpoint commits made before testing are
 candidates, not successes. Report failures and rejected units honestly; never weaken gates.
 
+### Session workflow - owner update (2026-09-08 UTC)
+
+Use one continuous agent session per optimization strategy. Keep implementation, offline
+tests, cold measurements, regression review, and the final acceptance/rejection verdict in
+that session, with durable checkpoints after each step. Do not end a session merely because
+one test, sample, or candidate commit completed. Ralph starts the next strategy after the
+current strategy's verdict and required commit/ranking update. An unavoidable interruption,
+context limit, or evidenced escalation resumes the unfinished strategy before advancing.
+
+The project-local `_ralph/tools/strategy_sessions.py` adapter changes only the generated
+session contract; the shared harness, immutable task, rules, START-to-T1 definition, and
+Sol High -> Sol xhigh -> Astra High model ladder are unchanged. The detached launcher uses
+this adapter. Its `--migrate-only` mode safely updates the existing pinned workspace without
+launching a second runner or stopping the current worker; the running runner's next agent
+session reads the new contract. Candidate builds are still committed/deployed before cold
+tests and are not labeled successful until their required gates pass.
+
 Starting corrected terrain checkpoint: v932 `fde100f`. Full rules baseline is **not yet green**:
 first pinned14N cold run START-to-T1 204.256s and final resource audits clean; the second failed
 the native-enrichment migration verification before T1. Two diagnostic retries passed but do

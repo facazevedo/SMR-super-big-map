@@ -19,10 +19,10 @@ CODEX = Path(r"C:\Users\fazevedo\AppData\Local\OpenAI\Codex\bin\8e5b6932251c2c1c
 def main():
     if os.name != "nt" or not CODEX.is_file():
         raise RuntimeError("This launcher requires the verified local Windows Codex CLI")
-    command = [sys.executable, "-u", str(HARNESS / "loop.py"), "--agent", "codex",
+    command = [sys.executable, "-u", str(PROJECT / "_ralph/tools/strategy_sessions.py"), "--agent", "codex",
                "--codex-model", "gpt-5.6-sol", "--codex-escalation-model", "gpt-6-astra",
                "--project", str(PROJECT), "--task-name", "reoptimize-under-70s",
-               "--pause-seconds", "5"]
+               "--pause-seconds", "5", "--migrate-prompt"]
     environment = dict(os.environ)
     environment["PATH"] = str(CODEX.parent) + os.pathsep + environment.get("PATH", "")
     # One shared game/debug port: refuse another loop or game before starting work.
@@ -30,7 +30,7 @@ def main():
         "powershell", "-NoProfile", "-Command",
         "@(Get-CimInstance Win32_Process | Where-Object { "
         "$_.Name -eq 'MarsDebug.exe' -or "
-        "($_.Name -match '^python(w)?\\.exe$' -and $_.CommandLine -match 'loop\\.py') "
+        "($_.Name -match '^python(w)?\\.exe$' -and $_.CommandLine -match '(loop|strategy_sessions)\\.py') "
         "} | Select-Object ProcessId,Name,CommandLine) | ConvertTo-Json -Compress"
     ], capture_output=True, text=True, check=True)
     existing = json.loads(check.stdout) if check.stdout.strip() else []
