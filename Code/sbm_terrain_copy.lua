@@ -755,10 +755,11 @@ local function RepairRaisedTerminalHeightStrips(grid)
 		end
 		finish()
 	end
-	local modified, max_drop, spans = 0, 0, {}
+	local modified, max_drop, spans, dirty_regions = 0, 0, {}, {}
 	for _, plan in ipairs(plans) do
 		local side = plan.side
 		spans[#spans + 1] = side.name .. ":" .. plan.first .. "-" .. plan.last
+		local plan_modified = 0
 		for along = plan.first, plan.last do
 			local row = plan.rows[along]
 			-- Fade the small tail residual to zero; no hard end-cap at the detection threshold.
@@ -774,14 +775,32 @@ local function RepairRaisedTerminalHeightStrips(grid)
 				if drop > 0 then
 					grid:set(x, y, old - drop)
 					modified = modified + 1
+					plan_modified = plan_modified + 1
 					max_drop = math.max(max_drop, drop)
 				end
 			end
 		end
+		if plan_modified > 0 then
+			local x0, y0, x1, y1
+			if side.name == "left" then
+				x0, y0, x1, y1 = 0, plan.first, 3, plan.last + 1
+			elseif side.name == "right" then
+				x0, y0, x1, y1 = w - 3, plan.first, w, plan.last + 1
+			elseif side.name == "top" then
+				x0, y0, x1, y1 = plan.first, 0, plan.last + 1, 3
+			else
+				x0, y0, x1, y1 = plan.first, h - 3, plan.last + 1, h
+			end
+			dirty_regions[#dirty_regions + 1] = {
+				source = "terminal", side = side.name,
+				x0 = x0, y0 = y0, x1 = x1, y1 = y1,
+			}
+		end
 	end
 	return modified > 0, { reason = modified > 0 and "raised three-cell terminal strips lowered"
 		or "no coherent raised terminal strip", modified = modified, max_drop = max_drop,
-		width = 3, spans = table.concat(spans, ","), threshold = threshold }
+		width = 3, spans = table.concat(spans, ","), threshold = threshold,
+		dirty_regions = dirty_regions }
 end
 
 -- A few vanilla height fields contain long one-cell discontinuities in their perimeter terrain.
@@ -2649,7 +2668,7 @@ local function PrepareOuterResourceTerrain(map)
 	local native_weight_scale, native_height_scale = 4096, 256
 	local native_tile_step = math.floor(height_tile + 0.5)
 	local native_sample_step = 4
-	local native_raster_cells, native_mask_samples = 0, 0
+	local native_raster_cells, native_mask_samples, dirty_height_regions = 0, 0, {}
 	local modified_cells, shaped_patches = 0, 0
 
 	local function patch_sort()
@@ -2865,6 +2884,10 @@ local function PrepareOuterResourceTerrain(map)
 			local packed_result = own(native_repack(result, native_is_compute(grid)))
 			assert(packed_result, "native result conversion failed")
 			grid:copyrect(packed_result, local_box, point_fn(x0, y0))
+			dirty_height_regions[#dirty_height_regions + 1] = {
+				source = "patch", kind = patch.kind, q = patch.q, r = patch.r,
+				x0 = x0, y0 = y0, x1 = x1 + 1, y1 = y1 + 1,
+			}
 			return changed_cells, local_width * local_height, samples
 		end)
 		for index = #owned, 1, -1 do
@@ -2894,6 +2917,9 @@ local function PrepareOuterResourceTerrain(map)
 			map.SuperBigMapTerminalHeightStripReport = report
 		end
 		modified_cells = modified_cells + report.modified
+		for _, region in ipairs(report.dirty_regions or {}) do
+			dirty_height_regions[#dirty_height_regions + 1] = region
+		end
 		TerrainCreaseAudit(repaired and "TERMINAL_STRIP_REPAIRED" or "TERMINAL_STRIP_SKIPPED", report, map)
 	end
 
@@ -2950,6 +2976,11 @@ local function PrepareOuterResourceTerrain(map)
 		native_raster_cells = native_raster_cells,
 		native_mask_samples = native_mask_samples,
 		native_sample_step = native_sample_step,
+		dirty_region_certificate_version = 1,
+		dirty_height_regions = dirty_height_regions,
+		dirty_region_count = #dirty_height_regions,
+		height_grid_width = width, height_grid_height = height,
+		height_tile_size = height_tile, map_width = map_w, map_height = map_h,
 		error = not ok_apply and tostring(apply_error)
 			or not set_ok and tostring(set_error) or "",
 	}
@@ -2977,6 +3008,118 @@ local function PrepareOuterResourceTerrain(map)
 			.. " error=" .. tostring(report.error))
 	end
 	return set_ok and modified_cells > 0, report
+end
+
+-- Rebuild only the passability regions whose height cells were actually written by
+-- PrepareOuterResourceTerrain. The certificate uses half-open height-grid boxes from the
+-- production raster and terminal-strip writers; every box is expanded by the stock two-pass-tile
+-- dependency before it reaches the engine. Buildability remains a single full-map rebuild because
+-- the public API exposes no region form. There is deliberately no whole-map passability fallback.
+local function RebuildOuterResourceTerrainRegions(map, preparation, stage)
+	local unit = "outer resource terrain dirty-region rebuild"
+	local function fail(reason)
+		OptimizationFailure(unit, reason, map)
+		error(unit .. ": " .. tostring(reason), 0)
+	end
+	if not map or type(preparation) ~= "table" then
+		return fail("dirty-region certificate is missing")
+	end
+	if preparation.dirty_region_certificate_version ~= 1
+		or type(preparation.dirty_height_regions) ~= "table" then
+		return fail("dirty-region certificate version or region list is invalid")
+	end
+	local regions = preparation.dirty_height_regions
+	if #regions < 1 or tonumber(preparation.dirty_region_count) ~= #regions then
+		return fail("dirty-region certificate count is invalid")
+	end
+	local grid_w, grid_h = tonumber(preparation.height_grid_width),
+		tonumber(preparation.height_grid_height)
+	local height_tile = tonumber(preparation.height_tile_size)
+	local map_w, map_h = TerrainSize(map)
+	if grid_w ~= math.floor(grid_w or -1) or grid_h ~= math.floor(grid_h or -1)
+		or grid_w < 1 or grid_h < 1 or type(height_tile) ~= "number" or height_tile <= 0
+		or map_w <= 0 or map_h <= 0
+		or tonumber(preparation.map_width) ~= map_w
+		or tonumber(preparation.map_height) ~= map_h then
+		return fail("dirty-region certificate geometry is invalid")
+	end
+	local terrain_api = Global("terrain")
+	local rebuild_buildable = Global("RebuildBuildableGrid")
+	local box_fn = Global("box")
+	local const_tbl = Global("const")
+	local pass_tile = type(const_tbl) == "table" and tonumber(const_tbl.PassTileSize) or nil
+	if not (type(terrain_api) == "table"
+		and type(terrain_api.InvalidateHeight) == "function"
+		and type(terrain_api.InvalidateType) == "function"
+		and type(terrain_api.RebuildPassability) == "function"
+		and type(rebuild_buildable) == "function" and type(box_fn) == "function"
+		and type(pass_tile) == "number" and pass_tile > 0) then
+		return fail("dirty-region rebuild APIs are unavailable")
+	end
+	local dependency_margin = math.floor(pass_tile * 2)
+	local pass_regions = {}
+	for index, region in ipairs(regions) do
+		local x0, y0, x1, y1 = tonumber(region.x0), tonumber(region.y0),
+			tonumber(region.x1), tonumber(region.y1)
+		if x0 ~= math.floor(x0 or -1) or y0 ~= math.floor(y0 or -1)
+			or x1 ~= math.floor(x1 or -1) or y1 ~= math.floor(y1 or -1)
+			or x0 < 0 or y0 < 0 or x1 <= x0 or y1 <= y0
+			or x1 > grid_w or y1 > grid_h
+			or (region.source ~= "patch" and region.source ~= "terminal") then
+			return fail("dirty-region certificate box " .. tostring(index) .. " is invalid")
+		end
+		local world_x0 = math.max(0, math.floor(x0 * height_tile) - dependency_margin)
+		local world_y0 = math.max(0, math.floor(y0 * height_tile) - dependency_margin)
+		local world_x1 = math.min(map_w, math.ceil(x1 * height_tile) + dependency_margin)
+		local world_y1 = math.min(map_h, math.ceil(y1 * height_tile) + dependency_margin)
+		if world_x1 <= world_x0 or world_y1 <= world_y0 then
+			return fail("dirty-region certificate box " .. tostring(index) .. " clamps empty")
+		end
+		pass_regions[index] = box_fn(world_x0, world_y0, world_x1, world_y1)
+	end
+
+	stage = tostring(stage or "outer resource terrain")
+	local report = {
+		stage = stage, regions = #pass_regions, dependency_margin = dependency_margin,
+		passability_ms = 0, buildable_ms = 0, total_ms = 0, error = "",
+	}
+	local total_started = GetPreciseTicks()
+	local pass_started = GetPreciseTicks()
+	local pass_token = LoadingBegin(
+		"surface outer resource dirty-region RebuildPassability (" .. stage .. ")", map,
+		{ regions = #pass_regions, dependency_margin = dependency_margin })
+	local pass_ok, pass_error = pcall(function()
+		for _, region in ipairs(pass_regions) do
+			terrain_api.InvalidateHeight(map, region)
+			terrain_api.InvalidateType(map, region)
+			terrain_api.RebuildPassability(map, region)
+		end
+	end)
+	report.passability_ms = GetPreciseTicks() - pass_started
+	LoadingEnd(pass_token, { error = pass_ok and "" or tostring(pass_error),
+		regions = #pass_regions }, pass_ok)
+	if not pass_ok then
+		report.error = "dirty-region passability rebuild failed: " .. tostring(pass_error)
+		map.SuperBigMapOuterResourceDirtyRebuildReport = report
+		return fail(report.error)
+	end
+	local buildable_started = GetPreciseTicks()
+	local buildable_token = LoadingBegin(
+		"surface outer resource RebuildBuildableGrid (" .. stage .. ")", map)
+	local buildable_ok, buildable_error = pcall(rebuild_buildable, map)
+	report.buildable_ms = GetPreciseTicks() - buildable_started
+	report.total_ms = GetPreciseTicks() - total_started
+	LoadingEnd(buildable_token, { error = buildable_ok and "" or tostring(buildable_error) },
+		buildable_ok)
+	if not buildable_ok then
+		report.error = "outer resource buildable-grid rebuild failed: "
+			.. tostring(buildable_error)
+		map.SuperBigMapOuterResourceDirtyRebuildReport = report
+		return fail(report.error)
+	end
+	map.SuperBigMapOuterResourceDirtyRebuildReport = report
+	map.SuperBigMapRevalidationRebuiltGrids = true
+	return true, report
 end
 
 -- Run only after the engine has rebuilt passability and the buildable grid from the edited height
@@ -7492,6 +7635,7 @@ local TerrainCopy = {
 	ClearDecorRelief = ClearDecorRelief,
 	AuditNaturalMountainBaseBuildableAprons = AuditNaturalMountainBaseBuildableAprons,
 	PrepareOuterResourceTerrain = PrepareOuterResourceTerrain,
+	RebuildOuterResourceTerrainRegions = RebuildOuterResourceTerrainRegions,
 	AuditOuterResourceTerrain = AuditOuterResourceTerrain,
 }
 SuperBigMap.TerrainCopy = TerrainCopy

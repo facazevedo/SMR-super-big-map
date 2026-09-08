@@ -11156,8 +11156,11 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								.. tostring(resource_terrain_stats.error))
 						end
 						if resource_terrain_changed == true then
-							SuperBigMap.GenerationGrids.RebuildFinal(
-								map, "after outer resource terrain preparation")
+							if type(TerrainCopy.RebuildOuterResourceTerrainRegions) ~= "function" then
+								error("outer resource terrain dirty-region rebuild is unavailable")
+							end
+							TerrainCopy.RebuildOuterResourceTerrainRegions(map, resource_terrain_stats,
+								"after outer resource terrain preparation")
 							-- TopUpDeposits may have published candidates validated against the old grids.
 							-- Force anomaly/effect selection to observe the rebuilt terrain instead.
 							if type(deposits.ClearTopUpPlacementPool) == "function" then
@@ -11186,7 +11189,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 									.. tostring(repair_stats.error))
 							end
 							if repair_changed ~= true then break end
-							SuperBigMap.GenerationGrids.RebuildFinal(map,
+							TerrainCopy.RebuildOuterResourceTerrainRegions(map, repair_stats,
 								"after outer resource terrain repair " .. tostring(terrain_repair_attempt))
 							if type(deposits.ClearTopUpPlacementPool) == "function" then
 								deposits.ClearTopUpPlacementPool(map)
