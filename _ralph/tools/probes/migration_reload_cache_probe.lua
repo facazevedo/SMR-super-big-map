@@ -31,9 +31,20 @@ rules.StageNativeEnrichmentRecords = function(map, records, reason, signature)
 		trace.before = result(verify, map, #records, signature)
 		trace.status = "ready"
 		print("[MigrationCacheProbe] ready count=" .. tostring(#records))
-		-- The host captures this state, injects one reload, then authorizes comparison.
+		-- smr reload waits for main-menu readiness, which paused generation cannot
+		-- satisfy. Observe completion here without waiting for a host release flag.
 		-- No OnMsg registration at runtime and no in-game ReloadLua invocation.
-		while rawget(_G, "MIGRATION_CACHE_COMPARE") ~= true do Sleep(50) end
+		local polls = 0
+		while (const.LuaReloads or 0) <= trace.reloads_before
+			or rules == sbm.DepositRules do
+			Sleep(50)
+			polls = polls + 1
+			if polls >= 3600 then
+				trace.status = "reload_wait_expired"
+				error("migration cache probe: reload boundary not observed within 180 seconds")
+				return staged, err
+			end
+		end
 		trace.reloads_after = const.LuaReloads or 0
 		trace.published_rules = tostring(sbm.DepositRules)
 		trace.rules_changed = rules ~= sbm.DepositRules
@@ -46,7 +57,9 @@ rules.StageNativeEnrichmentRecords = function(map, records, reason, signature)
 			.. " published_count=" .. tostring(trace.published_after.count))
 		-- Preserve the first red verifier result for host capture and scoped teardown.
 		-- Do not permit migration cleanup to create unrelated cascade errors.
-		while true do Sleep(50) end
+		for i = 1, 2400 do Sleep(50) end
+		trace.status = "capture_wait_expired"
+		error("migration cache probe: host did not stop diagnostic within 120 seconds")
 	end
 	return staged, err
 end
