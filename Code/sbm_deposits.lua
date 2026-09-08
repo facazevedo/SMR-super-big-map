@@ -4056,6 +4056,8 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 	local rand_int = options.rand_int
 	local classify_center = options.classify_center
 	local build_candidate = options.build_candidate
+	local validate_static = options.validate_static
+	local validate_dynamic = options.validate_dynamic
 	if type(centers) ~= "table" or #centers == 0 then
 		return nil, "natural mountain-base centers unavailable"
 	end
@@ -4066,7 +4068,8 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 		return nil, "cluster specifications unavailable"
 	end
 	if type(rand_int) ~= "function" or type(classify_center) ~= "function"
-		or type(build_candidate) ~= "function" then
+		or type(build_candidate) ~= "function" or type(validate_static) ~= "function"
+		or type(validate_dynamic) ~= "function" then
 		return nil, "planner callbacks unavailable"
 	end
 
@@ -4082,23 +4085,45 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 	local stats = {
 		strategy = "direct_seeded_cluster_v1", centers_available = #centers,
 		centers_attempted = 0, candidate_attempts = 0, valid_candidates = 0,
+		terrain_candidate_entries = #centers, static_validations = 0,
+		static_cache_reuses = 0, static_rejections = 0,
+		dynamic_validations = 0, dynamic_rejections = 0,
+		accepted_candidates = 0, rejected_candidates = 0,
 		plans = 0, outer_plans = 0, inner_plans = 0,
 		center_attempt_budget = center_attempt_budget,
 		candidate_attempt_budget = candidate_attempt_budget,
 	}
 
-	local function shuffled_copy(source)
-		local copy = {}
-		for index, value in ipairs(source) do copy[index] = value end
-		for index = #copy, 2, -1 do
-			local draw = rand_int(index)
-			if type(draw) ~= "number" or draw < 0 or draw >= index then
-				return nil, "private random stream returned an invalid draw"
-			end
-			local swap = math.floor(draw) + 1
-			copy[index], copy[swap] = copy[swap], copy[index]
+	local function greatest_common_divisor(a, b)
+		while b ~= 0 do a, b = b, a % b end
+		return a
+	end
+	local function seeded_permutation(count)
+		if count <= 0 then return function() return nil end end
+		local start = rand_int(count)
+		if type(start) ~= "number" or start < 0 or start >= count then
+			return nil, "private random stream returned an invalid start draw"
 		end
-		return copy
+		start = math.floor(start)
+		local step = 1
+		if count > 1 then
+			local draw = rand_int(count - 1)
+			if type(draw) ~= "number" or draw < 0 or draw >= count - 1 then
+				return nil, "private random stream returned an invalid step draw"
+			end
+			step = math.floor(draw) + 1
+			while greatest_common_divisor(step, count) ~= 1 do
+				step = step + 1
+				if step >= count then step = 1 end
+			end
+		end
+		local cursor = 0
+		return function()
+			if cursor >= count then return nil end
+			local index = ((start + cursor * step) % count) + 1
+			cursor = cursor + 1
+			return index
+		end
 	end
 
 	local bands = { outer = {}, inner = {} }
@@ -4108,14 +4133,14 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 			bands[band][#bands[band] + 1] = { center = center, index = index }
 		end
 	end
-	local error_message
-	bands.outer, error_message = shuffled_copy(bands.outer)
-	if not bands.outer then return nil, error_message, stats end
-	bands.inner, error_message = shuffled_copy(bands.inner)
-	if not bands.inner then return nil, error_message, stats end
-
-	local band_cursors = { outer = 1, inner = 1 }
+	local band_orders = {}
+	local static_verdicts = {}
 	local reserved, plans = {}, {}
+	local function finish_stats()
+		stats.rejected_candidates = math.max(0,
+			stats.candidate_attempts - stats.accepted_candidates)
+		return stats
+	end
 	local function distance(a, b)
 		local dq, dr = a.q - b.q, a.r - b.r
 		return math.max(math.abs(dq), math.abs(dr), math.abs(dq + dr))
@@ -4124,33 +4149,64 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 		local target = math.max(1, math.floor(tonumber(spec.resource_target) or 0))
 		local band = spec_index <= outer_count and "outer" or "inner"
 		local source = bands[band]
-		local cursor = band_cursors[band]
+		local next_center = band_orders[band]
+		if not next_center then
+			local order_error
+			next_center, order_error = seeded_permutation(#source)
+			if not next_center then return nil, order_error, finish_stats() end
+			band_orders[band] = next_center
+		end
 		local centers_attempted, candidate_attempts = 0, 0
 		local chosen
-		while cursor <= #source and centers_attempted < center_attempt_budget
+		while centers_attempted < center_attempt_budget
 			and candidate_attempts < candidate_attempt_budget do
-			local center_entry = source[cursor]
-			cursor = cursor + 1
+			local center_index = next_center()
+			if not center_index then break end
+			local center_entry = source[center_index]
 			centers_attempted = centers_attempted + 1
 			stats.centers_attempted = stats.centers_attempted + 1
-			local ranked_offsets, shuffle_error = shuffled_copy(offsets)
-			if not ranked_offsets then return nil, shuffle_error, stats end
+			local next_offset, order_error = seeded_permutation(#offsets)
+			if not next_offset then return nil, order_error, finish_stats() end
 			local trial, trial_hexes = {}, {}
-			for _, offset in ipairs(ranked_offsets) do
+			while true do
 				if candidate_attempts >= candidate_attempt_budget then break end
+				local offset_index = next_offset()
+				if not offset_index then break end
+				local offset = offsets[offset_index]
 				candidate_attempts = candidate_attempts + 1
 				stats.candidate_attempts = stats.candidate_attempts + 1
 				local candidate = build_candidate(center_entry.center, center_entry.index,
 					offset, band, spec, spec_index)
 				if candidate and type(candidate.q) == "number" and type(candidate.r) == "number" then
 					local key = tostring(candidate.q) .. ":" .. tostring(candidate.r)
-					local clear = not trial_hexes[key]
+					local cached = static_verdicts[key]
+					if cached then
+						stats.static_cache_reuses = stats.static_cache_reuses + 1
+						candidate.terrain_type = cached.terrain_type
+					else
+						stats.static_validations = stats.static_validations + 1
+						cached = { valid = validate_static(candidate) == true,
+							terrain_type = candidate.terrain_type }
+						static_verdicts[key] = cached
+					end
+					local clear = cached.valid == true
+					if not clear then
+						stats.static_rejections = stats.static_rejections + 1
+					end
+					if clear then clear = not trial_hexes[key] end
 					if clear then
 						for _, prior in ipairs(reserved) do
 							if distance(candidate, prior) <= cluster_radius then
 								clear = false
 								break
 							end
+						end
+					end
+					if clear then
+						stats.dynamic_validations = stats.dynamic_validations + 1
+						clear = validate_dynamic(candidate) == true
+						if not clear then
+							stats.dynamic_rejections = stats.dynamic_rejections + 1
 						end
 					end
 					if clear then
@@ -4174,13 +4230,12 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 			end
 			if chosen then break end
 		end
-		band_cursors[band] = cursor
 		if not chosen then
 			return nil, "cluster " .. tostring(spec_index) .. " " .. band
 				.. " search exhausted: centers=" .. tostring(centers_attempted)
 				.. "/" .. tostring(center_attempt_budget)
 				.. " candidates=" .. tostring(candidate_attempts)
-				.. "/" .. tostring(candidate_attempt_budget), stats
+				.. "/" .. tostring(candidate_attempt_budget), finish_stats()
 		end
 		local plan = {
 			id = spec_index, target = target, extractor_target = spec.extractor_target,
@@ -4192,9 +4247,10 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 		stats.plans = stats.plans + 1
 		if plan.outermost then stats.outer_plans = stats.outer_plans + 1
 		else stats.inner_plans = stats.inner_plans + 1 end
+		stats.accepted_candidates = stats.accepted_candidates + #chosen
 		for _, candidate in ipairs(chosen) do reserved[#reserved + 1] = candidate end
 	end
-	return plans, nil, stats
+	return plans, nil, finish_stats()
 end
 -- DIRECT_SEEDED_CLUSTER_PLANNER_END
 
@@ -4694,10 +4750,17 @@ function DepositRules.TopUpDeposits(map)
 		-- is built, and exhaustion is a loud invalid-map result rather than an eager fallback.
 		local direct_cluster_plans = { outermost = {}, inner = {} }
 		local direct_cluster_repulsion
+		local direct_cluster_dynamic_validator
 		local direct_cluster_stats = {
 			strategy = "inactive", centers_available = 0, centers_attempted = 0,
 			candidate_attempts = 0, valid_candidates = 0, plans = 0,
 			outer_plans = 0, inner_plans = 0, rng_draws = 0,
+			terrain_candidate_entries = 0, static_validations = 0,
+			static_cache_reuses = 0, static_rejections = 0,
+			dynamic_validations = 0, dynamic_rejections = 0,
+			accepted_candidates = 0, rejected_candidates = 0,
+			placement_dynamic_validations = 0, placement_dynamic_rejections = 0,
+			placement_accepted = 0,
 		}
 		if not underground and surface_mountain_base_minimum > 0
 			and surface_mountain_base_ring_sectors > 0 then
@@ -4718,6 +4781,15 @@ function DepositRules.TopUpDeposits(map)
 			direct_cluster_repulsion = NewTopUpRepulsionTracker(
 				map, "direct seeded surface cluster plans")
 			local direct_context = NewDepositValidationContext(map)
+			direct_cluster_dynamic_validator = function(candidate, profile)
+				local pt = point(candidate.x, candidate.y)
+				if not IsUnobstructedAt(map, pt, true, direct_context,
+					candidate.q, candidate.r) then return false end
+				if profile then return direct_cluster_repulsion.CanPlace(candidate, profile) end
+				return direct_cluster_repulsion.CanPlaceUnique(candidate)
+					and direct_cluster_repulsion.CanPlaceMinimum(candidate, false,
+						TopUpEnrichmentMinimumHexDistance())
+			end
 			local resource_cluster_radius = math.max(4,
 				math.floor(cfg().OUTER_RESOURCE_CLUSTER_RADIUS_HEXES or 12))
 			local offsets = {}
@@ -4772,36 +4844,38 @@ function DepositRules.TopUpDeposits(map)
 						if not ok_world or type(x) ~= "number" or type(y) ~= "number" then
 							return nil
 						end
-						local outermost = IsInFinalOuterResourceWorldBand(map, x, y, 1)
-						if (band == "outer") ~= outermost
-							or not IsInFinalOuterResourceWorldBand(map, x, y,
-								surface_mountain_base_ring_sectors) then
-							return nil
-						end
 						local sector = SectorAtPoint(map, x, y)
-						local candidate = {
+						return {
 							x = x, y = y, q = q, r = r, sector = sector,
-							sector_id = sector and sector.id,
+							sector_id = sector and sector.id, band = band,
+							_sbm_mountain_base_apron = true,
+							_sbm_mountain_base_natural = true,
+							_sbm_mountain_base_center_index = center_index,
 						}
-						if not sector or SectorIsScanned(sector)
+					end,
+					validate_static = function(candidate)
+						local outermost = IsInFinalOuterResourceWorldBand(
+							map, candidate.x, candidate.y, 1)
+						if (candidate.band == "outer") ~= outermost
+							or not IsInFinalOuterResourceWorldBand(map, candidate.x, candidate.y,
+								surface_mountain_base_ring_sectors)
+							or not candidate.sector or SectorIsScanned(candidate.sector)
 							or not surface_extractor_footprint_within_map(candidate) then
-							return nil
+							return false
 						end
-						local pt = point(x, y)
-						local can_receive, _, _, _, final_q, final_r = CanReceiveDeposit(
-							map, pt, direct_context, false)
-						if not can_receive or final_q ~= q or final_r ~= r then return nil end
+						local pt = point(candidate.x, candidate.y)
+						local terrain_ok, _, _, _, final_q, final_r =
+							CanReceiveDepositTerrain(map, pt, direct_context)
+						if not terrain_ok or final_q ~= candidate.q or final_r ~= candidate.r then
+							return false
+						end
 						candidate.terrain_type = TerrainTypeAt(map, pt, direct_context) or -1
-						candidate._sbm_repulsion_hex = tostring(q) .. ":" .. tostring(r)
-						if not direct_cluster_repulsion.CanPlaceUnique(candidate)
-							or not direct_cluster_repulsion.CanPlaceMinimum(candidate, false,
-								TopUpEnrichmentMinimumHexDistance()) then
-							return nil
-						end
-						candidate._sbm_mountain_base_apron = true
-						candidate._sbm_mountain_base_natural = true
-						candidate._sbm_mountain_base_center_index = center_index
-						return candidate
+						candidate._sbm_repulsion_hex = tostring(candidate.q)
+							.. ":" .. tostring(candidate.r)
+						return true
+					end,
+					validate_dynamic = function(candidate)
+						return direct_cluster_dynamic_validator(candidate, nil)
 					end,
 				})
 			if not plan_ok then
@@ -4858,6 +4932,10 @@ function DepositRules.TopUpDeposits(map)
 		local repulsion = direct_cluster_repulsion
 			or NewTopUpRepulsionTracker(map, "resources")
 		local function surface_quota_commit(candidate)
+			if candidate and direct_cluster_stats.strategy == "direct_seeded_cluster_v1" then
+				direct_cluster_stats.placement_accepted =
+					(direct_cluster_stats.placement_accepted or 0) + 1
+			end
 			return candidate ~= nil
 		end
 		local surface_selector_loads = not underground
@@ -5224,8 +5302,18 @@ function DepositRules.TopUpDeposits(map)
 			cluster_count_stream = cluster_count_draw_stream,
 			center_attempt_budget = direct_cluster_stats.center_attempt_budget or 0,
 			candidate_attempt_budget = direct_cluster_stats.candidate_attempt_budget or 0,
+			terrain_candidate_entries = direct_cluster_stats.terrain_candidate_entries or 0,
 			centers_attempted = direct_cluster_stats.centers_attempted or 0,
 			candidate_attempts = direct_cluster_stats.candidate_attempts or 0,
+			rejected_candidates = direct_cluster_stats.rejected_candidates or 0,
+			static_validations = direct_cluster_stats.static_validations or 0,
+			static_cache_reuses = direct_cluster_stats.static_cache_reuses or 0,
+			static_rejections = direct_cluster_stats.static_rejections or 0,
+			dynamic_validations = direct_cluster_stats.dynamic_validations or 0,
+			dynamic_rejections = direct_cluster_stats.dynamic_rejections or 0,
+			accepted_candidates = direct_cluster_stats.accepted_candidates or 0,
+			placement_dynamic_validations = 0, placement_dynamic_rejections = 0,
+			placement_accepted = 0,
 			valid_candidates = direct_cluster_stats.valid_candidates or 0,
 			rng_draws = direct_cluster_stats.rng_draws or 0,
 		}
@@ -5257,12 +5345,19 @@ function DepositRules.TopUpDeposits(map)
 				end
 				return count
 			end
-			local function take(terrain_type)
+			local function take(terrain_type, profile)
 				for _, candidate in ipairs(candidates or {}) do
 					if not consumed[candidate]
 						and (terrain_type == nil or candidate.terrain_type == terrain_type) then
 						consumed[candidate] = true
-						return candidate
+						direct_cluster_stats.placement_dynamic_validations =
+							(direct_cluster_stats.placement_dynamic_validations or 0) + 1
+						if direct_cluster_dynamic_validator
+							and direct_cluster_dynamic_validator(candidate, profile) then
+							return candidate
+						end
+						direct_cluster_stats.placement_dynamic_rejections =
+							(direct_cluster_stats.placement_dynamic_rejections or 0) + 1
 					end
 				end
 				return nil
@@ -5384,6 +5479,12 @@ function DepositRules.TopUpDeposits(map)
 			cluster_plan_diagnostic.quota = surface_resource_quota_added
 			cluster_plan_diagnostic.outermost = surface_outermost_resource_added
 			cluster_plan_diagnostic.inner_band = surface_inner_band_resource_added
+			cluster_plan_diagnostic.placement_dynamic_validations =
+				direct_cluster_stats.placement_dynamic_validations or 0
+			cluster_plan_diagnostic.placement_dynamic_rejections =
+				direct_cluster_stats.placement_dynamic_rejections or 0
+			cluster_plan_diagnostic.placement_accepted =
+				direct_cluster_stats.placement_accepted or 0
 			if cluster_plan_diagnostic.placed_clusters < resource_cluster_minimum_count
 				or cluster_plan_diagnostic.placed_clusters > resource_cluster_maximum_count then
 				cluster_plan_fail("outer-ring resource cluster count failed: required="

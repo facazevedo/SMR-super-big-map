@@ -137,7 +137,7 @@ local cache_plans, cache_error, cache_stats = planner({
 	specs = { { resource_target = 2 } }, outer_count = 1,
 	cluster_radius = 12, minimum_member_distance = 3,
 	center_attempt_budget = 1, candidate_attempt_budget = 3,
-	rand_int = function(limit) return limit - 1 end,
+	rand_int = function() return 0 end,
 	classify_center = function(center) return center.band end,
 	build_candidate = function(center, _, offset)
 		return { q = center.q + offset.dq, r = center.r + offset.dr }
@@ -171,6 +171,8 @@ local failed, failure, failure_stats = planner({
 	rand_int = fail_rng,
 	classify_center = function(center) return center.band end,
 	build_candidate = function() return { q = 0, r = 0 } end,
+	validate_static = function() return true end,
+	validate_dynamic = function() return true end,
 })
 assert(failed == nil and tostring(failure):find("search exhausted", 1, true))
 assert(failure_stats.centers_attempted == 1 and failure_stats.candidate_attempts == 1)
@@ -214,8 +216,8 @@ require_policy(topup:find('OptimizationFailure("direct seeded surface clusters"'
 require_policy(config_source:find("config.OptimizeDirectSeededSurfaceClusters = true", 1, true)
 	and config_source:find("C.OPTIMIZE_DIRECT_SEEDED_SURFACE_CLUSTERS", 1, true),
 	"direct planner config is not enabled and compiled")
-require_policy(metadata_source:find("'version', 937", 1, true),
-	"behavior-change version is not 937")
+require_policy(metadata_source:find("'version', 938", 1, true),
+	"behavior-change version is not 938")
 
 local findings = {
 	"DIRECT_SEEDED_TOPUP_BEHAVIOR",
