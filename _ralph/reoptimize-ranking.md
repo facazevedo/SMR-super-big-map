@@ -524,3 +524,35 @@ All49offline commands pass, including production stamp/loop/failure-tail tests
 and a230-template fully blocked finite-exhaustion fixture. Cold results pending.
 The native worst-case cost of exhausting millions of cells remains a runtime risk;
 finite coverage does not prove that every map has sufficient legal decor capacity.
+
+v952 `2356f0f` cold checks (single provisional samples, not accepted savings):
+
+| Scenario | START-to-T1 | Resources/pads | Decor | Result |
+|---|---:|---:|---:|---|
+| 15S67E | 160.272s | 9/9 | 99/99 | Available numeric gates pass; pairs/control/visual pending |
+| 24S74W | 187.069s | 8/8 | 171/171 | Correct sole D8 anchor; available numeric gates pass |
+| 45S120W | 139.146s | 8/8 | 53/53 | Available numeric gates pass |
+| 61N136W | No completed T1 | Unknown | Unknown | Stopped after >10 minutes; DAP quit timed out |
+| 17S11W | Not run | — | — | Finite phase stopped at 61N; no substitute scenario |
+
+The completed three retain canonical snapshots, raw height grids, original images,
+flushed logs and clean teardown. Two earlier 15S diagnostic-export failures remain
+separate invalid evidence. 61N partial logs and exact test identity were preserved
+before forced termination; it has neither a full report nor a clean-teardown claim.
+The finite decor candidate phase needs runtime diagnosis, not an all-green label.
+
+Candidate v953 fixes the remaining narrow edge-join defect: a preferred guard
+limit could end the bounded crease join inside the detected resampling ramp,
+leaving one untouched low sample beside the translated edge. Two symmetric
+endpoint clamps ensure the join reaches that translated endpoint. Detection,
+translation, bounded quintic formula, resource footprints and three-cell terminal
+repair are unchanged; there is no broad taper or scenario/sector special case.
+Read-only source review found no further issue. The full production helper now
+passes all-four-edge/corner/boundedness and unchanged-safe-join regressions;
+the old endpoints reproduce the defect. All50offline commands pass. Native visual
+confirmation and the unresolved61N/17S plus pair/control gates remain required.
+
+Owner permits temporary debug logging. Next is a separate instrumented61N
+diagnostic for stage time, matcher/circle cost and live candidate/placement/reject
+counts. Its logging/yields invalidate performance acceptance; no permanent debug
+switch, weakened rule, automatic new strategy or Ralph restart is authorized here.

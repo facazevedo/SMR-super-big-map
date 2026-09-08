@@ -1306,11 +1306,17 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 							local join_lo, join_hi
 							if before_edge then
 								join_lo = math.max(outer_guard + 1, perp - 6)
+								-- The guard is a detection/preferred-join limit, not a no-write
+								-- border: translation above already reaches the physical edge.
+								-- Never stop inside the ramp and leave a notch next to the
+								-- translated low endpoint. Retain every non-clipped join.
+								join_lo = math.min(join_lo, low_perp)
 								join_hi = math.min(selected.perp_n - 2, perp + width + 12)
 							else
 								join_lo = math.max(1, perp - 12)
 								join_hi = math.min(selected.perp_n - outer_guard - 2,
 									perp + width + 6)
+								join_hi = math.max(join_hi, low_perp)
 							end
 							modified = modified
 								+ feather_join(selected.axis, along, join_lo, join_hi)
