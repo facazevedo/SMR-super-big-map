@@ -509,3 +509,18 @@ now prevents reveal mutation after a failed lookup. Production selection tests
 are red on v950 and green on v951 (110 cases); 46 offline commands pass before
 the version bump. Cold verification is pending. This is a correctness checkpoint,
 not an accepted optimization. Decor and edge-wall work remains required.
+
+v951 `acae71e` cold24S confirms the corrected sole D8 anchor at157.203s, resources
+still valid8/8. Full snapshot/logs and clean teardown; decor144/171 remains red.
+
+Candidate v952 addresses general decor correctness, not a new performance strategy:
+explicit cosmetic creation whitelist (separate from existing-object scaling),
+no marker-only density credit, final rounded-coordinate band checks, and finite
+seeded interior candidate coverage after the random local search runs out.
+Terrain, matcher, template radius, occupancy and no-terrain-write rules stay intact.
+Underfill now records an optimization failure and displays an invalid-map notice.
+Review found and regressed both upper-bound rounding and loading-notice waiting.
+All49offline commands pass, including production stamp/loop/failure-tail tests
+and a230-template fully blocked finite-exhaustion fixture. Cold results pending.
+The native worst-case cost of exhausting millions of cells remains a runtime risk;
+finite coverage does not prove that every map has sufficient legal decor capacity.

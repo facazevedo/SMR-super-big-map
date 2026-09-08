@@ -65,7 +65,7 @@ local ObjectScalesWithTerrain = ObjectClone and ObjectClone.ObjectScalesWithTerr
 local DecorTopUp = {}
 SuperBigMap.DecorTopUp = DecorTopUp
 
-DecorTopUp.VERSION = 8
+DecorTopUp.VERSION = 9
 DecorTopUp.SEED_TAG = "SuperBigMapDecorEnginePass"
 DecorTopUp.LastStats = nil
 
@@ -156,9 +156,47 @@ local function circle_hits(list, x, y, radius)
 	return false
 end
 
+-- DECOR_OUTPUT_HELPERS_BEGIN
+local function IsAllowedDecorOutputClass(class_name, environment)
+	-- Existing objects may scale with terrain without being safe to CREATE as decor.
+	-- Keep this creation policy separate from ObjectScalesWithTerrain's defaults.
+	return class_name == "PrefabMarker" or class_name:sub(1, 5) == "Cliff"
+		or class_name:sub(1, 3) == "Dec" or class_name:sub(1, 5) == "Rocks"
+		or class_name:sub(1, 6) == "Stones"
+		or (environment == "Underground" and class_name:sub(1, 16) == "Underground_Arch")
+end
+-- DECOR_OUTPUT_HELPERS_END
+
+-- DECOR_FINITE_SITES_BEGIN
+local function NewDecorInteriorCursor(x0, y0, x1, y1, step, rand)
+	x0, y0, x1, y1 = math.ceil(x0), math.ceil(y0), math.ceil(x1), math.ceil(y1)
+	step = math.max(1, math.floor(step))
+	if x1 <= x0 or y1 <= y0 then return function() return nil end end
+	-- Integer-safe ceilings, including partial cells on the far edges.
+	local nx = math.floor((x1 - x0 + step - 1) / step)
+	local ny = math.floor((y1 - y0 + step - 1) / step)
+	local count = nx * ny
+	local index, stride = rand(count), rand(count) + 1
+	local function gcd(a, b)
+		while b ~= 0 do a, b = b, a % b end
+		return a
+	end
+	while gcd(stride, count) ~= 1 do stride = stride % count + 1 end
+	local remaining = count
+	return function()
+		if remaining == 0 then return nil end
+		local cx = x0 + (index % nx) * step
+		local cy = y0 + math.floor(index / nx) * step
+		index, remaining = (index + stride) % count, remaining - 1
+		-- One seeded candidate per cell, created only when requested; no candidate pool.
+		return cx + rand(math.min(step, x1 - cx)), cy + rand(math.min(step, y1 - cy))
+	end
+end
+-- DECOR_FINITE_SITES_END
+
 -- Runs while the stretch's pass edits are still suspended, after ScaleDecorationsToFull and
--- ScaleMarkersToFull have moved every marker to its stretched position.  Never throws; a hard
--- failure comes back as false plus a reason, and the map is left exactly as it was.
+-- ScaleMarkersToFull have moved every marker to its stretched position. Failures are recorded
+-- explicitly; a partially completed pass is never advertised as complete or rolled back.
 function DecorTopUp.Run(map, pass_edits_already_suspended)
 	local stats = { version = DecorTopUp.VERSION, enabled = false, placed = 0, objects = 0 }
 	DecorTopUp.LastStats = stats
@@ -242,6 +280,10 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 		local is_valid = Global("IsValid")
 		local done_object = Global("DoneObject")
 		local set_game_flags = Global("SetGameFlags")
+		if type(done_object) ~= "function" then
+			stats.error = "decor object-removal API unavailable"
+			return -- Fail before creating anything, including when engine error() would not throw.
+		end
 		if type(place_prefab) ~= "function" or type(weighted_rand) ~= "function"
 			or type(mul_div_round) ~= "function" or type(rotate_radius) ~= "function"
 			or type(point_fn) ~= "function" or type(xxhash) ~= "function"
@@ -468,14 +510,17 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 			end
 			local perr, objs = place_prefab(map, name, center, angle, nil, params)
 			if perr or type(objs) ~= "table" or #objs == 0 then return "failed" end
+			local first_new_object, cosmetic_objects = #placed_list + 1, 0
 			-- The group arrived at native offsets and native size.  Give it the stretch's
 			-- similarity about its centre so it matches its neighbours, and reseat each object on
 			-- the stretched terrain.
 			for _, obj in ipairs(objs) do
 				local ox, oy = PointXY(ObjectPosition(obj))
 				if type(ox) == "number" and type(oy) == "number" then
-					local nx = cx + (ox - cx) * length_scale
-					local ny = cy + (oy - cy) * length_scale
+					-- Validate the exact coordinates SetPos will receive, including rounding
+					-- across the half-open upper band/map boundary.
+					local nx = math.floor(cx + (ox - cx) * length_scale + 0.5)
+					local ny = math.floor(cy + (oy - cy) * length_scale + 0.5)
 					local outside = map_w and (nx < 0 or ny < 0 or nx >= map_w or ny >= map_h)
 					-- The centre was already refused inside the band; the similarity about that centre
 					-- can still push a single object of an edge-of-band group across the boundary.
@@ -503,15 +548,14 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 						-- (sbm_object_clone scale_stretch_allowlist), so the denial must not rest on
 						-- one inherited kind test.
 						or IsKindOfSafe(obj, "RubbleBase"))
-					local cosmetic = not denied and (is_stamp_marker
-						or (type(ObjectScalesWithTerrain) == "function" and ObjectScalesWithTerrain(obj) == true))
+					local cosmetic = not denied and IsAllowedDecorOutputClass(class_name, environment)
 					if (outside or banded or not cosmetic) and type(done_object) == "function" then
 						if banded then dropped_out_of_band = dropped_out_of_band + 1
 						elseif not outside then dropped_non_cosmetic = dropped_non_cosmetic + 1 end
 						pcall(done_object, obj)
 					else
 						if is_stamp_marker then obj.zone = ZONE_DECOR end
-						local np = point_fn(math.floor(nx + 0.5), math.floor(ny + 0.5))
+						local np = point_fn(nx, ny)
 						if type(np.SetTerrainZ) == "function" then
 							local okz, nz = pcall(np.SetTerrainZ, np, map)
 							if okz and nz then np = nz end
@@ -528,8 +572,22 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 						obj.SuperBigMapDecorEnginePass = true
 						placed_list[#placed_list + 1] = obj
 						objects = objects + 1
+						if not is_stamp_marker then cosmetic_objects = cosmetic_objects + 1 end
 					end
+				elseif type(done_object) == "function" then
+					-- An unpositioned creation cannot be certified cosmetic and in bounds.
+					dropped_non_cosmetic = dropped_non_cosmetic + 1
+					pcall(done_object, obj)
 				end
+			end
+			if cosmetic_objects == 0 then
+				-- A surviving stamp marker alone restores no visible decor density.
+				for i = #placed_list, first_new_object, -1 do
+					if type(done_object) == "function" then pcall(done_object, placed_list[i]) end
+					placed_list[i] = nil
+					objects = objects - 1
+				end
+				return "empty"
 			end
 			placed = placed + 1
 			prefabs_count[prefab] = (prefabs_count[prefab] or 0) + 1
@@ -615,13 +673,15 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 			for _, site in ipairs(templates) do allow(terrain_type_at(site.x, site.y)) end
 			stats.synthetic_allowed_types = allowed_count
 			local attempts, budget = 0, (target - placed) * per_group
+			local finite_templates = {}
+			for i = 1, #templates do finite_templates[i] = templates[i] end
 			local rejected = { obstruct = 0, decorated = 0, no_match = 0, bounds = 0, failed = 0,
 				terrain = 0, band = 0 }
 			-- A template hemmed in by mountain masses fails every draw on the obstruct circles (1,021
 			-- of 1,320 rejections in v903), and one whose annulus is already full fails every draw on
 			-- the decorated circles.  Both mean "no room at this reach", so after `patience`
 			-- consecutive no-room misses WIDEN that template instead of retiring it: double its jitter
-			-- reach and reset its counter, and retire it only once the reach is already at the cap.  A
+			-- reach and reset its counter, and defer to finite interior coverage at the reach cap. A
 			-- success resets the counter too.  Retiring outright is what v921 did (obstruct misses
 			-- only), and on a decor-dense site it dismantles the pool: at 15S67E 135 of 136 templates
 			-- retired -- 135 x 24 = 3,240 of the 3,527 obstruct rejections were retirement streaks --
@@ -669,13 +729,54 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 								if wider > max_reach then max_reach = wider end
 							else
 								table.remove(templates, ti)
-								exhausted = exhausted + 1
 							end
 						end
 					end
 				end
 			end
+			local random_attempts = attempts
+			local finite_cursors, finite_attempts = {}, 0
+			-- A miss streak is not proof that legal ground is exhausted. Continue through
+			-- a finite seeded cell cover of the interior, retaining each template's matcher,
+			-- radius, terrain-type restrictions and live stamp/occupancy checks. The old
+			-- budget bounds the random annulus phase only; this phase ends at exact demand
+			-- or exhaustion of all finite candidate cells, never an arbitrary miss count.
+			while placed < target and #finite_templates > 0 do
+				local ti = stream.rand(#finite_templates) + 1
+				local template = finite_templates[ti]
+				local cursor = finite_cursors[template]
+				if not cursor then
+					local radius = template.radius
+					cursor = NewDecorInteriorCursor(
+						math.max(radius, band_x0 or 0), math.max(radius, band_y0 or 0),
+						math.min((map_w or 0) - radius, band_x1 or 0),
+						math.min((map_h or 0) - radius, band_y1 or 0),
+						math.max(type_tile, math.floor(radius / 2)), stream.rand)
+					finite_cursors[template] = cursor
+				end
+				local sx, sy = cursor()
+				if sx == nil then
+					table.remove(finite_templates, ti)
+					exhausted = exhausted + 1
+				else
+					attempts, finite_attempts = attempts + 1, finite_attempts + 1
+					local outcome
+					if allowed_count > 0 and not allowed_types[terrain_type_at(sx, sy)] then
+						outcome = "terrain"
+					else
+						outcome = try_stamp(template.marker, sx, sy, template.radius)
+					end
+					if outcome == "placed" then
+						placed_synthetic = placed_synthetic + 1
+					else
+						rejected[outcome] = (rejected[outcome] or 0) + 1
+					end
+				end
+			end
 			stats.synthetic_templates_exhausted = exhausted
+			stats.synthetic_random_attempts = random_attempts
+			stats.synthetic_finite_attempts = finite_attempts
+			stats.synthetic_finite_templates_left = #finite_templates
 			stats.synthetic_escalations = escalations
 			stats.synthetic_reach_cap_percent = reach_cap
 			stats.synthetic_max_reach_percent = max_reach
@@ -707,6 +808,37 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 	end)
 	if not ok then
 		stats.error = tostring(err)
+	elseif stats.enabled and type(stats.target) == "number" and stats.placed ~= stats.target then
+		stats.error = string.format("decor candidate search incomplete: placed=%s target=%s",
+			tostring(stats.placed), tostring(stats.target))
+	end
+	if stats.error then
+		local State = SuperBigMap.State or {}
+		SuperBigMap.State = State
+		State.optimization_failures = State.optimization_failures or {}
+		State.optimization_failures[#State.optimization_failures + 1] = {
+			unit = "decor finite candidate coverage", reason = stats.error,
+			map = map and tostring(map.name) or nil,
+		}
+		local print_fn = Global("print")
+		if type(print_fn) == "function" then
+			print_fn("[Super Big Map][OptimizationFailure] decor: " .. stats.error)
+		end
+		local thread, message = Global("CreateRealTimeThread"), Global("CreateMessageBox")
+		if type(thread) == "function" and type(message) == "function" then
+			thread(function()
+				local sleep, loading = Global("Sleep"), Global("GetLoadingScreenDialog")
+				for _ = 1, 1200 do
+					local ok_loading, dialog
+					if type(loading) == "function" then ok_loading, dialog = pcall(loading) end
+					if not (ok_loading and dialog) then break end
+					if type(sleep) ~= "function" then break end
+					sleep(500)
+				end
+				pcall(message, nil, "Super Big Map: map generation failed", stats.error
+					.. "\n\nThis map is not valid. Please start a new game.")
+			end)
+		end
 		return false, stats
 	end
 	return true, stats
