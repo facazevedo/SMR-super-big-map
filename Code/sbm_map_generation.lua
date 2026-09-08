@@ -87,7 +87,7 @@ end
 
 -- Ported optimizations must never fail behind a fallback. Preserve the exact failure for the
 -- rules probe, print it unconditionally, and arrange a player-facing notice after loading ends.
-local function OptimizationFailure(unit, reason, map)
+function SuperBigMap.RecordOptimizationFailure(unit, reason, map)
 	local State = SuperBigMap.State or {}
 	SuperBigMap.State = State
 	State.optimization_failures = State.optimization_failures or {}
@@ -11571,7 +11571,8 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					if deferred_surface_completion then
 						local reason = "canonical surface final-grid rebuild failed: "
 							.. tostring(revalidation_err)
-						OptimizationFailure("surface final-grid rebuild deferral", reason, map)
+						SuperBigMap.RecordOptimizationFailure(
+							"surface final-grid rebuild deferral", reason, map)
 						SetLoadingPhase("Surface final grid rebuild failed; this map is invalid")
 					end
 					LoadingFinish("surface post-pipeline revalidation failed", map, {
@@ -11590,7 +11591,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 			if deferred_surface_completion then
 				local reason = tostring(thread_err or thread_ok)
 				map.SuperBigMapSurfacePostPipelineRevalidationError = reason
-				OptimizationFailure("surface final-grid rebuild deferral",
+				SuperBigMap.RecordOptimizationFailure("surface final-grid rebuild deferral",
 					"canonical rebuild scheduling failed: " .. reason, map)
 				SetLoadingPhase("Surface final grid rebuild scheduling failed; this map is invalid")
 				LoadingFinish("surface expansion thread failed before final revalidation", map,
