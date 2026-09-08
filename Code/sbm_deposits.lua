@@ -4069,8 +4069,19 @@ end
 
 -- A lazy tree of native buildable-region presence, not a pool of terrain candidates.
 -- Unknown API results stay eligible; every sampled point still needs the full validator.
+function DepositRules.DirectSeededLeafLimit(bounds, leaf_size)
+	local function axis(size)
+		if size <= 0 then return 0 end
+		local count = 1
+		while size > leaf_size do size, count = math.ceil(size / 2), count * 2 end
+		return count
+	end
+	return axis(bounds.x1 - bounds.x0) * axis(bounds.y1 - bounds.y0)
+end
+
 function DepositRules.NewDirectSeededBuildableGuide(options)
-	local stats = { queries = 0, cache_reuses = 0, empty = 0, unknown = 0 }
+	local stats = { queries = 0, cache_reuses = 0, empty = 0, unknown = 0,
+		leaves_visited = 0, boundary_fallbacks = 0 }
 	local leaf_size = math.max(1, options.leaf_size)
 	local function eligible(node)
 		if node.checked then
@@ -4091,9 +4102,13 @@ function DepositRules.NewDirectSeededBuildableGuide(options)
 		return node.present ~= false
 	end
 	local function sample(node)
-		if node.x1 <= node.x0 or node.y1 <= node.y0 or not eligible(node) then return nil end
-		while node.present == true
-			and math.max(node.x1 - node.x0, node.y1 - node.y0) > leaf_size do
+		if node.exhausted then return nil end
+		if node.x1 <= node.x0 or node.y1 <= node.y0
+			or not (node.conservative or eligible(node)) then
+			node.exhausted = true
+			return nil
+		end
+		if math.max(node.x1 - node.x0, node.y1 - node.y0) > leaf_size then
 			if not node.children then
 				local a = { x0 = node.x0, y0 = node.y0, x1 = node.x1, y1 = node.y1 }
 				local b = { x0 = node.x0, y0 = node.y0, x1 = node.x1, y1 = node.y1 }
@@ -4104,15 +4119,26 @@ function DepositRules.NewDirectSeededBuildableGuide(options)
 					local mid = math.floor((node.y0 + node.y1) / 2)
 					a.y1, b.y0 = mid, mid
 				end
-				node.children = { a, b }
+				if node.conservative then
+					a.conservative, b.conservative = true, true
+				elseif not eligible(a) and not eligible(b) then
+					-- Rounded native child queries can lose a boundary hex. In this
+					-- subtree visit each leaf conservatively instead of resampling a parent.
+					a.conservative, b.conservative = true, true
+					stats.boundary_fallbacks = stats.boundary_fallbacks + 1
+				end
+				node.children = options.rand_int(2) == 0 and { a, b } or { b, a }
 			end
-			local a, b = node.children[1], node.children[2]
-			local has_a, has_b = eligible(a), eligible(b)
-			-- A parent can contain a boundary hex that neither rounded child query sees.
-			-- Keep sampling the parent in that case; don't turn uncertain subdivision into loss.
-			if not has_a and not has_b then break end
-			node = has_a and (not has_b or options.rand_int(2) == 0) and a or b
+			for _, child in ipairs(node.children) do
+				local x, y = sample(child)
+				if x then return x, y end
+			end
+			node.exhausted = true
+			return nil
 		end
+		-- The tree is an iterator: never draw the same leaf again on a later trial.
+		node.exhausted = true
+		stats.leaves_visited = stats.leaves_visited + 1
 		return node.x0 + options.rand_int(node.x1 - node.x0),
 			node.y0 + options.rand_int(node.y1 - node.y0)
 	end
@@ -4146,6 +4172,7 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 	local rand_int = options.rand_int
 	local classify_center = options.classify_center
 	local center_priority = options.center_priority
+	local prepare_center = options.prepare_center
 	local build_candidate = options.build_candidate
 	local validate_static = options.validate_static
 	local validate_dynamic = options.validate_dynamic
@@ -4171,14 +4198,6 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 	local cluster_radius = math.max(1, math.floor(tonumber(options.cluster_radius) or 1))
 	local minimum_member_distance = math.max(1,
 		math.floor(tonumber(options.minimum_member_distance) or 1))
-	local center_attempt_budget = math.max(1,
-		math.floor(tonumber(options.center_attempt_budget) or 32))
-	local candidate_attempt_budget = math.max(1,
-		math.floor(tonumber(options.candidate_attempt_budget) or 256))
-	local center_candidate_budget = math.max(1,
-		math.floor(tonumber(options.center_candidate_budget) or #offsets))
-	local center_member_budget = math.max(center_candidate_budget,
-		math.floor(tonumber(options.center_member_budget) or center_candidate_budget))
 	local anchor_first = options.anchor_first == true
 	local require_valid_anchor = options.require_valid_anchor == true
 	local stats = {
@@ -4192,9 +4211,9 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 		dynamic_validations = 0, dynamic_rejections = 0,
 		accepted_candidates = 0, rejected_candidates = 0,
 		plans = 0, outer_plans = 0, inner_plans = 0, plan_exhaustions = 0,
-		center_attempt_budget = center_attempt_budget,
-		candidate_attempt_budget = candidate_attempt_budget,
-		center_candidate_budget = center_candidate_budget,
+		-- Derived geometry ceilings, not arbitrary per-cluster search cutoffs.
+		center_attempt_budget = 0, candidate_attempt_budget = 0,
+		center_candidate_budget = #offsets, sources_exhausted = 0,
 	}
 
 	local function greatest_common_divisor(a, b)
@@ -4239,9 +4258,16 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 			local priority = type(center_priority) == "function"
 				and center_priority(center) == "preferred" and "preferred" or "general"
 			local bucket = bands[band][priority]
-			bucket[#bucket + 1] = { center = center, index = index }
+			local limit = type(prepare_center) == "function"
+				and type(options.source_visit_limit) == "function"
+				and options.source_visit_limit(center, band) or 1
+			if type(limit) ~= "number" or limit < 0 or limit ~= math.floor(limit)
+				or limit == math.huge then return nil, "invalid finite source limit", stats end
+			bucket[#bucket + 1] = { center = center, index = index, limit = limit, visits = 0 }
+			stats.center_attempt_budget = stats.center_attempt_budget + limit
 		end
 	end
+	stats.candidate_attempt_budget = stats.center_attempt_budget * #offsets
 	local band_orders = {}
 	local offset_rings, maximum_offset_ring = {}, 0
 	if options.near_seed_first then
@@ -4276,34 +4302,57 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 			local next_general
 			next_general, order_error = seeded_permutation(#source.general)
 			if not next_general then return nil, order_error, finish_stats() end
+			local preferred_left, general_left = #source.preferred, #source.general
+			local function visit(family, next_index)
+				for _ = 1, #family do
+					local index = next_index()
+					if not index then return nil, "finite source order ended prematurely" end
+					local entry = family[index]
+					if not entry.exhausted then return entry end
+				end
+			end
+			-- Repeat the same seeded source order; each source advances its own finite
+			-- leaf iterator, so a retry can never redraw a previously visited leaf.
+			local function cyclic_order(family, first_order)
+				local order, cursor = {}, 0
+				for i = 1, #family do order[i] = first_order() end
+				return function()
+					if #order == 0 then return nil end
+					cursor = cursor % #order + 1
+					return order[cursor]
+				end
+			end
+			next_preferred = cyclic_order(source.preferred, next_preferred)
+			next_general = cyclic_order(source.general, next_general)
 			local prefer_next = true
 			next_center = function()
-				local index
-				-- Neither source family may consume the entire search budget before the other
-				-- gets a turn. A prepared apron center can still be unbuildable after settlement.
-				if prefer_next then
-					index = next_preferred()
-					prefer_next = false
-					if index then return source.preferred[index] end
+				while preferred_left + general_left > 0 do
+					local preferred = preferred_left > 0 and (prefer_next or general_left == 0)
+					prefer_next = not preferred
+					local entry, visit_error = visit(preferred and source.preferred or source.general,
+						preferred and next_preferred or next_general)
+					if not entry then return nil, visit_error end
+					local ready = type(prepare_center) == "function"
+						and prepare_center(entry.center, band) or nil
+					if type(prepare_center) ~= "function" then ready = entry.visits == 0 end
+					if ready then
+						entry.visits = entry.visits + 1
+						if entry.visits > entry.limit then
+							return nil, "source iterator exceeded finite geometry limit"
+						end
+						return entry
+					end
+					entry.exhausted = true
+					stats.sources_exhausted = stats.sources_exhausted + 1
+					if preferred then preferred_left = preferred_left - 1
+					else general_left = general_left - 1 end
 				end
-				index = next_general()
-				if not index and #source.general > 0 then
-					local cycle_error
-					next_general, cycle_error = seeded_permutation(#source.general)
-					if not next_general then return nil, cycle_error end
-					index = next_general()
-				end
-				prefer_next = true
-				if index then return source.general[index] end
-				index = next_preferred()
-				return index and source.preferred[index] or nil
 			end
 			band_orders[band] = next_center
 		end
 		local centers_attempted, candidate_attempts = 0, 0
 		local chosen
-		while centers_attempted < center_attempt_budget
-			and candidate_attempts < candidate_attempt_budget do
+		while true do
 			local center_entry, center_error = next_center()
 			if center_error then return nil, center_error, finish_stats() end
 			if not center_entry then break end
@@ -4339,17 +4388,12 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 			end
 			if not next_offset then return nil, order_error, finish_stats() end
 			local trial, trial_hexes = {}, {}
-			local center_candidates = 0
 			while true do
-				if candidate_attempts >= candidate_attempt_budget
-					or center_candidates >= (#trial > 0 and center_member_budget
-						or center_candidate_budget) then break end
 				local offset_index, offset_error = next_offset()
 				if offset_error then return nil, offset_error, finish_stats() end
 				if not offset_index then break end
 				local offset = offsets[offset_index]
 				candidate_attempts = candidate_attempts + 1
-				center_candidates = center_candidates + 1
 				stats.candidate_attempts = stats.candidate_attempts + 1
 				local attempt_accepted = false
 				local candidate = build_candidate(center_entry.center, center_entry.index,
@@ -4432,9 +4476,8 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 			if not at_band_end or #plans + remaining_specs < minimum_plans then
 				return nil, "cluster " .. tostring(spec_index) .. " " .. band
 					.. " search exhausted: centers=" .. tostring(centers_attempted)
-					.. "/" .. tostring(center_attempt_budget)
 					.. " candidates=" .. tostring(candidate_attempts)
-					.. "/" .. tostring(candidate_attempt_budget), finish_stats()
+					.. " (finite sources exhausted)", finish_stats()
 			end
 			stats.plan_exhaustions = stats.plan_exhaustions + 1
 		else
@@ -5091,11 +5134,11 @@ function DepositRules.TopUpDeposits(map)
 			local resource_cluster_radius = math.max(4,
 				math.floor(cfg().OUTER_RESOURCE_CLUSTER_RADIUS_HEXES or 12))
 			local offsets = DepositRules.BuildDirectSeededClusterOffsets(resource_cluster_radius)
-			local center_hexes = {}
 			local buildable_ratio = Global("BuildableGridRatio")
 			local box_fn = Global("box")
+			local guide_leaf_size = 4 * surface_hex_size
 			local guide = DepositRules.NewDirectSeededBuildableGuide({
-				leaf_size = 4 * surface_hex_size,
+				leaf_size = guide_leaf_size,
 				rand_int = RandInt,
 				has_buildable = function(rect)
 					if type(buildable_ratio) ~= "function" or type(box_fn) ~= "function"
@@ -5109,6 +5152,29 @@ function DepositRules.TopUpDeposits(map)
 					return ratio > 0
 				end,
 			})
+			local function source_regions(center, band)
+				if not center.buildable_regions then
+					local bounds
+					if center.kind == "sector" then
+						local descriptor = center.descriptor
+						bounds = {x0 = descriptor.area_x0, y0 = descriptor.area_y0,
+							x1 = descriptor.area_x1, y1 = descriptor.area_y1}
+					else
+						local reach = resource_cluster_radius * surface_hex_size
+						bounds = {x0 = center.x - reach, y0 = center.y - reach,
+							x1 = center.x + reach, y1 = center.y + reach}
+						local ok, q, r = pcall(world_to_hex, point(center.x, center.y))
+						if not ok or type(q) ~= "number" or type(r) ~= "number" then
+							error("direct seeded apron coordinate unavailable")
+						end
+						center.apron_origin = {q = q, r = r}
+					end
+					center.buildable_regions = DepositRules.DirectSeededBandRegions(
+						bounds, map_w, map_h, surface_mountain_base_ring_sectors,
+						band, surface_extractor_safe_margin)
+				end
+				return center.buildable_regions
+			end
 			local rng = deterministic_placement_rng
 			local draws_before = type(rng) == "table" and rng.calls or 0
 			local outer_count = math.max(1, math.ceil(desired_resource_cluster_count
@@ -5124,10 +5190,13 @@ function DepositRules.TopUpDeposits(map)
 					minimum_plans = resource_cluster_minimum_count,
 					cluster_radius = resource_cluster_radius,
 					minimum_member_distance = surface_quota_minimum_hex_distance,
-					center_attempt_budget = 384,
-					candidate_attempt_budget = 384,
-					center_candidate_budget = 32,
-					center_member_budget = 128,
+					source_visit_limit = function(center, band)
+						local limit = 0
+						for _, rect in ipairs(source_regions(center, band)) do
+							limit = limit + DepositRules.DirectSeededLeafLimit(rect, guide_leaf_size)
+						end
+						return limit
+					end,
 					near_seed_first = true,
 					anchor_first = true,
 					-- An apron/sector seed guides the search; it is not a required member.
@@ -5145,50 +5214,25 @@ function DepositRules.TopUpDeposits(map)
 					center_priority = function(center)
 						return center.kind == "apron" and "preferred" or "general"
 					end,
-					build_candidate = function(center, center_index, offset, band, _, _,
-						center_attempt_id)
-						local center_key = center.kind == "sector"
-							and center_attempt_id or center
-						local center_hex = center_hexes[center_key]
-						if center_hex == nil then
-							local center_x, center_y = center.x, center.y
-							if not center.buildable_regions then
-								local bounds
-								if center.kind == "sector" then
-									local descriptor = center.descriptor
-									bounds = {x0 = descriptor.area_x0, y0 = descriptor.area_y0,
-										x1 = descriptor.area_x1, y1 = descriptor.area_y1}
-								else
-									local reach = resource_cluster_radius * surface_hex_size
-									bounds = {x0 = center.x - reach, y0 = center.y - reach,
-										x1 = center.x + reach, y1 = center.y + reach}
-									local ok, q, r = pcall(world_to_hex, point(center.x, center.y))
-									if not ok or type(q) ~= "number" or type(r) ~= "number" then return false end
-									center.apron_origin = {q = q, r = r}
+					prepare_center = function(center, band)
+						local regions = source_regions(center, band)
+						if #regions == 0 then return false end
+						local start = RandInt(#regions)
+						for region_index = 0, #regions - 1 do
+							local x, y = guide.Sample(regions[(start + region_index) % #regions + 1])
+							if x then
+								local ok, q, r = pcall(world_to_hex, point(x, y))
+								if not ok or type(q) ~= "number" or type(r) ~= "number" then
+									error("direct seeded leaf coordinate unavailable")
 								end
-								center.buildable_regions = DepositRules.DirectSeededBandRegions(
-									bounds, map_w, map_h, surface_mountain_base_ring_sectors,
-									band, surface_extractor_safe_margin)
+								center.current_hex = {q = q, r = r}
+								return true
 							end
-							center_x, center_y = nil, nil
-							local regions = center.buildable_regions
-							if #regions > 0 then
-								local start = RandInt(#regions)
-								for offset_index = 0, #regions - 1 do
-									center_x, center_y = guide.Sample(regions[(start + offset_index) % #regions + 1])
-									if center_x then break end
-								end
-							end
-							if not center_x then
-								center_hexes[center_key] = false
-								return false
-							end
-							local ok_hex, q, r = pcall(world_to_hex, point(center_x, center_y))
-							center_hex = ok_hex and type(q) == "number" and type(r) == "number"
-								and { q = q, r = r } or false
-							center_hexes[center_key] = center_hex
 						end
-						if not center_hex then return false end
+						return false
+					end,
+					build_candidate = function(center, _, offset, band)
+						local center_hex = center.current_hex
 						local q = center_hex.q + offset.dq
 						local r = center_hex.r + offset.dr
 						if center.apron_origin and (AxialHexDistance(center.apron_origin.q,
@@ -5668,6 +5712,7 @@ function DepositRules.TopUpDeposits(map)
 			terrain_candidate_entries = direct_cluster_stats.terrain_candidate_entries or 0,
 			sampling_source_entries = direct_cluster_stats.sampling_source_entries or 0,
 			centers_attempted = direct_cluster_stats.centers_attempted or 0,
+			sources_exhausted = direct_cluster_stats.sources_exhausted or 0,
 			candidate_attempts = direct_cluster_stats.candidate_attempts or 0,
 			rejected_candidates = direct_cluster_stats.rejected_candidates or 0,
 			static_validations = direct_cluster_stats.static_validations or 0,

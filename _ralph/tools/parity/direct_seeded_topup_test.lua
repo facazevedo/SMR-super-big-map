@@ -75,7 +75,6 @@ local function run(seed)
 	local plans, planner_error, stats = planner({
 		centers = centers, offsets = offsets, specs = specs, outer_count = 2,
 		cluster_radius = 12, minimum_member_distance = 3,
-		center_attempt_budget = 3, candidate_attempt_budget = 18,
 		rand_int = rand_int,
 		classify_center = function(center) return center.band end,
 		build_candidate = function(center, center_index, offset, band)
@@ -108,7 +107,7 @@ local function run(seed)
 		"planner did not count mutable placement validations")
 	assert(stats.accepted_candidates == 14 and stats.rejected_candidates == 0,
 		"planner did not separate attempted/rejected/accepted counts")
-	assert(stats.candidate_attempts <= #specs * stats.candidate_attempt_budget)
+	assert(stats.candidate_attempts <= stats.candidate_attempt_budget)
 	local encoded = {}
 	for index, plan in ipairs(plans) do
 		assert(plan.id == index and #plan.candidates == specs[index].resource_target)
@@ -136,7 +135,6 @@ local cache_plans, cache_error, cache_stats = planner({
 	offsets = { { dq = 0, dr = 0 }, { dq = 0, dr = 0 }, { dq = 3, dr = 0 } },
 	specs = { { resource_target = 2 } }, outer_count = 1,
 	cluster_radius = 12, minimum_member_distance = 3,
-	center_attempt_budget = 1, candidate_attempt_budget = 3,
 	rand_int = function() return 0 end,
 	classify_center = function(center) return center.band end,
 	build_candidate = function(center, _, offset)
@@ -169,7 +167,6 @@ local source_plans, source_error, source_stats = planner({
 	offsets = { { dq = 0, dr = 0 }, { dq = 3, dr = 0 }, { dq = 6, dr = 0 } },
 	specs = { { resource_target = 2 } }, outer_count = 1,
 	cluster_radius = 12, minimum_member_distance = 3,
-	center_attempt_budget = 2, candidate_attempt_budget = 4,
 	anchor_first = true, require_valid_anchor = true,
 	rand_int = function() return 0 end,
 	classify_center = function(center) return center.band end,
@@ -191,7 +188,8 @@ local repeated_source_plans, repeated_source_error, repeated_source_stats = plan
 	offsets = { { dq = 0, dr = 0 }, { dq = 3, dr = 0 } },
 	specs = { { resource_target = 2 } }, outer_count = 1,
 	cluster_radius = 12, minimum_member_distance = 3,
-	center_attempt_budget = 3, candidate_attempt_budget = 4,
+	source_visit_limit = function() return 2 end,
+	prepare_center = function() return repeat_anchor_draws < 2 end,
 	anchor_first = true, require_valid_anchor = true,
 	rand_int = function() return 0 end,
 	classify_center = function(center) return center.band end,
@@ -224,7 +222,6 @@ local partial_plans, partial_error, partial_stats = planner({
 	},
 	outer_count = 2, minimum_plans = 2,
 	cluster_radius = 12, minimum_member_distance = 3,
-	center_attempt_budget = 4, candidate_attempt_budget = 4,
 	anchor_first = true, require_valid_anchor = true,
 	rand_int = function() return 0 end,
 	classify_center = function(center) return center.band end,
@@ -251,7 +248,6 @@ local false_positive_plans, false_positive_error = planner({
 	offsets = { { dq = 0, dr = 0 }, { dq = 3, dr = 0 } },
 	specs = { { resource_target = 2 }, { resource_target = 2 } }, outer_count = 1,
 	cluster_radius = 12, minimum_member_distance = 3,
-	center_attempt_budget = 4, candidate_attempt_budget = 10,
 	anchor_first = true, require_valid_anchor = true,
 	rand_int = function() return 0 end,
 	classify_center = function(center) return center.band end,
@@ -280,7 +276,6 @@ local false_negative_plans, false_negative_error = planner({
 	offsets = { { dq = 0, dr = 0 }, { dq = -3, dr = 0 } },
 	specs = { { resource_target = 2 }, { resource_target = 2 } }, outer_count = 1,
 	cluster_radius = 12, minimum_member_distance = 3,
-	center_attempt_budget = 4, candidate_attempt_budget = 10,
 	anchor_first = true, require_valid_anchor = true,
 	rand_int = function() return 0 end,
 	classify_center = function(center) return center.band end,
@@ -351,7 +346,6 @@ local failed, failure, failure_stats = planner({
 	offsets = { { dq = 0, dr = 0 } },
 	specs = { { resource_target = 2 } }, outer_count = 1,
 	cluster_radius = 12, minimum_member_distance = 3,
-	center_attempt_budget = 1, candidate_attempt_budget = 1,
 	rand_int = fail_rng,
 	classify_center = function(center) return center.band end,
 	build_candidate = function() return { q = 0, r = 0 } end,
@@ -377,8 +371,7 @@ local repaired, repaired_error = planner({
 	offsets = complete_offsets,
 	specs = {{resource_target = 2}}, outer_count = 1,
 	cluster_radius = 12, minimum_member_distance = 3,
-	center_attempt_budget = 384, candidate_attempt_budget = 384, center_candidate_budget = 32,
-	center_member_budget = 128, near_seed_first = true,
+	near_seed_first = true,
 	anchor_first = true, require_valid_anchor = false,
 	rand_int = function() return 0 end,
 	classify_center = function(c) return c.band end,
@@ -417,7 +410,7 @@ for i = 1, 20 do fair_sources[#fair_sources + 1] = {q = i * 100, r = 0, band = "
 fair_sources[#fair_sources + 1] = {q = 3000, r = 0, band = "outer", priority = "general"}
 local fair, fair_error, fair_stats = planner({
 	centers = fair_sources, offsets = {{dq = 0, dr = 0}}, specs = {{resource_target = 1}},
-	outer_count = 1, center_attempt_budget = 2, candidate_attempt_budget = 2,
+	outer_count = 1,
 	rand_int = function() return 0 end,
 	classify_center = function(c) return c.band end,
 	center_priority = function(c) return c.priority end,
@@ -446,26 +439,94 @@ local function check_guide(points)
 		if math.abs(x - p[1]) < 4 and math.abs(y - p[2]) < 4 then touched = true end
 	end
 	assert(touched, "guide missed the small buildable region")
-	local prior_queries = guide.stats.queries
-	guide.Sample(region)
+	local visited = {[math.floor(x / 4) .. ":" .. math.floor(y / 4)] = true}
+	local count = 1
+	while true do
+		x, y = guide.Sample(region)
+		if not x then break end
+		local key = math.floor(x / 4) .. ":" .. math.floor(y / 4)
+		assert(not visited[key], "guide revisited a leaf")
+		visited[key], count = true, count + 1
+		assert(count <= 256, "finite guide did not exhaust")
+	end
 	assert(guide.stats.cache_reuses > 0)
-	if #points == 1 then assert(guide.stats.queries == prior_queries) end
+	if #points == 1 then assert(count == 1) end
+	for _, p in ipairs(points) do
+		assert(visited[math.floor(p[1] / 4) .. ":" .. math.floor(p[2] / 4)],
+			"later disconnected buildable leaf was never visited")
+	end
+	local prior_queries = guide.stats.queries
+	assert(guide.Sample(region) == nil and guide.stats.queries == prior_queries,
+		"exhausted guide repeated native work")
 end
 check_guide({{31, 31}})
 check_guide({{32, 32}}) -- split boundary
 local diagonal = {}
 for i = 0, 63 do diagonal[#diagonal + 1] = {i, i} end
 check_guide(diagonal)
-for _, result in ipairs({"error", "empty", "full", "inconsistent"}) do
+check_guide({{1, 1}, {61, 61}, {1, 61}, {61, 1}})
+for _, result in ipairs({"error", "empty", "full", "inconsistent", "unknown_parent"}) do
 	local guide = new_guide({leaf_size = 4, rand_int = function() return 0 end,
 		has_buildable = function(rect)
 			if result == "error" then error("native query unavailable") end
 			if result == "inconsistent" then return rect.x1 - rect.x0 == 64 end
+			if result == "unknown_parent" then
+				if rect.x1 - rect.x0 == 64 then return nil end
+				return false
+			end
 			return result == "full"
 		end})
-	local x = guide.Sample({x0 = 10, y0 = 10, x1 = 74, y1 = 74})
+	local region = {x0 = 10, y0 = 10, x1 = 74, y1 = 74}
+	local x = guide.Sample(region)
 	assert((x ~= nil) == (result ~= "empty"), "unknown/boundary guide result incorrectly pruned")
 	assert(guide.stats.queries <= 17, "guide exceeded a single lazy path")
+	local visits = x and 1 or 0
+	while guide.Sample(region) do visits = visits + 1; assert(visits <= 256) end
+	assert(visits == (result == "empty" and 0 or 256), "finite conservative coverage incomplete")
+end
+
+-- Legal members on the outer local rings must not be truncated at32/128/384 draws.
+local distant, distant_error, distant_stats = planner({
+	centers = {{q = 100, r = 100, band = "outer"}}, offsets = complete_offsets,
+	specs = {{resource_target = 2}}, outer_count = 1,
+	cluster_radius = 12, minimum_member_distance = 3, near_seed_first = true,
+	rand_int = function() return 0 end,
+	classify_center = function(c) return c.band end,
+	build_candidate = function(c, _, offset) return {q = c.q + offset.dq, r = c.r + offset.dr} end,
+	validate_static = function(c) return c.r == 100 and (c.q == 109 or c.q == 112) end,
+	validate_dynamic = function() return true end,
+})
+assert(distant, distant_error)
+assert(distant_stats.candidate_attempts > 384 and distant_stats.accepted_candidates == 2,
+	"complete finite offsets were truncated before distant legal members")
+
+-- A finite source yields distinct leaf anchors. Impossible terrain exhausts once;
+-- a complete first trial must not request any later leaf or native validation.
+for _, possible in ipairs({false, true}) do
+	local prepared, tested = 0, 0
+	local result, err, stats = planner({
+		centers = {{band = "outer"}}, offsets = complete_offsets,
+		specs = {{resource_target = 1}}, outer_count = 1, near_seed_first = true,
+		cluster_radius = 12, minimum_member_distance = 3,
+		rand_int = function() return 0 end,
+		classify_center = function(c) return c.band end,
+		source_visit_limit = function() return 3 end,
+		prepare_center = function(c)
+			prepared = prepared + 1
+			if prepared > 3 then return false end
+			c.q = prepared * 100
+			return true
+		end,
+		build_candidate = function(c, _, offset) return {q = c.q + offset.dq, r = offset.dr} end,
+		validate_static = function() tested = tested + 1; return possible end,
+		validate_dynamic = function() return true end,
+	})
+	if possible then
+		assert(result and prepared == 1 and tested == 1, err)
+	else
+		assert(not result and err:find("finite sources exhausted", 1, true))
+		assert(prepared == 4 and tested == 3 * 469 and stats.sources_exhausted == 1)
+	end
 end
 local function require_policy(condition, message)
 	if not condition then violations[#violations + 1] = message end
@@ -488,9 +549,10 @@ require_policy(not topup:find("local function build_quota_cluster_plans", 1, tru
 	"whole-pool cluster planner remains")
 require_policy(topup:find("rand_int = RandInt", 1, true),
 	"planner is not driven by the existing private placement stream")
-require_policy(topup:find("center_attempt_budget = 384", 1, true)
-	and topup:find("candidate_attempt_budget = 384", 1, true),
-	"production attempt budgets are missing")
+require_policy(topup:find("source_visit_limit = function(center, band)", 1, true)
+	and topup:find("DepositRules.DirectSeededLeafLimit(rect, guide_leaf_size)", 1, true)
+	and not topup:find("candidate_attempt_budget = 384", 1, true),
+	"finite geometry-derived source exhaustion was replaced by arbitrary attempt caps")
 require_policy(topup:find("validate_static = function(candidate)", 1, true)
 	and topup:find("CanReceiveDepositTerrain(", 1, true)
 	and topup:find("TerrainTypeAt(map, pt, direct_context)", 1, true)
@@ -520,8 +582,8 @@ require_policy(topup:find('kind = "sector"', 1, true)
 	and topup:find("guide.Sample(regions[", 1, true)
 	and topup:find("direct_context.build_unbuildable_z, 10000", 1, true),
 	"apron-first on-demand physical-band sampling is missing")
-require_policy(topup:find("center_attempt_id", 1, true),
-	"repeated general-sector attempts do not draw a fresh physical anchor")
+require_policy(topup:find("prepare_center = function(center, band)", 1, true),
+	"repeated sources do not advance their finite guide leaf iterator")
 require_policy(topup:find("terrain_candidate_entries =", 1, true)
 	and topup:find("sampling_source_entries =", 1, true),
 	"published terrain-list and on-demand source counts are not separated")

@@ -321,9 +321,9 @@ static_checks = {
     "resource_quota_uses_bounded_direct_seeded_candidates": (
         "config.OptimizeDirectSeededSurfaceClusters = true" in CONFIG
         and "C.OPTIMIZE_DIRECT_SEEDED_SURFACE_CLUSTERS" in CONFIG
-        and "center_attempt_budget = 384" in resources
-        and "candidate_attempt_budget = 384" in resources
-        and "center_attempt_id" in resources
+        and "source_visit_limit = function(center, band)" in resources
+        and "DepositRules.DirectSeededLeafLimit(rect, guide_leaf_size)" in resources
+        and "prepare_center = function(center, band)" in resources
         and "rand_int = RandInt" in resources
         and "local perimeter_quota_candidates = {}" not in resources
         and "local MAX_FINAL_QUOTA_CANDIDATES = 4096" not in resources
