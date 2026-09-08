@@ -1,6 +1,6 @@
--- Production-function red/green regression for ranked optimization unit #11.
+-- Production-function regression for the accepted surface final-grid lifecycle.
 -- Run from the project root:
---   lua _ralph/tools/parity/surface_final_rebuild_deferral_test.lua
+--   lua _ralph/tools/parity/surface_final_rebuild_lifecycle_test.lua
 
 local function read(path)
 	local file = assert(io.open(path, "rb"))
@@ -18,32 +18,25 @@ local rebuild_block = assert(map_source:match(
 	"(function SuperBigMap%.GenerationGrids%.RebuildFinal.-)\n\n%-%- Stretch%-only surface"),
 	"production final-grid rebuild not found")
 
--- Keep the red case tied to the actual production lifecycle: v936 contains both the immediate
--- closing rebuild and the later canonical post-pipeline rebuild on one successful surface run.
+-- Unit #11 was rejected after cold runs proved that removing the immediate rebuild can change
+-- native surface pass output. Keep both stages tied to the actual production lifecycle.
 local immediate =
 	'SuperBigMap.GenerationGrids.RebuildFinal(map, "after last object-grid transaction")'
 local scheduled =
 	'SuperBigMap.GenerationGrids.RebuildFinal(\n\t\t\t\t\t\tmap, "post-pipeline scheduled revalidation")'
 local has_immediate = runner:find(immediate, 1, true) ~= nil
 local has_scheduled = runner:find(scheduled, 1, true) ~= nil
-assert(has_immediate, "production red baseline lost its immediate final rebuild")
+assert(has_immediate, "accepted production lifecycle lost its immediate final rebuild")
 assert(has_scheduled, "production canonical post-pipeline rebuild is missing")
 
--- Green contract: defer the superseded immediate call, keep completion/loading pending until the
--- canonical scheduled call succeeds, and never retry a failed optimization behind a fallback.
-local config_enabled = config_source:find(
-	"config.OptimizeDeferImmediateSurfaceFinalGridRebuild = true", 1, true) ~= nil
-local config_exported = config_source:find(
-	"C.OPTIMIZE_DEFER_IMMEDIATE_SURFACE_FINAL_GRID_REBUILD", 1, true) ~= nil
-local requests_deferral = runner:find(
-	'cfg_bool("OPTIMIZE_DEFER_IMMEDIATE_SURFACE_FINAL_GRID_REBUILD", false)', 1, true) ~= nil
-local skips_immediate = runner:find(
-	"map.SuperBigMapSurfaceImmediateFinalRebuildSkipped = true", 1, true) ~= nil
-local holds_completion = runner:find("hold_completion_for_revalidation", 1, true) ~= nil
-local publishes_after_success = runner:find("publish_deferred_surface_completion()", 1, true) ~= nil
-local hidden_retry = runner:find("post-pipeline revalidation failure fallback", 1, true) ~= nil
-local deferral_ready = config_enabled and config_exported and requests_deferral
-	and skips_immediate and holds_completion and publishes_after_success and not hidden_retry
+-- Rejected-unit guard: neither the config seam nor the completion-deferral machinery may return
+-- without new native-equivalence evidence.
+assert(config_source:find("OptimizeDeferImmediateSurfaceFinalGridRebuild", 1, true) == nil,
+	"rejected unit #11 config seam returned")
+assert(runner:find("SuperBigMapSurfaceImmediateFinalRebuildSkipped", 1, true) == nil,
+	"rejected unit #11 immediate-rebuild skip returned")
+assert(runner:find("hold_completion_for_revalidation", 1, true) == nil,
+	"rejected unit #11 completion deferral returned")
 
 -- Execute the shipped RebuildFinal implementation, not a copied model. Each invocation must
 -- perform one complete invalidate/passability/buildable sequence; this makes the duplicate's
@@ -86,9 +79,10 @@ local rebuild = assert(load(rebuild_block
 	.. "\nreturn SuperBigMap.GenerationGrids.RebuildFinal",
 	"production-surface-final-rebuild", "t", env))()
 local map = { mapdata = { Environment = "Surface" } }
-local active_stages = deferral_ready
-	and { "post-pipeline scheduled revalidation" }
-	or { "after last object-grid transaction", "post-pipeline scheduled revalidation" }
+local active_stages = {
+	"after last object-grid transaction",
+	"post-pipeline scheduled revalidation",
+}
 for _, stage in ipairs(active_stages) do rebuild(map, stage) end
 
 local counts = {}
@@ -106,14 +100,6 @@ assert(counts.InvalidateHeight == expected and counts.InvalidateType == expected
 	"production calls did not execute one complete rebuild sequence per active stage")
 assert(map.SuperBigMapFinalPassCount == expected,
 	"production rebuild counter did not observe every active surface call")
-if expected == 2 then
-	print("RED baseline: v936 surface path executes 2 whole-map passability + 2 buildable rebuilds")
-end
-
-assert(config_enabled and config_exported and requests_deferral,
-	"RED: unit #11 deferral is not enabled in production")
-assert(skips_immediate and holds_completion and publishes_after_success,
-	"RED: surface completion is not gated on the single canonical rebuild")
-assert(not hidden_retry,
-	"optimized final rebuild must fail loudly instead of retrying behind a fallback")
-print("PASS surface final rebuild deferral: one canonical rebuild before T1, fail-loud")
+assert(expected == 2,
+	"accepted surface lifecycle must retain both whole-map final rebuild stages")
+print("PASS surface final rebuild lifecycle: immediate and scheduled rebuilds retained")
