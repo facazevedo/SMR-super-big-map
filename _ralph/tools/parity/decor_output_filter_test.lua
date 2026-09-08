@@ -9,7 +9,7 @@ local function run(classes,environment,options)
   local env=setmetatable({environment=environment, map={},
     placed=0,objects=0,placed_list={},prefabs_count={},decorated={},obstruct={},
     dropped_non_cosmetic=0,dropped_out_of_band=0,
-    defs_cache={},raster_cache={},prefab_markers={[prefab]='test'},
+    defs_cache={},raster_cache={},matches_cache={},prefab_markers={[prefab]='test'},
     type_tile=1,length_scale=1,revision=0,version=1,gof=0,
     stream={seed=function() return 1 end,rand=function() return 0 end},
     point_fn=function(x,y) return {x=x,y=y} end,

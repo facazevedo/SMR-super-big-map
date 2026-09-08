@@ -432,6 +432,10 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 		end
 
 		local defs_cache, raster_cache = {}, {}
+		-- Matching reads only the marker's fixed filters and this pass's fixed
+		-- revision/catalog. Keep its ordered list private to this Run: vanilla
+		-- callers can mutate their own returned lists. Weights/occupancy stay live.
+		local matches_cache = {}
 		local placed_list = {}
 		pass_objects_by_map[map] = placed_list
 		local unused = {}
@@ -469,7 +473,13 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 		--    Returns "placed" (plus the prefab name) or the reason it did not place.
 		local dropped_non_cosmetic, dropped_out_of_band = 0, 0
 		local function try_stamp(marker, sx, sy, site_radius)
-			local prefabs = SafeCall(marker.GetMatchingMarkers, marker, revision, version)
+			local prefabs = matches_cache[marker]
+			if prefabs == nil then
+				prefabs = SafeCall(marker.GetMatchingMarkers, marker, revision, version)
+				-- Cache legitimate empty lists too, but never make a failed call
+				-- permanent. Preserve no_match precedence over spacing rejection.
+				if type(prefabs) == "table" then matches_cache[marker] = prefabs end
+			end
 			if type(prefabs) ~= "table" or #prefabs == 0 then return "no_match" end
 			if circle_hits(obstruct, sx, sy, site_radius) then return "obstruct" end
 			if circle_hits(decorated, sx, sy, site_radius) then return "decorated" end

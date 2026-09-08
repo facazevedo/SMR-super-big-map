@@ -556,3 +556,32 @@ Owner permits temporary debug logging. Next is a separate instrumented61N
 diagnostic for stage time, matcher/circle cost and live candidate/placement/reject
 counts. Its logging/yields invalidate performance acceptance; no permanent debug
 switch, weakened rule, automatic new strategy or Ralph restart is authorized here.
+
+Temporary v953 61N diagnosis completed (not an optimization acceptance): flushed
+`v953_61_stage_debug/daemon_flushed.log` shows decor190/190 in512.940s and eventual
+START-to-T1=675.427s. At509.776s into decor,710358 native matching calls consumed
+444.109s (~87%); circle checks consumed53.227s. Of727247 synthetic attempts,
+652582+60756 were rejected for obstruction/existing decor (~98%). Live log output
+was delayed; the apparent earlier underground-cleanup stall was not the hotspot.
+Exact test75508 quit cleanly, but diagnostic yields/overhead, timed-out report and
+missing full snapshot make this run ineligible for acceptance. All rules remain
+pending. No new production code, accepted savings or changed deployment.
+
+Next narrow candidate identified by source review: lazy ordered matching-result
+cache private to each decor Run and keyed by marker; retain no_match precedence,
+dynamic weights/occupancy and every RNG draw. Do not cache globally (vanilla
+mutates returned arrays), and do not merely reorder filters (rejection reasons
+drive reach escalation). Refined temporary logging removes all yields and adds
+repeat-input/filter counters; offline wrapper tests pass, native repeat pending.
+
+Owner-authorized fix v954: implemented the run-local ordered matching cache with
+no other placement changes. Mixed production-stamp regression gives identical
+outcomes, object placements, dynamic repeat weights and RNG traces while reducing
+3009 matcher calls to7 (including a separate-run invalidation check). Empty lists
+keep no_match precedence; errors/non-table returns remain retryable, and newly
+placed occupancy still rejects subsequent candidates. Source review found no
+actionable issue. All51offline commands pass in `v954_offline`.
+Native verification now covers the fixed five15S/24S/45S/61N/17S: expanded runs,
+seed replays and same-site controls, with START-boundary T0 and completed surface
+pipeline T1. Fix any failures and finish incomplete checks; no waivers or scenario
+substitution. Temporary diagnostic wrappers are not loaded in timing runs.
