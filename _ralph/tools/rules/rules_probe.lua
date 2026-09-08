@@ -252,6 +252,60 @@ CreateRealTimeThread(function()
 
 		RULES_STATUS = "reading"
 		local R = {}
+		-- Exact temporal discriminator for the surface pass-grid instability seen only
+		-- in post-first-access captures.  Keep each serialized blob in this probe's
+		-- local scope so later stages can prove byte equality, while publishing only
+		-- dimensions/size/hash/equality into RULES.  All reads happen after T1, so
+		-- diagnostic serialization cost cannot contaminate START-to-T1 timing.
+		local surface_pass_stage_blobs = {}
+		local function capture_surface_pass_stage(stage)
+			if type(stage) ~= "string" or stage == "" then
+				error("surface pass stage name is required")
+			end
+			if type(terrain.GetPassGridsCount) ~= "function"
+				or type(terrain.GetPassGrid) ~= "function"
+				or type(GridWriteStr) ~= "function" or type(xxhash) ~= "function" then
+				error("surface pass serialization APIs are unavailable at " .. stage)
+			end
+			local count = tonumber(terrain.GetPassGridsCount(map))
+			if not count or count < 1 or count > 8 then
+				error("invalid surface pass-grid count at " .. stage .. ": " .. tostring(count))
+			end
+			local blobs, summary = {}, {}
+			local t1_blobs = surface_pass_stage_blobs.t1
+			R["surface_pass_" .. stage .. "_count"] = count
+			for index = 0, count - 1 do
+				local grid = terrain.GetPassGrid(map, index)
+				if not grid or not IsGrid(grid) then
+					error(string.format("surface pass grid %d unavailable at %s", index, stage))
+				end
+				local blob, write_error = GridWriteStr(grid)
+				if write_error or type(blob) ~= "string" then
+					error(string.format("surface GridWriteStr grid %d failed at %s: %s",
+						index, stage, tostring(write_error)))
+				end
+				local repeat_blob, repeat_error = GridWriteStr(grid)
+				if repeat_error or type(repeat_blob) ~= "string" then
+					error(string.format("surface repeated GridWriteStr grid %d failed at %s: %s",
+						index, stage, tostring(repeat_error)))
+				end
+				local width, height = grid:size()
+				local prefix = "surface_pass_" .. stage .. "_" .. tostring(index)
+				local hash = tostring(xxhash(blob))
+				R[prefix .. "_w"] = width
+				R[prefix .. "_h"] = height or width
+				R[prefix .. "_bytes"] = #blob
+				R[prefix .. "_hash"] = hash
+				R[prefix .. "_repeat_equal"] = tostring(blob == repeat_blob)
+				R[prefix .. "_matches_t1"] = t1_blobs and tostring(blob == t1_blobs[index]) or "self"
+				blobs[index] = blob
+				summary[#summary + 1] = string.format("%d:%s/%d/t1=%s", index, hash, #blob,
+					t1_blobs and tostring(blob == t1_blobs[index]) or "self")
+			end
+			surface_pass_stage_blobs[stage] = blobs
+			R["surface_pass_" .. stage .. "_summary"] = table.concat(summary, " ")
+		end
+		capture_surface_pass_stage("t1")
 		R.site = "__SITE__"
 		R.map_name = tostring(map.name)
 		R.hex_width = map.hex_width
@@ -1219,6 +1273,7 @@ CreateRealTimeThread(function()
 				restore_counters()
 				return "the paired Elevator quick-build failed: " .. build_err
 			end
+			capture_surface_pass_stage("after_quick_build")
 
 			local twin_passage = rawget(target_passage, "other")
 			local ldl = GetPreciseTicks() + 120000
@@ -1292,6 +1347,7 @@ CreateRealTimeThread(function()
 			R.ug_stretch_done = tostring(ug.SuperBigMapUndergroundStretchDone)
 			R.ug_prepared_after = tostring(ug.SuperBigMapUndergroundPrepared)
 			R.ug_stretch_failed = tostring(ug.SuperBigMapUndergroundStretchFailed)
+			capture_surface_pass_stage("after_switch")
 			restore_counters()
 			if CurrentMap ~= ug then
 				return "first access did not switch to the underground map within 900 s"
