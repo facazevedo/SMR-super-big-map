@@ -845,6 +845,7 @@ CreateRealTimeThread(function()
 		local orp = map.SuperBigMapResourceClusterPlanDiagnostic
 		if type(orp) == "table" then
 			R.ring_plan_static_rejection_reasons = orp.static_rejection_reasons
+			R.ring_plan_buildable_guide = orp.buildable_guide
 			for _, k in ipairs({ "desired_clusters", "placed_clusters", "cluster_minimum",
 				"cluster_maximum", "cluster_count_stream", "terrain_candidate_entries",
 				"sampling_source_entries", "candidate_attempts", "rejected_candidates", "static_validations",

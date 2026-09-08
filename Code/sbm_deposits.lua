@@ -4044,6 +4044,73 @@ end
 -- Breakthrough anomalies are preserved exactly from the vanilla source record set.
 
 -- DIRECT_SEEDED_CLUSTER_PLANNER_BEGIN
+-- A lazy tree of native buildable-region presence, not a pool of terrain candidates.
+-- Unknown API results stay eligible; every sampled point still needs the full validator.
+function DepositRules.NewDirectSeededBuildableGuide(options)
+	local stats = { queries = 0, cache_reuses = 0, empty = 0, unknown = 0 }
+	local leaf_size = math.max(1, options.leaf_size)
+	local function eligible(node)
+		if node.checked then
+			stats.cache_reuses = stats.cache_reuses + 1
+			return node.present ~= false
+		end
+		stats.queries = stats.queries + 1
+		local ok, present = pcall(options.has_buildable, node)
+		node.checked = true
+		node.present = ok and present or nil
+		if ok and present == false then
+			node.present = false
+			stats.empty = stats.empty + 1
+		elseif node.present ~= true then
+			node.present = nil
+			stats.unknown = stats.unknown + 1
+		end
+		return node.present ~= false
+	end
+	local function sample(node)
+		if node.x1 <= node.x0 or node.y1 <= node.y0 or not eligible(node) then return nil end
+		while node.present == true
+			and math.max(node.x1 - node.x0, node.y1 - node.y0) > leaf_size do
+			if not node.children then
+				local a = { x0 = node.x0, y0 = node.y0, x1 = node.x1, y1 = node.y1 }
+				local b = { x0 = node.x0, y0 = node.y0, x1 = node.x1, y1 = node.y1 }
+				if node.x1 - node.x0 >= node.y1 - node.y0 then
+					local mid = math.floor((node.x0 + node.x1) / 2)
+					a.x1, b.x0 = mid, mid
+				else
+					local mid = math.floor((node.y0 + node.y1) / 2)
+					a.y1, b.y0 = mid, mid
+				end
+				node.children = { a, b }
+			end
+			local a, b = node.children[1], node.children[2]
+			local has_a, has_b = eligible(a), eligible(b)
+			-- A parent can contain a boundary hex that neither rounded child query sees.
+			-- Keep sampling the parent in that case; don't turn uncertain subdivision into loss.
+			if not has_a and not has_b then break end
+			node = has_a and (not has_b or options.rand_int(2) == 0) and a or b
+		end
+		return node.x0 + options.rand_int(node.x1 - node.x0),
+			node.y0 + options.rand_int(node.y1 - node.y0)
+	end
+	return { Sample = sample, stats = stats }
+end
+
+-- Spacing is a relation between accepted members, not a sampling-grid stride.
+-- Visit every axial residue class so narrow buildable strips remain reachable.
+function DepositRules.BuildDirectSeededClusterOffsets(radius)
+	local offsets = { { dq = 0, dr = 0 } }
+	for dq = -radius, radius do
+		for dr = -radius, radius do
+			if (dq ~= 0 or dr ~= 0)
+				and math.max(math.abs(dq), math.abs(dr), math.abs(dq + dr)) <= radius then
+				offsets[#offsets + 1] = { dq = dq, dr = dr }
+			end
+		end
+	end
+	return offsets
+end
+
 -- Build only the candidates needed by the already-selected cluster specifications. The caller
 -- supplies the map-specific geometry and validation callbacks so this planner remains directly
 -- regression-testable without copying its behavior into a synthetic model. Accepted candidates
@@ -4085,6 +4152,8 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 		math.floor(tonumber(options.center_attempt_budget) or 32))
 	local candidate_attempt_budget = math.max(1,
 		math.floor(tonumber(options.candidate_attempt_budget) or 256))
+	local center_candidate_budget = math.max(1,
+		math.floor(tonumber(options.center_candidate_budget) or #offsets))
 	local anchor_first = options.anchor_first == true
 	local require_valid_anchor = options.require_valid_anchor == true
 	local stats = {
@@ -4100,6 +4169,7 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 		plans = 0, outer_plans = 0, inner_plans = 0, plan_exhaustions = 0,
 		center_attempt_budget = center_attempt_budget,
 		candidate_attempt_budget = candidate_attempt_budget,
+		center_candidate_budget = center_candidate_budget,
 	}
 
 	local function greatest_common_divisor(a, b)
@@ -4208,16 +4278,21 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 			end
 			if not next_offset then return nil, order_error, finish_stats() end
 			local trial, trial_hexes = {}, {}
+			local center_candidates = 0
 			while true do
-				if candidate_attempts >= candidate_attempt_budget then break end
+				if candidate_attempts >= candidate_attempt_budget
+					or center_candidates >= center_candidate_budget then break end
 				local offset_index = next_offset()
 				if not offset_index then break end
 				local offset = offsets[offset_index]
 				candidate_attempts = candidate_attempts + 1
+				center_candidates = center_candidates + 1
 				stats.candidate_attempts = stats.candidate_attempts + 1
 				local attempt_accepted = false
 				local candidate = build_candidate(center_entry.center, center_entry.index,
 					offset, band, spec, spec_index, stats.centers_attempted)
+				-- False certifies that this source has no eligible region; nil rejects only a point.
+				if candidate == false then break end
 				if candidate and type(candidate.q) == "number" and type(candidate.r) == "number" then
 					-- Terrain/buildability is coordinate-stable during this transaction,
 					-- but the complete static callback also enforces the requested physical
@@ -4952,18 +5027,25 @@ function DepositRules.TopUpDeposits(map)
 			end
 			local resource_cluster_radius = math.max(4,
 				math.floor(cfg().OUTER_RESOURCE_CLUSTER_RADIUS_HEXES or 12))
-			local offsets = { { dq = 0, dr = 0 } }
-			for dq = -resource_cluster_radius, resource_cluster_radius,
-				surface_quota_minimum_hex_distance do
-				for dr = -resource_cluster_radius, resource_cluster_radius,
-					surface_quota_minimum_hex_distance do
-					if (AxialHexDistance(0, 0, dq, dr) or math.huge)
-						<= resource_cluster_radius and (dq ~= 0 or dr ~= 0) then
-						offsets[#offsets + 1] = { dq = dq, dr = dr }
-					end
-				end
-			end
+			local offsets = DepositRules.BuildDirectSeededClusterOffsets(resource_cluster_radius)
 			local center_hexes = {}
+			local buildable_ratio = Global("BuildableGridRatio")
+			local box_fn = Global("box")
+			local guide = DepositRules.NewDirectSeededBuildableGuide({
+				leaf_size = 4 * surface_hex_size,
+				rand_int = RandInt,
+				has_buildable = function(rect)
+					if type(buildable_ratio) ~= "function" or type(box_fn) ~= "function"
+						or not (map.buildable and map.buildable.z_grid)
+						or not direct_context.build_unbuildable_ok
+						or type(direct_context.build_unbuildable_z) ~= "number" then return nil end
+					local ratio = buildable_ratio(map.buildable.z_grid,
+						direct_context.build_unbuildable_z, 10000,
+						box_fn(rect.x0, rect.y0, rect.x1, rect.y1))
+					if type(ratio) ~= "number" then return nil end
+					return ratio > 0
+				end,
+			})
 			local rng = deterministic_placement_rng
 			local draws_before = type(rng) == "table" and rng.calls or 0
 			local outer_count = math.max(1, math.ceil(desired_resource_cluster_count
@@ -4981,8 +5063,10 @@ function DepositRules.TopUpDeposits(map)
 					minimum_member_distance = surface_quota_minimum_hex_distance,
 					center_attempt_budget = 384,
 					candidate_attempt_budget = 384,
+					center_candidate_budget = 32,
 					anchor_first = true,
-					require_valid_anchor = true,
+					-- An apron/sector seed guides the search; it is not a required member.
+					require_valid_anchor = false,
 					rand_int = RandInt,
 					classify_center = function(center)
 						if type(center) ~= "table" then return nil end
@@ -5005,23 +5089,26 @@ function DepositRules.TopUpDeposits(map)
 							local center_x, center_y = center.x, center.y
 							if center.kind == "sector" then
 								local descriptor = center.descriptor
-								local first_x = math.floor(descriptor.area_x0)
-								local first_y = math.floor(descriptor.area_y0)
-								local past_x = math.floor(descriptor.area_x1)
-								local past_y = math.floor(descriptor.area_y1)
-								if past_x <= first_x or past_y <= first_y then
-									center_hexes[center_key] = false
-									return nil
+								if not center.buildable_region then
+									center.buildable_region = {
+										x0 = math.ceil(math.max(descriptor.area_x0, surface_extractor_safe_margin)),
+										y0 = math.ceil(math.max(descriptor.area_y0, surface_extractor_safe_margin)),
+										x1 = math.floor(math.min(descriptor.area_x1, map_w - surface_extractor_safe_margin)),
+										y1 = math.floor(math.min(descriptor.area_y1, map_h - surface_extractor_safe_margin)),
+									}
 								end
-								center_x = first_x + RandInt(past_x - first_x)
-								center_y = first_y + RandInt(past_y - first_y)
+								center_x, center_y = guide.Sample(center.buildable_region)
+								if not center_x then
+									center_hexes[center_key] = false
+									return false
+								end
 							end
 							local ok_hex, q, r = pcall(world_to_hex, point(center_x, center_y))
 							center_hex = ok_hex and type(q) == "number" and type(r) == "number"
 								and { q = q, r = r } or false
 							center_hexes[center_key] = center_hex
 						end
-						if not center_hex then return nil end
+						if not center_hex then return false end
 						local q = center_hex.q + offset.dq
 						local r = center_hex.r + offset.dr
 						local ok_world, x, y = pcall(hex_to_world, q, r)
@@ -5070,6 +5157,7 @@ function DepositRules.TopUpDeposits(map)
 			end
 			direct_cluster_stats = type(plan_stats) == "table" and plan_stats
 				or direct_cluster_stats
+			direct_cluster_stats.buildable_guide = guide.stats
 			rng = deterministic_placement_rng
 			direct_cluster_stats.rng_draws = type(rng) == "table"
 				and math.max(0, rng.calls - draws_before) or 0
@@ -5502,6 +5590,7 @@ function DepositRules.TopUpDeposits(map)
 			static_cache_reuses = direct_cluster_stats.static_cache_reuses or 0,
 			static_rejections = direct_cluster_stats.static_rejections or 0,
 			static_rejection_reasons = direct_cluster_stats.static_rejection_reasons,
+			buildable_guide = direct_cluster_stats.buildable_guide,
 			dynamic_validations = direct_cluster_stats.dynamic_validations or 0,
 			dynamic_rejections = direct_cluster_stats.dynamic_rejections or 0,
 			accepted_candidates = direct_cluster_stats.accepted_candidates or 0,

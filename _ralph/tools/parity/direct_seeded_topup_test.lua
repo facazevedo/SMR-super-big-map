@@ -362,6 +362,74 @@ assert(failed == nil and tostring(failure):find("search exhausted", 1, true))
 assert(failure_stats.centers_attempted == 1 and failure_stats.candidate_attempts == 1)
 
 local violations = {}
+-- Execute the production offset builder: valid members need not share q/r modulo three.
+local complete_offsets = environment.DepositRules.BuildDirectSeededClusterOffsets(12)
+assert(#complete_offsets == 469)
+local residues = {}
+for _, offset in ipairs(complete_offsets) do
+	residues[(offset.dq % 3) .. ":" .. (offset.dr % 3)] = true
+end
+local residue_count = 0
+for _ in pairs(residues) do residue_count = residue_count + 1 end
+assert(residue_count == 9, "local sampler excludes legal axial residue classes")
+local repaired, repaired_error = planner({
+	centers = {{ q = 100, r = 100, band = "outer" }},
+	offsets = {{dq = 0, dr = 0}, {dq = 2, dr = 0}, {dq = 5, dr = 0}},
+	specs = {{resource_target = 2}}, outer_count = 1,
+	cluster_radius = 12, minimum_member_distance = 3,
+	center_attempt_budget = 1, candidate_attempt_budget = 10, center_candidate_budget = 3,
+	anchor_first = true, require_valid_anchor = false,
+	rand_int = function() return 0 end,
+	classify_center = function(c) return c.band end,
+	build_candidate = function(c, _, offset) return {q = c.q + offset.dq, r = c.r} end,
+	validate_static = function(c) return c.q == 102 or c.q == 105 end,
+	validate_dynamic = function() return true end,
+})
+assert(repaired, repaired_error)
+assert(repaired[1].candidates[1].q == 102 and repaired[1].candidates[2].q == 105,
+	"an unbuildable seed suppressed its legal neighbours")
+
+local new_guide = environment.DepositRules.NewDirectSeededBuildableGuide
+local function check_guide(points)
+	local draws = new_rng(17)
+	local guide = new_guide({leaf_size = 4, rand_int = draws, has_buildable = function(rect)
+		for _, p in ipairs(points) do
+			if p[1] >= rect.x0 and p[1] < rect.x1 and p[2] >= rect.y0 and p[2] < rect.y1 then
+				return true
+			end
+		end
+		return false
+	end})
+	local region = {x0 = 0, y0 = 0, x1 = 64, y1 = 64}
+	local x, y = guide.Sample(region)
+	assert(x and y)
+	assert(guide.stats.queries <= 17, "guide eagerly traversed unused leaves")
+	local touched = false
+	for _, p in ipairs(points) do
+		if math.abs(x - p[1]) < 4 and math.abs(y - p[2]) < 4 then touched = true end
+	end
+	assert(touched, "guide missed the small buildable region")
+	local prior_queries = guide.stats.queries
+	guide.Sample(region)
+	assert(guide.stats.cache_reuses > 0)
+	if #points == 1 then assert(guide.stats.queries == prior_queries) end
+end
+check_guide({{31, 31}})
+check_guide({{32, 32}}) -- split boundary
+local diagonal = {}
+for i = 0, 63 do diagonal[#diagonal + 1] = {i, i} end
+check_guide(diagonal)
+for _, result in ipairs({"error", "empty", "full", "inconsistent"}) do
+	local guide = new_guide({leaf_size = 4, rand_int = function() return 0 end,
+		has_buildable = function(rect)
+			if result == "error" then error("native query unavailable") end
+			if result == "inconsistent" then return rect.x1 - rect.x0 == 64 end
+			return result == "full"
+		end})
+	local x = guide.Sample({x0 = 10, y0 = 10, x1 = 74, y1 = 74})
+	assert((x ~= nil) == (result ~= "empty"), "unknown/boundary guide result incorrectly pruned")
+	assert(guide.stats.queries <= 17, "guide exceeded a single lazy path")
+end
 local function require_policy(condition, message)
 	if not condition then violations[#violations + 1] = message end
 end
@@ -411,8 +479,9 @@ require_policy(not planner_source:find("local function shuffled_copy", 1, true),
 require_policy(topup:find('kind = "sector"', 1, true)
 	and topup:find("center_priority = function(center)", 1, true)
 	and topup:find("anchor_first = true", 1, true)
-	and topup:find("require_valid_anchor = true", 1, true)
-	and topup:find("first_x + RandInt(past_x - first_x)", 1, true),
+	and topup:find("require_valid_anchor = false", 1, true)
+	and topup:find("guide.Sample(center.buildable_region)", 1, true)
+	and topup:find("direct_context.build_unbuildable_z, 10000", 1, true),
 	"apron-first on-demand physical-band sampling is missing")
 require_policy(topup:find("center_attempt_id", 1, true),
 	"repeated general-sector attempts do not draw a fresh physical anchor")
