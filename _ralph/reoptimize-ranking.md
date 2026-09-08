@@ -218,6 +218,61 @@ Evidence: `_ralph/runs/reoptimize-under-70s/artifacts/iter011_apron_math_red/`,
 `iter013_v934_14n_after1/`, `iter014_v934_14n_after2/`,
 `iter015_v934_14n_after3/`, and `iter018_v934_15s_regression/`.
 
+### Step 4 - #4 surface hard-spacing audit spatial index (v935 `dd0504f`, 2026-09-08)
+
+`AuditTopUpVanillaRepulsion` now builds conservative world and axial bucket
+indexes for the final surface top-up audit, unions their candidate pairs, and
+sorts each row back into literal pair order before evaluating the unchanged
+predicates. The established underground density-fallback audit remains literal.
+An unavailable, disabled, malformed, or non-finite surface certificate records
+one shared `OptimizationFailure`, raises with the concrete cause, and never runs
+the quadratic audit as a fallback.
+
+Measured by the full rules probe at 14N134W with identical double pins and the
+START-boundary clock (all samples retain full grids and incident-matched logs):
+
+| | v934 before | v935 after |
+|---|---|---|
+| T0->T1 | 194.171 / 196.363 / 197.156 s, **median 196.363 s**, range 2.985 s | 194.119 / 194.941 / 198.799 s, **median 194.941 s**, range 4.680 s (**-1.422 s, -0.724%**) |
+| first access | 41.376 / 41.100 / 41.108 s | 41.251 / 41.457 / 41.433 s |
+| surface enrichment | `857148281` / 701 in every run | identical |
+| surface decor | `917959587` / 1292 in every run | identical |
+| underground enrichment | `1609697062` / 251 in every run | identical |
+| terrain/sites/pads/audits | surface height `-897814779083946979`, UG height `8297061474709185495`, UG pass `3500460399427711453`, 65 sites and 12 pads; detailed audits identical | identical across all six samples |
+| rules/logs | all directly judged gates green; zero Lua/optimization/native failures | same |
+
+The required pinned 15S67E regression is also green and exact: v934
+T0->T1 **161.370 s**, v935 **160.655 s** (0.715 s / 0.443% faster), with
+surface enrichment `666958567`/592, decor `464485535`/2749, underground
+enrichment `1158028783`/265, underground decor `5381`, one initial sector,
+9 clusters == 9 pads, and successful player-route first access. Canonical
+comparison of the complete native snapshot is equal, including surface/UG height
+and pass grids, all 39 sites, all 9 pads, detailed terrain audit, apron census,
+and empty optimization failures. The preliminary judge's retained planned-10 /
+actual-9 complaint is unchanged corrected-baseline behavior; the current rule
+judges the actual 9 clusters in the allowed 8..12 range with one pad each.
+
+Full serialized surface pass content was compared, not replaced by historical
+`HashPassability`. It varies within unchanged v934 and around the required
+Elevator placement/`Complete` lifecycle; exact stage captures isolate those
+native occupancy mutations. Unit #4 adds no RNG or grid-write path, while
+surface/UG heights, UG pass, sites, pads, audits, and all placement/rule digests
+remain exact across the complete 14N set. The deterministic production-function
+fixture preserves every v934 counter, verdict, pair budget, and first-detail
+field while reducing actual pair predicates from **125891 to 3541**; an injected
+non-finite certificate proves the fail-loud, no-fallback path.
+
+Visual verdict: output-preserving. Exact height grids, resource/pad records, and
+the complete pinned-15S native snapshot show that accepted terrain pixels and
+placements are unchanged. This audit-only unit cannot alter rendering, so no
+replacement visual capture was required.
+
+Evidence: `_ralph/runs/reoptimize-under-70s/artifacts/iter019_spacing_audit_red/`,
+`iter020_spacing_audit_green/`, `iter021_v935_14n_after1/`,
+`iter022_v935_14n_after2/`, `iter024_pass_stage_boundary/`,
+`iter025_pass_stage_split/`, `iter026_v935_14n_after3/`, and
+`iter027_v935_15s_regression/`.
+
 ## Acceptance per step (same for every unit)
 
 - `rules_probe` at 14N134W: all ten gates green; preserving units must match the immediately
