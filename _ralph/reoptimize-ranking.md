@@ -273,6 +273,66 @@ Evidence: `_ralph/runs/reoptimize-under-70s/artifacts/iter019_spacing_audit_red/
 `iter025_pass_stage_split/`, `iter026_v935_14n_after3/`, and
 `iter027_v935_15s_regression/`.
 
+### Step 5 - #5 bounded outer-resource passability rebuilds (v936 `ed288e9`, 2026-09-08)
+
+The outer-resource terrain writer now certificates every aligned native patch
+and terminal strip it writes. The two intermediate passability rebuilds consume
+those half-open regions expanded by two pass tiles instead of rebuilding all
+819,200 squares. The one full buildable rebuild and the later authoritative
+whole-map closing rebuilds remain unchanged. An invalid or missing certificate
+records one shared `OptimizationFailure`, raises with the concrete cause, and
+makes zero engine calls; there is no whole-map fallback.
+
+Measured by the full rules probe at 14N134W with identical double pins and the
+START-boundary clock (all samples retain full grids and incident-matched logs):
+
+| | v935 before | v936 after |
+|---|---|---|
+| T0->T1 | 194.119 / 194.941 / 198.799 s, **median 194.941 s**, range 4.680 s | 187.549 / 189.107 / 186.260 s, **median 187.549 s**, range 2.847 s (**-7.392 s, -3.79%**) |
+| first access | 41.251 / 41.457 / 41.433 s | 41.380 / 41.209 / 41.087 s |
+| surface enrichment | `857148281` / 701 in every run | identical |
+| surface decor | `917959587` / 1292 in every run | identical |
+| underground enrichment | `1609697062` / 251 in every run | identical |
+| terrain/sites/pads/audits | surface height `-897814779083946979`, UG height `8297061474709185495`, 65 sites and 12 pads; detailed audits exact | identical across all six samples |
+| rules/logs | all directly judged gates green; zero Lua/optimization/native failures | same |
+
+All four recursively key-sorted complete 14N snapshots are exactly equal at
+7,884 characters, SHA256
+`075790F59F64311B9C85ABD3A932E197C46F8897D636A2C37585FF16A4C51FA1`.
+This includes both native height/pass grids, all 65 resource sites, all 12 pads,
+detailed terrain audit, apron census, and empty optimization failures.
+
+The required pinned 15S67E regression is also green and exact: v935 T0->T1
+**160.655 s**, v936 **158.890 s** (1.765 s / 1.10% faster). Complete canonical
+snapshots are equal at 5,473 characters, SHA256
+`07d1f302341401436cfb23ed37cb3aa5d370d74b5fb1acc8183afc69fe2e9b28`,
+including both native height/pass grids, all 39 sites, all 9 pads, detailed
+terrain audit, apron census, and empty optimization failures. Enrichment/decor
+digests and counts, one initial sector, two signs, unexplored visibility, one SBM
+cover, two underground passages, Elevator build/link, underground stretch, and
+nil revalidation error all match. The preliminary helper's planned-10/actual-9
+complaint is unchanged accepted-baseline behavior; the current gate is 8..12
+actual clusters with one pad each, and v936 has 9 == 9 with every audit failure zero.
+
+The focused production fixture proves the historical ring rectangles are unsafe
+for the current adaptive terrain: its largest patch reaches x=134300 while the
+old `80a0452` bound stops at x=82120. The accepted implementation derives bounds
+from the actual aligned writes, expands by two pass tiles, preserves prepare ->
+scoped rebuild -> audit -> anomaly -> effect ordering, and passes the complete
+offline matrix: Lua 31/31, crease 8/8, blend 14/14, terminal 10/10, focused dirty
+rebuild, Python 7/7, and policy static 101/101 plus all 28 dynamic/synthetic cases.
+
+Visual verdict: output-preserving. Exact native height grids, every serialized
+site/pad, both pass grids in the complete pinned snapshots, and the detailed
+terrain/apron audits prove the accepted pixels and placements are unchanged.
+This rebuild-scope-only unit cannot alter rendering, so no replacement visual
+capture was required.
+
+Evidence: `_ralph/runs/reoptimize-under-70s/artifacts/iter029_dirty_rebuild_red/`,
+`iter030_dirty_rebuild_green/`, `iter032_v936_static_gate/`,
+`iter033_v936_14n_after1/`, `iter034_v936_14n_after2/`,
+`iter035_v936_14n_after3/`, and `iter036_v936_15s_regression/`.
+
 ## Acceptance per step (same for every unit)
 
 - `rules_probe` at 14N134W: all ten gates green; preserving units must match the immediately
