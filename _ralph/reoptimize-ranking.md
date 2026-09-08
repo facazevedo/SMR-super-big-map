@@ -92,15 +92,62 @@ Skip: rank-then-filter (`86767a7`, no measured gain); everything in the record's
 
 ## Suggested order
 
-1. #1–#5 in one or two steps (all output-preserving; the digests already in the rules probe are
-   the whole acceptance test). #1–#3 have no guard at all (pure rewrites), so "no fallback" costs
-   nothing there; #4 and #5 lose their quadratic-audit / whole-map-rebuild rescue branches.
-2. #6 buildable snap — first behaviour-changing step; re-prove the seed pair.
-3. #7–#11 (rocket deferral and caches, crease discovery side, deferred end rebuild).
-4. Native rasters #13 → #14 → #15, each A/B'd on the height grid with the flag on and off.
-5. #16–#18 ring content planners.
-6. #19 crease translation/feather with the wall fixes, border profile checked.
-7. #20 in-place generation only after a crash-free soak; #21/#22 only with a new design.
+### Current implementation plan — owner priorities, 2026-09-08
+
+This replaces the original least-risk-first execution order. The numbered historical
+catalog above remains a reference. These are candidates to investigate and implement
+when evidence supports them; no future speedup or all-rules verdict is implied.
+After the owner's top-up priority, measured remaining cost and dependencies can
+change the order. Compare with the full tree at `6afbcd9`, not only that commit's
+diagnostic patch. Its ancestors contain the historical sub-70 techniques; the last
+recorded START figure is 60.4 s at `ca28e66`. The later entrance-oracle estimate is
+not a measurement of `6afbcd9`.
+
+Current accepted timing reference: v936, 14N **187.549 s median** from
+187.549 / 189.107 / 186.260 s; pinned 15S **158.890 s**. The individual accepted
+steps and their evidence are below. Final all-scenario sign-off remains pending.
+
+| Priority | Optimization to try | Concrete change | Status / acceptance condition |
+|---|---|---|---|
+| 1 | Direct seeded top-up sampling and streaming clusters (#17/#18) | Draw candidates on demand around eligible terrain opportunities; accept enough valid members for each required cluster and stop at its count. Remove the 4,096-entry perimeter pool, full-pool sorting, and repeated anchor/neighbour scans. | Implementing. Preserve composition, quantities, spacing, 8..12 clusters and one usable pad each; prove repeatable new positions and seamless terrain. |
+| 2 | Reuse candidate terrain validation | Validate only sampled candidate locations. Cache a static result for the exact coordinate/footprint while its terrain/buildable/protection state is unchanged; reuse existing trustworthy candidate records. | Required companion to #1. Apron centers alone are not certified placement footprints. Keep occupancy/spacing/composition checks current; invalidate affected cached results after relevant changes. |
+| 3 | Demand-driven selection for remaining top-up phases | Profile ordinary resources, anomalies and effects for remaining pool rescans; consume valid entries or generate the next candidate only until the remaining target is satisfied. | Planned audit; keep existing demand-driven paths and numeric/cache-first optimizations. Change only work still measured as redundant. |
+| 4 | Native buildable-hex snap (#6) | Guide a sampled candidate to a nearby valid buildable hex using a bounded native query, before expensive placement checks. | Try if rejection counts remain high. Candidate-only work; preserve geometry restrictions and deterministic placement. |
+| 5 | Defer rocket relief scoring (#7) | Evaluate expensive surrounding-relief samples only for candidates whose score can still win. | Planned. Preserve the selected pad and every footprint rule. |
+| 6 | Reuse rocket terrain samples and clearance index (#8) | Cache repeated terrain reads and query nearby obstacles instead of rescanning them for each pad candidate. | Planned. Reuse only while terrain and obstacle state remain valid. |
+| 7 | Bounded seeded rocket-pad search (#16) | Sample a finite set near each cluster and stop once a rule-valid landing pad is selected. | Planned after #5/#6; pad positions may change, but every cluster still needs a valid pad. |
+| 8 | Native mountain-apron raster (#15) | Move the expensive Lua per-cell apron blend into native grid operations using the current terrain formula. | Profile, then adapt. Preserve terrain detail, seamless transitions and actual buildability; historical raster cannot be copied blindly. |
+| 9 | Settle resource terrain once (#14) | Plan interacting resource/extractor/pad edits together so fewer repair passes are necessary. | Planned. Preserve overlapping protected cores and smooth deformation; keep final audits authoritative. |
+| 10 | Faster crease discovery and neighbourhood reads (#9/#10) | Reuse rolling neighbourhoods and native discovery indexes while retaining the current processing order. | Planned. Exact height output, including terminal-wall and spike fixes, must match. |
+| 11 | Native crease translation and feather (#19) | Batch the current bounded, slope-limited calculations in native grid operations. | Conditional on profiling and #10. Preserve the corrected formula; no overshoot or unsigned wrap. |
+| 12 | Coalesce terrain publication and rebuild work (#21) | Combine compatible edits and rebuild their actual affected regions at a proven lifecycle boundary. | Requires a fresh design. Retain both currently required closing rebuilds unless new native-state evidence proves an equivalent replacement. |
+| 13 | Generate the native source in place (#20) | Avoid the temporary source-map load and terrain/object migration. | Architecture experiment. Must resolve the historical `MaskBuildableGrid` crash and preserve vanilla generation, RNG and passage behavior before adoption. |
+| 14 | Minimal lazy underground generation (#22) | Defer eligible underground generation until first access, with deterministic entrance information available at surface generation. | Architecture experiment. Preserve glued entrances, all underground rules and one working first-access cover; report first-access time separately. |
+
+Execution details for priorities 1–3: stop at the requested accepted count, discard
+rejected draws, and retain only the small pending cluster plus required placement
+records. Validate a reused coordinate once only while its guarantees remain valid;
+do not pre-validate the whole map to build a certified reserve. Track attempted,
+rejected, statically validated, cache-reused and accepted counts. A bounded search
+that cannot satisfy the rules fails visibly and requires redesign; it must not
+silently use the eager planner or reduce required quantities.
+
+Already implemented: native outer-resource raster (#13), numeric hex keys and
+cache-first verdicts (#1/#2), apron math bindings (#3), spacing-audit index (#4),
+and actual-dirty-region intermediate passability rebuilds (#5). Preserve these.
+
+Rejected: immediate final-rebuild deferral (#11, candidate `35c33c6`/`7e9bdd4`).
+It measured 184.677 / 184.429 s but changed native surface passability output;
+`2d9ea57` restored the exact v936 payload. Reconsider only with materially new
+evidence, not unchanged retries. Coarser terrain masks (#12) are deferred because
+their fidelity risk directly touches the no-visible-marks requirement. Historical
+rank-then-filter (`86767a7`) has no demonstrated saving and stays deprioritized.
+
+For every successful unit: separate implementation commit, before/after cold
+START-to-T1 samples (at least three at 14N), median/range/saving, rule and visual
+verdicts, and a Step log entry here. Reuse matching accepted baseline samples.
+Placement/terrain/lifecycle changes require the full scenario sweep specified in
+the current task contract; passing only 14N and 15S is not final all-scenario proof.
 
 ## Step log
 
