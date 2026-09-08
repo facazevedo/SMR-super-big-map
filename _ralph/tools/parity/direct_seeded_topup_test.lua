@@ -185,6 +185,62 @@ assert(source_stats.centers_attempted == 2 and source_stats.candidate_attempts =
 	and source_stats.accepted_candidates == 2 and source_stats.rejected_candidates == 1,
 	"invalid preferred anchor did not advance directly to the general on-demand source")
 
+-- A coordinate may be reached from either side of the physical outer/inner boundary.
+-- Static terrain/buildability can be cached by coordinate, but band eligibility cannot.
+local false_positive_plans, false_positive_error = planner({
+	centers = {
+		{ q = 0, r = 0, band = "outer" }, { q = 100, r = 0, band = "outer" },
+		{ q = -3, r = 0, band = "inner" }, { q = -100, r = 0, band = "inner" },
+	},
+	offsets = { { dq = 0, dr = 0 }, { dq = 3, dr = 0 } },
+	specs = { { resource_target = 2 }, { resource_target = 2 } }, outer_count = 1,
+	cluster_radius = 12, minimum_member_distance = 3,
+	center_attempt_budget = 4, candidate_attempt_budget = 10,
+	anchor_first = true, require_valid_anchor = true,
+	rand_int = function() return 0 end,
+	classify_center = function(center) return center.band end,
+	build_candidate = function(center, _, offset, band)
+		return { q = center.q + offset.dq, r = 0, band = band }
+	end,
+	validate_static = function(candidate)
+		local actual_band = candidate.q < 0 and "inner" or "outer"
+		return candidate.band == actual_band and candidate.q ~= 3
+	end,
+	validate_dynamic = function() return true end,
+})
+assert(false_positive_plans, false_positive_error)
+local false_positive_safe = true
+for _, candidate in ipairs(false_positive_plans[2].candidates) do
+	if not (candidate.band == "inner" and candidate.q < 0) then
+		false_positive_safe = false
+	end
+end
+
+local false_negative_plans, false_negative_error = planner({
+	centers = {
+		{ q = 3, r = 0, band = "outer" }, { q = 100, r = 0, band = "outer" },
+		{ q = 0, r = 0, band = "inner" }, { q = -100, r = 0, band = "inner" },
+	},
+	offsets = { { dq = 0, dr = 0 }, { dq = -3, dr = 0 } },
+	specs = { { resource_target = 2 }, { resource_target = 2 } }, outer_count = 1,
+	cluster_radius = 12, minimum_member_distance = 3,
+	center_attempt_budget = 4, candidate_attempt_budget = 10,
+	anchor_first = true, require_valid_anchor = true,
+	rand_int = function() return 0 end,
+	classify_center = function(center) return center.band end,
+	build_candidate = function(center, _, offset, band)
+		return { q = center.q + offset.dq, r = 0, band = band }
+	end,
+	validate_static = function(candidate)
+		local actual_band = candidate.q <= 0 and "inner" or "outer"
+		return candidate.band == actual_band
+	end,
+	validate_dynamic = function() return true end,
+})
+assert(false_negative_plans, false_negative_error)
+local false_negative_safe = false_negative_plans[2].candidates[1].q == 0
+	and false_negative_plans[2].candidates[2].q == -3
+
 local fail_rng = new_rng(7)
 local failed, failure, failure_stats = planner({
 	centers = { { band = "outer", q = 0, r = 0 } },
@@ -205,6 +261,10 @@ local violations = {}
 local function require_policy(condition, message)
 	if not condition then violations[#violations + 1] = message end
 end
+require_policy(false_positive_safe,
+	"cross-band positive static cache reuse accepted a member in the wrong physical band")
+require_policy(false_negative_safe,
+	"cross-band negative static cache reuse poisoned a later valid-band candidate")
 require_policy(not topup:find("local perimeter_quota_candidates = {}", 1, true),
 	"eager perimeter candidate pool remains")
 require_policy(not topup:find("local MAX_FINAL_QUOTA_CANDIDATES = 4096", 1, true),
