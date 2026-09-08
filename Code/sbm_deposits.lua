@@ -4043,6 +4043,161 @@ end
 
 -- Breakthrough anomalies are preserved exactly from the vanilla source record set.
 
+-- DIRECT_SEEDED_CLUSTER_PLANNER_BEGIN
+-- Build only the candidates needed by the already-selected cluster specifications. The caller
+-- supplies the map-specific geometry and validation callbacks so this planner remains directly
+-- regression-testable without copying its behavior into a synthetic model. Accepted candidates
+-- are retained only as one complete 1..5-member cluster; there is no map-sized reserve or fallback.
+function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
+	if type(options) ~= "table" then return nil, "planner options unavailable" end
+	local centers = options.centers
+	local offsets = options.offsets
+	local specs = options.specs
+	local rand_int = options.rand_int
+	local classify_center = options.classify_center
+	local build_candidate = options.build_candidate
+	if type(centers) ~= "table" or #centers == 0 then
+		return nil, "natural mountain-base centers unavailable"
+	end
+	if type(offsets) ~= "table" or #offsets == 0 then
+		return nil, "cluster offsets unavailable"
+	end
+	if type(specs) ~= "table" or #specs == 0 then
+		return nil, "cluster specifications unavailable"
+	end
+	if type(rand_int) ~= "function" or type(classify_center) ~= "function"
+		or type(build_candidate) ~= "function" then
+		return nil, "planner callbacks unavailable"
+	end
+
+	local outer_count = math.max(0, math.min(#specs,
+		math.floor(tonumber(options.outer_count) or 0)))
+	local cluster_radius = math.max(1, math.floor(tonumber(options.cluster_radius) or 1))
+	local minimum_member_distance = math.max(1,
+		math.floor(tonumber(options.minimum_member_distance) or 1))
+	local center_attempt_budget = math.max(1,
+		math.floor(tonumber(options.center_attempt_budget) or 32))
+	local candidate_attempt_budget = math.max(1,
+		math.floor(tonumber(options.candidate_attempt_budget) or 256))
+	local stats = {
+		strategy = "direct_seeded_cluster_v1", centers_available = #centers,
+		centers_attempted = 0, candidate_attempts = 0, valid_candidates = 0,
+		plans = 0, outer_plans = 0, inner_plans = 0,
+		center_attempt_budget = center_attempt_budget,
+		candidate_attempt_budget = candidate_attempt_budget,
+	}
+
+	local function shuffled_copy(source)
+		local copy = {}
+		for index, value in ipairs(source) do copy[index] = value end
+		for index = #copy, 2, -1 do
+			local draw = rand_int(index)
+			if type(draw) ~= "number" or draw < 0 or draw >= index then
+				return nil, "private random stream returned an invalid draw"
+			end
+			local swap = math.floor(draw) + 1
+			copy[index], copy[swap] = copy[swap], copy[index]
+		end
+		return copy
+	end
+
+	local bands = { outer = {}, inner = {} }
+	for index, center in ipairs(centers) do
+		local band = classify_center(center)
+		if band == "outer" or band == "inner" then
+			bands[band][#bands[band] + 1] = { center = center, index = index }
+		end
+	end
+	local error_message
+	bands.outer, error_message = shuffled_copy(bands.outer)
+	if not bands.outer then return nil, error_message, stats end
+	bands.inner, error_message = shuffled_copy(bands.inner)
+	if not bands.inner then return nil, error_message, stats end
+
+	local band_cursors = { outer = 1, inner = 1 }
+	local reserved, plans = {}, {}
+	local function distance(a, b)
+		local dq, dr = a.q - b.q, a.r - b.r
+		return math.max(math.abs(dq), math.abs(dr), math.abs(dq + dr))
+	end
+	for spec_index, spec in ipairs(specs) do
+		local target = math.max(1, math.floor(tonumber(spec.resource_target) or 0))
+		local band = spec_index <= outer_count and "outer" or "inner"
+		local source = bands[band]
+		local cursor = band_cursors[band]
+		local centers_attempted, candidate_attempts = 0, 0
+		local chosen
+		while cursor <= #source and centers_attempted < center_attempt_budget
+			and candidate_attempts < candidate_attempt_budget do
+			local center_entry = source[cursor]
+			cursor = cursor + 1
+			centers_attempted = centers_attempted + 1
+			stats.centers_attempted = stats.centers_attempted + 1
+			local ranked_offsets, shuffle_error = shuffled_copy(offsets)
+			if not ranked_offsets then return nil, shuffle_error, stats end
+			local trial, trial_hexes = {}, {}
+			for _, offset in ipairs(ranked_offsets) do
+				if candidate_attempts >= candidate_attempt_budget then break end
+				candidate_attempts = candidate_attempts + 1
+				stats.candidate_attempts = stats.candidate_attempts + 1
+				local candidate = build_candidate(center_entry.center, center_entry.index,
+					offset, band, spec, spec_index)
+				if candidate and type(candidate.q) == "number" and type(candidate.r) == "number" then
+					local key = tostring(candidate.q) .. ":" .. tostring(candidate.r)
+					local clear = not trial_hexes[key]
+					if clear then
+						for _, prior in ipairs(reserved) do
+							if distance(candidate, prior) <= cluster_radius then
+								clear = false
+								break
+							end
+						end
+					end
+					if clear then
+						for _, prior in ipairs(trial) do
+							if distance(candidate, prior) < minimum_member_distance then
+								clear = false
+								break
+							end
+						end
+					end
+					if clear then
+						trial_hexes[key] = true
+						trial[#trial + 1] = candidate
+						stats.valid_candidates = stats.valid_candidates + 1
+						if #trial == target then
+							chosen = trial
+							break
+						end
+					end
+				end
+			end
+			if chosen then break end
+		end
+		band_cursors[band] = cursor
+		if not chosen then
+			return nil, "cluster " .. tostring(spec_index) .. " " .. band
+				.. " search exhausted: centers=" .. tostring(centers_attempted)
+				.. "/" .. tostring(center_attempt_budget)
+				.. " candidates=" .. tostring(candidate_attempts)
+				.. "/" .. tostring(candidate_attempt_budget), stats
+		end
+		local plan = {
+			id = spec_index, target = target, extractor_target = spec.extractor_target,
+			strength = spec.strength, anomaly_capacity = spec.anomaly_capacity,
+			reward_capacity = spec.reward_capacity, candidates = chosen,
+			outermost = band == "outer",
+		}
+		plans[#plans + 1] = plan
+		stats.plans = stats.plans + 1
+		if plan.outermost then stats.outer_plans = stats.outer_plans + 1
+		else stats.inner_plans = stats.inner_plans + 1 end
+		for _, candidate in ipairs(chosen) do reserved[#reserved + 1] = candidate end
+	end
+	return plans, nil, stats
+end
+-- DIRECT_SEEDED_CLUSTER_PLANNER_END
+
 function DepositRules.TopUpDeposits(map)
 	if cfg().TOPUP_RESOURCES ~= true then return end
 	if not ExpansionAdditionStagesReady("resource top-up") then return end
@@ -4534,171 +4689,165 @@ function DepositRules.TopUpDeposits(map)
 			end
 			return pool
 		end
-		-- The terrain pass publishes one opportunity per pseudorandomly selected mountain-base
-		-- sector. Probe only the small planar core and retain the first fully valid coordinate, so
-		-- every opportunity contributes at most one deposit and untouched foothills stay untouched.
-		local mountain_base_candidates = {}
-		local outermost_mountain_base_candidates = {}
-		local inner_band_mountain_base_candidates = {}
-		local perimeter_quota_candidates = {}
-		local outermost_perimeter_quota_candidates = {}
-		local inner_band_perimeter_quota_candidates = {}
+		-- The surface cluster pass consumes only a bounded set of seeded candidates around the
+		-- terrain pass's existing natural mountain-base centers. No perimeter-wide candidate pool
+		-- is built, and exhaustion is a loud invalid-map result rather than an eager fallback.
+		local direct_cluster_plans = { outermost = {}, inner = {} }
+		local direct_cluster_repulsion
+		local direct_cluster_stats = {
+			strategy = "inactive", centers_available = 0, centers_attempted = 0,
+			candidate_attempts = 0, valid_candidates = 0, plans = 0,
+			outer_plans = 0, inner_plans = 0, rng_draws = 0,
+		}
 		if not underground and surface_mountain_base_minimum > 0
 			and surface_mountain_base_ring_sectors > 0 then
+			if cfg().OPTIMIZE_DIRECT_SEEDED_SURFACE_CLUSTERS ~= true then
+				local reason = "direct seeded surface cluster planner is disabled"
+				OptimizationFailure("direct seeded surface clusters", reason, map)
+				error(reason)
+			end
 			local centers = map.SuperBigMapNaturalMountainBaseApronCenters
-			local mountain_base_hexes = {}
-			local const_tbl = Global("const")
-			local hex_size = type(const_tbl) == "table"
-				and tonumber(const_tbl.HexSize) or 1000
-			hex_size = type(hex_size) == "number" and hex_size > 0 and hex_size or 1000
-			local radius = hex_size * 1.25
-			local diagonal = radius * 0.8660254
-			local probe_offsets = {
-				{ 0, 0 }, { radius, 0 }, { -radius, 0 },
-				{ radius * 0.5, diagonal }, { -radius * 0.5, diagonal },
-				{ radius * 0.5, -diagonal }, { -radius * 0.5, -diagonal },
-			}
-			if type(centers) == "table" then
-				for center_index, center in ipairs(centers) do
-					surface_mountain_base_centers = surface_mountain_base_centers + 1
-					for probe_index, offset in ipairs(probe_offsets) do
-						local x, y = center.x + offset[1], center.y + offset[2]
-						local sector = SectorAtPoint(map, x, y)
-						if sector and not SectorIsScanned(sector)
-							and IsInFinalOuterResourceWorldBand(map, x, y,
+			local hex_to_world = Global("HexToWorld")
+			local world_to_hex = Global("WorldToHex")
+			if type(centers) ~= "table" or #centers == 0
+				or type(hex_to_world) ~= "function" or type(world_to_hex) ~= "function" then
+				local reason = "direct seeded surface cluster geometry unavailable"
+				OptimizationFailure("direct seeded surface clusters", reason, map)
+				error(reason)
+			end
+			direct_cluster_repulsion = NewTopUpRepulsionTracker(
+				map, "direct seeded surface cluster plans")
+			local direct_context = NewDepositValidationContext(map)
+			local resource_cluster_radius = math.max(4,
+				math.floor(cfg().OUTER_RESOURCE_CLUSTER_RADIUS_HEXES or 12))
+			local offsets = {}
+			for dq = -resource_cluster_radius, resource_cluster_radius,
+				surface_quota_minimum_hex_distance do
+				for dr = -resource_cluster_radius, resource_cluster_radius,
+					surface_quota_minimum_hex_distance do
+					if (AxialHexDistance(0, 0, dq, dr) or math.huge)
+						<= resource_cluster_radius then
+						offsets[#offsets + 1] = { dq = dq, dr = dr }
+					end
+				end
+			end
+			local center_hexes = {}
+			local rng = deterministic_placement_rng
+			local draws_before = type(rng) == "table" and rng.calls or 0
+			local outer_count = math.max(1, math.ceil(desired_resource_cluster_count
+				* surface_outermost_resource_minimum_percent / 100))
+			local plan_ok, plans, plan_error, plan_stats = pcall(
+				DepositRules.BuildDirectSeededSurfaceClusterPlans, {
+					centers = centers,
+					offsets = offsets,
+					specs = planned_resource_cluster_specs,
+					outer_count = outer_count,
+					cluster_radius = resource_cluster_radius,
+					minimum_member_distance = surface_quota_minimum_hex_distance,
+					center_attempt_budget = 64,
+					candidate_attempt_budget = 384,
+					rand_int = RandInt,
+					classify_center = function(center)
+						if type(center) ~= "table" or type(center.x) ~= "number"
+							or type(center.y) ~= "number"
+							or not IsInFinalOuterResourceWorldBand(map, center.x, center.y,
 								surface_mountain_base_ring_sectors) then
-							local pt = point(x, y)
-							local can_receive, _, _, _, q, r = CanReceiveDeposit(
-								map, pt, validation_context, false)
-							if can_receive then
-								local terrain_type = TerrainTypeAt(map, pt, validation_context) or -1
-								local hex_key = type(q) == "number" and type(r) == "number"
-									and (tostring(q) .. ":" .. tostring(r)) or nil
-								local candidate = not (hex_key and mountain_base_hexes[hex_key])
-									and append_valid_candidate(x, y, sector, terrain_type, q, r) or nil
-								if candidate then
-									if hex_key then mountain_base_hexes[hex_key] = true end
-									candidate._sbm_mountain_base_apron = true
-									candidate._sbm_mountain_base_center_index = center_index
-									candidate._sbm_mountain_base_rank =
-										(tonumber(center.pseudorandom_rank) or center_index)
-										* 8 + probe_index
-									mountain_base_candidates[#mountain_base_candidates + 1] = candidate
-									perimeter_quota_candidates[#perimeter_quota_candidates + 1] = candidate
-									surface_resource_quota_candidates =
-										surface_resource_quota_candidates + 1
-									surface_mountain_base_valid_candidates =
-										surface_mountain_base_valid_candidates + 1
-								end
-							end
+							return nil
 						end
-					end
-				end
-			end
-
-			-- Raw-height discovery deliberately samples only a few possible centers per sector. The
-			-- final buildable grid is authoritative and often contains narrow natural flats between
-			-- those samples. Walk every perimeter sector with a deterministic 32x32 stratified pattern,
-			-- retaining flat/buildable/unobstructed quota points generally and tagging the natural
-			-- mountain-base subset for the preferred pass. This does not grade any additional terrain.
-			local edge_ctx = type(BuildTopUpEdgeContext) == "function"
-				and BuildTopUpEdgeContext(map) or nil
-			-- The two-sector guarantee needs more than a single sparse candidate per local foothill.
-			-- This changes sampling only: every retained point still passes the unchanged final
-			-- buildable/passable/unobstructed gate and the quota-specific spacing tracker.
-			local MAX_FINAL_QUOTA_CANDIDATES = 4096
-			local MAX_CANDIDATES_PER_SECTOR = 64
-			local SAMPLES_AXIS = 32
-			local SAMPLES_PER_SECTOR = SAMPLES_AXIS * SAMPLES_AXIS
-			if type(edge_ctx) == "table" and type(edge_ctx.sectors) == "table"
-				and type(edge_ctx.min_col) == "number" and type(edge_ctx.max_col) == "number"
-				and type(edge_ctx.min_row) == "number" and type(edge_ctx.max_row) == "number" then
-				for _, descriptor in ipairs(edge_ctx.sectors) do
-					if #perimeter_quota_candidates >= MAX_FINAL_QUOTA_CANDIDATES then break end
-					local sector = descriptor.sector_ref
-					local outer = descriptor.col <= edge_ctx.min_col
-							+ surface_mountain_base_ring_sectors - 1
-						or descriptor.col >= edge_ctx.max_col
-							- surface_mountain_base_ring_sectors + 1
-						or descriptor.row <= edge_ctx.min_row
-							+ surface_mountain_base_ring_sectors - 1
-						or descriptor.row >= edge_ctx.max_row
-							- surface_mountain_base_ring_sectors + 1
-					if outer and sector and not SectorIsScanned(sector)
-						and type(descriptor.area_x0) == "number"
-						and type(descriptor.area_y0) == "number"
-						and type(descriptor.area_x1) == "number"
-						and type(descriptor.area_y1) == "number" then
-						local span_sector_x = descriptor.area_x1 - descriptor.area_x0
-						local span_sector_y = descriptor.area_y1 - descriptor.area_y0
-						local seed = ((descriptor.col + 17) * 73856093
-							+ (descriptor.row + 31) * 19349663) % SAMPLES_PER_SECTOR
-						local accepted_in_sector = 0
-						for sample_index = 0, SAMPLES_PER_SECTOR - 1 do
-							surface_mountain_base_sample_attempts =
-								surface_mountain_base_sample_attempts + 1
-							local permuted = (sample_index * 73 + seed) % SAMPLES_PER_SECTOR
-							local cell_x = permuted % SAMPLES_AXIS
-							local cell_y = math.floor(permuted / SAMPLES_AXIS)
-							local jitter_x = ((permuted * 37 + seed * 11) % 97 + 0.5) / 97
-							local jitter_y = ((permuted * 53 + seed * 7) % 89 + 0.5) / 89
-							local x = descriptor.area_x0
-								+ (cell_x + 0.15 + jitter_x * 0.70) / SAMPLES_AXIS * span_sector_x
-							local y = descriptor.area_y0
-								+ (cell_y + 0.15 + jitter_y * 0.70) / SAMPLES_AXIS * span_sector_y
-							local pt = point(x, y)
-							local can_receive, _, _, _, q, r = CanReceiveDeposit(
-								map, pt, validation_context, false)
-							if can_receive then
-								local valley_score, rise, higher_samples = ValleyScore(map, pt)
-								local hex_key = type(q) == "number" and type(r) == "number"
-									and (tostring(q) .. ":" .. tostring(r)) or nil
-								local mountain_base = IsMountainBaseRelief(valley_score, rise,
-									higher_samples)
-								if not (hex_key and mountain_base_hexes[hex_key]) then
-									local terrain_type = TerrainTypeAt(map, pt, validation_context) or -1
-									local candidate = append_valid_candidate(
-										x, y, sector, terrain_type, q, r)
-									if candidate then
-										if hex_key then mountain_base_hexes[hex_key] = true end
-										candidate._sbm_mountain_base_rank =
-											((math.floor(x) * 73856093 + math.floor(y) * 19349663) % 2147483647) * 8
-										perimeter_quota_candidates[#perimeter_quota_candidates + 1] = candidate
-										surface_resource_quota_candidates = surface_resource_quota_candidates + 1
-										if mountain_base then
-											candidate._sbm_mountain_base_apron = true
-											candidate._sbm_mountain_base_natural = true
-											mountain_base_candidates[#mountain_base_candidates + 1] = candidate
-											surface_mountain_base_valid_candidates = surface_mountain_base_valid_candidates + 1
-											surface_mountain_base_sampled_candidates = surface_mountain_base_sampled_candidates + 1
-										end
-										accepted_in_sector = accepted_in_sector + 1
-										if accepted_in_sector >= MAX_CANDIDATES_PER_SECTOR
-											or #perimeter_quota_candidates >= MAX_FINAL_QUOTA_CANDIDATES then break end
-									end
-								end
-							end
+						return IsInFinalOuterResourceWorldBand(map, center.x, center.y, 1)
+							and "outer" or "inner"
+					end,
+					build_candidate = function(center, center_index, offset, band)
+						local center_hex = center_hexes[center]
+						if center_hex == nil then
+							local ok_hex, q, r = pcall(world_to_hex, point(center.x, center.y))
+							center_hex = ok_hex and type(q) == "number" and type(r) == "number"
+								and { q = q, r = r } or false
+							center_hexes[center] = center_hex
 						end
+						if not center_hex then return nil end
+						local q = center_hex.q + offset.dq
+						local r = center_hex.r + offset.dr
+						local ok_world, x, y = pcall(hex_to_world, q, r)
+						if not ok_world or type(x) ~= "number" or type(y) ~= "number" then
+							return nil
+						end
+						local outermost = IsInFinalOuterResourceWorldBand(map, x, y, 1)
+						if (band == "outer") ~= outermost
+							or not IsInFinalOuterResourceWorldBand(map, x, y,
+								surface_mountain_base_ring_sectors) then
+							return nil
+						end
+						local sector = SectorAtPoint(map, x, y)
+						local candidate = {
+							x = x, y = y, q = q, r = r, sector = sector,
+							sector_id = sector and sector.id,
+						}
+						if not sector or SectorIsScanned(sector)
+							or not surface_extractor_footprint_within_map(candidate) then
+							return nil
+						end
+						local pt = point(x, y)
+						local can_receive, _, _, _, final_q, final_r = CanReceiveDeposit(
+							map, pt, direct_context, false)
+						if not can_receive or final_q ~= q or final_r ~= r then return nil end
+						candidate.terrain_type = TerrainTypeAt(map, pt, direct_context) or -1
+						candidate._sbm_repulsion_hex = tostring(q) .. ":" .. tostring(r)
+						if not direct_cluster_repulsion.CanPlaceUnique(candidate)
+							or not direct_cluster_repulsion.CanPlaceMinimum(candidate, false,
+								TopUpEnrichmentMinimumHexDistance()) then
+							return nil
+						end
+						candidate._sbm_mountain_base_apron = true
+						candidate._sbm_mountain_base_natural = true
+						candidate._sbm_mountain_base_center_index = center_index
+						return candidate
+					end,
+				})
+			if not plan_ok then
+				plan_error, plans = tostring(plans), nil
+			end
+			direct_cluster_stats = type(plan_stats) == "table" and plan_stats
+				or direct_cluster_stats
+			rng = deterministic_placement_rng
+			direct_cluster_stats.rng_draws = type(rng) == "table"
+				and math.max(0, rng.calls - draws_before) or 0
+			if type(plans) ~= "table" then
+				local reason = "bounded direct seeded planning failed: " .. tostring(plan_error)
+				OptimizationFailure("direct seeded surface clusters", reason, map)
+				error(reason)
+			end
+			surface_mountain_base_centers = #centers
+			surface_mountain_base_sample_attempts = direct_cluster_stats.candidate_attempts or 0
+			for _, plan in ipairs(plans) do
+				local destination = plan.outermost
+					and direct_cluster_plans.outermost or direct_cluster_plans.inner
+				destination[#destination + 1] = plan
+				for member_index, record in ipairs(plan.candidates) do
+					local candidate = append_valid_candidate(record.x, record.y, record.sector,
+						record.terrain_type, record.q, record.r)
+					if not candidate then
+						local reason = "direct seeded candidate publication failed"
+						OptimizationFailure("direct seeded surface clusters", reason, map)
+						error(reason)
 					end
-				end
-			end
-			table.sort(mountain_base_candidates, function(a, b)
-				return a._sbm_mountain_base_rank < b._sbm_mountain_base_rank
-			end)
-			for _, candidate in ipairs(mountain_base_candidates) do
-				if IsInFinalOuterResourceWorldBand(map, candidate.x, candidate.y, 1) then
-					candidate._sbm_outermost_resource_band = true
-					outermost_mountain_base_candidates[#outermost_mountain_base_candidates + 1] = candidate
-				else
-					candidate._sbm_inner_resource_band = true
-					inner_band_mountain_base_candidates[#inner_band_mountain_base_candidates + 1] = candidate
-				end
-			end
-			for _, candidate in ipairs(perimeter_quota_candidates) do
-				if IsInFinalOuterResourceWorldBand(map, candidate.x, candidate.y, 1) then
-					outermost_perimeter_quota_candidates[#outermost_perimeter_quota_candidates + 1] = candidate
-				else
-					inner_band_perimeter_quota_candidates[#inner_band_perimeter_quota_candidates + 1] = candidate
+					candidate._sbm_mountain_base_apron = record._sbm_mountain_base_apron
+					candidate._sbm_mountain_base_natural = record._sbm_mountain_base_natural
+					candidate._sbm_mountain_base_center_index =
+						record._sbm_mountain_base_center_index
+					candidate._sbm_mountain_base_rank = plan.id * 1000 + member_index
+					candidate._sbm_resource_cluster_plan = plan.id
+					candidate._sbm_resource_cluster_strength = plan.strength
+					candidate._sbm_resource_cluster_resource_target = plan.target
+					candidate._sbm_resource_cluster_extractor_target = plan.extractor_target
+					candidate._sbm_resource_cluster_anomaly_capacity = plan.anomaly_capacity
+					candidate._sbm_resource_cluster_reward_capacity = plan.reward_capacity
+					plan.candidates[member_index] = candidate
+					surface_resource_quota_candidates = surface_resource_quota_candidates + 1
+					surface_mountain_base_valid_candidates =
+						surface_mountain_base_valid_candidates + 1
+					surface_mountain_base_sampled_candidates =
+						surface_mountain_base_sampled_candidates + 1
 				end
 			end
 		end
@@ -4706,33 +4855,10 @@ function DepositRules.TopUpDeposits(map)
 		if optimize_placement_pool then
 			topup_candidate_pool_by_map[map] = shared_candidates
 		end
-		local repulsion = NewTopUpRepulsionTracker(map, "resources")
-		-- Planned surface clusters are intentionally narrower than the ordinary top-up planner. Their
-		-- fallback remains deterministic and conservative: globally unique hexes at least three hexes
-		-- apart, sector-load balancing, and every normal terrain gate. Only these cluster members are
-		-- exempt from family-radius repulsion; all later resource additions continue through CanPlace.
-		local surface_quota_hexes = {}
-		local function surface_quota_spacing_clear(candidate)
-			local q, r = candidate and candidate.q, candidate and candidate.r
-			if type(q) ~= "number" or type(r) ~= "number" then return false end
-			for _, occupied in ipairs(surface_quota_hexes) do
-				local dq, dr = q - occupied.q, r - occupied.r
-				if math.max(math.abs(dq), math.abs(dr), math.abs(dq + dr))
-					< surface_quota_minimum_hex_distance then return false end
-			end
-			return true
-		end
-		local function surface_quota_can_place(candidate)
-			return repulsion.CanPlaceUnique(candidate)
-				and repulsion.CanPlaceMinimum(candidate, false,
-					TopUpEnrichmentMinimumHexDistance())
-				and surface_quota_spacing_clear(candidate)
-		end
+		local repulsion = direct_cluster_repulsion
+			or NewTopUpRepulsionTracker(map, "resources")
 		local function surface_quota_commit(candidate)
-			if not candidate then return end
-			surface_quota_hexes[#surface_quota_hexes + 1] = {
-				q = candidate.q, r = candidate.r,
-			}
+			return candidate ~= nil
 		end
 		local surface_selector_loads = not underground
 			and cfg().OPTIMIZE_SURFACE_RESOURCE_SELECTOR_LOAD_CACHE == true
@@ -5086,21 +5212,22 @@ function DepositRules.TopUpDeposits(map)
 			end
 		end
 
-		-- Build deterministic geometric clusters before ordinary density placement. Candidate
-		-- reservations enforce the configured three-hex member spacing and keep distinct clusters more
-		-- than one cluster radius apart. Each cluster receives 1..3 extractor markers, never exceeds five
-		-- resource members, and is driven only by final terrain geometry.
-		local planned_cluster_candidates = {}
-		local reserved_cluster_candidates = {}
-		local next_resource_cluster_plan = 0
+		-- Direct planning has already retained exactly one small candidate list per cluster. Placement
+		-- preserves the established composition and clone transaction, but never searches a pool.
 		local cluster_plan_diagnostic = {
 			stage = "initializing", error = "", quota = 0, outermost = 0, inner_band = 0,
-			results = "", strategy = "selector_local_v3",
+			results = "", strategy = "direct_seeded_cluster_v1",
 			desired_clusters = desired_resource_cluster_count, placed_clusters = 0,
 			plan_exhaustions = 0,
 			cluster_minimum = resource_cluster_minimum_count,
 			cluster_maximum = resource_cluster_maximum_count,
 			cluster_count_stream = cluster_count_draw_stream,
+			center_attempt_budget = direct_cluster_stats.center_attempt_budget or 0,
+			candidate_attempt_budget = direct_cluster_stats.candidate_attempt_budget or 0,
+			centers_attempted = direct_cluster_stats.centers_attempted or 0,
+			candidate_attempts = direct_cluster_stats.candidate_attempts or 0,
+			valid_candidates = direct_cluster_stats.valid_candidates or 0,
+			rng_draws = direct_cluster_stats.rng_draws or 0,
 		}
 		map.SuperBigMapResourceClusterPlanDiagnostic = cluster_plan_diagnostic
 		local function cluster_plan_fail(message)
@@ -5108,139 +5235,14 @@ function DepositRules.TopUpDeposits(map)
 			cluster_plan_diagnostic.quota = surface_resource_quota_added
 			cluster_plan_diagnostic.outermost = surface_outermost_resource_added
 			cluster_plan_diagnostic.inner_band = surface_inner_band_resource_added
+			OptimizationFailure("direct seeded surface clusters", message, map)
 			error(message)
 		end
-		local resource_cluster_radius = math.max(4,
-			math.floor(cfg().OUTER_RESOURCE_CLUSTER_RADIUS_HEXES or 12))
-		local resource_cluster_member_radius = math.max(3,
-			math.floor(resource_cluster_radius))
 		local minimum_cluster_extractors = math.max(1,
 			math.floor(cfg().OUTER_RESOURCE_CLUSTER_MINIMUM_EXTRACTOR_DEPOSITS or 1))
 		local maximum_cluster_extractors = math.max(minimum_cluster_extractors,
 			math.min(resource_cluster_maximum_deposits,
 				math.floor(cfg().OUTER_RESOURCE_CLUSTER_MAXIMUM_EXTRACTOR_DEPOSITS or 3)))
-		-- The live extractor shape itself is smaller than the terrain core that survives a final
-		-- BuildableGrid rebuild. Keep the whole nine-hex guarded core (live shape radius plus the
-		-- terrain pass's five-hex rebuild allowance) inside the physical map. This prevents a valid
-		-- candidate near any edge from later inheriting the engine's immutable boundary bit.
-		local function extractor_footprint_within_map(candidate)
-			return surface_extractor_footprint_within_map(candidate)
-		end
-		local function candidate_distance(a, b)
-			return AxialHexDistance(a.q, a.r, b.q, b.r) or math.huge
-		end
-		local function build_quota_cluster_plans(preferred, fallback, specs, label)
-			local candidates, seen = {}, {}
-			for _, source in ipairs({ preferred or {}, fallback or {} }) do
-				for _, candidate in ipairs(source) do
-					local _, sector_key = CandidateSector(map, candidate)
-					local coordinate_key = type(candidate.q) == "number"
-						and type(candidate.r) == "number"
-						and (tostring(candidate.q) .. ":" .. tostring(candidate.r)) or nil
-					if sector_key and coordinate_key and not seen[coordinate_key]
-						and extractor_footprint_within_map(candidate)
-						and surface_quota_can_place(candidate) then
-						seen[coordinate_key] = true
-						candidates[#candidates + 1] = candidate
-					end
-				end
-			end
-			table.sort(candidates, function(a, b)
-				local ar = tonumber(a._sbm_mountain_base_rank) or math.huge
-				local br = tonumber(b._sbm_mountain_base_rank) or math.huge
-				if ar == br then
-					if a.q == b.q then return (a.r or 0) < (b.r or 0) end
-					return (a.q or 0) < (b.q or 0)
-				end
-				return ar < br
-			end)
-			local plans = {}
-			for cluster_index, spec in ipairs(specs or {}) do
-				local target = spec.resource_target
-				local chosen_anchor, chosen_pool
-				for _, anchor in ipairs(candidates) do
-					if not reserved_cluster_candidates[anchor] then
-						local separated = true
-						for _, prior in ipairs(planned_cluster_candidates) do
-							local distance = candidate_distance(anchor, prior)
-							if distance <= resource_cluster_radius then
-								separated = false
-								break
-							end
-						end
-						if separated then
-							local neighbours = {}
-							for _, candidate in ipairs(candidates) do
-								if not reserved_cluster_candidates[candidate]
-									and candidate_distance(anchor, candidate)
-										<= resource_cluster_member_radius then
-									local clear_of_plans = true
-									for _, prior in ipairs(planned_cluster_candidates) do
-										if candidate_distance(candidate, prior)
-											<= resource_cluster_radius then
-											clear_of_plans = false
-											break
-										end
-									end
-									if clear_of_plans then neighbours[#neighbours + 1] = candidate end
-								end
-							end
-							table.sort(neighbours, function(a, b)
-								local ad, bd = candidate_distance(anchor, a), candidate_distance(anchor, b)
-								if ad == bd then
-									return (tonumber(a._sbm_mountain_base_rank) or math.huge)
-										< (tonumber(b._sbm_mountain_base_rank) or math.huge)
-								end
-								return ad < bd
-							end)
-							local spaced = {}
-							for _, candidate in ipairs(neighbours) do
-								local clear = true
-								for _, selected in ipairs(spaced) do
-									if candidate_distance(candidate, selected)
-										< surface_quota_minimum_hex_distance then
-										clear = false
-										break
-									end
-								end
-								if clear then spaced[#spaced + 1] = candidate end
-							end
-							if #spaced >= target then
-								chosen_anchor, chosen_pool = anchor, {}
-								for index = 1, target do chosen_pool[index] = spaced[index] end
-								break
-							end
-						end
-					end
-				end
-				if not chosen_anchor then
-					-- The pseudorandom draw is an upper target, not a requirement to manufacture
-					-- unsuitable terrain. Stop this band at the last complete cluster; the final
-					-- 6..10 count audit remains authoritative across both bands.
-					cluster_plan_diagnostic.plan_exhaustions =
-						cluster_plan_diagnostic.plan_exhaustions + 1
-					break
-				end
-				next_resource_cluster_plan = next_resource_cluster_plan + 1
-				for _, candidate in ipairs(chosen_pool) do
-					reserved_cluster_candidates[candidate] = true
-					planned_cluster_candidates[#planned_cluster_candidates + 1] = candidate
-					candidate._sbm_resource_cluster_plan = next_resource_cluster_plan
-					candidate._sbm_resource_cluster_strength = spec.strength
-					candidate._sbm_resource_cluster_resource_target = spec.resource_target
-					candidate._sbm_resource_cluster_extractor_target = spec.extractor_target
-					candidate._sbm_resource_cluster_anomaly_capacity = spec.anomaly_capacity
-					candidate._sbm_resource_cluster_reward_capacity = spec.reward_capacity
-				end
-				plans[#plans + 1] = {
-					id = next_resource_cluster_plan, target = target,
-					extractor_target = spec.extractor_target,
-					strength = spec.strength, anomaly_capacity = spec.anomaly_capacity,
-					reward_capacity = spec.reward_capacity, candidates = chosen_pool,
-				}
-			end
-			return plans
-		end
 		local function new_planned_cluster_selector(candidates)
 			-- Keep attempt state in this selector. Candidate tables are shared with the legacy
 			-- pool and can retain transient fields from its validation passes. The complete plan was
@@ -5363,29 +5365,21 @@ function DepositRules.TopUpDeposits(map)
 			local total_clusters = desired_resource_cluster_count
 			local outermost_clusters = math.max(1, math.ceil(total_clusters
 				* surface_outermost_resource_minimum_percent / 100))
-			local inner_clusters = math.max(1, total_clusters - outermost_clusters)
-			local outermost_specs, inner_specs = {}, {}
 			local outermost_required, inner_required = 0, 0
 			for index, spec in ipairs(planned_resource_cluster_specs) do
 				if index <= outermost_clusters then
-					outermost_specs[#outermost_specs + 1] = spec
 					outermost_required = outermost_required + spec.resource_target
 				else
-					inner_specs[#inner_specs + 1] = spec
 					inner_required = inner_required + spec.resource_target
 				end
 			end
-			local outermost_plans = build_quota_cluster_plans(
-				outermost_mountain_base_candidates, outermost_perimeter_quota_candidates,
-				outermost_specs, "outermost resource cluster")
-			local inner_plans = build_quota_cluster_plans(
-				inner_band_mountain_base_candidates, inner_band_perimeter_quota_candidates,
-				inner_specs, "inner-band resource")
 			cluster_plan_diagnostic.required = required
 			cluster_plan_diagnostic.outermost_required = outermost_required
 			cluster_plan_diagnostic.inner_required = inner_required
-			place_quota_cluster_plans(outermost_plans, true, false, "outermost resource")
-			place_quota_cluster_plans(inner_plans, false, true, "inner-band resource")
+			place_quota_cluster_plans(
+				direct_cluster_plans.outermost, true, false, "outermost resource")
+			place_quota_cluster_plans(
+				direct_cluster_plans.inner, false, true, "inner-band resource")
 			cluster_plan_diagnostic.stage = "complete"
 			cluster_plan_diagnostic.quota = surface_resource_quota_added
 			cluster_plan_diagnostic.outermost = surface_outermost_resource_added

@@ -318,10 +318,14 @@ static_checks = {
     "natural_aprons_reserve_288_opportunities": (
         "config.MountainBaseApronMaximumCount = 288" in CONFIG
     ),
-    "resource_quota_scans_final_grid_generally": (
-        "local SAMPLES_AXIS = 32" in resources
-        and "local MAX_CANDIDATES_PER_SECTOR = 64" in resources
-        and "local MAX_FINAL_QUOTA_CANDIDATES = 4096" in resources
+    "resource_quota_uses_bounded_direct_seeded_candidates": (
+        "config.OptimizeDirectSeededSurfaceClusters = true" in CONFIG
+        and "C.OPTIMIZE_DIRECT_SEEDED_SURFACE_CLUSTERS" in CONFIG
+        and "center_attempt_budget = 64" in resources
+        and "candidate_attempt_budget = 384" in resources
+        and "rand_int = RandInt" in resources
+        and "local perimeter_quota_candidates = {}" not in resources
+        and "local MAX_FINAL_QUOTA_CANDIDATES = 4096" not in resources
     ),
     "natural_aprons_reject_obvious_cliffs": "maximum_local_slope > 24" in aprons,
     "already_buildable_foothills_are_unchanged": (
@@ -354,18 +358,20 @@ static_checks = {
         "map.SuperBigMapNaturalMountainBaseApronCenters" in resources
     ),
     "resource_quota_uses_authoritative_terrain_validation": (
-        "CanReceiveDeposit(" in resources and "mountain_base_candidates" in resources
+        "CanReceiveDeposit(" in resources
+        and "TerrainTypeAt(map, pt, direct_context)" in resources
+        and "NewDepositValidationContext(map)" in resources
     ),
     "resource_quota_rejects_edge_crossing_extractor_footprints": (
-        "extractor_footprint_within_map(candidate)" in resources
+        "surface_extractor_footprint_within_map(candidate)" in resources
         and "surface_extractor_safe_margin" in resources
         and "surface_extractor_footprint_within_map(c)" in resources
         and "local extractor_safe_margin = 10 * hex_size" in TERRAIN
         and "Move only those centers minimally inward" in TERRAIN
     ),
     "resource_clusters_are_separated_beyond_the_cluster_radius": (
-        "distance <= resource_cluster_radius" in resources
-        and "selector_local_v3" in resources
+        "distance(candidate, prior) <= cluster_radius" in DEPOSITS
+        and 'strategy = "direct_seeded_cluster_v1"' in DEPOSITS
     ),
     "ordinary_resources_preserve_exact_repulsion": (
         'NewTopUpRepulsionTracker(map, "resources")' in resources
@@ -375,9 +381,10 @@ static_checks = {
     "resource_quota_has_documented_three_hex_policy": (
         "config.MountainBaseQuotaMinimumHexDistance = 3" in CONFIG
         and "C.MOUNTAIN_BASE_QUOTA_MINIMUM_HEX_DISTANCE" in CONFIG
-        and "surface_quota_can_place" in resources
-        and "repulsion.CanPlaceUnique(candidate)" in resources
-        and "< surface_quota_minimum_hex_distance" in resources
+        and "direct_cluster_repulsion.CanPlaceUnique(candidate)" in resources
+        and "direct_cluster_repulsion.CanPlaceMinimum(candidate" in resources
+        and "minimum_member_distance = surface_quota_minimum_hex_distance" in resources
+        and "distance(candidate, prior) < minimum_member_distance" in DEPOSITS
         and "surface_quota_spacing_violations" in DEPOSITS
     ),
     "all_topups_enforce_three_hex_enrichment_spacing": (
@@ -413,7 +420,7 @@ static_checks = {
         and "distance < context.minimum_hex_distance" in DEPOSITS
     ),
     "resource_quota_places_before_general_resources": (
-        resources.index("build_quota_cluster_plans")
+        resources.index("place_quota_cluster_plans(")
         < resources.index("if sequential_placement then")
     ),
     "resource_quota_marks_ordinary_resource_topups": (
@@ -438,10 +445,10 @@ static_checks = {
     ),
     "resource_quota_guarantees_60_40_disjoint_band_split": (
         "MountainBaseOutermostResourceMinimumPercent = 60" in CONFIG
-        and '"outermost resource cluster"' in resources
-        and '"inner-band resource"' in resources
-        and "inner_band_mountain_base_candidates" in resources
-        and "inner_band_perimeter_quota_candidates" in resources
+        and 'and "outer" or "inner"' in DEPOSITS
+        and "direct_cluster_plans.outermost" in resources
+        and "direct_cluster_plans.inner" in resources
+        and "plan.outermost" in resources
         and "clone.SuperBigMapOuterRingResourceQuotaTopUp" in resources
         and "clone.SuperBigMapInnerBandResourceTopUp" in resources
         and "place_quota_cluster_plans" in resources
