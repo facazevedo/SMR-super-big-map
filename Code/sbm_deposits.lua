@@ -7626,6 +7626,39 @@ local function VerifiedMountainRocketPadAt(map, x, y)
 	return nil
 end
 
+-- DEMAND_DRIVEN_EFFECT_CANDIDATE_BEGIN
+-- Ask the caller for one fully validated candidate at a time. The callback owns
+-- the private RNG draw and all terrain/placement checks; this helper owns the
+-- finite attempt budget and stops immediately when a selector can consume the
+-- newly published candidate.
+function DepositRules.TakeNextDemandDrivenEffectCandidate(options)
+	options = type(options) == "table" and options or {}
+	local maximum_samples = math.max(0, math.floor(tonumber(options.maximum_samples) or 0))
+	local sample = options.sample
+	local rebuild = options.rebuild
+	local take = options.take
+	local stats = { attempted = 0, rejected = 0, accepted = 0, exhausted = false }
+	if type(sample) ~= "function" or type(rebuild) ~= "function" or type(take) ~= "function" then
+		stats.exhausted = true
+		return nil, nil, stats
+	end
+	while stats.attempted < maximum_samples do
+		stats.attempted = stats.attempted + 1
+		if sample() == true then
+			rebuild()
+			local candidate, owner = take()
+			if candidate then
+				stats.accepted = 1
+				return candidate, owner, stats
+			end
+		end
+		stats.rejected = stats.rejected + 1
+	end
+	stats.exhausted = true
+	return nil, nil, stats
+end
+-- DEMAND_DRIVEN_EFFECT_CANDIDATE_END
+
 function DepositRules.TopUpEffectDeposits(map)
 	if not ExpansionAdditionStagesReady("effect top-up") then return end
 	map = map or Global("CurrentMap")
@@ -7739,8 +7772,9 @@ function DepositRules.TopUpEffectDeposits(map)
 		return not IsInFinalOuterSectorRing(map, x, y, surface_exclusion_ring_sectors,
 			sector, surface_exclusion_ring_context)
 	end
-	local sequential_underground = underground
-		and cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true
+	local sequential_placement = cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true
+	local sequential_surface = sequential_placement and not underground
+	local sequential_underground = sequential_placement and underground
 	local defer_candidate_reachability = underground
 		and cfg().OPTIMIZE_UNDERGROUND_DEFER_CANDIDATE_REACHABILITY == true
 	local reachability_checks, reachability_rejections = 0, 0
@@ -7750,9 +7784,13 @@ function DepositRules.TopUpEffectDeposits(map)
 		local repulsion = NewTopUpRepulsionTracker(map, "effects")
 		local candidates, mountain_pad_candidates, mountain_pad_hexes = {}, {}, {}
 		local MAX_SAMPLES, MAX_POOL = 6000, 2500
-		local target_pool = sequential_underground and 0
-			or math.min(MAX_POOL, math.max(512, total_shortfall * 32))
+		local target_pool = sequential_placement and 0
+			or math.min(MAX_POOL, total_shortfall * 32)
 		local candidate_samples = 0
+		local candidate_static_validations = 0
+		local candidate_cache_reuses = 0
+		local candidate_rejections = 0
+		local candidate_accepted = 0
 		-- Give verified pads one exact candidate each.  They remain subject to normal terrain,
 		-- obstruction, scan-gate, and vanilla effect-family repulsion checks.  No resource marker or
 		-- pad coordinate is moved, and the general pool skips the same hex to prevent duplicates.
@@ -7786,7 +7824,7 @@ function DepositRules.TopUpEffectDeposits(map)
 		local cached = CachedTopUpCandidates(map)
 		if cached then
 			for _, c in ipairs(cached) do
-				if not sequential_underground and #candidates >= target_pool then break end
+				if not sequential_placement and #candidates >= target_pool then break end
 				if not c.used then
 					local candidate_key = type(c.q) == "number" and type(c.r) == "number"
 						and (tostring(c.q) .. ":" .. tostring(c.r)) or nil
@@ -7803,6 +7841,7 @@ function DepositRules.TopUpEffectDeposits(map)
 							or CanReceiveDeposit(map, pt, validation_context,
 								defer_candidate_reachability) then
 							candidates[#candidates + 1] = c
+							candidate_cache_reuses = candidate_cache_reuses + 1
 						end
 					end
 				end
@@ -7827,6 +7866,7 @@ function DepositRules.TopUpEffectDeposits(map)
 				surface_ring_sample_rejected = surface_ring_sample_rejected + 1
 			elseif sector and (underground or not SectorIsScanned(sector)) then
 				local pt = point(x, y)
+				candidate_static_validations = candidate_static_validations + 1
 				local can_receive, _, _, _, q, r = CanReceiveDeposit(
 					map, pt, validation_context, defer_candidate_reachability)
 				if can_receive and (not underground or ReserveUndergroundTopUpHex(map, q, r)) then
@@ -7846,7 +7886,7 @@ function DepositRules.TopUpEffectDeposits(map)
 			end
 			return #candidates
 		end
-		local need_fresh = not sequential_underground and #candidates < target_pool
+		local need_fresh = not sequential_placement and #candidates < target_pool
 		for _ = 1, need_fresh and MAX_SAMPLES or 0 do
 			if #candidates >= target_pool then break end
 			sample_fresh_candidate()
@@ -7887,6 +7927,26 @@ function DepositRules.TopUpEffectDeposits(map)
 			mountain_pad_selector = new_mountain_pad_selector()
 			relaxed_selector = nil
 		end
+		local function take_strict_effect_candidate()
+			local c = take_reachable_candidate(mountain_pad_selector, effect_profile)
+			local active = c and mountain_pad_selector or nil
+			if not c then
+				c = take_reachable_candidate(selector, effect_profile)
+				active = c and selector or nil
+			end
+			return c, active
+		end
+		local function sample_surface_demand_candidate()
+			local before = #candidates
+			sample_fresh_candidate()
+			if #candidates <= before then return false end
+			local candidate = candidates[#candidates]
+			if not repulsion.CanPlace(candidate, effect_profile) then
+				candidates[#candidates] = nil
+				return false
+			end
+			return true
+		end
 		for _, deposit_type in ipairs(types) do
 			local templates = templates_by_type[deposit_type]
 			local shortfall = math.max(0,
@@ -7894,13 +7954,20 @@ function DepositRules.TopUpEffectDeposits(map)
 			-- Continue after a failed clone. Take consumes one candidate, so this loop is
 			-- bounded by the validated pool even when every clone attempt fails.
 			while (added_by_type[deposit_type] or 0) < shortfall do
-				local c = take_reachable_candidate(mountain_pad_selector, effect_profile)
-				local active_selector = c and mountain_pad_selector or nil
-				if not c then
-					c = take_reachable_candidate(selector, effect_profile)
-					active_selector = c and selector or nil
-				end
+				local c, active_selector = take_strict_effect_candidate()
 				local density_fallback = false
+				if not c and sequential_surface then
+					local demand_stats
+					c, active_selector, demand_stats =
+						DepositRules.TakeNextDemandDrivenEffectCandidate({
+							maximum_samples = math.max(0, MAX_SAMPLES - candidate_samples),
+							sample = sample_surface_demand_candidate,
+							rebuild = rebuild_effect_selectors,
+							take = take_strict_effect_candidate,
+						})
+					candidate_rejections = candidate_rejections
+						+ (demand_stats and demand_stats.rejected or 0)
+				end
 				if not c and sequential_underground then
 					local strict_sample_limit = math.min(MAX_SAMPLES, candidate_samples + 128)
 					while not c and candidate_samples < strict_sample_limit do
@@ -7948,6 +8015,9 @@ function DepositRules.TopUpEffectDeposits(map)
 					local tx, ty = tpos:xy()
 					local clone = clone_fn(map, template, point(c.x - tx, c.y - ty, 0))
 					if clone and type(clone) == "table" then
+						if sequential_surface then
+							candidate_accepted = candidate_accepted + 1
+						end
 						active_selector.Commit(c)
 						clone.SuperBigMapEffectTopUp = true
 						clone.SuperBigMapEffectTopUpType = deposit_type
@@ -8003,6 +8073,16 @@ function DepositRules.TopUpEffectDeposits(map)
 			if (stats.selected or 0) > 0 then fallback_selector_stats = stats end
 		end
 		candidate_pool_size, candidate_samples_total = #candidates, candidate_samples
+		if not sequential_surface then
+			candidate_rejections = math.max(0, candidate_samples - candidate_accepted)
+		end
+		map.SuperBigMapSurfaceEffectDemandStats = {
+			attempted = candidate_samples,
+			static_validations = candidate_static_validations,
+			cache_reuses = candidate_cache_reuses,
+			rejected = candidate_rejections,
+			accepted = candidate_accepted,
+		}
 	end)
 	local final_by_type, remaining_shortfall = {}, 0
 	pcall(map.MapForEach, map, "map", "EffectDepositMarker", function(marker)
@@ -8042,7 +8122,16 @@ function DepositRules.TopUpEffectDeposits(map)
 			and fallback_selector_stats.relaxed_selected or 0,
 		candidate_pool_size = candidate_pool_size,
 		candidate_samples = candidate_samples_total,
-		sequential_placement = sequential_underground,
+		candidate_attempts = candidate_samples_total,
+		candidate_static_validations = map.SuperBigMapSurfaceEffectDemandStats
+			and map.SuperBigMapSurfaceEffectDemandStats.static_validations or 0,
+		candidate_cache_reuses = map.SuperBigMapSurfaceEffectDemandStats
+			and map.SuperBigMapSurfaceEffectDemandStats.cache_reuses or 0,
+		candidate_rejections = map.SuperBigMapSurfaceEffectDemandStats
+			and map.SuperBigMapSurfaceEffectDemandStats.rejected or 0,
+		candidate_accepted = map.SuperBigMapSurfaceEffectDemandStats
+			and map.SuperBigMapSurfaceEffectDemandStats.accepted or 0,
+		sequential_placement = sequential_placement,
 		deferred_reachability = defer_candidate_reachability,
 		reachability_checks = reachability_checks,
 		reachability_rejections = reachability_rejections,
@@ -8064,7 +8153,7 @@ function DepositRules.TopUpEffectDeposits(map)
 				.. " valid=" .. tostring(candidate_pool_size)
 				.. " sampled=" .. tostring(candidate_samples_total)
 				.. " reused=" .. tostring(reused_pool)
-				.. " sequential=" .. tostring(sequential_underground)
+				.. " sequential=" .. tostring(sequential_placement)
 				.. " shared_samples=" .. tostring(shared_state and shared_state.samples or 0)
 				.. " sector_samples=" .. tostring(shared_state and shared_state.sector_samples or 0)
 				.. " whole_map_samples=" .. tostring(
@@ -8079,6 +8168,12 @@ function DepositRules.TopUpEffectDeposits(map)
 					surface_ring_cached_rejected + surface_ring_sample_rejected)
 				.. " remaining=" .. tostring(remaining_shortfall))
 		end
+	end
+	if sequential_surface and remaining_shortfall > 0 then
+		local reason = "surface effect demand exhausted: remaining="
+			.. tostring(remaining_shortfall) .. " attempts=" .. tostring(candidate_samples_total)
+		OptimizationFailure("surface_effect_demand", reason, map)
+		error(reason)
 	end
 end
 
