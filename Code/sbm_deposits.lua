@@ -4171,6 +4171,12 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 				local index = next_preferred()
 				if index then return source.preferred[index] end
 				index = next_general()
+				if not index and #source.general > 0 then
+					local cycle_error
+					next_general, cycle_error = seeded_permutation(#source.general)
+					if not next_general then return nil, cycle_error end
+					index = next_general()
+				end
 				return index and source.general[index] or nil
 			end
 			band_orders[band] = next_center
@@ -4179,7 +4185,8 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 		local chosen
 		while centers_attempted < center_attempt_budget
 			and candidate_attempts < candidate_attempt_budget do
-			local center_entry = next_center()
+			local center_entry, center_error = next_center()
+			if center_error then return nil, center_error, finish_stats() end
 			if not center_entry then break end
 			centers_attempted = centers_attempted + 1
 			stats.centers_attempted = stats.centers_attempted + 1
@@ -4207,7 +4214,7 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 				stats.candidate_attempts = stats.candidate_attempts + 1
 				local attempt_accepted = false
 				local candidate = build_candidate(center_entry.center, center_entry.index,
-					offset, band, spec, spec_index)
+					offset, band, spec, spec_index, stats.centers_attempted)
 				if candidate and type(candidate.q) == "number" and type(candidate.r) == "number" then
 					-- Terrain/buildability is coordinate-stable during this transaction,
 					-- but the complete static callback also enforces the requested physical
@@ -4951,7 +4958,7 @@ function DepositRules.TopUpDeposits(map)
 					outer_count = outer_count,
 					cluster_radius = resource_cluster_radius,
 					minimum_member_distance = surface_quota_minimum_hex_distance,
-					center_attempt_budget = 64,
+					center_attempt_budget = 384,
 					candidate_attempt_budget = 384,
 					anchor_first = true,
 					require_valid_anchor = true,
@@ -4968,8 +4975,11 @@ function DepositRules.TopUpDeposits(map)
 					center_priority = function(center)
 						return center.kind == "apron" and "preferred" or "general"
 					end,
-					build_candidate = function(center, center_index, offset, band)
-						local center_hex = center_hexes[center]
+					build_candidate = function(center, center_index, offset, band, _, _,
+						center_attempt_id)
+						local center_key = center.kind == "sector"
+							and center_attempt_id or center
+						local center_hex = center_hexes[center_key]
 						if center_hex == nil then
 							local center_x, center_y = center.x, center.y
 							if center.kind == "sector" then
@@ -4979,7 +4989,7 @@ function DepositRules.TopUpDeposits(map)
 								local past_x = math.floor(descriptor.area_x1)
 								local past_y = math.floor(descriptor.area_y1)
 								if past_x <= first_x or past_y <= first_y then
-									center_hexes[center] = false
+									center_hexes[center_key] = false
 									return nil
 								end
 								center_x = first_x + RandInt(past_x - first_x)
@@ -4988,7 +4998,7 @@ function DepositRules.TopUpDeposits(map)
 							local ok_hex, q, r = pcall(world_to_hex, point(center_x, center_y))
 							center_hex = ok_hex and type(q) == "number" and type(r) == "number"
 								and { q = q, r = r } or false
-							center_hexes[center] = center_hex
+							center_hexes[center_key] = center_hex
 						end
 						if not center_hex then return nil end
 						local q = center_hex.q + offset.dq

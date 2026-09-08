@@ -393,8 +393,8 @@ require_policy(topup:find('OptimizationFailure("direct seeded surface clusters"'
 require_policy(config_source:find("config.OptimizeDirectSeededSurfaceClusters = true", 1, true)
 	and config_source:find("C.OPTIMIZE_DIRECT_SEEDED_SURFACE_CLUSTERS", 1, true),
 	"direct planner config is not enabled and compiled")
-require_policy(metadata_source:find("'version', 941", 1, true),
-	"behavior-change version is not 941")
+require_policy(metadata_source:find("'version', 942", 1, true),
+	"behavior-change version is not 942")
 
 local findings = {
 	"DIRECT_SEEDED_TOPUP_BEHAVIOR",
@@ -414,6 +414,7 @@ local findings = {
 	"bounded_exhaustion=true",
 	"cross_band_cache_guard=" .. tostring(false_positive_safe and false_negative_safe),
 	"clone_boundary_selector_behavior=" .. tostring(selector_behavior_safe),
+	"repeated_sector_anchor_sampling=" .. tostring(repeated_source_safe),
 	"violation_count=" .. tostring(#violations),
 }
 for index, message in ipairs(violations) do
