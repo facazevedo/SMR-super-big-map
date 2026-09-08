@@ -15,7 +15,9 @@ local effects = assert(source:match(
 	"production DepositRules.TopUpEffectDeposits function not found")
 
 local violations = {}
+local checks = 0
 local function require_policy(name, condition)
+	checks = checks + 1
 	if not condition then violations[#violations + 1] = name end
 end
 
@@ -96,5 +98,5 @@ end
 
 for _, name in ipairs(violations) do print("FAIL " .. name) end
 print(string.format("surface effect demand checks: %d passed, %d failed",
-	7 - #violations, #violations))
+	checks - #violations, #violations))
 if #violations > 0 then os.exit(1) end
