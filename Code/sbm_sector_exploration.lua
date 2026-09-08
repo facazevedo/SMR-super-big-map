@@ -1734,12 +1734,25 @@ local function SweepUnstagedStartSpawns(map, city, staged_markers)
 	return despawned
 end
 
+-- START_ANCHOR_HELPER_BEGIN
+local function SelectTransformedStartAnchor(overlaps, x0, y0, x1, y1)
+	local cx, cy = (x0 + x1 + 0.0) / 2, (y0 + y1 + 0.0) / 2
+	for i = 1, #overlaps do
+		local entry = overlaps[i]
+		if cx >= entry.x0 and cx < entry.x1 and cy >= entry.y0 and cy < entry.y1 then
+			return entry.sector
+		end
+	end
+	error("no expanded sector contains the transformed vanilla start anchor")
+	return nil -- The engine may log error() and continue instead of throwing.
+end
+-- START_ANCHOR_HELPER_END
+
 -- Post-stretch reveal: transform the annotated vanilla winner box and collect every live expanded
--- sector with positive-area overlap. Those sectors are the positional equivalents of the stretched
--- vanilla footprint. Run vanilla's own InitialReveal over that complete candidate set so its normal
--- metals/concrete, buildability, heat, and seeded-random rules choose the single initial winner.
--- Only that first winner is scanned; then replicate InitialExplore's tail (commander bonus deposit
--- plus forced overview SelectSector).
+-- sector with positive-area overlap. Keep vanilla's InitialReveal over that complete candidate set
+-- for its spawn-position decisions and seeded draws, but reveal only the sector containing the
+-- transformed start center. A second resource-quality choice can prefer a neighbouring sector;
+-- it must not displace the single geometric anchor. Then replicate InitialExplore's tail.
 local function RevealVanillaStartSectors(map)
 	local State = SuperBigMap.State or {}
 	map = map or Global("MainMap")
@@ -1803,15 +1816,16 @@ local function RevealVanillaStartSectors(map)
 			if ok_heat and type(avg_heat) == "number" then sector.avg_heat = avg_heat end
 		end
 		local overlap = ix * iy
-		overlaps[#overlaps + 1] = { sector = sector, overlap = overlap }
+		overlaps[#overlaps + 1] = { sector = sector, overlap = overlap,
+			x0 = ax0, y0 = ay0, x1 = ax1, y1 = ay1 }
 	end)
 	if #overlaps == 0 then
 		error("no expanded sector intersects the transformed vanilla start sector")
 	end
 
 	-- A stretched 10x10 source sector can cover several 20x20 destination sectors. Every positive
-	-- intersection belongs to that transformed footprint, so let the exact vanilla selection logic
-	-- decide between all of them instead of imposing a second geometric policy.
+	-- intersection belongs to that transformed footprint. Preserve the complete candidate set for
+	-- vanilla's placement decisions and random stream; anchor selection is geometric below.
 	local candidates = {}
 	for i = 1, #overlaps do
 		local sector = overlaps[i].sector
@@ -1835,9 +1849,10 @@ local function RevealVanillaStartSectors(map)
 		and candidates[revealed[1]] == true) then
 		error("vanilla InitialReveal failed for transformed start candidates: " .. tostring(revealed))
 	end
-	local selected = revealed[1]
+	local selected = SelectTransformedStartAnchor(overlaps, x0, y0, x1, y1)
+	if not selected then return 0 end -- Do not clear existing reveals after a failed lookup.
 	-- The expanded-map rule contract permits exactly one initial reveal. InitialReveal may return
-	-- more than one candidate in a vanilla fallback, but only its primary winner is scanned here.
+	-- multiple candidates or a neighbouring winner, but only the start anchor is scanned here.
 	local reveal_targets = { selected }
 	-- This is still initial generation: remove any accidental destination reveal produced while the
 	-- class wrapper was being reclaimed, then persist only vanilla's selected initial winner.

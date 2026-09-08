@@ -751,7 +751,8 @@ config.StretchHeightGridDumpPath = ""
 -- RevealVanillaStartSectors). Vanilla's OWN InitialReveal runs while the native source markers
 -- still exist, and its first 10x10 winner is recorded. After stretching, only 20x20 sectors that
 -- intersect the proportionally transformed winner box are candidates; vanilla InitialReveal runs
--- again over that small set and exactly its first result is revealed. This replaces legacy
+-- again over that small set for spawn decisions; only the sector containing the transformed
+-- start center is revealed. This replaces legacy
 -- start-sector relocation and never preserves vanilla's optional second concrete sector.
 config.StretchVanillaStartSector = true
 -- WHOLE-FOOTPRINT INITIAL DEPOSITS (sbm_sector_exploration RevealVanillaStartSectors). Destination

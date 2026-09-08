@@ -145,8 +145,9 @@ rank-then-filter (`86767a7`) has no demonstrated saving and stays deprioritized.
 
 Rejected: direct seeded top-up sampling/streaming (#17/#18 plus candidate
 validation companion #2), final candidate v943 `ec70d99`, rollback `113e3fc`.
-Three valid 14N samples were 153.960 / 151.329 / 151.672 s, median151.672 s,
-range2.631 s, saving35.877 s/19.13% versus v936. The mandatory pinned15S run
+Correction: 14N samples were 153.960 s on v940 and 151.329 / 151.672 s on v941.
+They mix behavior versions, so they are NOT a three-sample final-build median
+and do not establish an accepted per-unit saving. The mandatory pinned15S run
 remained rule-red through v943: outer cluster5 exhausted its bounded search,
 published0 clusters/pads, and produced shortfall8. Candidate timings from failed
 15S runs are invalid. Evidence:
@@ -438,3 +439,73 @@ first pinned14N cold run START-to-T1 204.256s and final resource audits clean; t
 the native-enrichment migration verification before T1. Two diagnostic retries passed but do
 not establish a fix. No additional optimization has been accepted since Step2 above. Root-cause
 that intermittent baseline failure before claiming a safe performance improvement.
+
+### Manual direct-seeded repair - owner update (2026-09-08)
+
+Ralph is stopped; the owner now commands each strategy manually. No automatic
+transition to another optimization and no Pursuing Goal mechanism.
+
+Current candidate: v950 `b738d30` (direct planner v949 `8222858`). Shared direct-seeded placement now streams
+finite buildable guide leaves, visits the full469 local axial offsets on demand,
+and continues into the inner band when the outer band cannot fill every requested
+specification. It keeps the hard8..12 complete-cluster rule, composition, static
+terrain checks, live spacing/obstruction checks, and all earlier terrain changes.
+The old32/128/384 cutoffs and repeated-leaf starvation have executable red/green
+regressions. All45 offline checks pass; cold verification is in progress.
+
+v949 resource results:15S158.280s(9clusters/pads),24S177.884s(8),45S157.194s(8),
+61N159.344s(11). These are single provisional samples, not accepted savings.
+17S failed one extractor after both repairs;176.980s is INVALID. Pre-changev937
+17S passes at145.849s. The failed site is an undersized34-cell buildable island
+(native minimum50), despite all12 exact extractor offsets being flat and passable.
+
+v950 fixes a generic building-feather arithmetic defect exposed by those changed
+placements: the prior fitted-plane term had a negative partial-weight coefficient
+and could excavate a moat or raise a rim outside the core. Building feathers now
+blend only between original and level-target heights; surface-resource grading,
+C2 masks, protection, native raster, footprint sizes and physical-edge repair stay
+intact. Executable production-plane/blend regressions fail onv949 and pass onv950;
+all45offline checks pass. Checkpoint committed/deployed37/37exact; cold17S first,
+then15S and the remaining scenario matrix. No scenario/sector/coordinate checks
+were added to production. This is a candidate repair, not all-rules sign-off.
+
+This is NOT an accepted optimization yet. Earlier manualv94715S runs completed
+at151.678s and152.819s with8clusters/8pads, but24S failed, so those are provisional
+samples only. Baselinev937/`158da2b`24S completes8clusters/8pads at179.344s but
+already fails the start-sector gate (D8 anchor versus D7 revealed) and decor
+count (144/171). Those pre-existing failures remain red; they are not waived.
+The baseline15S visual comparison also shows the previously noted thin edge ridge.
+
+Evidence and current checkpoint log:
+`_ralph/runs/reoptimize-under-70s/artifacts/manual_direct_seeded_20260908/STATUS.md`.
+
+### Five-scenario all-rules repair - latest owner scope
+
+The owner accepts five scenarios, provided ALL rules are green. Keep the first
+five manifest sites; do not replace red cases with green ones. Ralph remains off.
+v950 `b738d30` completed these fresh cold samples, each with full native snapshot,
+flushed incident-matched logs and clean teardown:
+
+| Scenario | START-to-T1 | Clusters/pads | Remaining preliminary numeric reds |
+|---|---:|---:|---|
+| 15S67E | 158.518s | 9/9 | None; pairs/control still pending |
+| 24S74W | 156.775s | 8/8 | Start anchor; decor 144/171 |
+| 45S120W | 135.829s | 8/8 | None; pairs/control still pending |
+| 61N136W | 183.494s | 11/11 | Start anchor; decor 100/190 |
+| 17S11W | 145.706s | 8/8 | Forbidden decor classes |
+
+All five resource/pad gates pass. These are individual samples, NOT accepted
+savings or an all-rules verdict. Visuals show the old tall resource-platform cut
+in 24S disappears at identical cameras/positions with v950; the pre-existing thin
+15S bottom edge wall remains, and angular tonal regions need attribution.
+Already-in-flight extras were retained (24S73E137.675s,23S19W155.051s), not added
+to the reduced acceptance set. No further scenarios launch automatically.
+
+Candidate v951 corrects the start-anchor rule generically: the single reveal uses
+the half-open sector containing the transformed native start center. The original
+full-candidate InitialReveal call, spawn positions and random draws are preserved.
+Source review caught non-throwing engine error handling; an explicit early return
+now prevents reveal mutation after a failed lookup. Production selection tests
+are red on v950 and green on v951 (110 cases); 46 offline commands pass before
+the version bump. Cold verification is pending. This is a correctness checkpoint,
+not an accepted optimization. Decor and edge-wall work remains required.
