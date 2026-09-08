@@ -18,6 +18,9 @@ local grade = assert(load("return function(relief_x, relief_y, relief_probe, kin
 local native_blend_block = assert(source:match(
     "(local weight_cube = own%(mask:clone%(%)%).-)\n\n\t\t\t%-%- No inner%-rectangle restore here"),
     "production native blend block not found")
+local plane_block = assert(source:match(
+    "(local function scaled_plane%(x, y%).-)\n\t\t\tplane_seed:set"),
+    "production native patch plane builder not found")
 local function scalar_grid(value)
     local grid = { value = value }
     function grid:clone() return scalar_grid(self.value) end
@@ -32,9 +35,10 @@ local native_blend = assert(load("return function(old, plane_value, mask_value, 
     .. "local native_weight_scale, native_height_scale = 4096, 256\n"
     .. "local source = scalar_grid(old * native_height_scale)\n"
     .. "local height_grid = source:clone()\n"
-    .. "local plane = scalar_grid(plane_value * native_height_scale)\n"
+    .. "local patch = { kind = kind, target = target, cx = 0, cy = 0, "
+    .. "grade_x = plane_value - target, grade_y = 0 }\n"
+    .. plane_block .. "\nlocal plane = scalar_grid(scaled_plane(1, 0))\n"
     .. "local mask = scalar_grid(mask_value)\n"
-    .. "local patch = { kind = kind, target = target }\n"
     .. "local function own(value) return value end\n"
     .. native_blend_block
     .. "\nreturn result.value / native_height_scale\nend", "production-native-blend", "t", {
@@ -137,5 +141,32 @@ end)
 check("native transition restores detail by one minus weight cubed", function()
     local actual = native_blend(120, 80, 2048, "surface", 80)
     assert(math.abs(actual - 115) < 1e-12)
+end)
+check("building feathers cannot extrapolate beyond original and target heights", function()
+    -- Exercise the shipped plane builder AND blend at partial weights. The old
+    -- expression assigns the fitted plane a negative coefficient w^3-w: even
+    -- equal old/target heights can become a deep moat around a level footprint.
+    for _, kind in ipairs({ "extractor", "rocket" }) do
+        for _, old in ipairs({ 0, 80, 8622, 32000, 65535 }) do
+            for _, target in ipairs({ 0, 8622, 65535 }) do
+                for _, fitted in ipairs({ -65535, 0, 10000, 32000, 131070 }) do
+                    for mask = 0, 4096, 128 do
+                        local actual = native_blend(old, fitted, mask, kind, target)
+                        assert(actual >= math.min(old, target) - 1e-8
+                            and actual <= math.max(old, target) + 1e-8,
+                            string.format("%s feather overshoot old=%s target=%s plane=%s mask=%s result=%s",
+                                kind, old, target, fitted, mask, actual))
+                    end
+                end
+            end
+        end
+    end
+end)
+check("level building neighbourhood stays level through every feather weight", function()
+    for _, kind in ipairs({ "extractor", "rocket" }) do
+        for mask = 0, 4096, 64 do
+            assert(math.abs(native_blend(8622, 32000, mask, kind, 8622) - 8622) < 1e-8)
+        end
+    end
 end)
 print(string.format("%d resource protection blend checks passed", passed))

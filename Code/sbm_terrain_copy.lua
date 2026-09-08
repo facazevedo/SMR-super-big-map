@@ -2767,6 +2767,15 @@ local function PrepareOuterResourceTerrain(map)
 			local plane_seed = own(native_new_grid(2, 2, "f", 32))
 			assert(plane_seed, "native plane allocation failed")
 			local function scaled_plane(x, y)
+				-- Building feathers must interpolate toward their level target. Combining
+				-- a fitted plane at w^3 with its level correction at w gives that plane
+				-- the negative coefficient w^3-w: steep grades can excavate a moat (or
+				-- raise a rim) outside a perfectly valid core. A constant building plane
+				-- keeps every blended height between its original value and the target,
+				-- without widening cores or changing the C2/protection masks.
+				if patch.kind ~= "surface" then
+					return math.floor(patch.target * native_height_scale + 0.5)
+				end
 				local value = patch.target + patch.grade_x * (x - patch.cx)
 					+ patch.grade_y * (y - patch.cy)
 				return math.floor(value * native_height_scale + 0.5)
@@ -2861,13 +2870,6 @@ local function PrepareOuterResourceTerrain(map)
 			local plane_term = own(plane:clone())
 			native_mul_div_add(plane_term, weight_cube, native_weight_scale, 0)
 			native_add(result, plane_term)
-			if patch.kind ~= "surface" then
-				local target_delta = own(plane:clone())
-				native_mul_div_add(target_delta, -1, 1,
-					math.floor(patch.target * native_height_scale + 0.5))
-				native_mul_div_add(target_delta, mask, native_weight_scale, 0)
-				native_add(result, target_delta)
-			end
 
 			-- No inner-rectangle restore here: the pixel loop this replaces wrote every cell a patch
 			-- reached, and a core that straddles the ring boundary must stay flat to be buildable.
