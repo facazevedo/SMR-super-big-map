@@ -212,6 +212,35 @@ local repeated_source_safe = repeated_source_plans ~= nil
 	and repeated_source_stats.candidate_attempts == 3
 	and repeated_source_stats.accepted_candidates == 2
 
+local partial_plans, partial_error, partial_stats = planner({
+	centers = {
+		{ band = "outer", q = 0, r = 0, valid = true },
+		{ band = "outer", q = 100, r = 0, valid = false },
+		{ band = "inner", q = -100, r = 0, valid = true },
+	},
+	offsets = { { dq = 0, dr = 0 } },
+	specs = {
+		{ resource_target = 1 }, { resource_target = 1 }, { resource_target = 1 },
+	},
+	outer_count = 2, minimum_plans = 2,
+	cluster_radius = 12, minimum_member_distance = 3,
+	center_attempt_budget = 4, candidate_attempt_budget = 4,
+	anchor_first = true, require_valid_anchor = true,
+	rand_int = function() return 0 end,
+	classify_center = function(center) return center.band end,
+	build_candidate = function(center, _, offset, band)
+		return {
+			q = center.q + offset.dq, r = center.r + offset.dr,
+			band = band, valid = center.valid,
+		}
+	end,
+	validate_static = function(candidate) return candidate.valid end,
+	validate_dynamic = function() return true end,
+})
+local partial_minimum_safe = partial_plans ~= nil and partial_error == nil
+	and #partial_plans == 2 and partial_plans[1].id == 1
+	and partial_plans[2].id == 3 and partial_stats.plan_exhaustions == 1
+
 -- A coordinate may be reached from either side of the physical outer/inner boundary.
 -- Static terrain/buildability can be cached by coordinate, but band eligibility cannot.
 local false_positive_plans, false_positive_error = planner({
@@ -344,6 +373,8 @@ require_policy(selector_behavior_safe,
 	"production cluster selector lacks executable clone-boundary mutation behavior coverage")
 require_policy(repeated_source_safe,
 	"general sector descriptors cannot provide bounded repeated on-demand anchor draws")
+require_policy(partial_minimum_safe,
+	"band-end exhaustion discards complete plans instead of continuing to the required minimum")
 require_policy(not topup:find("local perimeter_quota_candidates = {}", 1, true),
 	"eager perimeter candidate pool remains")
 require_policy(not topup:find("local MAX_FINAL_QUOTA_CANDIDATES = 4096", 1, true),
@@ -388,6 +419,8 @@ require_policy(topup:find("center_attempt_id", 1, true),
 require_policy(topup:find("terrain_candidate_entries =", 1, true)
 	and topup:find("sampling_source_entries =", 1, true),
 	"published terrain-list and on-demand source counts are not separated")
+require_policy(topup:find("minimum_plans = resource_cluster_minimum_count", 1, true),
+	"production direct planner does not preserve the authoritative minimum cluster count")
 require_policy(topup:find('OptimizationFailure("direct seeded surface clusters"', 1, true),
 	"exhaustion is not fail-loud")
 require_policy(config_source:find("config.OptimizeDirectSeededSurfaceClusters = true", 1, true)
@@ -415,6 +448,7 @@ local findings = {
 	"cross_band_cache_guard=" .. tostring(false_positive_safe and false_negative_safe),
 	"clone_boundary_selector_behavior=" .. tostring(selector_behavior_safe),
 	"repeated_sector_anchor_sampling=" .. tostring(repeated_source_safe),
+	"minimum_cluster_continuation=" .. tostring(partial_minimum_safe),
 	"violation_count=" .. tostring(#violations),
 }
 for index, message in ipairs(violations) do
