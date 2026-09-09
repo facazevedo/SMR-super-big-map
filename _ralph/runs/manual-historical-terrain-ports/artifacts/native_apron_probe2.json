@@ -1,0 +1,414 @@
+{
+  "ok": true,
+  "exit": 0,
+  "data": {
+    "value": {
+      "result": {
+        "mismatches": 0,
+        "cases": [
+          {
+            "case": 1,
+            "scalar_ms": 48,
+            "scalar": {
+              "modified": 9289,
+              "shaped": 2
+            },
+            "scalar_ok": true,
+            "changed": 0,
+            "native_ok": true,
+            "max_diff": 0,
+            "native_ms": 38,
+            "native": {
+              "shaped": 2,
+              "mask_samples": 25994,
+              "exact_samples": 346,
+              "modified": 9289,
+              "raster_cells": 25994
+            }
+          },
+          {
+            "case": 2,
+            "scalar_ms": 51,
+            "scalar": {
+              "modified": 10642,
+              "shaped": 2
+            },
+            "scalar_ok": true,
+            "changed": 0,
+            "native_ok": true,
+            "max_diff": 0,
+            "native_ms": 40,
+            "native": {
+              "shaped": 2,
+              "mask_samples": 27850,
+              "exact_samples": 445,
+              "modified": 10642,
+              "raster_cells": 27850
+            }
+          },
+          {
+            "case": 3,
+            "scalar_ms": 54,
+            "scalar": {
+              "modified": 13271,
+              "shaped": 2
+            },
+            "scalar_ok": true,
+            "changed": 0,
+            "native_ok": true,
+            "max_diff": 0,
+            "native_ms": 51,
+            "native": {
+              "shaped": 2,
+              "mask_samples": 29770,
+              "exact_samples": 3374,
+              "modified": 13271,
+              "raster_cells": 29770
+            }
+          },
+          {
+            "case": 4,
+            "scalar_ms": 55,
+            "scalar": {
+              "modified": 12910,
+              "shaped": 2
+            },
+            "scalar_ok": true,
+            "changed": 0,
+            "native_ok": true,
+            "max_diff": 0,
+            "native_ms": 44,
+            "native": {
+              "shaped": 2,
+              "mask_samples": 31754,
+              "exact_samples": 512,
+              "modified": 12910,
+              "raster_cells": 31754
+            }
+          },
+          {
+            "case": 5,
+            "scalar_ms": 58,
+            "scalar": {
+              "modified": 14303,
+              "shaped": 2
+            },
+            "scalar_ok": true,
+            "changed": 0,
+            "native_ok": true,
+            "max_diff": 0,
+            "native_ms": 47,
+            "native": {
+              "shaped": 2,
+              "mask_samples": 33802,
+              "exact_samples": 554,
+              "modified": 14303,
+              "raster_cells": 33802
+            }
+          },
+          {
+            "case": 6,
+            "scalar_ms": 61,
+            "scalar": {
+              "modified": 11100,
+              "shaped": 2
+            },
+            "scalar_ok": true,
+            "changed": 0,
+            "native_ok": true,
+            "max_diff": 0,
+            "native_ms": 50,
+            "native": {
+              "shaped": 2,
+              "mask_samples": 35914,
+              "exact_samples": 524,
+              "modified": 11100,
+              "raster_cells": 35914
+            }
+          },
+          {
+            "case": 7,
+            "scalar_ms": 63,
+            "scalar": {
+              "modified": 14933,
+              "shaped": 2
+            },
+            "scalar_ok": true,
+            "changed": 0,
+            "native_ok": true,
+            "max_diff": 0,
+            "native_ms": 60,
+            "native": {
+              "shaped": 2,
+              "mask_samples": 33802,
+              "exact_samples": 3759,
+              "modified": 14933,
+              "raster_cells": 33802
+            }
+          },
+          {
+            "case": 8,
+            "scalar_ms": 65,
+            "scalar": {
+              "modified": 13589,
+              "shaped": 2
+            },
+            "scalar_ok": true,
+            "changed": 0,
+            "native_ok": true,
+            "max_diff": 0,
+            "native_ms": 52,
+            "native": {
+              "shaped": 2,
+              "mask_samples": 35914,
+              "exact_samples": 558,
+              "modified": 13589,
+              "raster_cells": 35914
+            }
+          },
+          {
+            "case": 9,
+            "scalar_ms": 70,
+            "scalar": {
+              "modified": 15101,
+              "shaped": 2
+            },
+            "scalar_ok": true,
+            "changed": 0,
+            "native_ok": true,
+            "max_diff": 0,
+            "native_ms": 53,
+            "native": {
+              "shaped": 2,
+              "mask_samples": 37546,
+              "exact_samples": 677,
+              "modified": 15101,
+              "raster_cells": 37546
+            }
+          },
+          {
+            "case": 10,
+            "scalar_ms": 71,
+            "scalar": {
+              "modified": 16971,
+              "shaped": 2
+            },
+            "scalar_ok": true,
+            "changed": 0,
+            "native_ok": true,
+            "max_diff": 0,
+            "native_ms": 56,
+            "native": {
+              "shaped": 2,
+              "mask_samples": 39770,
+              "exact_samples": 772,
+              "modified": 16971,
+              "raster_cells": 39770
+            }
+          },
+          {
+            "case": 11,
+            "scalar_ms": 75,
+            "scalar": {
+              "modified": 19987,
+              "shaped": 2
+            },
+            "scalar_ok": true,
+            "changed": 0,
+            "native_ok": true,
+            "max_diff": 0,
+            "native_ms": 72,
+            "native": {
+              "shaped": 2,
+              "mask_samples": 42058,
+              "exact_samples": 5042,
+              "modified": 19987,
+              "raster_cells": 42058
+            }
+          },
+          {
+            "case": 12,
+            "scalar_ms": 79,
+            "scalar": {
+              "modified": 13705,
+              "shaped": 2
+            },
+            "scalar_ok": true,
+            "changed": 0,
+            "native_ok": true,
+            "max_diff": 0,
+            "native_ms": 62,
+            "native": {
+              "shaped": 2,
+              "mask_samples": 44410,
+              "exact_samples": 601,
+              "modified": 13705,
+              "raster_cells": 44410
+            }
+          },
+          {
+            "case": 13,
+            "scalar_ms": 81,
+            "scalar": {
+              "modified": 15224,
+              "shaped": 2
+            },
+            "scalar_ok": true,
+            "changed": 0,
+            "native_ok": true,
+            "max_diff": 0,
+            "native_ms": 66,
+            "native": {
+              "shaped": 2,
+              "mask_samples": 46826,
+              "exact_samples": 656,
+              "modified": 15224,
+              "raster_cells": 46826
+            }
+          },
+          {
+            "case": 14,
+            "scalar_ms": 82,
+            "scalar": {
+              "modified": 17644,
+              "shaped": 2
+            },
+            "scalar_ok": true,
+            "changed": 0,
+            "native_ok": true,
+            "max_diff": 0,
+            "native_ms": 69,
+            "native": {
+              "shaped": 2,
+              "mask_samples": 43810,
+              "exact_samples": 820,
+              "modified": 17644,
+              "raster_cells": 43810
+            }
+          },
+          {
+            "case": 15,
+            "scalar_ms": 87,
+            "scalar": {
+              "modified": 21882,
+              "shaped": 2
+            },
+            "scalar_ok": true,
+            "changed": 0,
+            "native_ok": true,
+            "max_diff": 0,
+            "native_ms": 86,
+            "native": {
+              "shaped": 2,
+              "mask_samples": 46210,
+              "exact_samples": 5538,
+              "modified": 21882,
+              "raster_cells": 46210
+            }
+          },
+          {
+            "case": 16,
+            "scalar_ms": 90,
+            "scalar": {
+              "modified": 20937,
+              "shaped": 2
+            },
+            "scalar_ok": true,
+            "changed": 0,
+            "native_ok": true,
+            "max_diff": 0,
+            "native_ms": 70,
+            "native": {
+              "shaped": 2,
+              "mask_samples": 48674,
+              "exact_samples": 900,
+              "modified": 20937,
+              "raster_cells": 48674
+            }
+          },
+          {
+            "case": 17,
+            "scalar_ms": 92,
+            "scalar": {
+              "modified": 23177,
+              "shaped": 2
+            },
+            "scalar_ok": true,
+            "changed": 0,
+            "native_ok": true,
+            "max_diff": 0,
+            "native_ms": 71,
+            "native": {
+              "shaped": 2,
+              "mask_samples": 51202,
+              "exact_samples": 929,
+              "modified": 23177,
+              "raster_cells": 51202
+            }
+          },
+          {
+            "case": 18,
+            "scalar_ms": 96,
+            "scalar": {
+              "modified": 17802,
+              "shaped": 2
+            },
+            "scalar_ok": true,
+            "changed": 0,
+            "native_ok": true,
+            "max_diff": 0,
+            "native_ms": 78,
+            "native": {
+              "shaped": 2,
+              "mask_samples": 53794,
+              "exact_samples": 844,
+              "modified": 17802,
+              "raster_cells": 53794
+            }
+          },
+          {
+            "case": 19,
+            "scalar_ms": 101,
+            "scalar": {
+              "modified": 23197,
+              "shaped": 2
+            },
+            "scalar_ok": true,
+            "changed": 0,
+            "native_ok": true,
+            "max_diff": 0,
+            "native_ms": 95,
+            "native": {
+              "shaped": 2,
+              "mask_samples": 56450,
+              "exact_samples": 5947,
+              "modified": 23197,
+              "raster_cells": 56450
+            }
+          },
+          {
+            "case": 20,
+            "scalar_ms": 103,
+            "scalar": {
+              "modified": 20789,
+              "shaped": 2
+            },
+            "scalar_ok": true,
+            "changed": 0,
+            "native_ok": true,
+            "max_diff": 0,
+            "native_ms": 83,
+            "native": {
+              "shaped": 2,
+              "mask_samples": 59170,
+              "exact_samples": 922,
+              "modified": 20789,
+              "raster_cells": 59170
+            }
+          }
+        ]
+      },
+      "status": "complete"
+    }
+  }
+}

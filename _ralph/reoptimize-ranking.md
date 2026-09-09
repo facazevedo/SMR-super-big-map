@@ -861,7 +861,47 @@ Evidence: `_ralph/runs/manual-historical-terrain-ports/artifacts/`, especially
 native control's empty table; that incomplete capture is preserved separately and
 excluded, the helper is corrected, and a fresh control completed successfully.
 
-Native aprons and crease processing have not been changed in the deployed mod yet.
+At the v958 sign-off, native aprons and crease processing had not been changed yet.
 Apron prototyping retains full-resolution masks and tests rounding equivalence;
 historical mask coarsening, inner-rectangle restoration and unsafe edge feathers are
 not being copied into the current pipeline.
+
+### Native apron blending — v959 `2532e53`, accepted in five scenarios
+
+Full-resolution masks and the original quintic/lobed blend are retained. Native
+grid operations blend integer-centered heights; a bounded rounding bracket sends
+only ambiguous cells through the original scalar expression. Plane seeds use an
+unsigned-safe bias removed natively. No coarse masks, central terrain restoration,
+legacy feather or failure fallback is copied. Failures prevent publication.
+
+Fresh14N START->T1 samples:142.764/141.558/144.001s; median142.764s versus
+v958148.226s, an additional5.462s (3.7%). All three predecessor/repeat comparisons
+and the fresh29.470s native control pass. All ten rules are GREEN in the five
+fixed scenarios after the separate source/RNG and process reviews, with full
+output equality inheriting the prior visual acceptance. Code is committed and
+deployed38/38; Ralph remains stopped.
+
+| Scenario | v958 matched run | v959 | Reduction |
+|---|---:|---:|---:|
+|15S67E|147.265s|142.081s|5.184s|
+|24S74W|142.225s|140.362s|1.863s|
+|45S120W|132.770s|129.267s|3.503s|
+|61N136W|199.791s|196.779s|3.012s|
+|17S11W|139.538s|137.516s|2.022s|
+
+These are individual matched correctness samples; the isolated performance
+claim uses the three-run14N medians. All Surface/UG heights/pass grids, resources,
+pads, corrected-rock records and ordinary/private streams match the predecessor.
+The unchanged native path reuses the accepted five v957 controls.
+
+All54 existing offline commands pass, plus15,414 native-raster assertions and
+81,267 rocket assertions. All20 corrected live scratch-grid cases match every cell
+and both report counts. An initial signed-setter prototype failed only in scratch
+grids and was corrected before production; its evidence is retained. Native apron
+14N work covers5,039,674 mask cells with147,549 scalar rounding corrections (2.93%),
+preserving the exact1,910,302 modified-cell count,50 shaped and23 untouched aprons.
+
+Evidence: `manual-historical-terrain-ports/artifacts/v959_offline_final/`,
+`native_apron_probe2.json`, `v959_SOURCE_REVIEW.md`, `v959_SIGN_OFF.md`,
+`v959_reference/reference_audit.json` and `v959_matrix/verification.json`.
+Crease processing is still unchanged at this sign-off.
