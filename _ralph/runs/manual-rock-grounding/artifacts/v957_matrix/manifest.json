@@ -1,0 +1,16 @@
+{
+  "version": 957,
+  "code_commit_short": "9982d4b",
+  "scope": "Finite owner-authorized rock-grounding verification; Ralph remains stopped",
+  "selection": "Same five fixed scenarios as the v955 all-rules matrix, plus a separate 14N134W G3 visual reproduction; no failed-scenario substitution",
+  "t0": "Immediately before START action body, after NewGame setup",
+  "t1": "SurfaceStretchDone and SurfacePostPipelineRevalidationComplete; normal player-route underground first access afterwards",
+  "process_plan": "Fresh expanded A, fresh expanded B with the same game and reserved underground seeds, fresh unexpanded control per site. No hot reloads or diagnostic hooks in acceptance timings.",
+  "scenarios": [
+    {"site":"15S67E","lat_minutes":900,"lon_minutes":4020},
+    {"site":"24S74W","lat_minutes":1440,"lon_minutes":-4440},
+    {"site":"45S120W","lat_minutes":2700,"lon_minutes":-7200},
+    {"site":"61N136W","lat_minutes":-3660,"lon_minutes":-8160},
+    {"site":"17S11W","lat_minutes":1020,"lon_minutes":-660}
+  ]
+}

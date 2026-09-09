@@ -1,0 +1,1082 @@
+{
+  "version": 957,
+  "code_commit": "9982d4b77af76e781f17200091dafb2b24a5606f",
+  "scenarios": [
+    {
+      "site": "15S67E",
+      "complete": true,
+      "t0_to_t1_a_s": 154.529,
+      "grounding": {
+        "total_lowering": 192081,
+        "probes": 134509,
+        "contacts": 6345,
+        "eligible": 16145,
+        "unchanged": 564,
+        "max_lowering": 2492,
+        "lowered": 271,
+        "capture_ms": 3144,
+        "apply_ms": 114,
+        "failures": 0,
+        "rays": 70543
+      },
+      "actual_lowered": 271,
+      "preliminary": {
+        "seed-parity": {
+          "verdict": "pending",
+          "details": [
+            "requires paired-run comparison and RNG source audit"
+          ]
+        },
+        "entrances-glued": {
+          "verdict": "pass",
+          "details": []
+        },
+        "entrances-not-in-ring": {
+          "verdict": "pass",
+          "details": []
+        },
+        "ring-content": {
+          "verdict": "pass",
+          "details": []
+        },
+        "single-start-reveal": {
+          "verdict": "pass",
+          "details": []
+        },
+        "badges-pre-reveal": {
+          "verdict": "pass",
+          "details": []
+        },
+        "decor-rules": {
+          "verdict": "pass",
+          "details": []
+        },
+        "no-errors": {
+          "verdict": "pass",
+          "details": []
+        },
+        "process": {
+          "verdict": "pending",
+          "details": [
+            "requires checkpoint/deployment provenance review"
+          ]
+        },
+        "underground-first-access": {
+          "verdict": "pass",
+          "details": []
+        }
+      },
+      "v955_surface_equal": {
+        "height": true,
+        "pass_grids": false,
+        "sites": true,
+        "pads": true
+      },
+      "pair": {
+        "verdict": "pass",
+        "differences": [],
+        "note": "Runtime parity only; engine-RNG source audit is separate.",
+        "full_snapshot_differences": [],
+        "rock_grounding_differences": []
+      },
+      "automated_gates_a_b": [
+        {
+          "seed-parity": {
+            "verdict": "pending",
+            "details": [
+              "requires paired-run comparison and RNG source audit"
+            ]
+          },
+          "entrances-glued": {
+            "verdict": "pass",
+            "details": []
+          },
+          "entrances-not-in-ring": {
+            "verdict": "pass",
+            "details": []
+          },
+          "ring-content": {
+            "verdict": "pass",
+            "details": []
+          },
+          "single-start-reveal": {
+            "verdict": "pass",
+            "details": []
+          },
+          "badges-pre-reveal": {
+            "verdict": "pass",
+            "details": []
+          },
+          "decor-rules": {
+            "verdict": "pass",
+            "details": []
+          },
+          "no-errors": {
+            "verdict": "pass",
+            "details": []
+          },
+          "process": {
+            "verdict": "pending",
+            "details": [
+              "requires checkpoint/deployment provenance review"
+            ]
+          },
+          "underground-first-access": {
+            "verdict": "pass",
+            "details": []
+          }
+        },
+        {
+          "seed-parity": {
+            "verdict": "pending",
+            "details": [
+              "requires paired-run comparison and RNG source audit"
+            ]
+          },
+          "entrances-glued": {
+            "verdict": "pass",
+            "details": []
+          },
+          "entrances-not-in-ring": {
+            "verdict": "pass",
+            "details": []
+          },
+          "ring-content": {
+            "verdict": "pass",
+            "details": []
+          },
+          "single-start-reveal": {
+            "verdict": "pass",
+            "details": []
+          },
+          "badges-pre-reveal": {
+            "verdict": "pass",
+            "details": []
+          },
+          "decor-rules": {
+            "verdict": "pass",
+            "details": []
+          },
+          "no-errors": {
+            "verdict": "pass",
+            "details": []
+          },
+          "process": {
+            "verdict": "pending",
+            "details": [
+              "requires checkpoint/deployment provenance review"
+            ]
+          },
+          "underground-first-access": {
+            "verdict": "pass",
+            "details": []
+          }
+        }
+      ],
+      "t0_to_t1_b_s": 156.335,
+      "control_s": 30.091,
+      "provenance": [
+        {
+          "sample": "a",
+          "identity": [
+            86436,
+            134333985157240626
+          ],
+          "incident": "20260909-033515-18d389bb9378f4dc",
+          "checkpoint_ok": true,
+          "normal_shutdown": true,
+          "requested_ug_pin": "0",
+          "actual_native_ug_seed": "8948058643542636291"
+        },
+        {
+          "sample": "b",
+          "identity": [
+            79408,
+            134334002542345730
+          ],
+          "incident": "20260909-040414-18d38b505ac7c910",
+          "checkpoint_ok": true,
+          "normal_shutdown": true,
+          "requested_ug_pin": "8948058643542636291",
+          "actual_native_ug_seed": "8948058643542636291"
+        },
+        {
+          "sample": "control",
+          "identity": [
+            69704,
+            134334005216231725
+          ],
+          "incident": "20260909-040841-18d38b8e9c6127fc",
+          "checkpoint_ok": true,
+          "normal_shutdown": true,
+          "requested_ug_pin": "8948058643542636291",
+          "actual_native_ug_seed": "2097516799300458604"
+        }
+      ],
+      "control_no_grounding": true,
+      "issues": []
+    },
+    {
+      "site": "24S74W",
+      "complete": true,
+      "t0_to_t1_a_s": 149.682,
+      "grounding": {
+        "max_lowering": 0,
+        "total_lowering": 0,
+        "lowered": 0,
+        "apply_ms": 1,
+        "rays": 108510,
+        "eligible": 11185,
+        "probes": 149037,
+        "contacts": 21217,
+        "capture_ms": 3171,
+        "unchanged": 1799,
+        "failures": 0
+      },
+      "actual_lowered": 0,
+      "preliminary": {
+        "seed-parity": {
+          "verdict": "pending",
+          "details": [
+            "requires paired-run comparison and RNG source audit"
+          ]
+        },
+        "entrances-glued": {
+          "verdict": "pass",
+          "details": []
+        },
+        "entrances-not-in-ring": {
+          "verdict": "pass",
+          "details": []
+        },
+        "ring-content": {
+          "verdict": "pass",
+          "details": []
+        },
+        "single-start-reveal": {
+          "verdict": "pass",
+          "details": []
+        },
+        "badges-pre-reveal": {
+          "verdict": "pass",
+          "details": []
+        },
+        "decor-rules": {
+          "verdict": "pass",
+          "details": []
+        },
+        "no-errors": {
+          "verdict": "pass",
+          "details": []
+        },
+        "process": {
+          "verdict": "pending",
+          "details": [
+            "requires checkpoint/deployment provenance review"
+          ]
+        },
+        "underground-first-access": {
+          "verdict": "pass",
+          "details": []
+        }
+      },
+      "v955_surface_equal": {
+        "height": true,
+        "pass_grids": true,
+        "sites": true,
+        "pads": true
+      },
+      "pair": {
+        "verdict": "pass",
+        "differences": [],
+        "note": "Runtime parity only; engine-RNG source audit is separate.",
+        "full_snapshot_differences": [],
+        "rock_grounding_differences": []
+      },
+      "automated_gates_a_b": [
+        {
+          "seed-parity": {
+            "verdict": "pending",
+            "details": [
+              "requires paired-run comparison and RNG source audit"
+            ]
+          },
+          "entrances-glued": {
+            "verdict": "pass",
+            "details": []
+          },
+          "entrances-not-in-ring": {
+            "verdict": "pass",
+            "details": []
+          },
+          "ring-content": {
+            "verdict": "pass",
+            "details": []
+          },
+          "single-start-reveal": {
+            "verdict": "pass",
+            "details": []
+          },
+          "badges-pre-reveal": {
+            "verdict": "pass",
+            "details": []
+          },
+          "decor-rules": {
+            "verdict": "pass",
+            "details": []
+          },
+          "no-errors": {
+            "verdict": "pass",
+            "details": []
+          },
+          "process": {
+            "verdict": "pending",
+            "details": [
+              "requires checkpoint/deployment provenance review"
+            ]
+          },
+          "underground-first-access": {
+            "verdict": "pass",
+            "details": []
+          }
+        },
+        {
+          "seed-parity": {
+            "verdict": "pending",
+            "details": [
+              "requires paired-run comparison and RNG source audit"
+            ]
+          },
+          "entrances-glued": {
+            "verdict": "pass",
+            "details": []
+          },
+          "entrances-not-in-ring": {
+            "verdict": "pass",
+            "details": []
+          },
+          "ring-content": {
+            "verdict": "pass",
+            "details": []
+          },
+          "single-start-reveal": {
+            "verdict": "pass",
+            "details": []
+          },
+          "badges-pre-reveal": {
+            "verdict": "pass",
+            "details": []
+          },
+          "decor-rules": {
+            "verdict": "pass",
+            "details": []
+          },
+          "no-errors": {
+            "verdict": "pass",
+            "details": []
+          },
+          "process": {
+            "verdict": "pending",
+            "details": [
+              "requires checkpoint/deployment provenance review"
+            ]
+          },
+          "underground-first-access": {
+            "verdict": "pass",
+            "details": []
+          }
+        }
+      ],
+      "t0_to_t1_b_s": 149.418,
+      "control_s": 29.304,
+      "provenance": [
+        {
+          "sample": "a",
+          "identity": [
+            32820,
+            134333988559040397
+          ],
+          "incident": "20260909-034055-18d38a0ac7c90c50",
+          "checkpoint_ok": true,
+          "normal_shutdown": true,
+          "requested_ug_pin": "0",
+          "actual_native_ug_seed": "929878631371625492"
+        },
+        {
+          "sample": "b",
+          "identity": [
+            82728,
+            134334006019938488
+          ],
+          "incident": "20260909-041001-18d38ba152d9482c",
+          "checkpoint_ok": true,
+          "normal_shutdown": true,
+          "requested_ug_pin": "929878631371625492",
+          "actual_native_ug_seed": "929878631371625492"
+        },
+        {
+          "sample": "control",
+          "identity": [
+            80112,
+            134334008528227250
+          ],
+          "incident": "20260909-041412-18d38bdbb96995f8",
+          "checkpoint_ok": true,
+          "normal_shutdown": true,
+          "requested_ug_pin": "929878631371625492",
+          "actual_native_ug_seed": "3375664548589736351"
+        }
+      ],
+      "control_no_grounding": true,
+      "issues": []
+    },
+    {
+      "site": "45S120W",
+      "complete": true,
+      "t0_to_t1_a_s": 139.319,
+      "grounding": {
+        "unchanged": 351,
+        "lowered": 0,
+        "eligible": 26267,
+        "probes": 94286,
+        "total_lowering": 0,
+        "apply_ms": 1,
+        "capture_ms": 3966,
+        "max_lowering": 0,
+        "contacts": 6688,
+        "failures": 0,
+        "rays": 23848
+      },
+      "actual_lowered": 0,
+      "preliminary": {
+        "seed-parity": {
+          "verdict": "pending",
+          "details": [
+            "requires paired-run comparison and RNG source audit"
+          ]
+        },
+        "entrances-glued": {
+          "verdict": "pass",
+          "details": []
+        },
+        "entrances-not-in-ring": {
+          "verdict": "pass",
+          "details": []
+        },
+        "ring-content": {
+          "verdict": "pass",
+          "details": []
+        },
+        "single-start-reveal": {
+          "verdict": "pass",
+          "details": []
+        },
+        "badges-pre-reveal": {
+          "verdict": "pass",
+          "details": []
+        },
+        "decor-rules": {
+          "verdict": "pass",
+          "details": []
+        },
+        "no-errors": {
+          "verdict": "pass",
+          "details": []
+        },
+        "process": {
+          "verdict": "pending",
+          "details": [
+            "requires checkpoint/deployment provenance review"
+          ]
+        },
+        "underground-first-access": {
+          "verdict": "pass",
+          "details": []
+        }
+      },
+      "v955_surface_equal": {
+        "height": true,
+        "pass_grids": true,
+        "sites": true,
+        "pads": true
+      },
+      "pair": {
+        "verdict": "pass",
+        "differences": [],
+        "note": "Runtime parity only; engine-RNG source audit is separate.",
+        "full_snapshot_differences": [],
+        "rock_grounding_differences": []
+      },
+      "automated_gates_a_b": [
+        {
+          "seed-parity": {
+            "verdict": "pending",
+            "details": [
+              "requires paired-run comparison and RNG source audit"
+            ]
+          },
+          "entrances-glued": {
+            "verdict": "pass",
+            "details": []
+          },
+          "entrances-not-in-ring": {
+            "verdict": "pass",
+            "details": []
+          },
+          "ring-content": {
+            "verdict": "pass",
+            "details": []
+          },
+          "single-start-reveal": {
+            "verdict": "pass",
+            "details": []
+          },
+          "badges-pre-reveal": {
+            "verdict": "pass",
+            "details": []
+          },
+          "decor-rules": {
+            "verdict": "pass",
+            "details": []
+          },
+          "no-errors": {
+            "verdict": "pass",
+            "details": []
+          },
+          "process": {
+            "verdict": "pending",
+            "details": [
+              "requires checkpoint/deployment provenance review"
+            ]
+          },
+          "underground-first-access": {
+            "verdict": "pass",
+            "details": []
+          }
+        },
+        {
+          "seed-parity": {
+            "verdict": "pending",
+            "details": [
+              "requires paired-run comparison and RNG source audit"
+            ]
+          },
+          "entrances-glued": {
+            "verdict": "pass",
+            "details": []
+          },
+          "entrances-not-in-ring": {
+            "verdict": "pass",
+            "details": []
+          },
+          "ring-content": {
+            "verdict": "pass",
+            "details": []
+          },
+          "single-start-reveal": {
+            "verdict": "pass",
+            "details": []
+          },
+          "badges-pre-reveal": {
+            "verdict": "pass",
+            "details": []
+          },
+          "decor-rules": {
+            "verdict": "pass",
+            "details": []
+          },
+          "no-errors": {
+            "verdict": "pass",
+            "details": []
+          },
+          "process": {
+            "verdict": "pending",
+            "details": [
+              "requires checkpoint/deployment provenance review"
+            ]
+          },
+          "underground-first-access": {
+            "verdict": "pass",
+            "details": []
+          }
+        }
+      ],
+      "t0_to_t1_b_s": 138.407,
+      "control_s": 26.697,
+      "provenance": [
+        {
+          "sample": "a",
+          "identity": [
+            86588,
+            134333991618975948
+          ],
+          "incident": "20260909-034601-18d38a52066c2e64",
+          "checkpoint_ok": true,
+          "normal_shutdown": true,
+          "requested_ug_pin": "0",
+          "actual_native_ug_seed": "6126103855836633687"
+        },
+        {
+          "sample": "b",
+          "identity": [
+            62144,
+            134334009324631738
+          ],
+          "incident": "20260909-041532-18d38bee4459fec0",
+          "checkpoint_ok": true,
+          "normal_shutdown": true,
+          "requested_ug_pin": "6126103855836633687",
+          "actual_native_ug_seed": "6126103855836633687"
+        },
+        {
+          "sample": "control",
+          "identity": [
+            81332,
+            134334011726049794
+          ],
+          "incident": "20260909-041932-18d38c262de6e1e8",
+          "checkpoint_ok": true,
+          "normal_shutdown": true,
+          "requested_ug_pin": "6126103855836633687",
+          "actual_native_ug_seed": "6327889790743343642"
+        }
+      ],
+      "control_no_grounding": true,
+      "issues": []
+    },
+    {
+      "site": "61N136W",
+      "complete": true,
+      "t0_to_t1_a_s": 224.104,
+      "grounding": {
+        "total_lowering": 0,
+        "eligible": 12189,
+        "probes": 138844,
+        "contacts": 18847,
+        "rays": 97361,
+        "capture_ms": 3186,
+        "lowered": 0,
+        "max_lowering": 0,
+        "unchanged": 1712,
+        "apply_ms": 1,
+        "failures": 0
+      },
+      "actual_lowered": 0,
+      "preliminary": {
+        "seed-parity": {
+          "verdict": "pending",
+          "details": [
+            "requires paired-run comparison and RNG source audit"
+          ]
+        },
+        "entrances-glued": {
+          "verdict": "pass",
+          "details": []
+        },
+        "entrances-not-in-ring": {
+          "verdict": "pass",
+          "details": []
+        },
+        "ring-content": {
+          "verdict": "pass",
+          "details": []
+        },
+        "single-start-reveal": {
+          "verdict": "pass",
+          "details": []
+        },
+        "badges-pre-reveal": {
+          "verdict": "pass",
+          "details": []
+        },
+        "decor-rules": {
+          "verdict": "pass",
+          "details": []
+        },
+        "no-errors": {
+          "verdict": "pass",
+          "details": []
+        },
+        "process": {
+          "verdict": "pending",
+          "details": [
+            "requires checkpoint/deployment provenance review"
+          ]
+        },
+        "underground-first-access": {
+          "verdict": "pass",
+          "details": []
+        }
+      },
+      "v955_surface_equal": {
+        "height": true,
+        "pass_grids": true,
+        "sites": true,
+        "pads": true
+      },
+      "pair": {
+        "verdict": "pass",
+        "differences": [],
+        "note": "Runtime parity only; engine-RNG source audit is separate.",
+        "full_snapshot_differences": [],
+        "rock_grounding_differences": []
+      },
+      "automated_gates_a_b": [
+        {
+          "seed-parity": {
+            "verdict": "pending",
+            "details": [
+              "requires paired-run comparison and RNG source audit"
+            ]
+          },
+          "entrances-glued": {
+            "verdict": "pass",
+            "details": []
+          },
+          "entrances-not-in-ring": {
+            "verdict": "pass",
+            "details": []
+          },
+          "ring-content": {
+            "verdict": "pass",
+            "details": []
+          },
+          "single-start-reveal": {
+            "verdict": "pass",
+            "details": []
+          },
+          "badges-pre-reveal": {
+            "verdict": "pass",
+            "details": []
+          },
+          "decor-rules": {
+            "verdict": "pass",
+            "details": []
+          },
+          "no-errors": {
+            "verdict": "pass",
+            "details": []
+          },
+          "process": {
+            "verdict": "pending",
+            "details": [
+              "requires checkpoint/deployment provenance review"
+            ]
+          },
+          "underground-first-access": {
+            "verdict": "pass",
+            "details": []
+          }
+        },
+        {
+          "seed-parity": {
+            "verdict": "pending",
+            "details": [
+              "requires paired-run comparison and RNG source audit"
+            ]
+          },
+          "entrances-glued": {
+            "verdict": "pass",
+            "details": []
+          },
+          "entrances-not-in-ring": {
+            "verdict": "pass",
+            "details": []
+          },
+          "ring-content": {
+            "verdict": "pass",
+            "details": []
+          },
+          "single-start-reveal": {
+            "verdict": "pass",
+            "details": []
+          },
+          "badges-pre-reveal": {
+            "verdict": "pass",
+            "details": []
+          },
+          "decor-rules": {
+            "verdict": "pass",
+            "details": []
+          },
+          "no-errors": {
+            "verdict": "pass",
+            "details": []
+          },
+          "process": {
+            "verdict": "pending",
+            "details": [
+              "requires checkpoint/deployment provenance review"
+            ]
+          },
+          "underground-first-access": {
+            "verdict": "pass",
+            "details": []
+          }
+        }
+      ],
+      "t0_to_t1_b_s": 223.361,
+      "control_s": 30.363,
+      "provenance": [
+        {
+          "sample": "a",
+          "identity": [
+            88084,
+            134333994571900446
+          ],
+          "incident": "20260909-035057-18d38a96c7398850",
+          "checkpoint_ok": true,
+          "normal_shutdown": true,
+          "requested_ug_pin": "0",
+          "actual_native_ug_seed": "5144878461829043810"
+        },
+        {
+          "sample": "b",
+          "identity": [
+            2468,
+            134334012497604632
+          ],
+          "incident": "20260909-042049-18d38c3824bdb6e8",
+          "checkpoint_ok": true,
+          "normal_shutdown": true,
+          "requested_ug_pin": "5144878461829043810",
+          "actual_native_ug_seed": "5144878461829043810"
+        },
+        {
+          "sample": "control",
+          "identity": [
+            82112,
+            134334015736565061
+          ],
+          "incident": "20260909-042613-18d38c838e7417a8",
+          "checkpoint_ok": true,
+          "normal_shutdown": true,
+          "requested_ug_pin": "5144878461829043810",
+          "actual_native_ug_seed": "3506645977778195795"
+        }
+      ],
+      "control_no_grounding": true,
+      "issues": []
+    },
+    {
+      "site": "17S11W",
+      "complete": true,
+      "t0_to_t1_a_s": 149.806,
+      "grounding": {
+        "rays": 58039,
+        "lowered": 278,
+        "max_lowering": 1465,
+        "capture_ms": 4372,
+        "apply_ms": 108,
+        "eligible": 26545,
+        "failures": 0,
+        "total_lowering": 126146,
+        "contacts": 12129,
+        "probes": 114206,
+        "unchanged": 439
+      },
+      "actual_lowered": 278,
+      "preliminary": {
+        "seed-parity": {
+          "verdict": "pending",
+          "details": [
+            "requires paired-run comparison and RNG source audit"
+          ]
+        },
+        "entrances-glued": {
+          "verdict": "pass",
+          "details": []
+        },
+        "entrances-not-in-ring": {
+          "verdict": "pass",
+          "details": []
+        },
+        "ring-content": {
+          "verdict": "pass",
+          "details": []
+        },
+        "single-start-reveal": {
+          "verdict": "pass",
+          "details": []
+        },
+        "badges-pre-reveal": {
+          "verdict": "pass",
+          "details": []
+        },
+        "decor-rules": {
+          "verdict": "pass",
+          "details": []
+        },
+        "no-errors": {
+          "verdict": "pass",
+          "details": []
+        },
+        "process": {
+          "verdict": "pending",
+          "details": [
+            "requires checkpoint/deployment provenance review"
+          ]
+        },
+        "underground-first-access": {
+          "verdict": "pass",
+          "details": []
+        }
+      },
+      "v955_surface_equal": {
+        "height": false,
+        "pass_grids": false,
+        "sites": true,
+        "pads": true
+      },
+      "pair": {
+        "verdict": "pass",
+        "differences": [],
+        "note": "Runtime parity only; engine-RNG source audit is separate.",
+        "full_snapshot_differences": [],
+        "rock_grounding_differences": []
+      },
+      "automated_gates_a_b": [
+        {
+          "seed-parity": {
+            "verdict": "pending",
+            "details": [
+              "requires paired-run comparison and RNG source audit"
+            ]
+          },
+          "entrances-glued": {
+            "verdict": "pass",
+            "details": []
+          },
+          "entrances-not-in-ring": {
+            "verdict": "pass",
+            "details": []
+          },
+          "ring-content": {
+            "verdict": "pass",
+            "details": []
+          },
+          "single-start-reveal": {
+            "verdict": "pass",
+            "details": []
+          },
+          "badges-pre-reveal": {
+            "verdict": "pass",
+            "details": []
+          },
+          "decor-rules": {
+            "verdict": "pass",
+            "details": []
+          },
+          "no-errors": {
+            "verdict": "pass",
+            "details": []
+          },
+          "process": {
+            "verdict": "pending",
+            "details": [
+              "requires checkpoint/deployment provenance review"
+            ]
+          },
+          "underground-first-access": {
+            "verdict": "pass",
+            "details": []
+          }
+        },
+        {
+          "seed-parity": {
+            "verdict": "pending",
+            "details": [
+              "requires paired-run comparison and RNG source audit"
+            ]
+          },
+          "entrances-glued": {
+            "verdict": "pass",
+            "details": []
+          },
+          "entrances-not-in-ring": {
+            "verdict": "pass",
+            "details": []
+          },
+          "ring-content": {
+            "verdict": "pass",
+            "details": []
+          },
+          "single-start-reveal": {
+            "verdict": "pass",
+            "details": []
+          },
+          "badges-pre-reveal": {
+            "verdict": "pass",
+            "details": []
+          },
+          "decor-rules": {
+            "verdict": "pass",
+            "details": []
+          },
+          "no-errors": {
+            "verdict": "pass",
+            "details": []
+          },
+          "process": {
+            "verdict": "pending",
+            "details": [
+              "requires checkpoint/deployment provenance review"
+            ]
+          },
+          "underground-first-access": {
+            "verdict": "pass",
+            "details": []
+          }
+        }
+      ],
+      "t0_to_t1_b_s": 146.395,
+      "control_s": 28.155,
+      "provenance": [
+        {
+          "sample": "a",
+          "identity": [
+            73672,
+            134333998518127883
+          ],
+          "incident": "20260909-035731-18d38af2a8929c14",
+          "checkpoint_ok": true,
+          "normal_shutdown": true,
+          "requested_ug_pin": "0",
+          "actual_native_ug_seed": "3070177425446232954"
+        },
+        {
+          "sample": "b",
+          "identity": [
+            1688,
+            134334016571768539
+          ],
+          "incident": "20260909-042737-18d38c9700a6cde4",
+          "checkpoint_ok": true,
+          "normal_shutdown": true,
+          "requested_ug_pin": "3070177425446232954",
+          "actual_native_ug_seed": "3070177425446232954"
+        },
+        {
+          "sample": "control",
+          "identity": [
+            49088,
+            134334019108652298
+          ],
+          "incident": "20260909-043150-18d38cd211aa4a54",
+          "checkpoint_ok": true,
+          "normal_shutdown": true,
+          "requested_ug_pin": "3070177425446232954",
+          "actual_native_ug_seed": "3555301753743727296"
+        }
+      ],
+      "control_no_grounding": true,
+      "issues": []
+    }
+  ],
+  "completed_scenarios": 5,
+  "unique_processes": 15,
+  "duplicate_processes": false,
+  "offline_commands_passed": 54,
+  "automated_evidence_complete_and_clean": true,
+  "qualification": "Manual source and visual review remain separate. Controls compare authored reveal/imprint behavior, not generated underground seed parity."
+}

@@ -760,3 +760,47 @@ and those runs are excluded from no-errors acceptance. Ralph remains stopped.
 v957 adds explicit source/destination contact-domain bounds, so terrain values beyond the
 physical map edge cannot trigger lowering. The initial v95615S A run is retained separately;
 the final five-site matrix restarts on the bounded-contact checkpoint. No rule is waived.
+
+### v957 - selective rock grounding: five-scenario sign-off (2026-09-09 UTC)
+
+Production `9982d4b` is committed and deployed38/38 exact. All ten standing rules are GREEN
+in the same five fixed scenarios after source/process/visual review:15 fresh processes,
+expanded A/B plus native unexpanded controls, and54 offline commands including30 grounding
+assertions. Exact Surface/Underground grids and all corrected-rock transforms repeat in A/B.
+The automated judge's separate source/provenance review fields are preserved, not weakened.
+
+| Scenario | START->T1 A | START->T1 B | Two-run median | Rocks lowered |
+|---|---:|---:|---:|---:|
+|15S67E|154.529s|156.335s|155.432s|271|
+|24S74W|149.682s|149.418s|149.550s|0|
+|45S120W|139.319s|138.407s|138.863s|0|
+|61N136W|224.104s|223.361s|223.733s|0|
+|17S11W|149.806s|146.395s|148.101s|278|
+
+T0 starts at the START action body after NewGame setup; T1 includes surface stretch and
+post-pipeline revalidation. These are correctness samples, not an isolated performance
+saving or a matched three-run benchmark. This repair adds work; none of these runs reaches
+70s. Eligibility work is included in final contact-capture counters. No subsequent
+optimization or unattended Ralph loop has been started.
+
+Only metadata-qualified decorative rocks with proven lost native support are lowered by
+an individually calculated amount. No new XY movement, resizing, rotation, terrain-writing
+pass, gameplay-object change, native patch or helper is introduced. Existing optimizations,
+resource/edge fixes and temporary buttons remain. Unexpanded controls apply no grounding.
+
+All five resource sites/pads remain exactly equal to v955. Full surface heights are identical
+in15S/24S/45S/61N. In17S exactly13,496 of67,108,864 cells are one height unit lower around the
+unchanged second entrance; every other cell is identical. The local native/buildable
+entrance-plane result reproduces exactly; no map-wide terrain change is hidden. Twelve rock
+comparison images, ten resource/edge views and ten final entrance views were reviewed,
+supported by exact baseline terrain comparisons. Native authored overhangs remain.
+
+Evidence: `_ralph/runs/manual-rock-grounding/artifacts/v957_SIGN_OFF.md`,
+`v957_acceptance_audit.json`, `SOURCE_REVIEW.md`, `VISUAL_REVIEW.md`, `v957_matrix/`,
+`v957_offline/results.json`, and `v957_17s11w_height_difference.json`.
+
+Final exact-v95714N134W G3 reproduction also passes: automatic2127wu drop, Z28391->26264,
+same XY/scale/rotation and ground height, all12 sampled native supports retained.160/14447
+eligible rocks changed; no grounding failure. Both original final screenshots were reviewed,
+and the corrected paused G3 scene is left open. Instrumented START->T1 was153.679s, separately
+recorded in `v957_g3_final/report.json`; it is not an accepted cold timing comparison.

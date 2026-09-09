@@ -1,0 +1,28 @@
+{
+  "site": "17S11W",
+  "old": "D:\\PROJS\\SMR\\super-big-map\\_ralph\\runs\\reoptimize-under-70s\\artifacts\\manual_direct_seeded_20260908\\v955_matrix\\17s11w_a",
+  "new": "D:\\PROJS\\SMR\\super-big-map\\_ralph\\runs\\manual-rock-grounding\\artifacts\\v957_matrix\\17s11w_b",
+  "changed_cells": 13496,
+  "raw_u16_delta_counts": {
+    "-1": 13496
+  },
+  "nearest_entrance_groups": [
+    {
+      "pose": [
+        "v955:2",
+        254000,
+        382772
+      ],
+      "cells": 13496,
+      "bbox_tiles": [
+        2464,
+        3761,
+        2615,
+        3895
+      ],
+      "max_distance_wu": 7609.098763979871
+    }
+  ],
+  "total_cells": 67108864,
+  "same_entrance_xy": true
+}

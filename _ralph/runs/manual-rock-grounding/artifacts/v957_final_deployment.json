@@ -1,0 +1,11 @@
+{
+  "source": "D:\\PROJS\\SMR\\super-big-map",
+  "destination": "C:\\Users\\fazevedo\\AppData\\Roaming\\Surviving Mars Relaunched\\Mods\\super-big-map",
+  "source_files": 38,
+  "destination_files": 38,
+  "missing_in_destination": [],
+  "stale_in_destination": [],
+  "content_mismatch": [],
+  "ok": true,
+  "tested_production_commit": "9982d4b77af76e781f17200091dafb2b24a5606f"
+}
