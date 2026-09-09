@@ -129,7 +129,12 @@ effects = section(
     "function DepositRules.TopUpEffectDeposits",
     "function DepositRules.AuditTopUpVanillaRepulsion",
 )
-aprons = section(
+apron_raster = section(
+    TERRAIN,
+    "local function RasterNaturalMountainBaseAprons",
+    "local function CreateNaturalMountainBaseBuildableAprons",
+)
+aprons = apron_raster + section(
     TERRAIN,
     "local function CreateNaturalMountainBaseBuildableAprons",
     "local function AuditNaturalMountainBaseBuildableAprons",
@@ -341,10 +346,13 @@ static_checks = {
     "natural_aprons_use_small_core_and_broad_transition": (
         "config.MountainBaseApronCoreRadiusHexes = 4" in CONFIG
         and "config.MountainBaseApronFeatherRadiusHexes = 20" in CONFIG
-        and "detail * detail_retention" in aprons
+        and "GridMulDivAdd(cube,mask,W,0)" in apron_raster
+        and apron_raster.count("GridMulDivAdd(cube,mask,W,0)") == 2
+        and "GridMulDivAdd(inverse,-1,1,W)" in apron_raster
+        and "aim+(old-aim)*retention+0.5" in apron_raster
     ),
     "natural_aprons_use_irregular_boundary": "lobe3" in aprons and "lobe2" in aprons,
-    "natural_aprons_use_quintic_feather": "t * t * t * (t * (t * 6 - 15) + 10)" in aprons,
+    "natural_aprons_use_quintic_feather": "t*t*t*(t*(t*6-15)+10)" in re.sub(r"\s+", "", aprons),
     "natural_aprons_have_no_scenario_special_case": (
         "14N134W" not in aprons and "A17" not in aprons
     ),

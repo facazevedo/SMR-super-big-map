@@ -1545,6 +1545,169 @@ end
 -- its short axis toward the adjacent mountain. A wide, slightly lobed quintic feather blends the
 -- core into the original height field. The quintic has zero first and second derivative at both
 -- ends, so neither the core join nor the untouched outer boundary leaves a lighting scar.
+-- Full-resolution native apron blend. Ambiguous U16 rounding cells use the original
+-- scalar expression; no mask coarsening, terrain redesign or failure fallback.
+local function RasterNaturalMountainBaseAprons(api, grid, selected, policy)
+	local floor, ceil, min, max, sqrt = math.floor, math.ceil, math.min, math.max, math.sqrt
+	local stats = { modified=0, shaped=0, raster_cells=0, mask_samples=0, exact_samples=0 }
+	local W, H = 16777216, 256
+	local required = {"NewComputeGrid","GridRepack","IsComputeGrid","GridResample",
+		"GridMulDivAdd","GridAddMulDiv","GridAdd","GridClamp","GridAbs","GridCount","GridForeach",
+		"GridFill","GridRound","GridMinMax","box","point"}
+	for _,key in ipairs(required) do
+		if type(api[key])~="function" then return false,stats,"native apron API unavailable: "..key end
+	end
+	local width,height=grid:size()
+	local format,bits=api.IsComputeGrid(grid)
+	if tostring(format):lower()~="u" or bits~=16 then
+		return false,stats,"native apron requires an unsigned 16-bit height grid"
+	end
+	local function weight(candidate, short_radius, long_radius, dx,dy)
+		local u=dx*candidate.mountain_x+dy*candidate.mountain_y
+		local v=-dx*candidate.mountain_y+dy*candidate.mountain_x
+		local ru,rv=u/short_radius,v/long_radius
+		local radius=sqrt(ru*ru+rv*rv)
+		if radius>=1.12 then return 0 end
+		local nx,ny=1,0
+		if radius>0.0001 then nx,ny=ru/radius,rv/radius end
+		local lobe3=nx*nx*nx-3*nx*ny*ny
+		local lobe2=nx*nx-ny*ny
+		local boundary=1+0.055*lobe3+0.035*lobe2
+		local normalized=radius/boundary
+		if normalized>=1 then return 0 end
+		if normalized<=policy.core_fraction then return 1 end
+		local t=(normalized-policy.core_fraction)/(1-policy.core_fraction)
+		return 1-t*t*t*(t*(t*6-15)+10)
+	end
+	for index,candidate in ipairs(selected) do
+		if candidate.requires_edit then
+			local owned, seen = {},{}
+			local function own(value)
+				if not value then return nil end
+				if value~=grid and not seen[value] then seen[value]=true;owned[#owned+1]=value end
+				return value
+			end
+			local ok,reason=pcall(function()
+				local variant=((candidate.sector_x*17+candidate.sector_y*31+index*13)%9)-4
+				local short_radius=policy.outer_short*(1+variant*0.012)
+				local long_radius=policy.outer_long*(1-variant*0.009)
+				local x0=max(0,floor(candidate.x-long_radius-2))
+				local y0=max(0,floor(candidate.y-long_radius-2))
+				local x1=min(width-1,ceil(candidate.x+long_radius+2))
+				local y1=min(height-1,ceil(candidate.y+long_radius+2))
+				local w,h=x1-x0+1,y1-y0+1
+				if w<2 or h<2 then return "empty native apron bounds" end
+				local source=own(grid:new_instance(w,h))
+				if not source then return "native apron snapshot allocation failed" end
+				source:copyrect(grid,api.box(x0,y0,x1+1,y1+1),api.point(0,0))
+				local float_source=own(api.GridRepack(source,"f",32,true))
+				local seed=own(api.NewComputeGrid(2,2,"f",32))
+				local mask=own(api.NewComputeGrid(w,h,"f",32))
+				if not float_source or not seed or not mask then return "native apron grid allocation failed" end
+				api.GridFill(mask,0)
+				local function target(x,y)
+					return candidate.gx*(x-candidate.x)+candidate.gy*(y-candidate.y)
+				end
+				-- ComputeGrid:set takes unsigned values, even for an f32 grid. Encode the
+				-- signed plane as nonnegative integers, then remove the bias natively.
+				local p00,p10=floor(target(x0,y0)*H+0.5),floor(target(x1,y0)*H+0.5)
+				local p01,p11=floor(target(x0,y1)*H+0.5),floor(target(x1,y1)*H+0.5)
+				local bias=max(0,-min(p00,p10,p01,p11))
+				if max(p00,p10,p01,p11)+bias>16777216 then
+					return "native apron plane exceeds exact f32 integer encoding"
+				end
+				seed:set(0,0,p00+bias);seed:set(1,0,p10+bias)
+				seed:set(0,1,p01+bias);seed:set(1,1,p11+bias)
+				api.GridMulDivAdd(seed,1,1,-bias)
+				local plane=own(api.GridResample(seed,w,h,true))
+				if not plane then return "native apron plane allocation failed" end
+				for y=y0,y1 do for x=x0,x1 do
+					local value=weight(candidate,short_radius,long_radius,x-candidate.x,y-candidate.y)
+					if value>0 then mask:set(x-x0,y-y0,floor(value*W+0.5)) end
+				end end
+				local cube=own(mask:clone())
+				if not cube then return "native apron mask clone failed" end
+				api.GridMulDivAdd(cube,mask,W,0)
+				api.GridMulDivAdd(cube,mask,W,0)
+				local inverse=own(cube:clone())
+				if not inverse then return "native apron inverse clone failed" end
+				api.GridMulDivAdd(inverse,-1,1,W)
+				local result=own(float_source:clone())
+				if not result then return "native apron result clone failed" end
+				-- Blend offsets from the integer center, not absolute elevations. This reduces
+				-- f32 cancellation and keeps the rounding bracket small even near the height cap.
+				api.GridMulDivAdd(result,1,1,-candidate.center)
+				local relative_min,relative_max=api.GridMinMax(result)
+				api.GridMulDivAdd(result,H,1,0)
+				api.GridMulDivAdd(result,inverse,W,0)
+				api.GridMulDivAdd(plane,cube,W,0)
+				api.GridAdd(result,plane)
+				-- Conservative f32/plane/mask rounding bracket. The live probe compares every
+				-- candidate cell with the literal pre-port raster before this can become production.
+				local magnitude=max(math.abs(target(x0,y0)),math.abs(target(x1,y0)),
+					math.abs(target(x0,y1)),math.abs(target(x1,y1)))
+				local margin=ceil((max(math.abs(relative_min),math.abs(relative_max))+magnitude)*H/524288)+4
+				local function rounded(offset)
+					local value=own(result:clone())
+					if not value then return nil end
+					api.GridMulDivAdd(value,1,1,offset)
+					api.GridMulDivAdd(value,1,H,0)
+					api.GridRound(value)
+					api.GridMulDivAdd(value,1,1,candidate.center)
+					api.GridClamp(value,0,65535)
+					return own(api.GridRepack(value,api.IsComputeGrid(grid)))
+				end
+				local packed,upper=rounded(-margin),rounded(margin)
+				if not packed or not upper then return "native apron rounding allocation failed" end
+				local difference=own(api.GridRepack(upper,"f",32,true))
+				local lower=own(api.GridRepack(packed,"f",32,true))
+				if not difference or not lower then return "native apron comparison allocation failed" end
+				api.GridAddMulDiv(difference,lower,-1)
+				api.GridAbs(difference)
+				-- Separate zero and nonzero integer differences by a gap, so callback filtering
+				-- is unambiguous for either inclusive or exclusive native lower-bound semantics.
+				api.GridMulDivAdd(difference,2,1,0)
+				local expected_exact=api.GridCount(difference,0,2147483647)
+				local exact,callback_error=0,nil
+				api.GridForeach(difference,function(value,x,y)
+					if callback_error then return end
+					if type(x)~="number" or type(y)~="number" or x~=floor(x) or y~=floor(y)
+						or x<0 or y<0 or x>=w or y>=h then
+						callback_error="native apron rounding coordinate escaped patch";return
+					end
+					local dx,dy=x+x0-candidate.x,y+y0-candidate.y
+					local blend=weight(candidate,short_radius,long_radius,dx,dy)
+					local old=source:get(x,y)
+					local aim=candidate.center+candidate.gx*dx+candidate.gy*dy
+					local retention=1-blend*blend*blend
+					local expected=floor(aim+(old-aim)*retention+0.5)
+					packed:set(x,y,max(0,min(65535,expected)))
+					exact=exact+1
+				end,1,2147483647)
+				if callback_error then return callback_error end
+				if exact~=expected_exact then return "native apron rounding enumeration mismatch" end
+				-- Count exact U16 changes before publication; preserve the existing report.
+				local delta=own(api.GridRepack(packed,"f",32,true))
+				if not delta then return "native apron census allocation failed" end
+				api.GridAddMulDiv(delta,float_source,-1)
+				api.GridAbs(delta)
+				local modified=api.GridCount(delta,0,2147483647)
+				grid:copyrect(packed,api.box(0,0,w,h),api.point(x0,y0))
+				stats.modified=stats.modified+modified;stats.shaped=stats.shaped+1
+				stats.raster_cells=stats.raster_cells+w*h;stats.mask_samples=stats.mask_samples+w*h
+				stats.exact_samples=stats.exact_samples+exact
+			end)
+			local cleanup={}
+			for i=#owned,1,-1 do
+				local freed,err=pcall(owned[i].free,owned[i]);if not freed then cleanup[#cleanup+1]=tostring(err) end
+			end
+			if not ok or reason then return false,stats,tostring(reason) end
+			if #cleanup>0 then return false,stats,"native apron cleanup: "..table.concat(cleanup," | ") end
+		end
+	end
+	return true,stats
+end
+
 local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 	if not cfg_bool("CREATE_NATURAL_MOUNTAIN_BASE_BUILDABLE_APRONS", true) then
 		return false, { reason = "disabled", created = 0, modified = 0 }
@@ -1765,67 +1928,18 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 	local pause = Global("PauseInfiniteLoopDetection")
 	local resume = Global("ResumeInfiniteLoopDetection")
 	if type(pause) == "function" then pcall(pause, "SBMMountainBaseAprons") end
-	local modified = 0
-	local shaped = 0
-	local ok_apply, apply_error = pcall(function()
-		for index, candidate in ipairs(selected) do
-			-- An already-flat mountain base is a zero-edit opportunity. Retain its original terrain
-			-- exactly; only marginal sites enter the feathered shaping loop below.
-			if candidate.requires_edit then
-				shaped = shaped + 1
-				-- Vary scale and lobe phase deterministically by sector; there is no random-stream cost.
-				local variant = ((candidate.sector_x * 17 + candidate.sector_y * 31
-					+ index * 13) % 9) - 4
-				local short_radius = outer_short * (1 + variant * 0.012)
-				local long_radius = outer_long * (1 - variant * 0.009)
-				local x0 = apron_max(0, apron_floor(candidate.x - long_radius - 2))
-				local y0 = apron_max(0, apron_floor(candidate.y - long_radius - 2))
-				local x1 = apron_min(width - 1, apron_ceil(candidate.x + long_radius + 2))
-				local y1 = apron_min(height - 1, apron_ceil(candidate.y + long_radius + 2))
-				for y = y0, y1 do
-					for x = x0, x1 do
-						local dx, dy = x - candidate.x, y - candidate.y
-						local u = dx * candidate.mountain_x + dy * candidate.mountain_y
-						local v = -dx * candidate.mountain_y + dy * candidate.mountain_x
-						local ru, rv = u / short_radius, v / long_radius
-						local radius = apron_sqrt(ru * ru + rv * rv)
-						if radius < 1.12 then
-							local nx, ny = 1, 0
-							if radius > 0.0001 then nx, ny = ru / radius, rv / radius end
-							local lobe3 = nx * nx * nx - 3 * nx * ny * ny
-							local lobe2 = nx * nx - ny * ny
-							local boundary = 1 + 0.055 * lobe3 + 0.035 * lobe2
-							local normalized = radius / boundary
-							if normalized < 1 then
-								local weight
-								if normalized <= core_fraction then
-									weight = 1
-								else
-									local t = (normalized - core_fraction) / (1 - core_fraction)
-									local smooth = t * t * t * (t * (t * 6 - 15) + 10)
-									weight = 1 - smooth
-								end
-								local old = grid:get(x, y)
-								if type(old) == "number" then
-									local target = candidate.center
-										+ candidate.gx * dx + candidate.gy * dy
-									local detail = old - target
-									local detail_retention = 1 - weight * weight * weight
-									local value = apron_floor(target
-										+ detail * detail_retention + 0.5)
-									value = apron_max(0, apron_min(65535, value))
-									if value ~= old then
-										grid:set(x, y, value)
-										modified = modified + 1
-									end
-								end
-							end
-						end
-					end
-				end
-			end
-		end
-	end)
+	local api = {}
+	for _, name in ipairs({"NewComputeGrid", "GridRepack", "IsComputeGrid", "GridResample",
+		"GridMulDivAdd", "GridAddMulDiv", "GridAdd", "GridClamp", "GridAbs", "GridCount",
+		"GridForeach", "GridFill", "GridRound", "GridMinMax", "box", "point"}) do
+		api[name] = Global(name)
+	end
+	local ok_call, ok_apply, stats, apply_error = pcall(RasterNaturalMountainBaseAprons,
+		api, grid, selected, {outer_short=outer_short, outer_long=outer_long, core_fraction=core_fraction})
+	if not ok_call then apply_error=ok_apply;ok_apply=false;stats={} end
+	local modified, shaped = stats.modified or 0, stats.shaped or 0
+	map.SuperBigMapNativeApronStats = stats
+	if not ok_apply then OptimizationFailure("native mountain-base aprons", apply_error, map) end
 	if type(resume) == "function" then pcall(resume, "SBMMountainBaseAprons") end
 
 	local centers = {}
@@ -3947,7 +4061,14 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			-- explicit, localized post-transform terrain operation and therefore run only after the
 			-- pure-transform capture/dump, but before this grid is committed and rebuilt for gameplay.
 			if scale_values and environment ~= "Underground" then
-				CreateNaturalMountainBaseBuildableAprons(map, stretched)
+				local _, apron_report = CreateNaturalMountainBaseBuildableAprons(map, stretched)
+				if apron_report and apron_report.error and apron_report.error ~= "" then
+					-- The private result must never be published after a failed native operation.
+					free_grid(src_sub)
+					if stretched ~= src_sub then free_grid(stretched) end
+					if full_c ~= raw and full_c ~= src_sub then free_grid(full_c) end
+					return false
+				end
 			end
 			local ok_set = pcall(set_fn, map, stretched)
 			if type(invalidate_fn) == "function" then pcall(invalidate_fn, map) end

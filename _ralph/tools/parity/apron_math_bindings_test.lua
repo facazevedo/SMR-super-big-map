@@ -1,11 +1,13 @@
--- Production apron function versus the v932 checkpoint, including every grid write.
--- This output-preserving regression also requires fewer hot-loop math table lookups.
+-- Production apron function versus v932: every final cell, candidate and report.
+-- Native copyback legitimately changes read/write counts, not terrain or decisions.
+local api = dofile("_ralph/tools/parity/native_grid_double.lua")
 local f = assert(io.open("Code/sbm_terrain_copy.lua", "rb"))
 local current = f:read("*a"); f:close()
 local pipe = assert(io.popen("git show fde100f:Code/sbm_terrain_copy.lua", "r"))
 local baseline = pipe:read("*a"); assert(pipe:close())
 local function extract(source)
-	return assert(source:match("(local function CreateNaturalMountainBaseBuildableAprons.-)\n%-%- Score the centers"))
+	local raster = source:match("(local function RasterNaturalMountainBaseAprons.-)\nlocal function CreateNaturalMountainBaseBuildableAprons") or ""
+	return raster .. "\n" .. assert(source:match("(local function CreateNaturalMountainBaseBuildableAprons.-)\n%-%- Score the centers"))
 end
 local function same(a, b, path)
 	path = path or "result"
@@ -17,6 +19,12 @@ end
 local function run(source, fixture)
 	local gets, writes, values, lookups, steps = 0, {}, {}, {}, {}
 	local grid = {}
+	function grid:new_instance(w, h) return api.NewComputeGrid(w, h, "u", 16) end
+	function grid:copyrect(source, bounds, destination)
+		for y=bounds.y0,bounds.y1-1 do for x=bounds.x0,bounds.x1-1 do
+			self:set(destination.x+x-bounds.x0,destination.y+y-bounds.y0,source:get(x,y))
+		end end
+	end
 	function grid:size() return fixture.width or 1024, fixture.height or 1024 end
 	function grid:get(x, y)
 		local w, h = self:size()
@@ -39,17 +47,29 @@ local function run(source, fixture)
 		cfg_bool = function(_, default) if fixture.disabled then return false end; return default end,
 		cfg_number = function(key, default) return fixture.config and fixture.config[key] or default end,
 		Global = function(key)
+			if api[key] then return api[key] end
 			if key == "const" then return constants end
 			if key == "guim" then return 100 end
 			assert(key == "PauseInfiniteLoopDetection" or key == "ResumeInfiniteLoopDetection", "unexpected global " .. key)
 			return function(reason) steps[#steps + 1] = {key, reason} end
 		end,
 		LoadingStep = function(name) steps[#steps + 1] = name end,
+		OptimizationFailure = function(_, reason) error(reason) end,
 	}, {__index = _G})
 	local fn = assert(load(extract(source) .. "\nreturn CreateNaturalMountainBaseBuildableAprons", "apron-test", "t", env))()
 	local map = {mapdata = {Environment = fixture.underground and "Underground" or "Surface"}}
 	local ok, report = fn(map, grid)
-	return {ok = ok, report = report, map = map, gets = gets, writes = writes, steps = steps}, lookups
+	-- Canonical sparse final grid: complete unchanged copyback cells are not edits.
+	local w = grid:size()
+	for key, value in pairs(values) do
+		if value == fixture.height_at(key % w, math.floor(key / w)) then values[key] = nil end
+	end
+	if map.SuperBigMapNativeApronStats then
+		assert(map.SuperBigMapNativeApronStats.modified == report.modified)
+		assert(map.SuperBigMapNativeApronStats.shaped == report.shaped)
+		map.SuperBigMapNativeApronStats = nil -- profiling only, deliberately outside semantic report
+	end
+	return {ok = ok, report = report, map = map, values = values, steps = steps}, lookups
 end
 local function hill(x, y)
 	return math.floor(20000 + 1000 * math.sin(x / 100) + 1000 * math.cos(y / 125))
@@ -77,9 +97,9 @@ for _, fixture in ipairs(fixtures) do
 	local after, new_lookups = run(current, fixture)
 	same(before, after)
 	if fixture.edited then
-		assert(#after.writes > 0, "fixture did not exercise raster")
+		assert(next(after.values), "fixture did not exercise raster")
 		assert((new_lookups.sqrt or 0) < (old_lookups.sqrt or 0), "sqrt lookups not reduced")
 	end
-	print("PASS " .. fixture.name .. " (" .. #after.writes .. " identical writes)")
+	print("PASS " .. fixture.name .. " (exact final grid, selection and report)")
 end
 print(#fixtures .. " apron equivalence checks passed")
