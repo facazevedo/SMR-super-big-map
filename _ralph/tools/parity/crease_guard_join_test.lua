@@ -51,7 +51,22 @@ local function run(code, side, near_guard, n)
 		for along = 0, along_n - 1, step do rows[along] = positions end
 		return rows, {}
 	end
-	local env = setmetatable({ BuildHeightStepDiscoveryIndex = scalar_discovery, Global = function(name)
+	-- Keep this sparse geometry fixture on scalar storage. The production batch
+	-- kernel has independent native/byte-exact tests; this adapter retains every
+	-- original coordinate, clamp, write-count and join-deficit assertion below.
+	local function scalar_translation(_, target, axis, _, rows, maximum)
+		local count = 0
+		for _, row in ipairs(rows) do
+			for p = row.lo, row.hi do
+				local x, y = axis == "x" and p or row.along, axis == "x" and row.along or p
+				target:set(x, y, math.min(maximum, target:get(x, y) + row.offset))
+				count = count + 1
+			end
+		end
+		return count
+	end
+	local env = setmetatable({ BuildHeightStepDiscoveryIndex = scalar_discovery,
+		TranslateHeightTrack = scalar_translation, Global = function(name)
 		if name == "GridMinMax" then return function() return 30000, 32000 end end
 	end }, { __index = _G })
 	local repair = assert(load(code .. "\nreturn RepairInternalHeightStep", "guard-join", "t", env))()
