@@ -1,0 +1,79 @@
+{
+  "code_commit": "ee51c1a2813ef67b8763ed00cb15e45ccfa58d10",
+  "version": 961,
+  "offline_commands_passed": 58,
+  "benchmark_median_s": 133.666,
+  "prior_median_s": 140.119,
+  "saving_s": 6.453000000000003,
+  "source_review": "source_review.md",
+  "deployment": {
+    "source": "D:\\PROJS\\SMR\\super-big-map",
+    "destination": "C:\\Users\\fazevedo\\AppData\\Roaming\\Surviving Mars Relaunched\\Mods\\super-big-map",
+    "source_files": 38,
+    "destination_files": 38,
+    "missing_in_destination": [],
+    "stale_in_destination": [],
+    "content_mismatch": [],
+    "ok": true
+  },
+  "unique_acceptance_processes": 9,
+  "scenarios": [
+    {
+      "site": "15S67E",
+      "all_ten": "pass",
+      "automated_gates": "8/8 pass",
+      "seed_parity_review": "Pass: exact full predecessor outputs, private-stream equality, and primary-agent source/RNG proof in source_review.md.",
+      "process_review": "Pass: committed v961/guard277, exact deployment audit before launch, fresh unique process identity, matching payload logs, complete first-access capture and normal teardown. No diagnostic setup or failure fallback shipped.",
+      "native_control": "Unchanged native path: accepted same-site v957 control, plus fresh v961 14N control.",
+      "visual_review": "Inherited from accepted predecessor only because full output is identical; no new screenshots or universal visual inspection claimed.",
+      "t0_to_t1_s": 133.102,
+      "prior_t0_to_t1_s": 136.236
+    },
+    {
+      "site": "24S74W",
+      "all_ten": "pass",
+      "automated_gates": "8/8 pass",
+      "seed_parity_review": "Pass: exact full predecessor outputs, private-stream equality, and primary-agent source/RNG proof in source_review.md.",
+      "process_review": "Pass: committed v961/guard277, exact deployment audit before launch, fresh unique process identity, matching payload logs, complete first-access capture and normal teardown. No diagnostic setup or failure fallback shipped.",
+      "native_control": "Unchanged native path: accepted same-site v957 control, plus fresh v961 14N control.",
+      "visual_review": "Inherited from accepted predecessor only because full output is identical; no new screenshots or universal visual inspection claimed.",
+      "t0_to_t1_s": 132.764,
+      "prior_t0_to_t1_s": 133.694
+    },
+    {
+      "site": "45S120W",
+      "all_ten": "pass",
+      "automated_gates": "8/8 pass",
+      "seed_parity_review": "Pass: exact full predecessor outputs, private-stream equality, and primary-agent source/RNG proof in source_review.md.",
+      "process_review": "Pass: committed v961/guard277, exact deployment audit before launch, fresh unique process identity, matching payload logs, complete first-access capture and normal teardown. No diagnostic setup or failure fallback shipped.",
+      "native_control": "Unchanged native path: accepted same-site v957 control, plus fresh v961 14N control.",
+      "visual_review": "Inherited from accepted predecessor only because full output is identical; no new screenshots or universal visual inspection claimed.",
+      "t0_to_t1_s": 122.423,
+      "prior_t0_to_t1_s": 124.833
+    },
+    {
+      "site": "61N136W",
+      "all_ten": "pass",
+      "automated_gates": "8/8 pass",
+      "seed_parity_review": "Pass: exact full predecessor outputs, private-stream equality, and primary-agent source/RNG proof in source_review.md.",
+      "process_review": "Pass: committed v961/guard277, exact deployment audit before launch, fresh unique process identity, matching payload logs, complete first-access capture and normal teardown. No diagnostic setup or failure fallback shipped.",
+      "native_control": "Unchanged native path: accepted same-site v957 control, plus fresh v961 14N control.",
+      "visual_review": "Inherited from accepted predecessor only because full output is identical; no new screenshots or universal visual inspection claimed.",
+      "t0_to_t1_s": 186.11,
+      "prior_t0_to_t1_s": 194.664
+    },
+    {
+      "site": "17S11W",
+      "all_ten": "pass",
+      "automated_gates": "8/8 pass",
+      "seed_parity_review": "Pass: exact full predecessor outputs, private-stream equality, and primary-agent source/RNG proof in source_review.md.",
+      "process_review": "Pass: committed v961/guard277, exact deployment audit before launch, fresh unique process identity, matching payload logs, complete first-access capture and normal teardown. No diagnostic setup or failure fallback shipped.",
+      "native_control": "Unchanged native path: accepted same-site v957 control, plus fresh v961 14N control.",
+      "visual_review": "Inherited from accepted predecessor only because full output is identical; no new screenshots or universal visual inspection claimed.",
+      "t0_to_t1_s": 131.341,
+      "prior_t0_to_t1_s": 134.262
+    }
+  ],
+  "raw_judgments_unchanged": true,
+  "qualification": "Separate primary-agent source/process acceptance, not relabeling raw pending fields."
+}

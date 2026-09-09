@@ -1,0 +1,10 @@
+{
+  "command": [
+    "lua",
+    "_ralph/tools/parity/rocket_pruning_test.lua"
+  ],
+  "exit": 1,
+  "seconds": 0.9669451999943703,
+  "stdout": "",
+  "stderr": "lua: _ralph/tools/parity/rocket_pruning_test.lua:19: equal bound must prune\nstack traceback:\n\t[C]: in function 'assert'\n\t_ralph/tools/parity/rocket_pruning_test.lua:19: in local 'check'\n\t_ralph/tools/parity/rocket_pruning_test.lua:118: in main chunk\n\t[C]: in ?\n"
+}

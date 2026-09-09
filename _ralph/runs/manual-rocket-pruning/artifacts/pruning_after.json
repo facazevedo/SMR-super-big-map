@@ -1,0 +1,10 @@
+{
+  "command": [
+    "lua",
+    "_ralph/tools/parity/rocket_pruning_test.lua"
+  ],
+  "exit": 0,
+  "seconds": 0.6338110000360757,
+  "stdout": "rocket pruning: 655454 checks passed; height reads 17382 -> 13705; score/range prunes 25662/4885\n",
+  "stderr": ""
+}

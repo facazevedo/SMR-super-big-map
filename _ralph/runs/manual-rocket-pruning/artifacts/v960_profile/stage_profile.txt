@@ -1,0 +1,157 @@
+=== markers ===
+=== sessions ===
+  line 156: BEGIN destination_tiles=8192x8192, environment=Surface, hex_size=nilxnil, map=BlankBigTerraceCMix_02, map_ref=table: 0000022E46683C68, mapdata_size=8192x8192, reason=expanded map allocation, session=1, slot=nil, source_tiles=6144x6144
+  line 904: END destination_tiles=8192x8192, diagnostic_print_ms=62, environment=Surface, error=, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 0000022E46683C68, mapdata_size=8192x8192, ok=true, reason=surface expansion complete, session=1, session_duration_ms=134146, slot=1, source_tiles=6144x6144,
+  line 906: BEGIN destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 0000022E46683C68, mapdata_size=8192x8192, reason=surface final RebuildPassability (post-pipeline scheduled revalidation), session=2, slot=1, source_tiles=6144x6144
+  line 1282: END darkness_ready=true, darkness_reason=vanilla darkness state ready, destination_tiles=8192x8192, diagnostic_print_ms=25, elevator_token=nil, elevator_token_status=consumed-or-none, environment=Underground, hex_size=820x946, map=BlankUnderground_04, map_ref=table: 0000022E51931648, mapdata_size=8192x8
+=== engine map slot changes ===
+  line 154: slot 1 -> PreGame: 10268 ms
+  line 208: slot 1 -> BlankBigTerraceCMix_02: 8191 ms
+  line 226: slot 15 -> BlankBigTerraceCMix_02: 3220 ms
+  line 471: slot 2 -> BlankUnderground_04: 6617 ms
+=== top-level spans (time order, per timer session) ===
+--- session 1: 119 END entries, 16 top-level, top-level sum 111.0 s, session span 125.8 s
+  +    8.2s     3.22s  allocate temporary vanilla backing
+  +   11.4s     1.42s  switch temporary generator current slot
+  +   12.8s     4.85s  vanilla RandomMapGenerator.DoGenerate
+  +   17.7s     0.02s  refresh temporary source object radius
+  +   17.7s     1.61s  finalize temporary source pass edits
+  +   19.3s     0.01s  capture native enrichment coordinates
+  +   19.3s     0.08s  capture native enrichment value records
+  +   19.4s     0.01s  capture vanilla initial sector
+  +   19.4s     0.71s  switch temporary generator current slot
+  +   20.1s    40.65s  stretch temporary source terrain directly to destination
+  +   60.7s     0.00s  copy generated map state
+  +   60.7s     1.53s  transfer generated non-enrichment objects
+  +   62.3s     4.93s  capture transferred decor relief from temporary terrain
+  +   67.2s     0.00s  rebuild destination grids after source migration
+  +   79.6s    11.74s  source-view RandomMapGenerator.DoGenerate on expanded backing
+  +   93.7s    40.23s  surface expansion pipeline
+--- session 2: 43 END entries, 3 top-level, top-level sum 45.2 s, session span 46.5 s
+  +    0.0s     4.89s  surface final RebuildPassability (post-pipeline scheduled revalidation)
+  +    4.9s     0.99s  surface final RebuildBuildableGrid (post-pipeline scheduled revalidation)
+  +    7.3s    39.28s  underground expansion pipeline
+=== all END entries ranked by duration (top 40) ===
+     40.65s  s1  +   20.1s  stretch temporary source terrain directly to destination
+     40.23s  s1  +   93.7s  surface expansion pipeline
+     40.09s  s1  +   20.1s  terrain grid stretch: height
+     39.28s  s2  +    7.3s  underground expansion pipeline
+     20.02s  s1  +  103.9s  surface prepare outer resource terrain
+     11.74s  s1  +   79.6s  source-view RandomMapGenerator.DoGenerate on expanded backing
+      5.54s  s2  +   19.2s  underground final RebuildPassability (before reachability and density)
+      5.42s  s2  +   26.2s  underground final RebuildPassability (before deferred wonder anomaly spawn)
+      5.24s  s2  +   40.9s  underground final RebuildPassability (after last object-grid transaction)
+      5.22s  s1  +   97.0s  surface resume combined pass edits
+      4.93s  s1  +   62.3s  capture transferred decor relief from temporary terrain
+      4.89s  s2  +    0.0s  surface final RebuildPassability (post-pipeline scheduled revalidation)
+      4.88s  s1  +  128.1s  surface final RebuildPassability (after last object-grid transaction)
+      4.85s  s1  +   12.8s  vanilla RandomMapGenerator.DoGenerate
+      4.66s  s2  +   32.5s  underground top-up resources
+      3.92s  s1  +   87.4s  RandomMapGenerator.OnGenerateLogic
+      3.22s  s1  +    8.2s  allocate temporary vanilla backing
+      3.16s  s2  +   37.2s  underground top-up anomalies
+      2.92s  s1  +   88.3s  deferred underground passage bootstrap
+      2.60s  s2  +    9.9s  terrain grid stretch: height
+      1.69s  s2  +   12.5s  terrain grid stretch: type
+      1.62s  s1  +  123.9s  surface outer resource dirty-region RebuildPassability (after outer resource terrain preparation)
+      1.61s  s1  +   17.7s  finalize temporary source pass edits
+      1.53s  s1  +   60.7s  transfer generated non-enrichment objects
+      1.42s  s1  +   11.4s  switch temporary generator current slot
+      0.99s  s1  +  132.9s  surface final RebuildBuildableGrid (after last object-grid transaction)
+      0.99s  s2  +    4.9s  surface final RebuildBuildableGrid (post-pipeline scheduled revalidation)
+      0.94s  s1  +  102.3s  surface final RebuildBuildableGrid
+      0.93s  s1  +  125.5s  surface outer resource RebuildBuildableGrid (after outer resource terrain preparation)
+      0.93s  s1  +   87.4s  RandomMap procedure: ResolveBuildable
+      0.92s  s1  +   94.7s  terrain map grid stretch: BiomeGrid
+      0.92s  s2  +   14.9s  terrain map grid stretch: BiomeGrid
+      0.80s  s1  +   93.9s  terrain map grid stretch: colorize
+      0.77s  s2  +   14.2s  terrain map grid stretch: colorize
+      0.71s  s1  +   19.4s  switch temporary generator current slot
+      0.65s  s1  +  103.2s  surface top-up resources
+      0.61s  s1  +   94.0s  terrain map grid colorize: destination write
+      0.57s  s2  +   14.4s  terrain map grid colorize: destination write
+      0.56s  s1  +   60.2s  terrain grid stretch: type
+      0.56s  s1  +   96.4s  surface engine decor pass
+=== phases ===
+  s1 11.923s  Generating the exact vanilla source terrain...
+  s1 47.116s  Migrating the vanilla source into the expanded terrain...
+  s1 26.52s  Finishing the expanded map...
+  s1 1.883s  Please wait.
+  s1 0.7s  Repositioning surface rocks and decorations
+  s1 0.071s  Restoring the vanilla resources and anomalies
+  s1 0.031s  Repositioning surface resource deposits
+  s1 5.851s  Restoring surface decoration density
+  s1 0.944s  Rebuilding the surface build grid
+  s1 24.074s  Distributing surface resources and anomalies
+  s1 0.746s  Aligning the underground entrances
+  s1 4.914s  Finalizing surface gameplay grids
+  s1 1.197s  Rebuilding the final surface build grid
+  s2 2.354s  Rebuilding the final surface build grid
+  s2 0.008s  Preparing the underground map for first access
+  s2 0.001s  Expanding the underground map
+  s2 2.559s  Preparing native underground wonder footprints
+  s2 0.052s  Preserving vanilla underground resources and anomalies
+  s2 6.011s  Stretching the underground terrain
+  s2 2.601s  Repositioning underground rocks and decorations
+  s2 0.121s  Reserving underground wonder footprints
+  s2 0.032s  Restoring vanilla underground resources and anomalies
+  s2 0.016s  Repositioning underground resource deposits
+  s2 0.06s  Restoring underground decoration density
+  s2 0.498s  Creating underground wonders
+  s2 5.57s  Finalizing reachable underground terrain
+  s2 0.404s  Rebuilding the final underground build grid
+  s2 0.126s  Aligning surface and underground passage entrances
+  s2 0.562s  Activating underground passage markers
+  s2 0.332s  Restoring buried-wonder positions
+  s2 5.441s  Settling underground grids before the wonder anomaly spawn
+  s2 0.395s  Rebuilding the final underground build grid
+  s2 0.386s  Activating underground wonder anomalies
+  s2 0.084s  Positioning buried-wonder anomalies on reachable terrain
+  s2 7.87s  Distributing underground resources and anomalies
+  s2 0.491s  Moving underground enrichments onto reachable terrain
+  s2 0.009s  Completing buried-wonder spawn effects
+  s2 5.264s  Finalizing underground gameplay grids
+  s2 0.502s  Rebuilding the final underground build grid
+  s2 3.574s  Opening the completed underground map
+=== timer SUMMARY lines ===
+  s1 #1 calls=1 total=47116 ms max=47116 ms  phase: Migrating the vanilla source into the expanded terrain...
+  s1 #2 calls=1 total=40649 ms max=40649 ms  stretch temporary source terrain directly to destination
+  s1 #3 calls=1 total=40227 ms max=40227 ms  surface expansion pipeline
+  s1 #4 calls=1 total=40088 ms max=40088 ms  terrain grid stretch: height
+  s1 #5 calls=1 total=26520 ms max=26520 ms  phase: Finishing the expanded map...
+  s1 #6 calls=1 total=24074 ms max=24074 ms  phase: Distributing surface resources and anomalies
+  s1 #7 calls=1 total=20022 ms max=20022 ms  surface prepare outer resource terrain
+  s1 #8 calls=1 total=11923 ms max=11923 ms  phase: Generating the exact vanilla source terrain...
+  s1 #9 calls=1 total=11739 ms max=11739 ms  source-view RandomMapGenerator.DoGenerate on expanded backing
+  s1 #10 calls=1 total=5851 ms max=5851 ms  phase: Restoring surface decoration density
+  s1 #11 calls=1 total=5217 ms max=5217 ms  surface resume combined pass edits
+  s1 #12 calls=1 total=4930 ms max=4930 ms  capture transferred decor relief from temporary terrain
+  s1 #13 calls=1 total=4914 ms max=4914 ms  phase: Finalizing surface gameplay grids
+  s1 #14 calls=1 total=4881 ms max=4881 ms  surface final RebuildPassability (after last object-grid transaction)
+  s1 #15 calls=1 total=4849 ms max=4849 ms  vanilla RandomMapGenerator.DoGenerate
+  s1 #16 calls=2 total=4454 ms max=3915 ms  RandomMapGenerator.OnGenerateLogic
+  s1 #17 calls=1 total=3220 ms max=3220 ms  allocate temporary vanilla backing
+  s1 #18 calls=1 total=2919 ms max=2919 ms  deferred underground passage bootstrap
+  s1 #19 calls=2 total=2129 ms max=1419 ms  switch temporary generator current slot
+  s1 #20 calls=1 total=1883 ms max=1883 ms  phase: Please wait.
+  s1 #21 calls=1 total=1618 ms max=1618 ms  surface outer resource dirty-region RebuildPassability (after outer resource terrain prepa
+  s1 #22 calls=1 total=1607 ms max=1607 ms  finalize temporary source pass edits
+  s1 #23 calls=1 total=1526 ms max=1526 ms  transfer generated non-enrichment objects
+  s1 #24 calls=2 total=1304 ms max=926 ms  RandomMap procedure: ResolveBuildable
+  s1 #25 calls=1 total=1197 ms max=1197 ms  phase: Rebuilding the final surface build grid
+  s1 #26 calls=1 total=995 ms max=995 ms  surface final RebuildBuildableGrid (after last object-grid transaction)
+  s1 #27 calls=1 total=944 ms max=944 ms  phase: Rebuilding the surface build grid
+  s1 #28 calls=1 total=939 ms max=939 ms  surface final RebuildBuildableGrid
+  s1 #29 calls=1 total=931 ms max=931 ms  surface outer resource RebuildBuildableGrid (after outer resource terrain preparation)
+  s1 #30 calls=1 total=918 ms max=918 ms  terrain map grid stretch: BiomeGrid
+  s1 #31 calls=1 total=803 ms max=803 ms  terrain map grid stretch: colorize
+  s1 #32 calls=1 total=746 ms max=746 ms  phase: Aligning the underground entrances
+  s1 #33 calls=1 total=700 ms max=700 ms  phase: Repositioning surface rocks and decorations
+  s1 #34 calls=1 total=650 ms max=650 ms  surface top-up resources
+  s1 #35 calls=1 total=614 ms max=614 ms  terrain map grid colorize: destination write
+  s1 #36 calls=1 total=559 ms max=559 ms  terrain grid stretch: type
+  s1 #37 calls=1 total=558 ms max=558 ms  surface engine decor pass
+  s1 #38 calls=1 total=509 ms max=509 ms  terrain map grid BiomeGrid: resample
+  s1 #39 calls=1 total=306 ms max=306 ms  unload retained vanilla source backing
+  s1 #40 calls=1 total=264 ms max=264 ms  terrain map grid BiomeGrid: destination write
+=== other timing prints (top-up module etc.) ===

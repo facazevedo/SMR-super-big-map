@@ -947,3 +947,67 @@ Evidence: `manual-historical-terrain-ports/artifacts/v960_offline/`,
 All three owner-selected ports are complete, separately committed and verified.
 Temporary buttons and previous terrain/resource/rock corrections remain. Ralph
 is stopped; no further optimization is being started without the next instruction.
+
+## Exact rocket score pruning — v961 `ee51c1a`, accepted 2026-09-09
+
+Owner's next instruction: profile first, then implement only rocket score pruning.
+Retain it only after measured improvement and all ten rules passing in five scenarios,
+with identical terrain and placements. No Ralph loop or later strategy was started.
+
+A separate pinned v960 diagnostic profile measured 140.247s START-to-T1: surface
+height processing took 40.088s and outer-resource terrain preparation took 20.022s.
+These are inclusive stage timings, not isolated crease/scoring costs. Underground
+first-access expansion was after T1 and cannot count as a saving here. Diagnostic
+flags were enabled only in that process; acceptance runs used the unchanged clocks
+and disabled production logging. The profile's outputs matched v960 exactly.
+
+The scorer now rejects candidates only when an exact lower bound cannot beat the
+incumbent: best possible readiness/distance, then live readiness, then the growing
+footprint height range. Search disk/order, strict ties, score weights, eligibility,
+spacing, resource composition, selected-winner relief and the immutable-grid
+certificate remain unchanged. No approximate score, scenario hardcode, candidate
+quota, changed terrain formula or legacy fallback is introduced.
+
+| Payload | 14N134W A | B | C | Median |
+|---|---:|---:|---:|---:|
+| v960 |140.229s|140.119s|138.318s|140.119s|
+| v961 pruning |135.919s|132.839s|133.666s|133.666s|
+
+Measured median saving: **6.453s (4.6%)**. T0 is immediately before the START action
+body, after NewGame; T1 requires both surface stretch and post-pipeline revalidation.
+All three full predecessor/repeat comparisons pass. Fresh native control: 28.636s.
+14N footprint height lookups fall from 3,095,708 to 439,294; 33,358 candidates stop
+on the partial-range bound, leaving 291 fully scored candidates and the same 12
+winners/108 relief-certificate reads. Apron counts and all terrain outputs stay exact.
+
+All ten rules are GREEN in the five fixed scenarios: eight automated gates plus
+separate source/RNG and deployment/process review, without changing the raw judge's
+two review-only fields. Full Surface/Underground height/pass grids, resource sites,
+pads, corrected-rock records and ordinary/private-stream outputs match v960.
+
+| Scenario | v960 matched run | v961 | Reduction |
+|---|---:|---:|---:|
+|15S67E|136.236s|133.102s|3.134s|
+|24S74W|133.694s|132.764s|0.930s|
+|45S120W|124.833s|122.423s|2.410s|
+|61N136W|194.664s|186.110s|8.554s|
+|17S11W|134.262s|131.341s|2.921s|
+
+These five timings are single matched correctness samples, not performance medians.
+The unchanged native path reuses the five accepted same-site v957 controls, with
+the fresh v961 14N control above. Identical outputs inherit the prior sampled visual
+acceptance; no new screenshots or universal visual coverage are claimed. Wall/spike
+repairs, seamless top-ups, selective rock grounding and temporary buttons remain.
+
+All 58 offline commands pass, including the new 655,454-assertion pruning regression
+(red before implementation), 81,267 rocket-cache, 15,414 apron and 3,097 crease
+assertions. All nine acceptance processes completed normally with exact payloads;
+final deployment audit is 38/38. The production change is committed as `ee51c1a`.
+
+Evidence: `_ralph/runs/manual-rocket-pruning/artifacts/`, especially
+`profile_summary.md`, `source_review.md`, `all_ten_rules_review.json`,
+`v961_reference/reference_audit.json`, `v961_matrix/verification.json`,
+`v961_offline/` and `v961_SIGN_OFF.md`.
+
+**The 70s target is not reached:** the accepted median is now 133.666s. This manual
+unit is complete; no additional optimization or unattended loop has been started.
