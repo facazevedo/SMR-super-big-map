@@ -1744,7 +1744,8 @@ end
 -- scalar expression; no mask coarsening, terrain redesign or failure fallback.
 local function RasterNaturalMountainBaseAprons(api, grid, selected, policy)
 	local floor, ceil, min, max, sqrt = math.floor, math.ceil, math.min, math.max, math.sqrt
-	local stats = { modified=0, shaped=0, raster_cells=0, mask_samples=0, exact_samples=0 }
+	local stats = { modified=0, shaped=0, raster_cells=0, mask_samples=0, exact_samples=0,
+		mask_cells_skipped=0, mask_fast_zero=0, mask_fast_one=0 }
 	local W, H = 16777216, 256
 	local required = {"NewComputeGrid","GridRepack","IsComputeGrid","GridResample",
 		"GridMulDivAdd","GridAddMulDiv","GridAdd","GridClamp","GridAbs","GridCount","GridForeach",
@@ -1757,11 +1758,41 @@ local function RasterNaturalMountainBaseAprons(api, grid, selected, policy)
 	if tostring(format):lower()~="u" or bits~=16 then
 		return false,stats,"native apron requires an unsigned 16-bit height grid"
 	end
+	local core_radius2=(policy.core_fraction*0.90)*(policy.core_fraction*0.90)
+	local function mask_row_bounds(candidate, short_radius, long_radius, x0,x1)
+		-- Conservative enclosing ellipse, NOT a different mask. The original weight
+		-- is zero at radius>=1.12; enclose radius1.14 and pad two whole cells against
+		-- floating-point endpoint error. Every retained cell uses the original weight.
+		local mx,my=candidate.mountain_x,candidate.mountain_y
+		local short2,long2=short_radius*short_radius,long_radius*long_radius
+		local a=mx*mx/short2+my*my/long2
+		if a<=0 then return function() return x0,x1 end end
+		local cross=mx*my*(1/short2-1/long2)
+		local norm2=mx*mx+my*my
+		-- det/quadratic-leading-coefficient avoids subtracting nearly equal terms.
+		local vertical2=(norm2/(short_radius*long_radius))^2/a
+		return function(y)
+			local dy=y-candidate.y
+			local remaining=1.14*1.14-vertical2*dy*dy
+			if remaining<0 then return 1,0 end
+			local center=candidate.x-cross*dy/a
+			local radius=sqrt(remaining/a)
+			return max(x0,floor(center-radius)-2),min(x1,ceil(center+radius)+2)
+		end
+	end
 	local function weight(candidate, short_radius, long_radius, dx,dy)
 		local u=dx*candidate.mountain_x+dy*candidate.mountain_y
 		local v=-dx*candidate.mountain_y+dy*candidate.mountain_x
 		local ru,rv=u/short_radius,v/long_radius
-		local radius=sqrt(ru*ru+rv*rv)
+		local radius2=ru*ru+rv*rv
+		-- On a unit direction lobe2/lobe3 are in [-1,1], so boundary is in
+		-- [0.91,1.09]. The generous 0.90/1.10 gaps keep roundoff away from the
+		-- certificates. Transition cells retain the exact original expression.
+		if radius2>=1.21 then stats.mask_fast_zero=stats.mask_fast_zero+1;return 0 end
+		if policy.core_fraction>=0 and radius2<=core_radius2 then
+			stats.mask_fast_one=stats.mask_fast_one+1;return 1
+		end
+		local radius=sqrt(radius2)
 		if radius>=1.12 then return 0 end
 		local nx,ny=1,0
 		if radius>0.0001 then nx,ny=ru/radius,rv/radius end
@@ -1816,10 +1847,16 @@ local function RasterNaturalMountainBaseAprons(api, grid, selected, policy)
 				api.GridMulDivAdd(seed,1,1,-bias)
 				local plane=own(api.GridResample(seed,w,h,true))
 				if not plane then return "native apron plane allocation failed" end
-				for y=y0,y1 do for x=x0,x1 do
-					local value=weight(candidate,short_radius,long_radius,x-candidate.x,y-candidate.y)
-					if value>0 then mask:set(x-x0,y-y0,floor(value*W+0.5)) end
-				end end
+				local row_bounds=mask_row_bounds(candidate,short_radius,long_radius,x0,x1)
+				local mask_samples=0
+				for y=y0,y1 do
+					local row0,row1=row_bounds(y)
+					mask_samples=mask_samples+max(0,row1-row0+1)
+					for x=row0,row1 do
+						local value=weight(candidate,short_radius,long_radius,x-candidate.x,y-candidate.y)
+						if value>0 then mask:set(x-x0,y-y0,floor(value*W+0.5)) end
+					end
+				end
 				local cube=own(mask:clone())
 				if not cube then return "native apron mask clone failed" end
 				api.GridMulDivAdd(cube,mask,W,0)
@@ -1889,7 +1926,8 @@ local function RasterNaturalMountainBaseAprons(api, grid, selected, policy)
 				local modified=api.GridCount(delta,0,2147483647)
 				grid:copyrect(packed,api.box(0,0,w,h),api.point(x0,y0))
 				stats.modified=stats.modified+modified;stats.shaped=stats.shaped+1
-				stats.raster_cells=stats.raster_cells+w*h;stats.mask_samples=stats.mask_samples+w*h
+				stats.raster_cells=stats.raster_cells+w*h;stats.mask_samples=stats.mask_samples+mask_samples
+				stats.mask_cells_skipped=stats.mask_cells_skipped+w*h-mask_samples
 				stats.exact_samples=stats.exact_samples+exact
 			end)
 			local cleanup={}

@@ -20,7 +20,14 @@ Baseline artifacts: manual-rocket-pruning/artifacts/v961_reference and v961_matr
 
 Native discovery accepted: code691f900, v962/guard278, median115.665s (saving18.001s).
 All59 offline checks and allten rules in five scenarios pass; full outputs exact.
-Next: mask construction shortcuts and a fresh native buildability-input diagnostic.
+Mask construction candidate v963/guard279 is implemented; not yet committed/deployed.
+845,617 mask checks and15,414 scalar-raster checks pass. Real engine:20 cases,
+2,448,000 cells compared, zero mismatches; previous raster1202ms vs candidate1087ms
+aggregate scratch time (not START-to-T1). Full offline/cold acceptance is next.
+Third unit investigated and NOT retained: process-cache prototype matched stock
+bytes but saved only about9ms net. InitBuildableGrid costs903ms and must still run
+to capture fresh collision/terrain state; classification costs16ms. Keep both
+existing full passability rebuilds and stock buildability pipeline unchanged.
 Read-only diagnostic on installed v961 completed; owned game closed normally.
 Prior native discovery implementation inspected; do not copy its old unsafe feather
 or silent fallback. Existing scalar refinement stays live after prior track writes.
@@ -41,3 +48,10 @@ unless materially new evidence establishes an exact replacement.
 - Integrated unit passes all59 offline commands/checks. Native scratch probe:
   15,768 checks, zero mismatches, source bytes unchanged. Cold timing and full
   five-scenario acceptance are next; not all-ten signed off yet.
+- v962 accepted: reference115.718/115.665/115.259s, median115.665s vs133.666s.
+  Allten rules in five sites and every full predecessor output pass. Ranking updated.
+- v962 buildable diagnostic: exact full map parity; both private stock-equivalent
+  raw/output grids and process parameters identical, cache hit exact. First process
+ 16ms -> cache preparation20ms; second16ms -> reuse3ms plus2ms raw serialization.
+  Net about9ms is negligible, not a measured T0/T1 gain. Do not ship a replacement
+  stock build path for that gain, or drop InitBuildableGrid based on output hashes.
