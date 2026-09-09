@@ -86,8 +86,42 @@ for _,wide in ipairs({false,true}) do
 			"empty refinement must not read or invent an edge")
 	end
 end
-for _,spec in ipairs({{"feather_join","offer_candidate"}}) do
-	check(extract(production,spec[1],spec[2])==extract(reference,spec[1],spec[2]),
-		"bounded monotone edge join changed")
+local actual_join=extract(production,"feather_join","offer_candidate")
+local expected_join=extract(reference,"feather_join","offer_candidate")
+if production:find("\tlocal join_basis_cache = {}\n\tlocal function feather_join",1,true) then
+	-- v966 explicitly optimizes this formerly untouched body. Retain a strict
+	-- source certificate: permit ONLY this exact coefficient-hoisting rewrite.
+	-- The separate join-basis oracle also checks all rounded outputs and cache reuse.
+	local original_loop=[=[		for p = lo + 1, hi - 1 do
+			local t = (p - lo + 0.0) / span
+			local t3 = t * t * t
+			local t4, t5 = t3 * t, t3 * t * t
+			local smooth = 10 * t3 - 15 * t4 + 6 * t5
+			local value = math.floor(v0 + delta * smooth
+				+ m0 * (t - 6 * t3 + 8 * t4 - 3 * t5)
+				+ m1 * (-4 * t3 + 7 * t4 - 3 * t5) + 0.5)
+]=]
+	local cached_loop=[=[		-- These coefficients depend only on integer span and relative position.
+		-- Preserve their original floating-point expressions and final evaluation order.
+		local basis = join_basis_cache[span]
+		if not basis then
+			basis = {}
+			for relative = 1, span - 1 do
+				local t = (relative + 0.0) / span
+				local t3 = t * t * t
+				local t4, t5 = t3 * t, t3 * t * t
+				basis[relative] = { 10 * t3 - 15 * t4 + 6 * t5,
+					t - 6 * t3 + 8 * t4 - 3 * t5, -4 * t3 + 7 * t4 - 3 * t5 }
+			end
+			join_basis_cache[span] = basis
+		end
+		for p = lo + 1, hi - 1 do
+			local coefficients = basis[p - lo]
+			local value = math.floor(v0 + delta * coefficients[1]
+				+ m0 * coefficients[2] + m1 * coefficients[3] + 0.5)
+]=]
+	local start,finish=assert(expected_join:find(original_loop,1,true))
+	expected_join=expected_join:sub(1,start-1)..cached_loop..expected_join:sub(finish+1)
 end
+check(actual_join==expected_join,"bounded monotone edge join changed outside exact basis hoist")
 print("crease sampling: "..tests.." checks passed")

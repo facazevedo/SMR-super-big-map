@@ -2,7 +2,9 @@
 -- Exercise the actual production join, not a second implementation of its formula.
 local file = assert(io.open("Code/sbm_terrain_copy.lua", "rb"))
 local source = file:read("*a"); file:close()
-local helper = assert(source:match("(local function feather_join.-)\n\tlocal function offer_candidate"))
+-- Include the production cache's lexical declaration when extracting its consumer.
+local helper = assert(source:match("(local join_basis_cache = {}.-)\n\tlocal function offer_candidate")
+	or source:match("(local function feather_join.-)\n\tlocal function offer_candidate"))
 local passed = 0
 local function check(name, fn) fn(); passed = passed + 1; print("PASS " .. name) end
 

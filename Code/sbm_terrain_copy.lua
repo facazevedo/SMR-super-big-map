@@ -1107,6 +1107,7 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		if axis == "x" then grid:set(perp, along, value) else grid:set(along, perp, value) end
 	end
 
+	local join_basis_cache = {}
 	local function feather_join(axis, along, lo, hi)
 		-- A quintic Hermite join preserves compatible endpoint slopes and has zero endpoint
 		-- curvature. Blending unbounded extrapolated lines instead can turn opposing/steep
@@ -1132,14 +1133,24 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		end
 		m0, m1 = sign * m0, sign * m1
 		local lower, upper = math.min(v0, v1), math.max(v0, v1)
+		-- These coefficients depend only on integer span and relative position.
+		-- Preserve their original floating-point expressions and final evaluation order.
+		local basis = join_basis_cache[span]
+		if not basis then
+			basis = {}
+			for relative = 1, span - 1 do
+				local t = (relative + 0.0) / span
+				local t3 = t * t * t
+				local t4, t5 = t3 * t, t3 * t * t
+				basis[relative] = { 10 * t3 - 15 * t4 + 6 * t5,
+					t - 6 * t3 + 8 * t4 - 3 * t5, -4 * t3 + 7 * t4 - 3 * t5 }
+			end
+			join_basis_cache[span] = basis
+		end
 		for p = lo + 1, hi - 1 do
-			local t = (p - lo + 0.0) / span
-			local t3 = t * t * t
-			local t4, t5 = t3 * t, t3 * t * t
-			local smooth = 10 * t3 - 15 * t4 + 6 * t5
-			local value = math.floor(v0 + delta * smooth
-				+ m0 * (t - 6 * t3 + 8 * t4 - 3 * t5)
-				+ m1 * (-4 * t3 + 7 * t4 - 3 * t5) + 0.5)
+			local coefficients = basis[p - lo]
+			local value = math.floor(v0 + delta * coefficients[1]
+				+ m0 * coefficients[2] + m1 * coefficients[3] + 0.5)
 			put(axis, p, along, math.max(lower, math.min(upper, value)))
 			changed = changed + 1
 		end
