@@ -1246,3 +1246,47 @@ Session outcome: **two kept, one rejected**. Accepted reference median
 marginal and within variation. Allten rules across five scenarios, exact previous
 terrain/placements/grounding and temporary buttons are preserved. **70s not reached.**
 This finite manual session ends here; no automatic next optimization or Ralph loop.
+
+## 2026-09-09 - exact rocket clearance indexes accepted (v968)
+
+New owner-directed four-unit session; no Ralph loop. Code `ee25640` (v968/guard284)
+replaces repeated resource/pad distance scans with exact per-preparation forbidden
+hex sets. Integer distance <minimum is equivalent to distance <=ceil(minimum)-1.
+Pad exclusions update immediately after each selected winner. Candidate traversal,
+strict ties, readiness, terrain masks, grounding and RNG calls are unchanged.
+
+| Reference | START-to-T1 A / B / C | Median |
+|---|---|---:|
+| accepted v966 |113.284 /113.024 /111.262s|113.024s|
+| accepted v968 |108.573 /107.513 /108.106s|108.106s|
+
+Observed median reduction **4.918s (4.35%)**; native control29.416s. T0 remains
+START, not New Game; final required revalidation remains inside T1. All samples
+retained. This is an observed three-run gain, not a statistical confidence claim.
+
+| Scenario | v966 | v968 | All ten rules / full predecessor output |
+|---|---:|---:|---|
+|15S67E|113.639s|109.769s|PASS / identical|
+|24S74W|111.015s|110.511s|PASS / identical|
+|45S120W|103.324s|99.343s|PASS / identical|
+|61N136W|164.813s|157.760s|PASS / identical|
+|17S11W|110.645s|108.945s|PASS / identical|
+
+All65 offline commands pass, including793811 new exact exclusion comparisons
+(red before implementation),655454 score-pruning and81267 terrain-sampling checks.
+Full surface/underground height and passability hashes, placements, individual rock
+grounding, ordinary/private seeds and reference repeats match. Eight automated
+gates plus separate source/RNG and process reviews complete allten; raw pending
+judgments are unchanged. Accepted visuals are inherited through identical complete
+outputs; no new screenshot claim. All nine acceptance processes exited normally;
+local-mod deployment audited38/38. Temporary buttons remain.
+
+Evidence: `_ralph/runs/manual-rocket-crease-transactions/artifacts/` contains
+`clearance_offline`, `v968_reference`, `v968_matrix`, `v968_source_review.md` and
+`v968_all_ten_rules_review.json`. Separate `v966_profile` is diagnostic only:
+rocket planning7161ms, outer raster7081ms, core harmonization10ms, install33ms.
+
+**70s not reached.** Remaining requested units: bounded seeded rocket planning
+(changed pads require fresh visuals and same-version exact repeats), native crease
+refinement/joins, and safe publication/rebuild consolidation. They are not yet
+accepted and must retain all rules and previous geometry corrections.
