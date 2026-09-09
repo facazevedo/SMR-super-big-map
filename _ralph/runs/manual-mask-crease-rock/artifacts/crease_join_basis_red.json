@@ -1,0 +1,10 @@
+{
+  "command": [
+    "lua",
+    "_ralph/tools/parity/crease_join_basis_test.lua"
+  ],
+  "exit": 1,
+  "seconds": 0.15364469995256513,
+  "stdout": "",
+  "stderr": "lua: _ralph/tools/parity/crease_join_basis_test.lua:7: production does not reuse exact join coefficients\nstack traceback:\n\t[C]: in function 'assert'\n\t_ralph/tools/parity/crease_join_basis_test.lua:7: in local 'check'\n\t_ralph/tools/parity/crease_join_basis_test.lua:18: in main chunk\n\t[C]: in ?\n"
+}

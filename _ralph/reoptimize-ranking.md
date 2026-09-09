@@ -1141,3 +1141,49 @@ Evidence under `_ralph/runs/manual-mask-crease-rock/artifacts/`: `v964_reference
 and the excluded `v964_matrix_shutdown_failed` with its incident capture.
 Current overall median114.512s: **70s not reached**. The other two requested units
 are being prepared separately; no Ralph controller or pursuing-goal API is used.
+
+## 2026-09-09 - v966 exact crease application accepted
+
+Production `56b8a1f`, v966/guard282. Batch physical-edge translations within each
+independent selected track using exact native copies/arithmetic; finish its original
+joins before later tracks. Reuse the original quintic basis by integer join width.
+Discovery, clipping, repair order, wall/spike corrections and terminal strips retain
+exact outputs. No resource, rock-grounding, placement, RNG or temporary-button changes.
+
+| Reference | START-to-T1 A / B / C | Median |
+|---|---|---:|
+| v964 |114.512 /115.056 /112.249s|114.512s|
+| v966 |113.284 /113.024 /111.262s|113.024s|
+
+Observed median reduction **1.488s (1.30%)**. Fresh native control29.067s. T0 remains
+START and required revalidation remains inside T1. All full predecessor/repeat
+comparisons pass. These are three-run observations, not a statistical confidence claim.
+
+| Scenario | v964 | v966 | All ten rules / complete predecessor outputs |
+|---|---:|---:|---|
+|15S67E|113.592s|113.639s|PASS / identical|
+|24S74W|110.789s|111.015s|PASS / identical|
+|45S120W|103.355s|103.324s|PASS / identical|
+|61N136W|165.318s|164.813s|PASS / identical|
+|17S11W|110.651s|110.645s|PASS / identical|
+
+Single correctness samples are not medians; no all-scenario speedup is claimed.
+All64 offline commands pass, including69125 native-kernel checks,655391 overlapping-
+track/order checks, and102569 exact cached-join checks. Existing geometry assertions
+remain. Historical source-scope checks allow only the literal reviewed basis hoist.
+All nine processes exited normally with audited38/38 payloads. Eight automated gates
+plus separate source/RNG and process review complete allten; raw pending gates unchanged.
+Accepted visual evidence is inherited only through identical complete outputs.
+
+Intermediate `4931670`/v965 (native translation alone) was NOT accepted: median114.588s,
+0.076s slower than v964; no five-site signoff. v966 is the combined crease unit and
+is compared directly to v964, not that unsuccessful intermediate. Mixed-format row
+arithmetic and nominal-identity native resampling prototypes were also rejected;
+the shipped exact-copy kernel passed all16 real-native cases with zero differences.
+
+Evidence: `_ralph/runs/manual-mask-crease-rock/artifacts/` contains `v965_result.md`,
+`v965_reference`, `native_track_probe2/result.json`, `v966_reference`, `v966_matrix`,
+`v966_offline`, `v966_source_review.md`, `v966_all_ten_rules_review.json`. Initial
+legacy-fixture extraction/source-certificate failures remain separately preserved.
+Current median113.024s: **70s not reached**. Rock capture is the last requested unit;
+it remains isolated pending its own implementation and acceptance. No Ralph loop.

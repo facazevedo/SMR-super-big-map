@@ -9,7 +9,7 @@ Acceptance: three fresh14N START-to-T1 samples plus native control, allten rules
 five fixed scenarios, exact predecessor terrain/placements/rock grounding and RNG,
 all offline regressions. Raw manual-review pending gates remain unmodified.
 
-Current: v964/5c8ce53 outer-mask candidate cold acceptance running. All61 offline
+Completed: v964/5c8ce53 outer-mask candidate accepted. All61 offline
 checks pass; exact387829 coarse-mask comparisons and >50% sine-call reduction.
 Reference complete114.512/115.056/112.249s; median114.512s versus114.612s, only0.100s
 lower and within observed variation. Exact predecessors/repeats all pass. Control29.451s.
@@ -31,8 +31,16 @@ assertions and655391 full detector/order/kernel comparisons over28 overlapping
 tracks. Native nominal-identity resampling failed378 cells at8192 rows, so replaced
 it with exact doubling copyrect replication. Native_track_probe2 passes all16 cases,
 zero differences, same modified counts; scratch scalar948ms->native265ms total.
-Production crease code is untouched. Helpers: track_candidate.lua and
-repair_candidate.lua in _ralph/tmp/mask_crease_rock_20260909. Existing guard/join
+v965/4931670 native translation passes63 offline checks and exact reference outputs,
+but median114.588s is0.076s slower than v964; not accepted, no five-site signoff.
+Current: v966/56b8a1f guard282 adds exact join-basis reuse; all64 offline commands pass.
+Reference PASS against v964:113.284/113.024/111.262s, median113.024s (1.488s lower),
+native control29.067s. Complete predecessor/repeat outputs and RNG are identical.
+Five-site sweep COMPLETE on immutable56b8a1f:113.639/111.015/103.324/164.813/110.645s,
+all full outputs identical. All-ten source/process signoff PASS, all9 normal exits,
+deployment38/38 audited. Ranking updated. Next integrate rock candidate separately.
+Helpers: track_candidate.lua
+and repair_candidate.lua in _ralph/tmp/mask_crease_rock_20260909. Existing guard/join
 fixture gained a scalar-storage adapter without losing any assertion; all8 checks
 pass. That tracked test edit is for the NEXT crease commit, not the current mask.
 Rock candidate is test-only: cached immutable bounds/visual coordinates and exact
@@ -40,5 +48,5 @@ segment-lower-bound rejection pass1441 differential assertions over360 fixtures;
 geometry reads66645->2493. Current production fails its work-reduction assertion,
 as expected before implementation. Production grounding remains unchanged.
 
-Next integrate the isolated crease helper/repair as next version, complete all offline/cold acceptance;
-then rock_candidate.lua likewise. No production mutation while cold runner active.
+Next complete crease cold acceptance; then integrate rock_candidate.lua and complete
+its offline/cold acceptance. No production mutation while cold runner active.
