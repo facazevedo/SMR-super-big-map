@@ -2393,6 +2393,29 @@ local function ProtectedTerrainBlendWeight(distance, radius, transition)
 	return t * t * t * (t * (t * 6 - 15) + 10)
 end
 
+-- The old predicates reject distance < minimum, not <= minimum. Axial hex
+-- distance is integral, so ceil(minimum)-1 is the exact forbidden disk radius.
+-- Each preparation owns its indexes; only selected pads extend the mutable one.
+local function NewRocketClearanceIndex(minimum)
+	local rows = {}
+	local radius = math.ceil(minimum) - 1
+	local function add(q, r)
+		for dq = -radius, radius do
+			local row = rows[q + dq]
+			if not row then row = {}; rows[q + dq] = row end
+			local first = math.max(-radius, -dq - radius)
+			local last = math.min(radius, -dq + radius)
+			for dr = first, last do row[r + dr] = true end
+		end
+	end
+	local function contains(q, r)
+		local row = rows[q]
+		return row ~= nil and row[r] == true
+	end
+	return { Add = add, Contains = contains }
+end
+-- ROCKET_CLEARANCE_INDEX_END
+
 local function PrepareOuterResourceTerrain(map)
 	if not cfg_bool("PREPARE_OUTER_RESOURCE_TERRAIN", true) then
 		return false, { reason = "disabled", resources = 0, patches = 0 }
@@ -2844,27 +2867,23 @@ local function PrepareOuterResourceTerrain(map)
 	local rocket_level_core = math.ceil(rocket_world_radius + 1)
 	local rocket_required_core = math.ceil(rocket_world_radius + 3)
 	local rocket_outer_radius = rocket_required_core + rocket_extra_feather
+	local resource_clearance_index = NewRocketClearanceIndex(
+		rocket_required_core + maximum_resource_core + 1)
+	for _, entry in ipairs(resources) do resource_clearance_index.Add(entry.q, entry.r) end
+	local rocket_clearance_index = NewRocketClearanceIndex(rocket_hex_radius * 2 + 4)
 	local function resource_clearance(q, r)
-		local minimum = rocket_required_core + maximum_resource_core + 1
-		for _, entry in ipairs(resources) do
-			if axial_distance(q, r, entry.q, entry.r) < minimum then return false end
-		end
-		return true
+		return not resource_clearance_index.Contains(q, r)
 	end
 	local function separated_from_rocket_pads(q, r)
-		local minimum = rocket_hex_radius * 2 + 4
-		for _, pad in ipairs(rocket_sites) do
-			if axial_distance(q, r, pad.q, pad.r) < minimum then return false end
-		end
-		return true
+		return not rocket_clearance_index.Contains(q, r)
 	end
 	local relief_directions = {
 		{ 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 },
 		{ 1, 1 }, { -1, 1 }, { 1, -1 }, { -1, -1 },
 	}
 	-- Planning only collects patches: this compute grid is immutable until all pad winners
-	-- have been chosen. Keep samples local to this invocation (including repair retries), never
-	-- cache live clearance/readiness, and preserve the exhaustive traversal and strict score tie.
+	-- have been chosen. Keep samples local to this invocation (including repair retries), update
+	-- pad exclusions at each commit, never cache readiness, and preserve traversal/strict ties.
 	local rocket_height_cache = {}
 	local rocket_sampling = {
 		height_hits = 0, height_misses = 0, viable_candidates = 0,
@@ -3049,6 +3068,7 @@ local function PrepareOuterResourceTerrain(map)
 						{ rocket_site = best,
 							support_cells = rocket_required_core * cells_per_hex })
 					rocket_sites[#rocket_sites + 1] = best
+					rocket_clearance_index.Add(best.q, best.r)
 				end
 		end
 	end
