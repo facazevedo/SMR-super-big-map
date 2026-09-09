@@ -2541,6 +2541,7 @@ local function PrepareOuterResourceTerrain(map)
 	local rocket_sampling = {
 		height_hits = 0, height_misses = 0, viable_candidates = 0,
 		selected_groups = 0, relief_reads = 0,
+		pruned_score = 0, pruned_range = 0,
 	}
 	local function cached_rocket_height(q, r, known_x, known_y)
 		local row = rocket_height_cache[q]
@@ -2557,7 +2558,14 @@ local function PrepareOuterResourceTerrain(map)
 		row[r] = value ~= nil and value or false
 		return value
 	end
-	local function candidate_score(q, r, cq, cr)
+	local function candidate_score(q, r, cq, cr, best_score, known_distance)
+		local distance = known_distance or axial_distance(q, r, cq, cr)
+		-- Range is nonnegative, and even a ready footprint cannot score below this.
+		-- Equality cannot replace the earlier winner: the traversal uses strict '<'.
+		if best_score and -1000000000 + distance >= best_score then
+			rocket_sampling.pruned_score = rocket_sampling.pruned_score + 1
+			return nil
+		end
 		if not resource_clearance(q, r) or not separated_from_rocket_pads(q, r) then return nil end
 		local x, y = world_xy(q, r)
 		if not x or not in_outer_band(x, y) then return nil end
@@ -2566,19 +2574,37 @@ local function PrepareOuterResourceTerrain(map)
 			or y >= map_h - edge_world then return nil end
 		local center = cached_rocket_height(q, r, x, y)
 		if not center then return nil end
+		local ready, score_bias
+		if best_score then
+			-- Read-only live predicate, not a cached verdict. Planning does not mutate
+			-- terrain/buildability or pads within this group's candidate traversal.
+			ready = rocket_shape_ready(q, r)
+			score_bias = ready and -1000000000 or 0
+			if score_bias + distance >= best_score then
+				rocket_sampling.pruned_score = rocket_sampling.pruned_score + 1
+				return nil
+			end
+		end
 		local range_min, range_max = center, center
 		for _, offset in ipairs(rocket_offsets) do
 			local z = cached_rocket_height(q + offset[1], r + offset[2])
 			if not z then return nil end
 			range_min, range_max = math.min(range_min, z), math.max(range_max, z)
+			-- Additional samples can only widen the range. Use the original score's
+			-- operation order; no approximate tolerance, changed weights or quota.
+			if best_score and score_bias + (range_max - range_min) * 100 + distance
+				>= best_score then
+				rocket_sampling.pruned_range = rocket_sampling.pruned_range + 1
+				return nil
+			end
 		end
 		rocket_sampling.viable_candidates = rocket_sampling.viable_candidates + 1
-		local ready = rocket_shape_ready(q, r)
+		if ready == nil then ready = rocket_shape_ready(q, r) end
 		return {
 			x = x, y = y, q = q, r = r, ready_before = ready,
 			height_range = range_max - range_min,
 			score = (ready and -1000000000 or 0) + (range_max - range_min) * 100
-				+ axial_distance(q, r, cq, cr),
+				+ distance,
 		}
 	end
 	local function finalize_rocket_relief(best)
@@ -2653,7 +2679,8 @@ local function PrepareOuterResourceTerrain(map)
 					for dr = -search_limit, search_limit do
 						local distance = math.max(math.abs(dq), math.abs(dr), math.abs(dq + dr))
 						if distance <= search_limit then
-							local candidate = candidate_score(cq + dq, cr + dr, cq, cr)
+							local candidate = candidate_score(cq + dq, cr + dr, cq, cr,
+								best and best.score, distance)
 							if candidate and (not best or candidate.score < best.score) then
 								best = candidate
 							end
