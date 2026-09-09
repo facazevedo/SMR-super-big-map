@@ -1,0 +1,22 @@
+{
+  "version": 955,
+  "code_commit": "26f691c25aca6bdc3994fb499093b64b53f46155",
+  "scope": "Owner-authorized five-scenario manual repair verification; not a Ralph strategy loop",
+  "selection": "First five entries of the pre-existing v932 master-seed-14134 sweep manifest, fixed before this repair matrix; no failed-scenario substitution",
+  "source_manifest": "_ralph/tmp/verification_v932_all_rules/sweep_manifest.json",
+  "game_rules": {"RoughTerrain": true},
+  "process_plan": "Fresh expanded A, fresh expanded same-seed B, fresh same-site unexpanded control. A reserves its underground seed naturally; expanded B consumes the exact reserved seed through the test seam. The control driver requests that pin too, but unexpanded native generation does not consume the mod seam and keeps its native AsyncRand underground seed. Controls compare authored underground reveal/imprint behavior on the same blank map, not generated-content parity. Content determinism is proven by expanded A/B only.",
+  "t0": "Immediately before the START action body, after NewGame setup",
+  "t1": "Both SurfaceStretchDone and SurfacePostPipelineRevalidationComplete; underground first-access checks follow",
+  "scenarios": [
+    {"site": "15S67E", "lat_minutes": 900, "lon_minutes": 4020, "game_seed_text": "v932_sweep_14134_15s67e", "reserved_underground_seed": "4515393887217496977"},
+    {"site": "24S74W", "lat_minutes": 1440, "lon_minutes": -4440, "game_seed_text": "v932_sweep_14134_24s74w", "reserved_underground_seed": "7513950432042771176"},
+    {"site": "45S120W", "lat_minutes": 2700, "lon_minutes": -7200, "game_seed_text": "v932_sweep_14134_45s120w", "reserved_underground_seed": "3885906582625500738"},
+    {"site": "61N136W", "lat_minutes": -3660, "lon_minutes": -8160, "game_seed_text": "v932_sweep_14134_61n136w", "reserved_underground_seed": "2799410282571234965"},
+    {"site": "17S11W", "lat_minutes": 1020, "lon_minutes": -660, "game_seed_text": "v932_sweep_14134_17s11w", "reserved_underground_seed": "36801489090708620"}
+  ],
+  "preserved_excluded_attempts": [
+    {"directory": "15s67e_b_visual_setup_failed", "reason": "Optional post-canonical camera setup used a map switch outside a real-time thread. Exact process closed and logs retained. Camera helper fixed before fresh rerun; not an acceptance or timing sample."},
+    {"directory": "15s67e_b_visual_status_failed", "reason": "Revised optional deferred camera setup did not publish ready status. Exact process closed and logs retained. Replaced with already-proven run-file visual setup before the clean fresh B; not an acceptance or timing sample."}
+  ]
+}

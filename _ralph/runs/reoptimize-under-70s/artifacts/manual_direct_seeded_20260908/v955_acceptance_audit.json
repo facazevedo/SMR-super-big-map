@@ -1,0 +1,355 @@
+{
+  "commit": "26f691c25aca6bdc3994fb499093b64b53f46155",
+  "version": "955",
+  "sites": [
+    {
+      "site": "15s67e",
+      "provenance": [
+        {
+          "case": "15s67e_a",
+          "pid": 63852,
+          "creation_filetime": 134333848603380338,
+          "incident": "20260908-234740-18d37d502f0b07c8",
+          "t0_to_t1_ms": 155534,
+          "requested_ug_pin": "0",
+          "native_ug_seed": "4515393887217496977",
+          "ug_seed_note": "Single reservation/consumer/holder trace verified."
+        },
+        {
+          "case": "15s67e_b",
+          "pid": 47412,
+          "creation_filetime": 134333874434364344,
+          "incident": "20260909-003043-18d37fa99bb3ca08",
+          "t0_to_t1_ms": 154908,
+          "requested_ug_pin": "4515393887217496977",
+          "native_ug_seed": "4515393887217496977",
+          "ug_seed_note": "Single reservation/consumer/holder trace verified."
+        },
+        {
+          "case": "15s67e_control",
+          "pid": 32412,
+          "creation_filetime": 134333877036641395,
+          "incident": "20260909-003503-18d37fe6327bdd54",
+          "t0_to_t1_ms": 31182,
+          "requested_ug_pin": "4515393887217496977",
+          "native_ug_seed": "4693917185197838208",
+          "ug_seed_note": "Native unexpanded controls do not consume the mod reservation seam; used for same-site authored reveal/imprint comparison only."
+        }
+      ],
+      "runtime_pair": {
+        "verdict": "pass",
+        "differences": [],
+        "note": "Runtime parity only; engine-RNG source audit is separate."
+      },
+      "extra_parity_differences": [],
+      "automated_gates_a_b": [
+        {
+          "seed-parity": "pending",
+          "entrances-glued": "pass",
+          "entrances-not-in-ring": "pass",
+          "ring-content": "pass",
+          "single-start-reveal": "pass",
+          "badges-pre-reveal": "pass",
+          "decor-rules": "pass",
+          "no-errors": "pass",
+          "process": "pending",
+          "underground-first-access": "pass"
+        },
+        {
+          "seed-parity": "pending",
+          "entrances-glued": "pass",
+          "entrances-not-in-ring": "pass",
+          "ring-content": "pass",
+          "single-start-reveal": "pass",
+          "badges-pre-reveal": "pass",
+          "decor-rules": "pass",
+          "no-errors": "pass",
+          "process": "pending",
+          "underground-first-access": "pass"
+        }
+      ],
+      "issues": []
+    },
+    {
+      "site": "24s74w",
+      "provenance": [
+        {
+          "case": "24s74w_a",
+          "pid": 37852,
+          "creation_filetime": 134333840452598835,
+          "incident": "20260908-233405-18d37c92689867b0",
+          "t0_to_t1_ms": 146152,
+          "requested_ug_pin": "0",
+          "native_ug_seed": "7513950432042771176",
+          "ug_seed_note": "Single reservation/consumer/holder trace verified."
+        },
+        {
+          "case": "24s74w_b",
+          "pid": 75876,
+          "creation_filetime": 134333844356083444,
+          "incident": "20260908-234035-18d37ced4b2ebd68",
+          "t0_to_t1_ms": 146551,
+          "requested_ug_pin": "7513950432042771176",
+          "native_ug_seed": "7513950432042771176",
+          "ug_seed_note": "Single reservation/consumer/holder trace verified."
+        },
+        {
+          "case": "24s74w_control",
+          "pid": 73468,
+          "creation_filetime": 134333846717441134,
+          "incident": "20260908-234431-18d37d2445f7de88",
+          "t0_to_t1_ms": 29722,
+          "requested_ug_pin": "7513950432042771176",
+          "native_ug_seed": "6919310898752574416",
+          "ug_seed_note": "Native unexpanded controls do not consume the mod reservation seam; used for same-site authored reveal/imprint comparison only."
+        }
+      ],
+      "runtime_pair": {
+        "verdict": "pass",
+        "differences": [],
+        "note": "Runtime parity only; engine-RNG source audit is separate."
+      },
+      "extra_parity_differences": [],
+      "automated_gates_a_b": [
+        {
+          "seed-parity": "pending",
+          "entrances-glued": "pass",
+          "entrances-not-in-ring": "pass",
+          "ring-content": "pass",
+          "single-start-reveal": "pass",
+          "badges-pre-reveal": "pass",
+          "decor-rules": "pass",
+          "no-errors": "pass",
+          "process": "pending",
+          "underground-first-access": "pass"
+        },
+        {
+          "seed-parity": "pending",
+          "entrances-glued": "pass",
+          "entrances-not-in-ring": "pass",
+          "ring-content": "pass",
+          "single-start-reveal": "pass",
+          "badges-pre-reveal": "pass",
+          "decor-rules": "pass",
+          "no-errors": "pass",
+          "process": "pending",
+          "underground-first-access": "pass"
+        }
+      ],
+      "issues": []
+    },
+    {
+      "site": "45s120w",
+      "provenance": [
+        {
+          "case": "45s120w_a",
+          "pid": 88904,
+          "creation_filetime": 134333851789960638,
+          "incident": "20260908-235258-18d37d9a6089aaf8",
+          "t0_to_t1_ms": 135493,
+          "requested_ug_pin": "0",
+          "native_ug_seed": "3885906582625500738",
+          "ug_seed_note": "Single reservation/consumer/holder trace verified."
+        },
+        {
+          "case": "45s120w_b",
+          "pid": 60704,
+          "creation_filetime": 134333877847174995,
+          "incident": "20260909-003624-18d37ff911a51eac",
+          "t0_to_t1_ms": 136460,
+          "requested_ug_pin": "3885906582625500738",
+          "native_ug_seed": "3885906582625500738",
+          "ug_seed_note": "Single reservation/consumer/holder trace verified."
+        },
+        {
+          "case": "45s120w_control",
+          "pid": 76440,
+          "creation_filetime": 134333880229954253,
+          "incident": "20260909-004022-18d380308c1dbd10",
+          "t0_to_t1_ms": 28552,
+          "requested_ug_pin": "3885906582625500738",
+          "native_ug_seed": "3760010567256340922",
+          "ug_seed_note": "Native unexpanded controls do not consume the mod reservation seam; used for same-site authored reveal/imprint comparison only."
+        }
+      ],
+      "runtime_pair": {
+        "verdict": "pass",
+        "differences": [],
+        "note": "Runtime parity only; engine-RNG source audit is separate."
+      },
+      "extra_parity_differences": [],
+      "automated_gates_a_b": [
+        {
+          "seed-parity": "pending",
+          "entrances-glued": "pass",
+          "entrances-not-in-ring": "pass",
+          "ring-content": "pass",
+          "single-start-reveal": "pass",
+          "badges-pre-reveal": "pass",
+          "decor-rules": "pass",
+          "no-errors": "pass",
+          "process": "pending",
+          "underground-first-access": "pass"
+        },
+        {
+          "seed-parity": "pending",
+          "entrances-glued": "pass",
+          "entrances-not-in-ring": "pass",
+          "ring-content": "pass",
+          "single-start-reveal": "pass",
+          "badges-pre-reveal": "pass",
+          "decor-rules": "pass",
+          "no-errors": "pass",
+          "process": "pending",
+          "underground-first-access": "pass"
+        }
+      ],
+      "issues": []
+    },
+    {
+      "site": "61n136w",
+      "provenance": [
+        {
+          "case": "61n136w_a",
+          "pid": 79340,
+          "creation_filetime": 134333854741401362,
+          "incident": "20260908-235754-18d37ddf18809eac",
+          "t0_to_t1_ms": 219141,
+          "requested_ug_pin": "0",
+          "native_ug_seed": "2799410282571234965",
+          "ug_seed_note": "Single reservation/consumer/holder trace verified."
+        },
+        {
+          "case": "61n136w_b",
+          "pid": 86000,
+          "creation_filetime": 134333881014359767,
+          "incident": "20260909-004141-18d38042cf884eb4",
+          "t0_to_t1_ms": 220816,
+          "requested_ug_pin": "2799410282571234965",
+          "native_ug_seed": "2799410282571234965",
+          "ug_seed_note": "Single reservation/consumer/holder trace verified."
+        },
+        {
+          "case": "61n136w_control",
+          "pid": 66888,
+          "creation_filetime": 134333884229327662,
+          "incident": "20260909-004702-18d3808daa3d7d8c",
+          "t0_to_t1_ms": 30728,
+          "requested_ug_pin": "2799410282571234965",
+          "native_ug_seed": "465848461952380011",
+          "ug_seed_note": "Native unexpanded controls do not consume the mod reservation seam; used for same-site authored reveal/imprint comparison only."
+        }
+      ],
+      "runtime_pair": {
+        "verdict": "pass",
+        "differences": [],
+        "note": "Runtime parity only; engine-RNG source audit is separate."
+      },
+      "extra_parity_differences": [],
+      "automated_gates_a_b": [
+        {
+          "seed-parity": "pending",
+          "entrances-glued": "pass",
+          "entrances-not-in-ring": "pass",
+          "ring-content": "pass",
+          "single-start-reveal": "pass",
+          "badges-pre-reveal": "pass",
+          "decor-rules": "pass",
+          "no-errors": "pass",
+          "process": "pending",
+          "underground-first-access": "pass"
+        },
+        {
+          "seed-parity": "pending",
+          "entrances-glued": "pass",
+          "entrances-not-in-ring": "pass",
+          "ring-content": "pass",
+          "single-start-reveal": "pass",
+          "badges-pre-reveal": "pass",
+          "decor-rules": "pass",
+          "no-errors": "pass",
+          "process": "pending",
+          "underground-first-access": "pass"
+        }
+      ],
+      "issues": []
+    },
+    {
+      "site": "17s11w",
+      "provenance": [
+        {
+          "case": "17s11w_a",
+          "pid": 87068,
+          "creation_filetime": 134333858630451515,
+          "incident": "20260909-000423-18d37e39a50b7acc",
+          "t0_to_t1_ms": 146514,
+          "requested_ug_pin": "0",
+          "native_ug_seed": "36801489090708620",
+          "ug_seed_note": "Single reservation/consumer/holder trace verified."
+        },
+        {
+          "case": "17s11w_b",
+          "pid": 84708,
+          "creation_filetime": 134333885052714286,
+          "incident": "20260909-004825-18d380a0d600cfd8",
+          "t0_to_t1_ms": 143798,
+          "requested_ug_pin": "36801489090708620",
+          "native_ug_seed": "36801489090708620",
+          "ug_seed_note": "Single reservation/consumer/holder trace verified."
+        },
+        {
+          "case": "17s11w_control",
+          "pid": 62740,
+          "creation_filetime": 134333887514818391,
+          "incident": "20260909-005231-18d380da29498d54",
+          "t0_to_t1_ms": 29724,
+          "requested_ug_pin": "36801489090708620",
+          "native_ug_seed": "8447760270195673273",
+          "ug_seed_note": "Native unexpanded controls do not consume the mod reservation seam; used for same-site authored reveal/imprint comparison only."
+        }
+      ],
+      "runtime_pair": {
+        "verdict": "pass",
+        "differences": [],
+        "note": "Runtime parity only; engine-RNG source audit is separate."
+      },
+      "extra_parity_differences": [],
+      "automated_gates_a_b": [
+        {
+          "seed-parity": "pending",
+          "entrances-glued": "pass",
+          "entrances-not-in-ring": "pass",
+          "ring-content": "pass",
+          "single-start-reveal": "pass",
+          "badges-pre-reveal": "pass",
+          "decor-rules": "pass",
+          "no-errors": "pass",
+          "process": "pending",
+          "underground-first-access": "pass"
+        },
+        {
+          "seed-parity": "pending",
+          "entrances-glued": "pass",
+          "entrances-not-in-ring": "pass",
+          "ring-content": "pass",
+          "single-start-reveal": "pass",
+          "badges-pre-reveal": "pass",
+          "decor-rules": "pass",
+          "no-errors": "pass",
+          "process": "pending",
+          "underground-first-access": "pass"
+        }
+      ],
+      "issues": []
+    }
+  ],
+  "summary": {
+    "completed_sites": 5,
+    "required_sites": 5,
+    "unique_captured_test_processes": 15,
+    "offline_commands_passed": 52,
+    "production_worktree_clean": true,
+    "source_review": "D:\\PROJS\\SMR\\super-big-map\\_ralph\\runs\\reoptimize-under-70s\\artifacts\\manual_direct_seeded_20260908\\SOURCE_REVIEW.md",
+    "note": "Final manual assessment must separately cite source review and visual reviews."
+  }
+}

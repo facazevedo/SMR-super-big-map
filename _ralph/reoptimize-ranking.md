@@ -103,14 +103,16 @@ diagnostic patch. Its ancestors contain the historical sub-70 techniques; the la
 recorded START figure is 60.4 s at `ca28e66`. The later entrance-oracle estimate is
 not a measurement of `6afbcd9`.
 
-Current accepted timing reference: v936, 14N **187.549 s median** from
-187.549 / 189.107 / 186.260 s; pinned 15S **158.890 s**. The individual accepted
-steps and their evidence are below. Final all-scenario sign-off remains pending.
+Historical accepted timing reference: v936, 14N **187.549 s median** from
+187.549 / 189.107 / 186.260 s; pinned 15S **158.890 s**. The latest manual repair
+is now **five-scenario, all-ten-rules verified at v955 `26f691c`**, including15S.
+Its final START-to-T1 A/B measurements and evidence are at the end of this file.
+This correctness acceptance is not a matched three-sample per-unit speedup claim.
 
 | Priority | Optimization to try | Concrete change | Status / acceptance condition |
 |---|---|---|---|
-| 1 | Direct seeded top-up sampling and streaming clusters (#17/#18) | Draw candidates on demand around eligible terrain opportunities; accept enough valid members for each required cluster and stop at its count. Remove the 4,096-entry perimeter pool, full-pool sorting, and repeated anchor/neighbour scans. | **Rejected at v943 `ec70d99`; rollback `113e3fc`.** 14N improved, but mandatory 15S deterministically exhausted outer cluster 5 and failed cluster/pad rules. |
-| 2 | Reuse candidate terrain validation | Validate only sampled candidate locations. Cache a static result for the exact coordinate/footprint while its terrain/buildable/protection state is unchanged; reuse existing trustworthy candidate records. | Rejected with #1. Its lazy exact-coordinate/band cache passed focused tests, but cannot be retained without the rejected planner. |
+| 1 | Direct seeded top-up sampling and streaming clusters (#17/#18) | Draw candidates on demand around eligible terrain opportunities; accept enough valid members for each required cluster and stop at its count. Remove the 4,096-entry perimeter pool, full-pool sorting, and repeated anchor/neighbour scans. | **Repaired and verified in five scenarios at v955 `26f691c`.** Finite guide traversal and cross-band continuation satisfy15S without hardcoding or reducing rules. The earlier v943 rejection/rollback remains historical evidence. |
+| 2 | Reuse candidate terrain validation | Validate only sampled candidate locations. Cache a static result for the exact coordinate/footprint while its terrain/buildable/protection state is unchanged; reuse existing trustworthy candidate records. | Retained with repaired #1 and verified at v955. Exact-coordinate/band static caching preserves live spacing, obstruction and clone-boundary checks. |
 | 3 | Demand-driven selection for remaining top-up phases | Profile ordinary resources, anomalies and effects for remaining pool rescans; consume valid entries or generate the next candidate only until the remaining target is satisfied. | Planned audit; keep existing demand-driven paths and numeric/cache-first optimizations. Change only work still measured as redundant. |
 | 4 | Native buildable-hex snap (#6) | Guide a sampled candidate to a nearby valid buildable hex using a bounded native query, before expensive placement checks. | Try if rejection counts remain high. Candidate-only work; preserve geometry restrictions and deterministic placement. |
 | 5 | Defer rocket relief scoring (#7) | Evaluate expensive surrounding-relief samples only for candidates whose score can still win. | Planned. Preserve the selected pad and every footprint rule. |
@@ -143,7 +145,8 @@ evidence, not unchanged retries. Coarser terrain masks (#12) are deferred becaus
 their fidelity risk directly touches the no-visible-marks requirement. Historical
 rank-then-filter (`86767a7`) has no demonstrated saving and stays deprioritized.
 
-Rejected: direct seeded top-up sampling/streaming (#17/#18 plus candidate
+Historical rejection, superseded by the v955 manual repair below: direct seeded
+top-up sampling/streaming (#17/#18 plus candidate
 validation companion #2), final candidate v943 `ec70d99`, rollback `113e3fc`.
 Correction: 14N samples were 153.960 s on v940 and 151.329 / 151.672 s on v941.
 They mix behavior versions, so they are NOT a three-sample final-build median
@@ -638,3 +641,92 @@ missing APIs and thrown/logging-only failure cleanup. Fresh five-site timing,
 replay/control and final native-grid verification follow on the v955 checkpoint.
 All52offline commands pass in `v955_offline`; final narrow review found no
 remaining actionable issue after correcting the failure phase's log verdict.
+
+Committed/deployed v955 `26f691c`,37/37 exact payload. 24S74W now passes fresh A/B
+and same-site control: START-to-T1 **146.152s / 146.551s** (control29.722s).
+Both full Surface/Underground height/pass-grid/site/pad snapshots and all ordinary
+parity fields match; expanded A/B audits and control comparisons are clean.
+The old pass-grid failure is fixed, not waived. Surface height also exactly matches
+the previously reviewed v954A; all24 fresh base pictures and six matched shadow
+comparisons reviewed, no new rim/moat/thin edge wall. Remaining15S/45S/61N/17S
+fresh matrix is running on this immutable code checkpoint, not a new strategy.
+
+Fresh15A:155.534s,99/99decor,9clusters/pads, all available runtime checks pass.
+Preserving native obstacles changes entrance1 from583500,336874/ring17 to
+563500,342070/ring21 (same invalid twin image, unchanged outward-ring rule;
+impassable rejections46->147). Full raw difference is30628height cells, confined
+to the two old/new entrance footprints (max distance7.68kwu from their centers).
+Top-up sites/pads and decor remain identical; the enrichment census includes the
+moved UndergroundTunnelMarker (native DepositMarker subclass). This is an expected
+consequence of retaining obstacles, not a terrain-wide reshaping. Repeat required.
+Fresh45A:135.493s,53/53decor,8clusters/pads, all available checks pass; entire
+surface height, resource/pad sites and ordinary surface parity outputs equalv954A.
+
+Fresh61A:219.141s,190/190decor,11clusters/pads; same727247synthetic attempts and
+all ordinary surface outputs/wholeheight asv954. Fresh17A:146.514s,72/72decor,
+8clusters/pads, all available runtime checks clean. 17entrance2 moves from
+248500,387102/ring14 to254000,382772/ring22 under the unchanged fitting-ring rule;
+all22183changedheight cells are within7.72kwu of the old/new entrance centers.
+Resource/pad sites and decor unchanged. AllfiveA captured/closed; final52offline
+commands rerun on exact26f691c PASS (`v955_offline_final`). RemainingfourB/control
+phase is active; native final entrance pictures will also be captured after the
+canonical B snapshots to review the moved entrances. No timings accepted as an
+isolated optimization saving; v955 is a necessary correctness repair.
+
+### Final manual five-scenario sign-off - v955 `26f691c` (2026-09-09 UTC)
+
+**All ten standing rules pass in all five requested scenarios**, on the surface
+and underground wherever applicable. This completes the direct-seeded repair
+step, not the historical sub70 performance goal. Ralph remains stopped; another
+optimization requires the owner's next instruction.
+
+All15 fresh processes (expanded A/B plus unexpanded control per scenario) have
+matching checkpoint/version/deployment provenance, canonical snapshots, incident-
+matched flushed native logs and clean normal shutdown. All52 offline commands
+pass on the exact code checkpoint. All five expanded pairs have zero differences
+in ordinary parity fields and complete native Surface/Underground height, pass
+grids, top-up sites and rocket pads. The old native passability failure is fixed.
+The source/RNG audit and explicit production/test reservation traces close the
+two review-only gates; they are not silently converted from pending by the judge.
+
+| Scenario | START-to-T1 A | START-to-T1 B | Two-run median | Unexpanded control | Clusters/pads | Decor placed/target |
+|---|---:|---:|---:|---:|---:|---:|
+| 15S67E | 155.534s | 154.908s | 155.221s | 31.182s | 9/9 | 99/99 |
+| 24S74W | 146.152s | 146.551s | 146.352s | 29.722s | 8/8 | 171/171 |
+| 45S120W | 135.493s | 136.460s | 135.977s | 28.552s | 8/8 | 53/53 |
+| 61N136W | 219.141s | 220.816s | 219.979s | 30.728s | 11/11 | 190/190 |
+| 17S11W | 146.514s | 143.798s | 145.156s | 29.724s | 8/8 | 72/72 |
+
+T0 is immediately before the START action body, after NewGame setup; T1 requires
+both surface stretch and post-pipeline revalidation completion. First underground
+access is tested afterward. These are two-run correctness samples, not a matched
+three-run before/after performance experiment. None is below70s. The v954 matcher
+cache is retained and tested, but its earlier instrumented diagnostic cannot be
+used as a clean baseline for a claimed per-unit saving.
+
+General repairs retained: finite candidate traversal/cross-band continuation,
+bounded building feathers, transformed start anchor, cosmetic-only finite decor,
+bounded crease endpoints, run-local decor matching cache, and native-object
+preservation at discarded provisional entrance poses. Temporary buttons remain.
+No scenario names, seed constants, scenario-specific coordinates or relaxed rule
+thresholds were added. Top-up sites/pads and decor are unchanged versus v954 in
+all five maps. The two changed final entrances reproduce exactly; all associated
+height changes are confined to their old/new pads, not map-wide terrain edits.
+
+Resource/edge visual reviews and fresh final entrance views found no new resource
+rim/moat or thin artificial wall in the inspected coverage. Native craters, rocks,
+mountains and stock entrance imprints remain. Coverage and the exact unchanged-
+height comparisons supporting prior views are documented, not overstated as
+universal future-map pixel proof.
+
+Two optional post-canonical15B camera-helper failures were diagnosed, corrected
+and preserved separately; a new clean B completed generation, pictures and normal
+shutdown. Neither failed helper attempt is an acceptance/timing sample. Native
+unexpanded controls retain their own AsyncRand underground seed despite the
+driver's requested pin; they prove authored reveal/imprint parity on the same
+blank map, while expanded A/B prove seed-identical generated content.
+
+Evidence: `_ralph/runs/reoptimize-under-70s/artifacts/manual_direct_seeded_20260908/`
+contains `v955_SIGN_OFF.md`, `v955_acceptance_audit.json`, `SOURCE_REVIEW.md`,
+`v955_offline_final/results.json`, and `v955_matrix/` with the fixed manifest,
+15 process captures, five judgments and the visual review notes.
