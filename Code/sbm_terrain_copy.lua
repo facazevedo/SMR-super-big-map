@@ -2416,6 +2416,78 @@ local function NewRocketClearanceIndex(minimum)
 end
 -- ROCKET_CLEARANCE_INDEX_END
 
+-- Deterministic candidate-first rocket search; no engine/global RNG dependency.
+local function NewBoundedRocketSearch(search_limit, preferred_minimum, seed)
+	local preferred, remaining = {}, {}
+	for dq = -search_limit, search_limit do
+		for dr = -search_limit, search_limit do
+			local distance = math.max(math.abs(dq), math.abs(dr), math.abs(dq + dr))
+			if distance <= search_limit then
+				local list = distance >= preferred_minimum and preferred or remaining
+				list[#list + 1] = { dq, dr, distance }
+			end
+		end
+	end
+	local stats = { seed = seed, universe = #preferred + #remaining,
+		groups = 0, attempts = 0, continued_groups = 0, exhausted_groups = 0 }
+	local function permutation(list, value)
+		local count, cursor = #list, 0
+		if count == 0 then return function() return nil end end
+		local first = value % count
+		local step = math.max(1, math.floor(value / count) % count)
+		local function coprime(a, b)
+			while b ~= 0 do a, b = b, a % b end
+			return a == 1
+		end
+		while not coprime(step, count) do
+			step = step + 1
+			if step >= count then step = 1 end
+		end
+		return function()
+			if cursor >= count then return nil end
+			local value = list[(first + cursor * step) % count + 1]
+			cursor = cursor + 1
+			return value
+		end
+	end
+	local function choose(plan, score)
+		local value = (seed + plan * 83492791 + (stats.groups + 1) * 19349663) % 2147483647
+		local next_preferred = permutation(preferred, value)
+		local next_remaining = permutation(remaining, (value + 104729) % 2147483647)
+		local best, attempts = nil, 0
+		local function visit(next_offset, budget)
+			for _ = 1, budget do
+				local offset = next_offset()
+				if not offset then return end
+				attempts = attempts + 1
+				local candidate = score(offset[1], offset[2], offset[3], best and best.score)
+				if candidate and (not best or candidate.score < best.score) then best = candidate end
+			end
+		end
+		-- A quality sample, not an acceptance waiver: every surviving candidate goes
+		-- through the unchanged scorer. Preserve the historical 3:1 sampling balance.
+		visit(next_preferred, 192)
+		visit(next_remaining, 256 - attempts)
+		if not best then
+			stats.continued_groups = stats.continued_groups + 1
+			-- Continue these same finite iterators without re-testing a single offset.
+			-- Sparse terrain cannot fail merely because the first budget was unlucky.
+			while not best and attempts < stats.universe do
+				local before = attempts
+				visit(next_preferred, 192)
+				visit(next_remaining, 256 - (attempts - before))
+				if attempts == before then break end
+			end
+		end
+		stats.groups = stats.groups + 1
+		stats.attempts = stats.attempts + attempts
+		if not best then stats.exhausted_groups = stats.exhausted_groups + 1 end
+		return best, attempts
+	end
+	return { Choose = choose, stats = stats }
+end
+-- BOUNDED_ROCKET_SEARCH_END
+
 local function PrepareOuterResourceTerrain(map)
 	if not cfg_bool("PREPARE_OUTER_RESOURCE_TERRAIN", true) then
 		return false, { reason = "disabled", resources = 0, patches = 0 }
@@ -2883,7 +2955,7 @@ local function PrepareOuterResourceTerrain(map)
 	}
 	-- Planning only collects patches: this compute grid is immutable until all pad winners
 	-- have been chosen. Keep samples local to this invocation (including repair retries), update
-	-- pad exclusions at each commit, never cache readiness, and preserve traversal/strict ties.
+	-- pad exclusions at each commit, never cache readiness, and retain strict score ties.
 	local rocket_height_cache = {}
 	local rocket_sampling = {
 		height_hits = 0, height_misses = 0, viable_candidates = 0,
@@ -3004,6 +3076,21 @@ local function PrepareOuterResourceTerrain(map)
 		end
 	end
 	table.sort(cluster_groups, function(a, b) return a.plan < b.plan end)
+	local search_limit = cluster_radius + rocket_outer_radius + maximum_resource_core + 4
+	local generator = map.RandomMapGenObject
+	local private_seed = math.abs(math.floor((type(generator) == "table"
+		and tonumber(generator.Seed)) or 0)) % 2147483647
+	local material = tostring(type(generator) == "table" and generator.GenerationHash or "")
+		.. "|" .. tostring(map.mapdata and map.mapdata.RandomMapPreset or "")
+		.. "|sbm-bounded-rocket-v1"
+	for index = 1, #material do
+		private_seed = (private_seed * 48271 + string.byte(material, index) + 1) % 2147483647
+	end
+	if private_seed == 0 then private_seed = 1 end
+	local rocket_search = NewBoundedRocketSearch(search_limit,
+		math.min(search_limit, math.ceil(cluster_radius + rocket_required_core + maximum_resource_core + 1)),
+		private_seed)
+	rocket_sampling.bounded = rocket_search.stats
 	for _, group in ipairs(cluster_groups) do
 		if #rocket_sites >= maximum_rocket_pads then break end
 		local members, extractor_members, sum_q, sum_r = group.members, 0, 0, 0
@@ -3019,20 +3106,15 @@ local function PrepareOuterResourceTerrain(map)
 			and extractor_members <= cluster_maximum_extractors then
 				local cq = math.floor(sum_q / #members + 0.5)
 				local cr = math.floor(sum_r / #members + 0.5)
-				local best
-				local search_limit = cluster_radius + rocket_outer_radius
-					+ maximum_resource_core + 4
-				for dq = -search_limit, search_limit do
-					for dr = -search_limit, search_limit do
-						local distance = math.max(math.abs(dq), math.abs(dr), math.abs(dq + dr))
-						if distance <= search_limit then
-							local candidate = candidate_score(cq + dq, cr + dr, cq, cr,
-								best and best.score, distance)
-							if candidate and (not best or candidate.score < best.score) then
-								best = candidate
-							end
-						end
-					end
+				local best = rocket_search.Choose(group.plan, function(dq, dr, distance, incumbent)
+					return candidate_score(cq + dq, cr + dr, cq, cr, incumbent, distance)
+				end)
+				if not best then
+					local reason = "finite seeded rocket search exhausted for cluster " .. tostring(group.plan)
+					OptimizationFailure("seeded rocket planner", reason, map)
+					if grid ~= raw and type(grid.free) == "function" then pcall(grid.free, grid) end
+					return false, { reason = "rocket planning failed", error = reason,
+						resources = #resources, patches = 0, rocket_sampling = rocket_sampling }
 				end
 				if best then
 					local relief_ok, relief_error = finalize_rocket_relief(best)
