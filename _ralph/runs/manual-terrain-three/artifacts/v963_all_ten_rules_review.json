@@ -1,0 +1,79 @@
+{
+  "code_commit": "8342ab2cd19e26d445432a6edb3ac83788435a48",
+  "version": 963,
+  "offline_commands_passed": 60,
+  "benchmark_median_s": 114.612,
+  "prior_median_s": 115.665,
+  "saving_s": 1.0530000000000115,
+  "source_review": "v963_source_review.md",
+  "deployment": {
+    "source": "D:\\PROJS\\SMR\\super-big-map",
+    "destination": "C:\\Users\\fazevedo\\AppData\\Roaming\\Surviving Mars Relaunched\\Mods\\super-big-map",
+    "source_files": 38,
+    "destination_files": 38,
+    "missing_in_destination": [],
+    "stale_in_destination": [],
+    "content_mismatch": [],
+    "ok": true
+  },
+  "unique_acceptance_processes": 9,
+  "scenarios": [
+    {
+      "site": "15S67E",
+      "all_ten": "pass",
+      "automated_gates": "8/8 pass",
+      "seed_parity_review": "Exact full predecessor outputs/private streams plus primary-agent source/RNG review.",
+      "process_review": "Committed payload, matching prelaunch audit/version, unique owned process, full capture and normal shutdown.",
+      "visual_review": "Inherited accepted visual evidence only through exact complete outputs; no new screenshot claim.",
+      "native_control": "Unchanged native path: accepted same-site v957 controls plus new current-version 14N control.",
+      "t0_to_t1_s": 112.003,
+      "prior_t0_to_t1_s": 115.003
+    },
+    {
+      "site": "24S74W",
+      "all_ten": "pass",
+      "automated_gates": "8/8 pass",
+      "seed_parity_review": "Exact full predecessor outputs/private streams plus primary-agent source/RNG review.",
+      "process_review": "Committed payload, matching prelaunch audit/version, unique owned process, full capture and normal shutdown.",
+      "visual_review": "Inherited accepted visual evidence only through exact complete outputs; no new screenshot claim.",
+      "native_control": "Unchanged native path: accepted same-site v957 controls plus new current-version 14N control.",
+      "t0_to_t1_s": 109.926,
+      "prior_t0_to_t1_s": 112.088
+    },
+    {
+      "site": "45S120W",
+      "all_ten": "pass",
+      "automated_gates": "8/8 pass",
+      "seed_parity_review": "Exact full predecessor outputs/private streams plus primary-agent source/RNG review.",
+      "process_review": "Committed payload, matching prelaunch audit/version, unique owned process, full capture and normal shutdown.",
+      "visual_review": "Inherited accepted visual evidence only through exact complete outputs; no new screenshot claim.",
+      "native_control": "Unchanged native path: accepted same-site v957 controls plus new current-version 14N control.",
+      "t0_to_t1_s": 103.679,
+      "prior_t0_to_t1_s": 102.388
+    },
+    {
+      "site": "61N136W",
+      "all_ten": "pass",
+      "automated_gates": "8/8 pass",
+      "seed_parity_review": "Exact full predecessor outputs/private streams plus primary-agent source/RNG review.",
+      "process_review": "Committed payload, matching prelaunch audit/version, unique owned process, full capture and normal shutdown.",
+      "visual_review": "Inherited accepted visual evidence only through exact complete outputs; no new screenshot claim.",
+      "native_control": "Unchanged native path: accepted same-site v957 controls plus new current-version 14N control.",
+      "t0_to_t1_s": 165.955,
+      "prior_t0_to_t1_s": 164.357
+    },
+    {
+      "site": "17S11W",
+      "all_ten": "pass",
+      "automated_gates": "8/8 pass",
+      "seed_parity_review": "Exact full predecessor outputs/private streams plus primary-agent source/RNG review.",
+      "process_review": "Committed payload, matching prelaunch audit/version, unique owned process, full capture and normal shutdown.",
+      "visual_review": "Inherited accepted visual evidence only through exact complete outputs; no new screenshot claim.",
+      "native_control": "Unchanged native path: accepted same-site v957 controls plus new current-version 14N control.",
+      "t0_to_t1_s": 110.467,
+      "prior_t0_to_t1_s": 110.71
+    }
+  ],
+  "raw_judgments_unchanged": true,
+  "qualification": "Separate source/process acceptance; raw pending fields remain unchanged."
+}

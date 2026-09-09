@@ -13,7 +13,7 @@ passability-deferral attempt.
 
 However, InitBuildableGrid costs903ms at each stage; ProcessBuildableGrid costs16ms.
 A scratch process-only cache took20ms to prepare the first result and3ms to reuse
-the second (plus2ms raw serialization). Net saving is only about9ms, not a cold
+the second, including the helper's serialization. Net saving is only about9ms, not a cold
 START-to-T1 improvement. Replacing the stock buildability path for this negligible
 gain is not justified. Skipping initialization instead would omit fresh collision
 and terrain sampling without an adequate input certificate, so it is not shipped.

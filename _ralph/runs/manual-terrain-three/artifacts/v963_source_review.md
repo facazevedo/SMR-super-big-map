@@ -28,4 +28,13 @@ Real engine:20 full360x340 scratch-grid comparisons (2,448,000 cells), zero chan
 cells, and matching modified/shaped counts. Aggregate native raster1202ms ->1087ms
 in the scratch probe; this is not a START-to-T1 measurement or cold sign-off.
 
-All60 offline commands/checks pass. Cold reference/five-scenario acceptance pending.
+All60 offline commands/checks pass. All nine fresh acceptance processes completed
+normally on immutable8342ab2/installed38 payload files. Reference112.843/114.612/
+114.785s gives median114.612s versus115.665s, saving1.053s. All three full
+predecessor/repeat comparisons and the five scenario predecessor comparisons pass.
+Eight automated gates pass in every scenario; this source/RNG proof plus the
+separate process-provenance audit complete the two manual review gates. Raw judge
+pending fields remain unchanged. Final all-ten review: v963_all_ten_rules_review.json.
+Prior sampled visual acceptance is inherited only through identical full outputs;
+no new screenshot or universal visual coverage claim is made. Single45S120W and
+61N136W timings were slower than their predecessors; no all-site speedup is claimed.

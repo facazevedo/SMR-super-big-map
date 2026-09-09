@@ -1049,3 +1049,56 @@ Evidence: `_ralph/runs/manual-terrain-three/artifacts/v962_reference/`,
 `v962_source_review.md`, and `v962_all_ten_rules_review.json`.
 The 70s target remains unmet. The other two owner-requested units are still under
 investigation in this same manual session; no Ralph loop or goal API is running.
+
+## 2026-09-09 - v963 exact apron-mask shortcuts accepted; three-unit session closed
+
+Production commit `8342ab2`, v963/guard279. Conservative row bounds omit only
+zero-weight cells from the existing full-resolution mask. Squared-radius bounds
+shortcut exact zero/one weights; transition expressions, blend planes, rounding,
+apron selection, resource masks and all earlier optimizations remain unchanged.
+
+| Payload | 14N134W A | B | C | Median |
+|---|---:|---:|---:|---:|
+|v962|115.718s|115.665s|115.259s|115.665s|
+|v963|112.843s|114.612s|114.785s|114.612s|
+
+Median saving: **1.053s (0.91%)**. Fresh native control:29.658s. T0 remains the
+START action boundary and T1 includes completed post-pipeline revalidation.
+All three full predecessor/repeat comparisons pass. 14N mask evaluations fall
+from5,039,674 to3,650,626, omitting1,389,048 certified zero cells. Shaped count50,
+modified cells1,910,302, exact-rounding cells147,549, crease candidates and rocket
+winners are unchanged. No mask coarsening, new terrain shape or fallback is added.
+
+| Scenario | v962 | v963 | All ten rules / full predecessor outputs |
+|---|---:|---:|---|
+|15S67E|115.003s|112.003s|PASS / identical|
+|24S74W|112.088s|109.926s|PASS / identical|
+|45S120W|102.388s|103.679s|PASS / identical|
+|61N136W|164.357s|165.955s|PASS / identical|
+|17S11W|110.710s|110.467s|PASS / identical|
+
+These are single correctness runs, not medians:45S120W and61N136W were slower in
+their individual samples. No all-site performance improvement is claimed.
+All60 offline commands pass, including845,617 new mask checks (red before the
+change), and a separate real-engine20-case comparison has zero differing cells
+among2,448,000 compared cells. All nine cold processes finished normally with
+exact38/38 payloads. Eight automatic gates plus source/RNG and process review
+complete allten; raw pending fields are unchanged. Visual evidence is inherited
+from accepted predecessors only through identical complete outputs.
+
+The **third requested strategy was investigated but not retained**. Both final
+passability rebuilds remain required by the accepted lifecycle. Fresh native
+buildability sampling costs903ms; its pure classification costs16ms. An exact
+scratch cache matched stock bytes but saved only about9ms net, not a demonstrated
+START-to-T1 improvement. Skipping fresh sampling would lack a sufficient terrain/
+collision-input certificate. Production rebuild code is therefore unchanged.
+
+Evidence: `_ralph/runs/manual-terrain-three/artifacts/v963_reference/`,
+`v963_matrix/`, `v963_offline/`, `native_mask_probe/`, `v963_source_review.md`,
+`v963_all_ten_rules_review.json`, `v962_buildable_diagnostic/` and
+`rebuild_candidate_review.md`.
+
+Session result: two accepted improvements in separate code commits; third rejected.
+**133.666s ->114.612s**, saving19.054s overall. All previous terrain/placement fixes
+and temporary buttons remain. **The70s target is not reached.** This finite manual
+session is complete; no game, Ralph loop or goal API remains running.

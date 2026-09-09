@@ -20,10 +20,17 @@ Baseline artifacts: manual-rocket-pruning/artifacts/v961_reference and v961_matr
 
 Native discovery accepted: code691f900, v962/guard278, median115.665s (saving18.001s).
 All59 offline checks and allten rules in five scenarios pass; full outputs exact.
-Mask construction candidate v963/guard279 is implemented; not yet committed/deployed.
+COMPLETE: mask construction v963/guard279 accepted and deployed as8342ab2.
+Reference exact audit PASS:112.843/114.612/114.785s, median114.612s, saving1.053s.
+Fresh control29.658s. Allten rules in all five scenarios and complete predecessor
+outputs pass. All60 offline commands pass; separate source/process sign-off saved.
+Final benchmark median114.612s, saving19.054s from the initial133.666s.70s not reached.
+Both requested retained units are committed separately; the third was investigated
+and rejected, not shipped. All owned games/finite runners finished; daemon stopped
+and no untracked game exists. No Ralph controller, goal or next strategy is active.
 845,617 mask checks and15,414 scalar-raster checks pass. Real engine:20 cases,
 2,448,000 cells compared, zero mismatches; previous raster1202ms vs candidate1087ms
-aggregate scratch time (not START-to-T1). Full offline/cold acceptance is next.
+aggregate scratch time (not START-to-T1). All60 offline commands pass.
 Third unit investigated and NOT retained: process-cache prototype matched stock
 bytes but saved only about9ms net. InitBuildableGrid costs903ms and must still run
 to capture fresh collision/terrain state; classification costs16ms. Keep both
@@ -52,6 +59,7 @@ unless materially new evidence establishes an exact replacement.
   Allten rules in five sites and every full predecessor output pass. Ranking updated.
 - v962 buildable diagnostic: exact full map parity; both private stock-equivalent
   raw/output grids and process parameters identical, cache hit exact. First process
- 16ms -> cache preparation20ms; second16ms -> reuse3ms plus2ms raw serialization.
+ 16ms -> cache preparation20ms; second16ms -> reuse3ms. Those helper totals include
+  its serialization; the separate diagnostic serialization took2ms.
   Net about9ms is negligible, not a measured T0/T1 gain. Do not ship a replacement
   stock build path for that gain, or drop InitBuildableGrid based on output hashes.
