@@ -905,3 +905,45 @@ Evidence: `manual-historical-terrain-ports/artifacts/v959_offline_final/`,
 `native_apron_probe2.json`, `v959_SOURCE_REVIEW.md`, `v959_SIGN_OFF.md`,
 `v959_reference/reference_audit.json` and `v959_matrix/verification.json`.
 Crease processing is still unchanged at this sign-off.
+
+### Crease sample reuse — v960 `2e2676c`, accepted in five scenarios
+
+Only overlapping scan/refinement reads are reused. A contiguous source scan now
+needs four initial reads plus one per later position; a destination scan needs six
+initial reads plus one per later position, versus four/twelve at every position.
+The exact coordinate union, nil/zero handling, candidate order, thresholds and
+refinement tie breaks are preserved. Windows are local to each invocation so
+previous track repairs remain visible. Current monotone joins, wall/spike and
+terminal-strip formulas remain unchanged; no native feather is imported.
+
+Fresh14N START->T1 samples140.229/140.119/138.318s: median140.119s versusv959
+142.764s, an additional2.645s (1.9%). All three full predecessor/repeat comparisons
+pass, with a clean28.897s native control. All ten rules are GREEN in the five
+fixed scenarios after separate source/RNG and deployment/process review.
+The three-port cumulative median saving is22.079s (13.6%) versusv957162.198s.
+This remains above70s; no unattended optimization loop is running.
+
+| Scenario | v959 matched run | v960 | Reduction |
+|---|---:|---:|---:|
+|15S67E|142.081s|136.236s|5.845s|
+|24S74W|140.362s|133.694s|6.668s|
+|45S120W|129.267s|124.833s|4.434s|
+|61N136W|196.779s|194.664s|2.115s|
+|17S11W|137.516s|134.262s|3.254s|
+
+These five are single matched correctness samples, not performance medians. All
+Surface/UG height/pass grids, resource sites, pads, grounded-rock transforms and
+ordinary/private-stream outputs match v959 exactly. Prior sampled visual acceptance
+is inherited only for identical output; no newly inspected screenshots are claimed.
+The unchanged native path reuses the accepted five v957 controls.
+
+All54 established offline commands pass, plus3,097 crease,15,414 native-apron and
+81,267 rocket assertions (57 passing commands total). Crease red-before evidence
+is retained separately. Code is committed and deployed38/38.
+Evidence: `manual-historical-terrain-ports/artifacts/v960_offline/`,
+`crease_read_port_review.md`, `v960_SIGN_OFF.md`,
+`v960_reference/reference_audit.json` and `v960_matrix/verification.json`.
+
+All three owner-selected ports are complete, separately committed and verified.
+Temporary buttons and previous terrain/resource/rock corrections remain. Ralph
+is stopped; no further optimization is being started without the next instruction.

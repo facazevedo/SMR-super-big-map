@@ -1,0 +1,10 @@
+{
+  "command": [
+    "lua",
+    "_ralph/tools/parity/native_apron_test.lua"
+  ],
+  "exit": 0,
+  "seconds": 0.35284870001487434,
+  "stdout": "native apron double: 15414 checks passed (real-engine differential proof still required)\n",
+  "stderr": ""
+}

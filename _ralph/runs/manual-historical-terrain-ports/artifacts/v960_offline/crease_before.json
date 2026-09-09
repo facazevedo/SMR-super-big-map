@@ -1,0 +1,10 @@
+{
+  "command": [
+    "lua",
+    "_ralph/tools/parity/crease_sampling_test.lua"
+  ],
+  "exit": 1,
+  "seconds": 0.13173870008904487,
+  "stdout": "",
+  "stderr": "lua: _ralph/tools/parity/crease_sampling_test.lua:18: rolling neighbourhood did not remove repeated grid reads\nstack traceback:\n\t[C]: in function 'assert'\n\t_ralph/tools/parity/crease_sampling_test.lua:18: in local 'check'\n\t_ralph/tools/parity/crease_sampling_test.lua:62: in main chunk\n\t[C]: in ?\n"
+}

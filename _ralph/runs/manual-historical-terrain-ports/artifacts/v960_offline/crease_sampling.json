@@ -1,0 +1,10 @@
+{
+  "command": [
+    "lua",
+    "_ralph/tools/parity/crease_sampling_test.lua"
+  ],
+  "exit": 0,
+  "seconds": 0.4485969999805093,
+  "stdout": "crease sampling: 3097 checks passed\n",
+  "stderr": ""
+}
