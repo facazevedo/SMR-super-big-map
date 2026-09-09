@@ -1,0 +1,408 @@
+{
+  "samples": [
+    {
+      "sample": "a",
+      "checkpoint": {
+        "commit": "5c8ce53df44d775b580bf52feaa7af214c9dbb69",
+        "version": "964",
+        "payload_audited_before_launch": true,
+        "expanded": "on"
+      },
+      "identity": [
+        88536,
+        134334558098547866
+      ],
+      "t0_to_t1_s": 114.512,
+      "prior_t0_to_t1_s": 112.843,
+      "predecessor_pair": {
+        "verdict": "pass",
+        "differences": [],
+        "note": "Runtime parity only; engine-RNG source audit is separate.",
+        "full_snapshot_differences": [],
+        "rock_grounding_differences": []
+      },
+      "repeat_pair": {
+        "verdict": "pass",
+        "differences": [],
+        "note": "Runtime parity only; engine-RNG source audit is separate.",
+        "full_snapshot_differences": [],
+        "rock_grounding_differences": []
+      },
+      "gates": {
+        "seed-parity": {
+          "verdict": "pending",
+          "details": [
+            "requires paired-run comparison and RNG source audit"
+          ]
+        },
+        "entrances-glued": {
+          "verdict": "pass",
+          "details": []
+        },
+        "entrances-not-in-ring": {
+          "verdict": "pass",
+          "details": []
+        },
+        "ring-content": {
+          "verdict": "pass",
+          "details": []
+        },
+        "single-start-reveal": {
+          "verdict": "pass",
+          "details": []
+        },
+        "badges-pre-reveal": {
+          "verdict": "pass",
+          "details": []
+        },
+        "decor-rules": {
+          "verdict": "pass",
+          "details": []
+        },
+        "no-errors": {
+          "verdict": "pass",
+          "details": []
+        },
+        "process": {
+          "verdict": "pending",
+          "details": [
+            "requires checkpoint/deployment provenance review"
+          ]
+        },
+        "underground-first-access": {
+          "verdict": "pass",
+          "details": []
+        }
+      },
+      "counters": {
+        "native_apron": {
+          "mask_cells_skipped": 1389048,
+          "raster_cells": 5039674,
+          "modified": 1910302,
+          "exact_samples": 147549,
+          "mask_fast_zero": 276602,
+          "mask_samples": 3650626,
+          "shaped": 50,
+          "mask_fast_one": 98058
+        },
+        "apron": {
+          "unchanged": 23,
+          "shaped": 50,
+          "relief_rejections": 190,
+          "error": "",
+          "candidates": 116,
+          "created": 73,
+          "considered": 9216,
+          "slope_rejections": 6401,
+          "ring_sectors": 2,
+          "modified": 1910302,
+          "reason": "reserved"
+        },
+        "surface_found": true,
+        "rocket_sampling": {
+          "pruned_range": 33358,
+          "height_misses": 40623,
+          "selected_groups": 12,
+          "pruned_score": 0,
+          "height_hits": 398671,
+          "viable_candidates": 291,
+          "relief_reads": 108
+        },
+        "crease": {
+          "destination": {
+            "sampled_rows": 32768,
+            "cells": 3391488,
+            "copies": 4,
+            "enumerated": 220059,
+            "candidates": 171387
+          },
+          "source": {
+            "sampled_rows": 3072,
+            "cells": 1787904,
+            "copies": 3072,
+            "enumerated": 287,
+            "candidates": 287
+          }
+        }
+      },
+      "issues": []
+    },
+    {
+      "sample": "b",
+      "checkpoint": {
+        "commit": "5c8ce53df44d775b580bf52feaa7af214c9dbb69",
+        "version": "964",
+        "payload_audited_before_launch": true,
+        "expanded": "on"
+      },
+      "identity": [
+        76060,
+        134334560118147169
+      ],
+      "t0_to_t1_s": 115.056,
+      "prior_t0_to_t1_s": 114.612,
+      "predecessor_pair": {
+        "verdict": "pass",
+        "differences": [],
+        "note": "Runtime parity only; engine-RNG source audit is separate.",
+        "full_snapshot_differences": [],
+        "rock_grounding_differences": []
+      },
+      "repeat_pair": {
+        "verdict": "pass",
+        "differences": [],
+        "note": "Runtime parity only; engine-RNG source audit is separate.",
+        "full_snapshot_differences": [],
+        "rock_grounding_differences": []
+      },
+      "gates": {
+        "seed-parity": {
+          "verdict": "pending",
+          "details": [
+            "requires paired-run comparison and RNG source audit"
+          ]
+        },
+        "entrances-glued": {
+          "verdict": "pass",
+          "details": []
+        },
+        "entrances-not-in-ring": {
+          "verdict": "pass",
+          "details": []
+        },
+        "ring-content": {
+          "verdict": "pass",
+          "details": []
+        },
+        "single-start-reveal": {
+          "verdict": "pass",
+          "details": []
+        },
+        "badges-pre-reveal": {
+          "verdict": "pass",
+          "details": []
+        },
+        "decor-rules": {
+          "verdict": "pass",
+          "details": []
+        },
+        "no-errors": {
+          "verdict": "pass",
+          "details": []
+        },
+        "process": {
+          "verdict": "pending",
+          "details": [
+            "requires checkpoint/deployment provenance review"
+          ]
+        },
+        "underground-first-access": {
+          "verdict": "pass",
+          "details": []
+        }
+      },
+      "counters": {
+        "native_apron": {
+          "mask_cells_skipped": 1389048,
+          "mask_fast_zero": 276602,
+          "modified": 1910302,
+          "shaped": 50,
+          "mask_fast_one": 98058,
+          "exact_samples": 147549,
+          "mask_samples": 3650626,
+          "raster_cells": 5039674
+        },
+        "rocket_sampling": {
+          "relief_reads": 108,
+          "pruned_score": 0,
+          "pruned_range": 33358,
+          "height_hits": 398671,
+          "selected_groups": 12,
+          "height_misses": 40623,
+          "viable_candidates": 291
+        },
+        "surface_found": true,
+        "apron": {
+          "created": 73,
+          "error": "",
+          "relief_rejections": 190,
+          "candidates": 116,
+          "unchanged": 23,
+          "modified": 1910302,
+          "shaped": 50,
+          "considered": 9216,
+          "slope_rejections": 6401,
+          "ring_sectors": 2,
+          "reason": "reserved"
+        },
+        "crease": {
+          "destination": {
+            "candidates": 171387,
+            "copies": 4,
+            "enumerated": 220059,
+            "sampled_rows": 32768,
+            "cells": 3391488
+          },
+          "source": {
+            "candidates": 287,
+            "copies": 3072,
+            "enumerated": 287,
+            "sampled_rows": 3072,
+            "cells": 1787904
+          }
+        }
+      },
+      "issues": []
+    },
+    {
+      "sample": "c",
+      "checkpoint": {
+        "commit": "5c8ce53df44d775b580bf52feaa7af214c9dbb69",
+        "version": "964",
+        "payload_audited_before_launch": true,
+        "expanded": "on"
+      },
+      "identity": [
+        86372,
+        134334562141465649
+      ],
+      "t0_to_t1_s": 112.249,
+      "prior_t0_to_t1_s": 114.785,
+      "predecessor_pair": {
+        "verdict": "pass",
+        "differences": [],
+        "note": "Runtime parity only; engine-RNG source audit is separate.",
+        "full_snapshot_differences": [],
+        "rock_grounding_differences": []
+      },
+      "repeat_pair": {
+        "verdict": "pass",
+        "differences": [],
+        "note": "Runtime parity only; engine-RNG source audit is separate.",
+        "full_snapshot_differences": [],
+        "rock_grounding_differences": []
+      },
+      "gates": {
+        "seed-parity": {
+          "verdict": "pending",
+          "details": [
+            "requires paired-run comparison and RNG source audit"
+          ]
+        },
+        "entrances-glued": {
+          "verdict": "pass",
+          "details": []
+        },
+        "entrances-not-in-ring": {
+          "verdict": "pass",
+          "details": []
+        },
+        "ring-content": {
+          "verdict": "pass",
+          "details": []
+        },
+        "single-start-reveal": {
+          "verdict": "pass",
+          "details": []
+        },
+        "badges-pre-reveal": {
+          "verdict": "pass",
+          "details": []
+        },
+        "decor-rules": {
+          "verdict": "pass",
+          "details": []
+        },
+        "no-errors": {
+          "verdict": "pass",
+          "details": []
+        },
+        "process": {
+          "verdict": "pending",
+          "details": [
+            "requires checkpoint/deployment provenance review"
+          ]
+        },
+        "underground-first-access": {
+          "verdict": "pass",
+          "details": []
+        }
+      },
+      "counters": {
+        "crease": {
+          "destination": {
+            "candidates": 171387,
+            "enumerated": 220059,
+            "sampled_rows": 32768,
+            "copies": 4,
+            "cells": 3391488
+          },
+          "source": {
+            "candidates": 287,
+            "enumerated": 287,
+            "sampled_rows": 3072,
+            "copies": 3072,
+            "cells": 1787904
+          }
+        },
+        "surface_found": true,
+        "native_apron": {
+          "exact_samples": 147549,
+          "mask_fast_one": 98058,
+          "mask_samples": 3650626,
+          "shaped": 50,
+          "mask_fast_zero": 276602,
+          "mask_cells_skipped": 1389048,
+          "raster_cells": 5039674,
+          "modified": 1910302
+        },
+        "apron": {
+          "unchanged": 23,
+          "candidates": 116,
+          "created": 73,
+          "slope_rejections": 6401,
+          "modified": 1910302,
+          "error": "",
+          "shaped": 50,
+          "considered": 9216,
+          "relief_rejections": 190,
+          "ring_sectors": 2,
+          "reason": "reserved"
+        },
+        "rocket_sampling": {
+          "pruned_score": 0,
+          "relief_reads": 108,
+          "height_misses": 40623,
+          "selected_groups": 12,
+          "viable_candidates": 291,
+          "pruned_range": 33358,
+          "height_hits": 398671
+        }
+      },
+      "issues": []
+    },
+    {
+      "sample": "control",
+      "checkpoint": {
+        "commit": "5c8ce53df44d775b580bf52feaa7af214c9dbb69",
+        "version": "964",
+        "payload_audited_before_launch": true,
+        "expanded": "off"
+      },
+      "identity": [
+        46636,
+        134334564146488955
+      ],
+      "t0_to_t1_s": 29.451,
+      "prior_t0_to_t1_s": 29.658,
+      "issues": []
+    }
+  ],
+  "issues": [],
+  "median_s": 114.512,
+  "prior_median_s": 114.612,
+  "saving_s": 0.09999999999999432,
+  "saving_percent": 0.0872508986842515,
+  "clean_exact_evidence": true,
+  "qualification": "Source/RNG review is separate. Native controls compare authored behavior, not generated underground content."
+}

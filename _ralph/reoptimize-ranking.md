@@ -1102,3 +1102,42 @@ Session result: two accepted improvements in separate code commits; third reject
 **133.666s ->114.612s**, saving19.054s overall. All previous terrain/placement fixes
 and temporary buttons remain. **The70s target is not reached.** This finite manual
 session is complete; no game, Ralph loop or goal API remains running.
+
+## 2026-09-09 - v964 outer-resource mask shortcuts: exact, marginal timing result
+
+New owner-requested manual session: outer-resource masks, crease application, and
+rock-capture overhead. Production `5c8ce53`, v964/guard280, completes the first unit.
+Skip angular work inside exact cores/outside the maximum feather radius, and stop
+protection multiplication at exact zero. No coarsening, new placement policy or
+changes to the native blend/rounding/core protections. Temporary buttons unchanged.
+
+| Reference | START-to-T1 A / B / C | Median |
+|---|---|---:|
+| v963 |112.843 /114.612 /114.785s|114.612s|
+| v964 |114.512 /115.056 /112.249s|114.512s|
+
+Observed median reduction **0.100s (0.087%)**, within the run-to-run variation.
+This is not a substantial or statistically established end-to-end speedup. The
+exact scalar differential removes1163484->556308 sine calls across387829 checks.
+Fresh native14N control29.451s. START remains T0; required revalidation precedes T1.
+
+| Scenario | v963 | v964 | All ten rules / complete predecessor outputs |
+|---|---:|---:|---|
+|15S67E|112.003s|113.592s|PASS / identical|
+|24S74W|109.926s|110.789s|PASS / identical|
+|45S120W|103.679s|103.355s|PASS / identical|
+|61N136W|165.955s|165.318s|PASS / identical|
+|17S11W|110.467s|110.651s|PASS / identical|
+
+These five-site times are single correctness samples, not medians; several are
+slower and no all-site speedup is claimed. All61 offline checks pass. Eight automatic
+gates plus separate source/RNG and process review complete allten; raw pending gates
+are not rewritten. Exact full outputs preserve prior accepted visual evidence.
+The first15S process completed but hung on shutdown; its evidence was preserved and
+excluded. A fresh full five-site retry on the unchanged payload exited normally.
+
+Evidence under `_ralph/runs/manual-mask-crease-rock/artifacts/`: `v964_reference`,
+`v964_matrix`, `v964_offline`, `v964_source_review.md`, `v964_all_ten_rules_review.json`,
+and the excluded `v964_matrix_shutdown_failed` with its incident capture.
+Current overall median114.512s: **70s not reached**. The other two requested units
+are being prepared separately; no Ralph controller or pursuing-goal API is used.
