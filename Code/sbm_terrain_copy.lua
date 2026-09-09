@@ -2488,6 +2488,33 @@ local function NewBoundedRocketSearch(search_limit, preferred_minimum, seed)
 end
 -- BOUNDED_ROCKET_SEARCH_END
 
+-- The generator object is transient. Cache this private phase seed on its map so
+-- later terrain-repair attempts cannot silently switch to a constant-zero seed.
+local function ResolveBoundedRocketSeed(map)
+	local cached = map.SuperBigMapBoundedRocketSeed
+	if cached ~= nil then
+		if type(cached) ~= "number" or cached ~= math.floor(cached) or cached < 1 or cached >= 2147483647 then
+			return nil, "invalid cached private rocket seed"
+		end
+		return cached
+	end
+	local generator = map.RandomMapGenObject
+	local numeric = tonumber(type(generator) == "table" and generator.Seed or nil)
+		or tonumber(map.SuperBigMapPlacementSeed)
+	if not numeric then return nil, "map generation seed unavailable for rocket planning" end
+	local private_seed = math.abs(math.floor(numeric)) % 2147483647
+	local material = tostring(type(generator) == "table" and generator.GenerationHash or "")
+		.. "|" .. tostring(map.mapdata and map.mapdata.RandomMapPreset or "")
+		.. "|sbm-bounded-rocket-v1"
+	for index = 1, #material do
+		private_seed = (private_seed * 48271 + string.byte(material, index) + 1) % 2147483647
+	end
+	if private_seed == 0 then private_seed = 1 end
+	map.SuperBigMapBoundedRocketSeed = private_seed
+	return private_seed
+end
+-- BOUNDED_ROCKET_SEED_END
+
 local function PrepareOuterResourceTerrain(map)
 	if not cfg_bool("PREPARE_OUTER_RESOURCE_TERRAIN", true) then
 		return false, { reason = "disabled", resources = 0, patches = 0 }
@@ -3077,16 +3104,13 @@ local function PrepareOuterResourceTerrain(map)
 	end
 	table.sort(cluster_groups, function(a, b) return a.plan < b.plan end)
 	local search_limit = cluster_radius + rocket_outer_radius + maximum_resource_core + 4
-	local generator = map.RandomMapGenObject
-	local private_seed = math.abs(math.floor((type(generator) == "table"
-		and tonumber(generator.Seed)) or 0)) % 2147483647
-	local material = tostring(type(generator) == "table" and generator.GenerationHash or "")
-		.. "|" .. tostring(map.mapdata and map.mapdata.RandomMapPreset or "")
-		.. "|sbm-bounded-rocket-v1"
-	for index = 1, #material do
-		private_seed = (private_seed * 48271 + string.byte(material, index) + 1) % 2147483647
+	local private_seed, seed_error = ResolveBoundedRocketSeed(map)
+	if not private_seed then
+		OptimizationFailure("seeded rocket planner", seed_error, map)
+		if grid ~= raw and type(grid.free) == "function" then pcall(grid.free, grid) end
+		return false, { reason = "rocket planning failed", error = seed_error,
+			resources = #resources, patches = 0, rocket_sampling = rocket_sampling }
 	end
-	if private_seed == 0 then private_seed = 1 end
 	local rocket_search = NewBoundedRocketSearch(search_limit,
 		math.min(search_limit, math.ceil(cluster_radius + rocket_required_core + maximum_resource_core + 1)),
 		private_seed)
