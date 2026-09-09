@@ -810,6 +810,141 @@ end
 -- performs version 839's complete translation and quintic interpolation. The central 16 x 16
 -- sectors are never scanned, ordinary broken Rough Terrain cliffs fail the long/dense-track gate,
 -- and version 738's affine transform still runs exactly once.
+-- Read-only native prefilter. U16 differences/doubled flanks are exact in f32.
+-- Export a superset (both edge directions) of the original scalar offers, sorted
+-- back into perpendicular order. The scalar predicates/ties and ALL writes stay
+-- in RepairInternalHeightStep; refinement never reuses these discovery indexes.
+local function BuildHeightStepDiscoveryIndex(api, grid, axis, perp0, perp1, along_n,
+		sample_step, max_width, threshold)
+	local required = { "IsComputeGrid", "GridRepack", "GridMulDivAdd", "GridAdd",
+		"GridAbs", "GridMask", "GridCount", "GridForeach", "NewComputeGrid", "box", "point" }
+	for _, key in ipairs(required) do
+		if type(api[key]) ~= "function" then return nil, "native crease API unavailable: " .. key end
+	end
+	local format, bits = api.IsComputeGrid(grid)
+	if tostring(format):lower() ~= "u" or bits ~= 16 then
+		return nil, "native crease discovery requires U16 input"
+	end
+	local w, h = grid:size()
+	local perp_n = axis == "x" and w or h
+	if (axis ~= "x" and axis ~= "y") or along_n ~= (axis == "x" and h or w)
+		or perp0 < 1 or perp1 > perp_n - 3 or sample_step < 1
+		or (max_width ~= 1 and max_width ~= 3) or threshold < 2 then
+		return nil, "invalid native crease discovery bounds"
+	end
+	local stats = { cells = 0, enumerated = 0, candidates = 0, sampled_rows = 0, copies = 0 }
+	if perp1 < perp0 then return {}, stats end
+	local owned, owned_set = {}, {}
+	local function own(value)
+		if not value or value == grid then return nil end
+		if not owned_set[value] then owned_set[value] = true; owned[#owned + 1] = value end
+		return value
+	end
+	local function work()
+		local rows, row_seen = {}, {}
+		local sampled_rows = math.floor((along_n - 1) / sample_step) + 1
+		local span = math.min(perp_n - 1, perp1 + max_width + 1) - (perp0 - 1) + 1
+		local sw, sh = axis == "x" and span or sampled_rows, axis == "x" and sampled_rows or span
+		local sampled = own(grid:new_instance(sw, sh))
+		if not sampled then return nil, "native crease sampled allocation failed" end
+		-- Source uses exactly the old every-eighth row/column, never interpolated rows.
+		-- Destination uses one contiguous slab copy per edge.
+		if sample_step == 1 then
+			local bounds = axis == "x" and api.box(perp0 - 1, 0, perp0 - 1 + span, along_n)
+				or api.box(0, perp0 - 1, along_n, perp0 - 1 + span)
+			sampled:copyrect(grid, bounds, api.point(0, 0)); stats.copies = 1
+		else
+			for i = 0, sampled_rows - 1 do
+				local along = i * sample_step
+				local bounds = axis == "x"
+					and api.box(perp0 - 1, along, perp0 - 1 + span, along + 1)
+					or api.box(along, perp0 - 1, along + 1, perp0 - 1 + span)
+				local destination = axis == "x" and api.point(0, i) or api.point(i, 0)
+				sampled:copyrect(grid, bounds, destination); stats.copies = stats.copies + 1
+			end
+		end
+		stats.sampled_rows = sampled_rows
+		for width = 1, max_width do
+			local positions = math.min(perp1, perp_n - width - 2) - perp0 + 1
+			if positions > 0 then
+				local local_w = axis == "x" and positions or sampled_rows
+				local local_h = axis == "x" and sampled_rows or positions
+				local function operand(offset)
+					local raw = own(grid:new_instance(local_w, local_h))
+					if not raw then return nil end
+					local bounds = axis == "x" and api.box(offset, 0, offset + positions, sampled_rows)
+						or api.box(0, offset, sampled_rows, offset + positions)
+					raw:copyrect(sampled, bounds, api.point(0, 0))
+					return own(api.GridRepack(raw, "f", 32, true))
+				end
+				local v0, a, b, v3 = operand(0), operand(1), operand(width + 1), operand(width + 2)
+				if not v0 or not a or not b or not v3 then return nil, "native crease operand allocation failed" end
+				local flank0, flank1, magnitude = own(a:clone()), own(v3:clone()), own(b:clone())
+				if not flank0 or not flank1 or not magnitude then return nil, "native crease clone failed" end
+				api.GridMulDivAdd(v0, -1, 1, 0); api.GridAdd(flank0, v0); api.GridAbs(flank0)
+				api.GridMulDivAdd(b, -1, 1, 0); api.GridAdd(flank1, b); api.GridAbs(flank1)
+				api.GridMulDivAdd(a, -1, 1, 0); api.GridAdd(magnitude, a); api.GridAbs(magnitude)
+				local accepted, mask = own(api.NewComputeGrid(local_w, local_h, "f", 32)),
+					own(api.NewComputeGrid(local_w, local_h, "f", 32))
+				local doubled = own(magnitude:clone())
+				if not accepted or not mask or not doubled then return nil, "native crease mask allocation failed" end
+				-- Integer gaps make both inclusive/exclusive native lower bounds equivalent.
+				api.GridMulDivAdd(doubled, 2, 1, 0)
+				api.GridMask(doubled, accepted, 2 * threshold - 1, 2147483647)
+				for _, flank in ipairs({ flank0, flank1 }) do
+					local margin = own(magnitude:clone())
+					if not margin then return nil, "native crease margin allocation failed" end
+					api.GridMulDivAdd(flank, -2, 1, 0); api.GridAdd(margin, flank)
+					-- Smallest possible margin is -131070. Keep mask thresholds unsigned-safe.
+					api.GridMulDivAdd(margin, 2, 1, 262140)
+					api.GridMask(margin, mask, 262139, 2147483647)
+					api.GridMulDivAdd(accepted, mask, 1, 0)
+				end
+				api.GridMulDivAdd(magnitude, accepted, 1, 0)
+				local expected = api.GridCount(magnitude, 1, 2147483647)
+				local count, callback_error, emitted = 0, nil, {}
+				api.GridForeach(magnitude, function(jump, x, y)
+					if callback_error then return end
+					if type(x) ~= "number" or type(y) ~= "number" or type(jump) ~= "number"
+						or x ~= math.floor(x) or y ~= math.floor(y) or jump ~= math.floor(jump)
+						or x < 0 or y < 0 or x >= local_w or y >= local_h
+						or jump < threshold or jump > 65535 then
+						callback_error = "native crease enumeration coordinate/value invalid"; return
+					end
+					local key = y * local_w + x
+					if emitted[key] then callback_error = "duplicate native crease enumeration"; return end
+					emitted[key] = true; count = count + 1
+					local along = (axis == "x" and y or x) * sample_step
+					local perp = perp0 + (axis == "x" and x or y)
+					local seen = row_seen[along]
+					if not seen then seen = {}; row_seen[along] = seen; rows[along] = {} end
+					if not seen[perp] then
+						seen[perp] = true; rows[along][#rows[along] + 1] = perp
+						stats.candidates = stats.candidates + 1
+					end
+				end, 1, 2147483647)
+				if callback_error then return nil, callback_error end
+				if type(expected) ~= "number" or count ~= expected then
+					return nil, "native crease enumeration count mismatch"
+				end
+				stats.enumerated = stats.enumerated + count
+				stats.cells = stats.cells + local_w * local_h
+			end
+		end
+		for _, row in pairs(rows) do table.sort(row) end
+		return rows, stats
+	end
+	local ok, rows, detail = pcall(work)
+	local cleanup_error
+	for i = #owned, 1, -1 do
+		local freed, err = pcall(owned[i].free, owned[i])
+		if not freed then cleanup_error = tostring(err) end
+	end
+	if not ok then return nil, tostring(rows) end
+	if cleanup_error then return nil, "native crease cleanup failed: " .. cleanup_error end
+	return rows, detail
+end
+
 local function RepairInternalHeightStep(grid, wide_ring_only)
 	local GridMinMax = Global("GridMinMax")
 	if type(GridMinMax) ~= "function" or not grid or type(grid.size) ~= "function"
@@ -855,6 +990,13 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 	local tracks = {}
 	local track_counts = { left = 0, right = 0, top = 0, bottom = 0 }
 	local selected_tracks = {}
+	local discovery_api = {}
+	for _, key in ipairs({ "IsComputeGrid", "GridRepack", "GridMulDivAdd", "GridAdd",
+		"GridAbs", "GridMask", "GridCount", "GridForeach", "NewComputeGrid", "box", "point" }) do
+		discovery_api[key] = Global(key)
+	end
+	local discovery_error
+	local discovery_stats = { cells = 0, enumerated = 0, candidates = 0, sampled_rows = 0, copies = 0 }
 
 	local function at(axis, perp, along)
 		if axis == "x" then return grid:get(perp, along) end
@@ -974,12 +1116,32 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 
 	local function collect_axis(axis, perp_n, along_n, before_edge, after_edge,
 			before_perp0, before_perp1, after_perp0, after_perp1, sample_step)
+		if discovery_error then return end
 		local active = {}
 		sample_step = math.max(1, sample_step or 1)
+		local function index(lo, hi)
+			local rows, detail = BuildHeightStepDiscoveryIndex(discovery_api, grid, axis,
+				lo, hi, along_n, sample_step, wide_ring_only and 1 or 3, threshold)
+			if not rows then discovery_error = tostring(detail); return nil end
+			for key in pairs(discovery_stats) do
+				discovery_stats[key] = discovery_stats[key] + (detail[key] or 0)
+			end
+			return rows
+		end
+		local before = index(before_perp0, before_perp1)
+		if not before then return end
+		local after = index(after_perp0, after_perp1)
+		if not after then return end
 		for along = 0, along_n - 1, sample_step do
 			local row = {}
-			scan_line_range(row, axis, along, before_perp0, before_perp1, before_edge)
-			scan_line_range(row, axis, along, after_perp0, after_perp1, after_edge)
+			-- Exact scalar acceptance, width order and edge order are unchanged. Only
+			-- positions proven unable to offer any width are omitted by the native index.
+			for _, perp in ipairs(before[along] or {}) do
+				scan_line_range(row, axis, along, perp, perp, before_edge)
+			end
+			for _, perp in ipairs(after[along] or {}) do
+				scan_line_range(row, axis, along, perp, perp, after_edge)
+			end
 
 			local used = {}
 			for _, candidate in ipairs(row) do
@@ -1202,6 +1364,7 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		end
 		collect_ring("x", w, h, "left", "right")
 		collect_ring("y", h, w, "top", "bottom")
+		if discovery_error then return end -- No qualification or height writes on failure.
 
 		local qualified = {}
 		for _, track in ipairs(tracks) do
@@ -1361,6 +1524,9 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		selected_tracks[1].qualified = #qualified
 	end)
 	if type(resume) == "function" then pcall(resume, "SBMInternalHeightStepRepair") end
+	if discovery_error then
+		return false, { reason = "native crease discovery failed", error = discovery_error }, nil, discovery_stats
+	end
 	if not ok_repair then
 		return false, { reason = tostring(repair_err), threshold = threshold, min = mn, max = mx }
 	end
@@ -1388,7 +1554,7 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 			left_tracks = track_counts.left, right_tracks = track_counts.right,
 			top_tracks = track_counts.top, bottom_tracks = track_counts.bottom,
 			min = mn, max = mx,
-		}
+		}, nil, discovery_stats
 	end
 	local primary = selected_tracks[1]
 	return true, {
@@ -1406,7 +1572,7 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		left_tracks = track_counts.left, right_tracks = track_counts.right,
 		top_tracks = track_counts.top, bottom_tracks = track_counts.bottom,
 		min = mn, max = mx,
-	}, selected_tracks
+	}, selected_tracks, discovery_stats
 end
 
 -- Repair already-qualified outer-ring creases on the vanilla grid, before interpolation can
@@ -3982,7 +4148,14 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			if scale_values then ZDumpHeightGrid(map, "source-pre", src_sub) end
 			if scale_values and environment ~= "Underground"
 				and cfg_bool("STRETCH_REPAIR_INTERNAL_HEIGHT_STEP", true) then
-				local detected, report, tracks = RepairInternalHeightStep(src_sub, true)
+				local detected, report, tracks, stats = RepairInternalHeightStep(src_sub, true)
+				map.SuperBigMapCreaseSamplingStats = { source = stats }
+				if report and report.error then
+					OptimizationFailure("native crease discovery", report.error, map)
+					free_grid(src_sub)
+					if full_c ~= raw and full_c ~= src_sub then free_grid(full_c) end
+					return false
+				end
 				internal_step_repair = report
 				TerrainCreaseAudit(detected and "SOURCE_DETECTED" or "SOURCE_SKIPPED", report, map)
 				if detected and tracks then
@@ -4005,7 +4178,16 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			-- seamless exactly as before.  It runs only after the source repair has been resampled.
 			if scale_values and environment ~= "Underground"
 				and cfg_bool("STRETCH_REPAIR_INTERNAL_HEIGHT_STEP", true) then
-				local repaired, report = RepairInternalHeightStep(stretched, false)
+				local repaired, report, _, stats = RepairInternalHeightStep(stretched, false)
+				map.SuperBigMapCreaseSamplingStats = map.SuperBigMapCreaseSamplingStats or {}
+				map.SuperBigMapCreaseSamplingStats.destination = stats
+				if report and report.error then
+					OptimizationFailure("native crease discovery", report.error, map)
+					free_grid(src_sub)
+					if stretched ~= src_sub then free_grid(stretched) end
+					if full_c ~= raw and full_c ~= src_sub then free_grid(full_c) end
+					return false
+				end
 				TerrainCreaseAudit(repaired and "DESTINATION_REPAIRED"
 					or "DESTINATION_SKIPPED", report, map)
 				merge_step_report(report)

@@ -42,7 +42,16 @@ local function run(code, side, near_guard, n)
 		count = count + 1
 		hash = (hash + (y * n + x + 1) * z) % 2147483647
 	end
-	local env = setmetatable({ Global = function(name)
+	-- This geometry-only sparse fixture intentionally supplies the complete scalar
+	-- discovery superset. It still runs every original acceptance/track/join check;
+	-- crease_discovery_test and native cold parity cover the optimized backend.
+	local function scalar_discovery(_, _, _, p0, p1, along_n, step)
+		local rows, positions = {}, {}
+		for p = p0, p1 do positions[#positions + 1] = p end
+		for along = 0, along_n - 1, step do rows[along] = positions end
+		return rows, {}
+	end
+	local env = setmetatable({ BuildHeightStepDiscoveryIndex = scalar_discovery, Global = function(name)
 		if name == "GridMinMax" then return function() return 30000, 32000 end end
 	end }, { __index = _G })
 	local repair = assert(load(code .. "\nreturn RepairInternalHeightStep", "guard-join", "t", env))()
