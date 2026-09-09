@@ -2391,6 +2391,29 @@ local function PrepareOuterResourceTerrain(map)
 		{ 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 },
 		{ 1, 1 }, { -1, 1 }, { 1, -1 }, { -1, -1 },
 	}
+	-- Planning only collects patches: this compute grid is immutable until all pad winners
+	-- have been chosen. Keep samples local to this invocation (including repair retries), never
+	-- cache live clearance/readiness, and preserve the exhaustive traversal and strict score tie.
+	local rocket_height_cache = {}
+	local rocket_sampling = {
+		height_hits = 0, height_misses = 0, viable_candidates = 0,
+		selected_groups = 0, relief_reads = 0,
+	}
+	local function cached_rocket_height(q, r, known_x, known_y)
+		local row = rocket_height_cache[q]
+		if not row then row = {}; rocket_height_cache[q] = row end
+		local value = row[r]
+		if value ~= nil then
+			rocket_sampling.height_hits = rocket_sampling.height_hits + 1
+			return value ~= false and value or nil
+		end
+		rocket_sampling.height_misses = rocket_sampling.height_misses + 1
+		local x, y = known_x, known_y
+		if x == nil then x, y = world_xy(q, r) end
+		value = x and grid_value(x / height_tile, y / height_tile) or nil
+		row[r] = value ~= nil and value or false
+		return value
+	end
 	local function candidate_score(q, r, cq, cr)
 		if not resource_clearance(q, r) or not separated_from_rocket_pads(q, r) then return nil end
 		local x, y = world_xy(q, r)
@@ -2398,35 +2421,49 @@ local function PrepareOuterResourceTerrain(map)
 		local edge_world = (rocket_outer_radius + 1) * hex_size
 		if x < edge_world or y < edge_world or x >= map_w - edge_world
 			or y >= map_h - edge_world then return nil end
-		local cx, cy = x / height_tile, y / height_tile
-		local center = grid_value(cx, cy)
+		local center = cached_rocket_height(q, r, x, y)
 		if not center then return nil end
 		local range_min, range_max = center, center
 		for _, offset in ipairs(rocket_offsets) do
-			local hx, hy = world_xy(q + offset[1], r + offset[2])
-			if not hx then return nil end
-			local z = grid_value(hx / height_tile, hy / height_tile)
+			local z = cached_rocket_height(q + offset[1], r + offset[2])
 			if not z then return nil end
 			range_min, range_max = math.min(range_min, z), math.max(range_max, z)
+		end
+		rocket_sampling.viable_candidates = rocket_sampling.viable_candidates + 1
+		local ready = rocket_shape_ready(q, r)
+		return {
+			x = x, y = y, q = q, r = r, ready_before = ready,
+			height_range = range_max - range_min,
+			score = (ready and -1000000000 or 0) + (range_max - range_min) * 100
+				+ axial_distance(q, r, cq, cr),
+		}
+	end
+	local function finalize_rocket_relief(best)
+		-- Surrounding relief is descriptive metadata, not a selection predicate or score.
+		-- Reuse the winning center and perform the same eight reads only after selection.
+		-- A direct center read certifies the immutable planning epoch before publication.
+		local row = rocket_height_cache[best.q]
+		local center = row and row[best.r]
+		local cx, cy = best.x / height_tile, best.y / height_tile
+		local reloaded_center = grid_value(cx, cy)
+		rocket_sampling.relief_reads = rocket_sampling.relief_reads + 1
+		if type(center) ~= "number" or reloaded_center ~= center then
+			return false, "deferred rocket relief immutable-grid certificate failed"
 		end
 		local maximum_rise, higher = 0, 0
 		for _, direction in ipairs(relief_directions) do
 			local z = grid_value(cx + direction[1] * 12 * cells_per_hex,
 				cy + direction[2] * 12 * cells_per_hex)
+			rocket_sampling.relief_reads = rocket_sampling.relief_reads + 1
 			if z and z - center >= 5 * guim_v then
 				maximum_rise = math.max(maximum_rise, z - center)
 				higher = higher + 1
 			end
 		end
-		local mountain = maximum_rise >= 5 * guim_v and higher >= 2
-		local ready = rocket_shape_ready(q, r)
-		return {
-			x = x, y = y, q = q, r = r, ready_before = ready,
-			mountain = mountain, maximum_rise = maximum_rise, higher_samples = higher,
-			height_range = range_max - range_min,
-			score = (ready and -1000000000 or 0) + (range_max - range_min) * 100
-				+ axial_distance(q, r, cq, cr),
-		}
+		best.mountain = maximum_rise >= 5 * guim_v and higher >= 2
+		best.maximum_rise, best.higher_samples = maximum_rise, higher
+		rocket_sampling.selected_groups = rocket_sampling.selected_groups + 1
+		return true
 	end
 	local cluster_groups_by_plan, cluster_groups = {}, {}
 	for index, entry in ipairs(resources) do
@@ -2481,6 +2518,13 @@ local function PrepareOuterResourceTerrain(map)
 					end
 				end
 				if best then
+					local relief_ok, relief_error = finalize_rocket_relief(best)
+					if not relief_ok then
+						OptimizationFailure("rocket terrain sampling", relief_error, map)
+						if grid ~= raw and type(grid.free) == "function" then pcall(grid.free, grid) end
+						return false, { reason = "rocket planning failed", error = relief_error,
+							resources = #resources, patches = 0, rocket_sampling = rocket_sampling }
+					end
 					best.members = #members
 					best.extractor_members = extractor_members
 					best.cluster_plan = group.plan
@@ -2977,6 +3021,7 @@ local function PrepareOuterResourceTerrain(map)
 		resource_sites_modified = 0, rocket_pads = #rocket_sites,
 		forced_resource_repairs = forced_resource_repairs,
 		rocket_pads_modified = 0, rocket_shape_hexes = #rocket_offsets,
+		rocket_sampling = rocket_sampling,
 		rocket_shape_radius = rocket_hex_radius,
 		patches = shaped_patches, modified_cells = modified_cells,
 		ring_sectors = ring_sectors,
