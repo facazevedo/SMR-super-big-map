@@ -1,6 +1,8 @@
 -- Run from the repository root: lua _ralph/tools/parity/resource_protection_blend_test.lua
 local file = assert(io.open("Code/sbm_terrain_copy.lua", "rb"))
 local source = file:read("*a"); file:close()
+-- Git on Windows may check out CRLF; source extraction must ignore line endings.
+source = source:gsub("\r\n", "\n")
 local helper = assert(source:match("(local function ProtectedTerrainBlendWeight.-)\nlocal function PrepareOuterResourceTerrain"))
 local weight = assert(load(helper .. "\nreturn ProtectedTerrainBlendWeight"))()
 
