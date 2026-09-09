@@ -66,28 +66,41 @@ local function Capture(map, obj)
 		stats.capture_ms = stats.capture_ms + ticks() - started
 		return
 	end
+	-- Bounds and visual pose cannot change during this non-yielding capture.
+	local min_x, min_y = bounds:minx(), bounds:miny()
+	local size_x, size_y = bounds:sizex(), bounds:sizey()
+	local visual_x, visual_y, visual_z = visual:x(), visual:y(), visual:z()
+	local min_z, max_z = bounds:minz(), bounds:maxz()
+	local ray_bottom, ray_top = min_z - tile, max_z + tile
+	local minimum_source_hit = source_z + (ray_bottom - visual_z)
 	local count = math.min(9, math.max(3,
-		math.ceil(math.max(bounds:sizex(), bounds:sizey()) / (4.0 * tile))))
+		math.ceil(math.max(size_x, size_y) / (4.0 * tile))))
+	local ys = {}
+	for iy = 1, count do
+		ys[iy] = min_y + math.floor(size_y * (iy + 0.0) / (count + 1) + 0.5)
+	end
 	local samples = {}
 	for ix = 1, count do
-		local x = bounds:minx() + math.floor(bounds:sizex() * (ix + 0.0) / (count + 1) + 0.5)
+		local x = min_x + math.floor(size_x * (ix + 0.0) / (count + 1) + 0.5)
 		for iy = 1, count do
-			local y = bounds:miny() + math.floor(bounds:sizey() * (iy + 0.0) / (count + 1) + 0.5)
+			local y = ys[iy]
 			local ground
 			if InBounds(x, y, context.source_width, context.source_height) then
 				ground = terrain_api.GetHeight(context.source_map, point_fn(x, y))
 				stats.probes = stats.probes + 1
 			end
-			if ground and ground > source_z + tile then
-				local hit = obj:IntersectSegment(point_fn(x, y, bounds:minz() - tile),
-					point_fn(x, y, bounds:maxz() + tile))
+			-- No intersection within the original segment can be below its lower end.
+			-- If even that end was unsupported, this column cannot yield a native contact.
+			if ground and ground > source_z + tile and ground >= minimum_source_hit then
+				local hit = obj:IntersectSegment(point_fn(x, y, ray_bottom),
+					point_fn(x, y, ray_top))
 				stats.rays = stats.rays + 1
 				if hit then
-					local dz = hit:z() - visual:z()
+					local dz = hit:z() - visual_z
 					-- Preserve only points that were supported in vanilla. An intentionally exposed
 					-- underside is not a reason to bury the entire formation after expansion.
 					if dz > tile and source_z + dz <= ground then
-						samples[#samples + 1] = { dx = x - visual:x(), dy = y - visual:y(), dz = dz }
+						samples[#samples + 1] = { dx = x - visual_x, dy = y - visual_y, dz = dz }
 					end
 				end
 			end
@@ -95,7 +108,7 @@ local function Capture(map, obj)
 	end
 	if #samples > 0 then
 		context.objects[obj] = { scale = obj:GetScale(), angle = obj:GetAngle(),
-			axis = obj:GetAxis(), top = bounds:maxz() - visual:z(), samples = samples }
+			axis = obj:GetAxis(), top = max_z - visual_z, samples = samples }
 		stats.contacts = stats.contacts + #samples
 	end
 	stats.capture_ms = stats.capture_ms + ticks() - started
