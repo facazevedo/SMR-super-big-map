@@ -1187,3 +1187,62 @@ Evidence: `_ralph/runs/manual-mask-crease-rock/artifacts/` contains `v965_result
 legacy-fixture extraction/source-certificate failures remain separately preserved.
 Current median113.024s: **70s not reached**. Rock capture is the last requested unit;
 it remains isolated pending its own implementation and acceptance. No Ralph loop.
+
+## 2026-09-09 - rock-capture trial rejected; three-unit session complete
+
+Experimental `3c03de4` (v967/guard283) cached immutable rock bounds/visual coordinates
+and rejected only rays whose original segment could not yield supported contact.
+Individual grounding Apply was byte-for-byte unchanged. All65 offline commands and
+allten rules in five scenarios passed, with identical complete terrain, placements,
+grounding and ordinary/private RNG. This correctness pass is not a speedup signoff.
+
+| Reference | START-to-T1 A / B / C | Median |
+|---|---|---:|
+| accepted v966 |113.284 /113.024 /111.262s|113.024s|
+| v967 trial |112.006 /112.143 /113.642s|112.143s|
+
+Initial observed reduction0.881s. Fresh native control30.103s. However, actual rock
+capture counter median only improved2478->2437ms (41ms). The offline fixture removed
+many scalar getter calls, but the real map saved only37 of29309 total rock-ray calls;
+contacts6342 and lowered rocks160 remained identical.
+
+| Scenario | v966 | v967 trial | All ten rules / full predecessor outputs |
+|---|---:|---:|---|
+|15S67E|113.639s|112.338s|PASS / identical|
+|24S74W|111.015s|112.461s|PASS / identical|
+|45S120W|103.324s|109.202s|PASS / identical|
+|61N136W|164.813s|170.052s|PASS / identical|
+|17S11W|110.645s|113.678s|PASS / identical|
+
+The slower later samples prompted two predeclared fresh45S repeats:106.792/108.099s.
+All samples were retained. A subsequent contemporaneous A/B/A/B comparison used the
+last candidate repeat, a detached accepted-v966 baseline, candidate, then baseline:
+
+| Order | Payload | START-to-T1 |
+|---|---|---:|
+|A1|v967|108.099s|
+|B1|v966|107.414s|
+|A2|v967|105.219s|
+|B2|v966|104.996s|
+
+Candidate mean106.659s versus predecessor106.205s: **0.454s slower**, not a confirmed
+gain. Both payloads varied, and fresh v966 also exceeded its historic103.324s. This
+does not establish a causal rock regression, but it fails to establish the reliable
+improvement required to keep this experiment. All bracket outputs/gates matched and
+all processes exited normally; the real source checkout was audited at every switch.
+
+Decision: **rejected and reverted** via `10f34e3`. Runtime payload restored to accepted
+v966/guard282, identical in Git content to `56b8a1f`;38/38 local-mod files audited.
+The removed candidate and its test remain recoverable at `3c03de4`. Full evidence is
+retained under `_ralph/runs/manual-mask-crease-rock/artifacts/`: `v967_result.md`,
+`v967_reference`, `v967_matrix`, `v967_offline`, `v967_all_ten_rules_review.json`,
+`v967_45_repeat_b/c`, `rock_bracket45/review.json`, and `restoration_review.json`.
+The final restored state is rechecked under `v966_restored_offline`; no new cold
+benchmark is claimed for the revert itself. The detached baseline checkout is retained
+only as reproducible test evidence, not deployed.
+
+Session outcome: **two kept, one rejected**. Accepted reference median
+**114.612s ->113.024s**, observed retained saving1.588s. The mask share0.100s remains
+marginal and within variation. Allten rules across five scenarios, exact previous
+terrain/placements/grounding and temporary buttons are preserved. **70s not reached.**
+This finite manual session ends here; no automatic next optimization or Ralph loop.

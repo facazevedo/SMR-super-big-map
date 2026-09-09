@@ -1,0 +1,21 @@
+{
+  "restoration_commit": "10f34e3b2b93214fb4530f7f345661840127abb7",
+  "version": 966,
+  "identical_accepted_production_commit": "56b8a1fa9fc75c71e633f63003033189d1330714",
+  "offline_commands_passed": 64,
+  "accepted_five_site_review": "v966_all_ten_rules_review.json",
+  "deployment": {
+    "source": "D:\\PROJS\\SMR\\super-big-map",
+    "destination": "C:\\Users\\fazevedo\\AppData\\Roaming\\Surviving Mars Relaunched\\Mods\\super-big-map",
+    "source_files": 38,
+    "destination_files": 38,
+    "missing_in_destination": [],
+    "stale_in_destination": [],
+    "content_mismatch": [],
+    "ok": true
+  },
+  "no_game_running": true,
+  "accepted_reference_median_s": 113.024,
+  "rejected_experiment_commit": "3c03de43bd00771d99026701d0095b6993ad5525",
+  "qualification": "No new cold timing claimed for the revert; production matches the accepted v966 Git content exactly."
+}

@@ -1,0 +1,10 @@
+{
+  "command": [
+    "lua",
+    "_ralph/tools/parity/rock_capture_cache_test.lua"
+  ],
+  "exit": 1,
+  "seconds": 0.2327854000031948,
+  "stdout": "",
+  "stderr": "lua: _ralph/tools/parity/rock_capture_cache_test.lua:7: capture did not remove repeated bounding-box calls\nstack traceback:\n\t[C]: in function 'assert'\n\t_ralph/tools/parity/rock_capture_cache_test.lua:7: in local 'check'\n\t_ralph/tools/parity/rock_capture_cache_test.lua:75: in main chunk\n\t[C]: in ?\n"
+}

@@ -1,0 +1,73 @@
+{
+  "code_commit": "3c03de43bd00771d99026701d0095b6993ad5525",
+  "version": "967",
+  "offline_commands_passed": 65,
+  "benchmark_median_s": 112.143,
+  "prior_median_s": 113.024,
+  "saving_s": 0.8810000000000002,
+  "source_review": "v967_source_review.md",
+  "deployment": {
+    "source": "D:\\PROJS\\SMR\\super-big-map",
+    "destination": "C:\\Users\\fazevedo\\AppData\\Roaming\\Surviving Mars Relaunched\\Mods\\super-big-map",
+    "source_files": 38,
+    "destination_files": 38,
+    "missing_in_destination": [],
+    "stale_in_destination": [],
+    "content_mismatch": [],
+    "ok": true
+  },
+  "unique_acceptance_processes": 9,
+  "scenarios": [
+    {
+      "site": "15S67E",
+      "all_ten": "pass",
+      "automated_gates": "8/8 pass",
+      "seed_parity_review": "Exact predecessor/private streams plus separate primary-agent source/RNG review.",
+      "process_review": "Immutable committed payload, prelaunch audit, unique owned process, complete capture and normal shutdown.",
+      "visual_review": "Inherited accepted visual evidence through identical full outputs; no new screenshot claim.",
+      "t0_to_t1_s": 112.338,
+      "prior_t0_to_t1_s": 113.639
+    },
+    {
+      "site": "24S74W",
+      "all_ten": "pass",
+      "automated_gates": "8/8 pass",
+      "seed_parity_review": "Exact predecessor/private streams plus separate primary-agent source/RNG review.",
+      "process_review": "Immutable committed payload, prelaunch audit, unique owned process, complete capture and normal shutdown.",
+      "visual_review": "Inherited accepted visual evidence through identical full outputs; no new screenshot claim.",
+      "t0_to_t1_s": 112.461,
+      "prior_t0_to_t1_s": 111.015
+    },
+    {
+      "site": "45S120W",
+      "all_ten": "pass",
+      "automated_gates": "8/8 pass",
+      "seed_parity_review": "Exact predecessor/private streams plus separate primary-agent source/RNG review.",
+      "process_review": "Immutable committed payload, prelaunch audit, unique owned process, complete capture and normal shutdown.",
+      "visual_review": "Inherited accepted visual evidence through identical full outputs; no new screenshot claim.",
+      "t0_to_t1_s": 109.202,
+      "prior_t0_to_t1_s": 103.324
+    },
+    {
+      "site": "61N136W",
+      "all_ten": "pass",
+      "automated_gates": "8/8 pass",
+      "seed_parity_review": "Exact predecessor/private streams plus separate primary-agent source/RNG review.",
+      "process_review": "Immutable committed payload, prelaunch audit, unique owned process, complete capture and normal shutdown.",
+      "visual_review": "Inherited accepted visual evidence through identical full outputs; no new screenshot claim.",
+      "t0_to_t1_s": 170.052,
+      "prior_t0_to_t1_s": 164.813
+    },
+    {
+      "site": "17S11W",
+      "all_ten": "pass",
+      "automated_gates": "8/8 pass",
+      "seed_parity_review": "Exact predecessor/private streams plus separate primary-agent source/RNG review.",
+      "process_review": "Immutable committed payload, prelaunch audit, unique owned process, complete capture and normal shutdown.",
+      "visual_review": "Inherited accepted visual evidence through identical full outputs; no new screenshot claim.",
+      "t0_to_t1_s": 113.678,
+      "prior_t0_to_t1_s": 110.645
+    }
+  ],
+  "raw_judgments_unchanged": true
+}

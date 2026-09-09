@@ -1,0 +1,365 @@
+{
+  "order": "A/B/A/B; A=v967, B=v966",
+  "runs": [
+    {
+      "path": "D:\\PROJS\\SMR\\super-big-map\\_ralph\\runs\\manual-mask-crease-rock\\artifacts\\v967_45_repeat_c\\45s120w_a",
+      "checkpoint": {
+        "commit": "3c03de43bd00771d99026701d0095b6993ad5525",
+        "version": "967",
+        "payload_audited_before_launch": true,
+        "expanded": "on",
+        "exact_twin": "D:\\PROJS\\SMR\\super-big-map\\_ralph\\runs\\manual-mask-crease-rock\\artifacts\\v966_matrix\\45s120w_a"
+      },
+      "identity": {
+        "pid": 43316,
+        "exe": "C:\\Games\\Surviving Mars Relaunched\\MarsDebug.exe",
+        "port": 8165,
+        "log": "D:\\PROJS\\SMR\\smr-harness\\logs\\daemon-20260909-214936.log",
+        "crash_dir": "D:\\PROJS\\SMR\\smr-harness\\.state\\game-crashes\\20260909-214936-18d3c57380e56b7c",
+        "incident_id": "20260909-214936-18d3c57380e56b7c",
+        "artifact_root": "D:\\PROJS\\SMR\\smr-harness\\logs",
+        "ralph_workspace": null,
+        "cmdline": [
+          "C:\\Games\\Surviving Mars Relaunched\\MarsDebug.exe",
+          "-nointro",
+          "-no_interactive_asserts",
+          "-stdout",
+          "-crash_folder",
+          "D:\\PROJS\\SMR\\smr-harness\\.state\\game-crashes\\20260909-214936-18d3c57380e56b7c",
+          "-hidden"
+        ],
+        "window": "hidden",
+        "breakaway_from_job": true,
+        "started_utc": "2026-09-09T21:49:36Z",
+        "process_started_utc": "2026-09-09T21:49:36.872Z",
+        "process_creation_filetime": 134334641768723272
+      },
+      "pair": {
+        "verdict": "pass",
+        "differences": [],
+        "note": "Runtime parity only; engine-RNG source audit is separate.",
+        "full_snapshot_differences": [],
+        "rock_grounding_differences": []
+      },
+      "gates": {
+        "seed-parity": {
+          "verdict": "pending",
+          "details": [
+            "requires paired-run comparison and RNG source audit"
+          ]
+        },
+        "entrances-glued": {
+          "verdict": "pass",
+          "details": []
+        },
+        "entrances-not-in-ring": {
+          "verdict": "pass",
+          "details": []
+        },
+        "ring-content": {
+          "verdict": "pass",
+          "details": []
+        },
+        "single-start-reveal": {
+          "verdict": "pass",
+          "details": []
+        },
+        "badges-pre-reveal": {
+          "verdict": "pass",
+          "details": []
+        },
+        "decor-rules": {
+          "verdict": "pass",
+          "details": []
+        },
+        "no-errors": {
+          "verdict": "pass",
+          "details": []
+        },
+        "process": {
+          "verdict": "pending",
+          "details": [
+            "requires checkpoint/deployment provenance review"
+          ]
+        },
+        "underground-first-access": {
+          "verdict": "pass",
+          "details": []
+        }
+      },
+      "t0_to_t1_s": 108.099,
+      "capture_ms": 4096
+    },
+    {
+      "path": "D:\\PROJS\\SMR\\super-big-map\\_ralph\\runs\\manual-mask-crease-rock\\artifacts\\rock_bracket45\\baseline_b1",
+      "checkpoint": {
+        "commit": "56b8a1fa9fc75c71e633f63003033189d1330714",
+        "version": "966",
+        "source_workspace": "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tmp\\mask_crease_rock_20260909\\baseline_worktree",
+        "payload_audited_before_launch": true,
+        "expanded": "on"
+      },
+      "identity": {
+        "pid": 82268,
+        "exe": "C:\\Games\\Surviving Mars Relaunched\\MarsDebug.exe",
+        "port": 8165,
+        "log": "D:\\PROJS\\SMR\\smr-harness\\logs\\daemon-20260909-215354.log",
+        "crash_dir": "D:\\PROJS\\SMR\\smr-harness\\.state\\game-crashes\\20260909-215354-18d3c5af78858c00",
+        "incident_id": "20260909-215354-18d3c5af78858c00",
+        "artifact_root": "D:\\PROJS\\SMR\\smr-harness\\logs",
+        "ralph_workspace": null,
+        "cmdline": [
+          "C:\\Games\\Surviving Mars Relaunched\\MarsDebug.exe",
+          "-nointro",
+          "-no_interactive_asserts",
+          "-stdout",
+          "-crash_folder",
+          "D:\\PROJS\\SMR\\smr-harness\\.state\\game-crashes\\20260909-215354-18d3c5af78858c00",
+          "-hidden"
+        ],
+        "window": "hidden",
+        "breakaway_from_job": true,
+        "started_utc": "2026-09-09T21:53:54Z",
+        "process_started_utc": "2026-09-09T21:53:54.430Z",
+        "process_creation_filetime": 134334644344302119
+      },
+      "pair": {
+        "verdict": "pass",
+        "differences": [],
+        "note": "Runtime parity only; engine-RNG source audit is separate.",
+        "full_snapshot_differences": [],
+        "rock_grounding_differences": []
+      },
+      "gates": {
+        "seed-parity": {
+          "verdict": "pending",
+          "details": [
+            "requires paired-run comparison and RNG source audit"
+          ]
+        },
+        "entrances-glued": {
+          "verdict": "pass",
+          "details": []
+        },
+        "entrances-not-in-ring": {
+          "verdict": "pass",
+          "details": []
+        },
+        "ring-content": {
+          "verdict": "pass",
+          "details": []
+        },
+        "single-start-reveal": {
+          "verdict": "pass",
+          "details": []
+        },
+        "badges-pre-reveal": {
+          "verdict": "pass",
+          "details": []
+        },
+        "decor-rules": {
+          "verdict": "pass",
+          "details": []
+        },
+        "no-errors": {
+          "verdict": "pass",
+          "details": []
+        },
+        "process": {
+          "verdict": "pending",
+          "details": [
+            "requires checkpoint/deployment provenance review"
+          ]
+        },
+        "underground-first-access": {
+          "verdict": "pass",
+          "details": []
+        }
+      },
+      "t0_to_t1_s": 107.414,
+      "capture_ms": 4374
+    },
+    {
+      "path": "D:\\PROJS\\SMR\\super-big-map\\_ralph\\runs\\manual-mask-crease-rock\\artifacts\\rock_bracket45\\candidate_a2\\45s120w_a",
+      "checkpoint": {
+        "commit": "3c03de43bd00771d99026701d0095b6993ad5525",
+        "version": "967",
+        "payload_audited_before_launch": true,
+        "expanded": "on",
+        "exact_twin": "D:\\PROJS\\SMR\\super-big-map\\_ralph\\runs\\manual-mask-crease-rock\\artifacts\\v966_matrix\\45s120w_a"
+      },
+      "identity": {
+        "pid": 75660,
+        "exe": "C:\\Games\\Surviving Mars Relaunched\\MarsDebug.exe",
+        "port": 8165,
+        "log": "D:\\PROJS\\SMR\\smr-harness\\logs\\daemon-20260909-215714.log",
+        "crash_dir": "D:\\PROJS\\SMR\\smr-harness\\.state\\game-crashes\\20260909-215714-18d3c5de06eab03c",
+        "incident_id": "20260909-215714-18d3c5de06eab03c",
+        "artifact_root": "D:\\PROJS\\SMR\\smr-harness\\logs",
+        "ralph_workspace": null,
+        "cmdline": [
+          "C:\\Games\\Surviving Mars Relaunched\\MarsDebug.exe",
+          "-nointro",
+          "-no_interactive_asserts",
+          "-stdout",
+          "-crash_folder",
+          "D:\\PROJS\\SMR\\smr-harness\\.state\\game-crashes\\20260909-215714-18d3c5de06eab03c",
+          "-hidden"
+        ],
+        "window": "hidden",
+        "breakaway_from_job": true,
+        "started_utc": "2026-09-09T21:57:14Z",
+        "process_started_utc": "2026-09-09T21:57:14.387Z",
+        "process_creation_filetime": 134334646343873859
+      },
+      "pair": {
+        "verdict": "pass",
+        "differences": [],
+        "note": "Runtime parity only; engine-RNG source audit is separate.",
+        "full_snapshot_differences": [],
+        "rock_grounding_differences": []
+      },
+      "gates": {
+        "seed-parity": {
+          "verdict": "pending",
+          "details": [
+            "requires paired-run comparison and RNG source audit"
+          ]
+        },
+        "entrances-glued": {
+          "verdict": "pass",
+          "details": []
+        },
+        "entrances-not-in-ring": {
+          "verdict": "pass",
+          "details": []
+        },
+        "ring-content": {
+          "verdict": "pass",
+          "details": []
+        },
+        "single-start-reveal": {
+          "verdict": "pass",
+          "details": []
+        },
+        "badges-pre-reveal": {
+          "verdict": "pass",
+          "details": []
+        },
+        "decor-rules": {
+          "verdict": "pass",
+          "details": []
+        },
+        "no-errors": {
+          "verdict": "pass",
+          "details": []
+        },
+        "process": {
+          "verdict": "pending",
+          "details": [
+            "requires checkpoint/deployment provenance review"
+          ]
+        },
+        "underground-first-access": {
+          "verdict": "pass",
+          "details": []
+        }
+      },
+      "t0_to_t1_s": 105.219,
+      "capture_ms": 4114
+    },
+    {
+      "path": "D:\\PROJS\\SMR\\super-big-map\\_ralph\\runs\\manual-mask-crease-rock\\artifacts\\rock_bracket45\\baseline_b2",
+      "checkpoint": {
+        "commit": "56b8a1fa9fc75c71e633f63003033189d1330714",
+        "version": "966",
+        "source_workspace": "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tmp\\mask_crease_rock_20260909\\baseline_worktree",
+        "payload_audited_before_launch": true,
+        "expanded": "on"
+      },
+      "identity": {
+        "pid": 83584,
+        "exe": "C:\\Games\\Surviving Mars Relaunched\\MarsDebug.exe",
+        "port": 8165,
+        "log": "D:\\PROJS\\SMR\\smr-harness\\logs\\daemon-20260909-220031.log",
+        "crash_dir": "D:\\PROJS\\SMR\\smr-harness\\.state\\game-crashes\\20260909-220031-18d3c60c030ee978",
+        "incident_id": "20260909-220031-18d3c60c030ee978",
+        "artifact_root": "D:\\PROJS\\SMR\\smr-harness\\logs",
+        "ralph_workspace": null,
+        "cmdline": [
+          "C:\\Games\\Surviving Mars Relaunched\\MarsDebug.exe",
+          "-nointro",
+          "-no_interactive_asserts",
+          "-stdout",
+          "-crash_folder",
+          "D:\\PROJS\\SMR\\smr-harness\\.state\\game-crashes\\20260909-220031-18d3c60c030ee978",
+          "-hidden"
+        ],
+        "window": "hidden",
+        "breakaway_from_job": true,
+        "started_utc": "2026-09-09T22:00:31Z",
+        "process_started_utc": "2026-09-09T22:00:31.891Z",
+        "process_creation_filetime": 134334648318911492
+      },
+      "pair": {
+        "verdict": "pass",
+        "differences": [],
+        "note": "Runtime parity only; engine-RNG source audit is separate.",
+        "full_snapshot_differences": [],
+        "rock_grounding_differences": []
+      },
+      "gates": {
+        "seed-parity": {
+          "verdict": "pending",
+          "details": [
+            "requires paired-run comparison and RNG source audit"
+          ]
+        },
+        "entrances-glued": {
+          "verdict": "pass",
+          "details": []
+        },
+        "entrances-not-in-ring": {
+          "verdict": "pass",
+          "details": []
+        },
+        "ring-content": {
+          "verdict": "pass",
+          "details": []
+        },
+        "single-start-reveal": {
+          "verdict": "pass",
+          "details": []
+        },
+        "badges-pre-reveal": {
+          "verdict": "pass",
+          "details": []
+        },
+        "decor-rules": {
+          "verdict": "pass",
+          "details": []
+        },
+        "no-errors": {
+          "verdict": "pass",
+          "details": []
+        },
+        "process": {
+          "verdict": "pending",
+          "details": [
+            "requires checkpoint/deployment provenance review"
+          ]
+        },
+        "underground-first-access": {
+          "verdict": "pass",
+          "details": []
+        }
+      },
+      "t0_to_t1_s": 104.996,
+      "capture_ms": 4345
+    }
+  ],
+  "candidate_mean_s": 106.65899999999999,
+  "baseline_mean_s": 106.205,
+  "saving_s": -0.4539999999999935,
+  "current_payload_restored": true
+}
