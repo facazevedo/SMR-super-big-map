@@ -24,11 +24,23 @@ end
 
 local function BeginCapture(map, source_map)
 	if not Enabled() then captures[map] = nil;map.SuperBigMapRockGroundingStats = nil;return end
+	local width, height = map:GetMapSize()
+	local tile = Global("const").HeightTileSize
+	local source_width = map.SuperBigMapSourceWidthTiles or map.SuperBigMapGeneratorWidthTiles
+	local source_height = map.SuperBigMapSourceHeightTiles or map.SuperBigMapGeneratorHeightTiles
+	local native_width, native_height = (source_map or map):GetMapSize()
 	local stats = { eligible = 0, probes = 0, rays = 0, contacts = 0, lowered = 0,
 		unchanged = 0, max_lowering = 0, total_lowering = 0, failures = 0,
 		capture_ms = 0, apply_ms = 0 }
 	map.SuperBigMapRockGroundingStats = stats
-	captures[map] = { source_map = source_map or map, objects = {}, stats = stats }
+	captures[map] = { source_map = source_map or map, objects = {}, stats = stats,
+		width = width, height = height,
+		source_width = source_width and source_width * tile or native_width,
+		source_height = source_height and source_height * tile or native_height }
+end
+
+local function InBounds(x, y, width, height)
+	return x >= 0 and y >= 0 and x < width and y < height
 end
 
 local function Capture(map, obj)
@@ -61,9 +73,12 @@ local function Capture(map, obj)
 		local x = bounds:minx() + math.floor(bounds:sizex() * (ix + 0.0) / (count + 1) + 0.5)
 		for iy = 1, count do
 			local y = bounds:miny() + math.floor(bounds:sizey() * (iy + 0.0) / (count + 1) + 0.5)
-			local ground = terrain_api.GetHeight(context.source_map, point_fn(x, y))
-			stats.probes = stats.probes + 1
-			if ground > source_z + tile then
+			local ground
+			if InBounds(x, y, context.source_width, context.source_height) then
+				ground = terrain_api.GetHeight(context.source_map, point_fn(x, y))
+				stats.probes = stats.probes + 1
+			end
+			if ground and ground > source_z + tile then
 				local hit = obj:IntersectSegment(point_fn(x, y, bounds:minz() - tile),
 					point_fn(x, y, bounds:maxz() + tile))
 				stats.rays = stats.rays + 1
@@ -112,7 +127,9 @@ local function Apply(map, obj, terrain_z_scale, xy_scale)
 		local x = pos:x() + math.floor(sample.dx * ratio + 0.5)
 		local y = pos:y() + math.floor(sample.dy * ratio + 0.5)
 		local bottom = pos:z() + math.floor(sample.dz * ratio + 0.5)
-		lower = math.max(lower, bottom - terrain_api.GetHeight(map, point_fn(x, y)))
+		if InBounds(x, y, context.width, context.height) then
+			lower = math.max(lower, bottom - terrain_api.GetHeight(map, point_fn(x, y)))
+		end
 	end
 	-- Sub-tile gaps can be native resampling/mesh quantization. Leave those rocks untouched.
 	if lower > Global("const").HeightTileSize then
@@ -131,10 +148,12 @@ local function Apply(map, obj, terrain_z_scale, xy_scale)
 				local x = bounds:minx() + math.floor(bounds:sizex() * (ix + 0.0) / 10 + 0.5)
 				for iy = 1, 9 do
 					local y = bounds:miny() + math.floor(bounds:sizey() * (iy + 0.0) / 10 + 0.5)
-					local hit = obj:IntersectSegment(point_fn(x,y,bounds:minz()-tile),
-						point_fn(x,y,bounds:maxz()+tile))
-					stats.rays = stats.rays + 1
-					if hit then exposed = math.max(exposed,hit:z()-terrain_api.GetHeight(map,point_fn(x,y))) end
+					if InBounds(x, y, context.width, context.height) then
+						local hit = obj:IntersectSegment(point_fn(x,y,bounds:minz()-tile),
+							point_fn(x,y,bounds:maxz()+tile))
+						stats.rays = stats.rays + 1
+						if hit then exposed = math.max(exposed,hit:z()-terrain_api.GetHeight(map,point_fn(x,y))) end
+					end
 					if exposed >= surplus then break end
 				end
 				if exposed >= surplus then break end

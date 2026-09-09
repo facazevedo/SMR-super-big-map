@@ -756,3 +756,7 @@ Artifacts: `_ralph/runs/manual-rock-grounding/artifacts/`. The hot-reload attemp
 the cached v955 code list and was replaced by a clean launch. Two diagnostic strict-global
 messages came from the temporary reproduction helper, not production; that helper is fixed
 and those runs are excluded from no-errors acceptance. Ralph remains stopped.
+
+v957 adds explicit source/destination contact-domain bounds, so terrain values beyond the
+physical map edge cannot trigger lowering. The initial v95615S A run is retained separately;
+the final five-site matrix restarts on the bounded-contact checkpoint. No rule is waived.

@@ -22,7 +22,7 @@ local tests=0
 local function check(value,msg) assert(value,msg);tests=tests+1 end
 local function scene(options)
 	options=options or {}
-	local map={height=function() return 10000 end}
+	local map={height=function() return 10000 end,GetMapSize=function() return 100000,100000 end}
 	local o={pos=pt(5000,6000,8000),scale=100,angle=321,axis=pt(1,2,3),entity='GenericRock',
 		bottom=10000,moves=0}
 	function o:GetPos() return self.pos end
@@ -95,6 +95,7 @@ check(lowered==nil and reason and o.moves==0,'changed pose must fail without mov
 map,o=scene({glued=true,visual=pt(5000,6000,20000),bottom=22000})
 function o:IntersectSegment(low,high) return pt(low:x(),low:y(),self:GetVisualPos():z()+2000*self.scale/100) end
 local source={height=function(p) if p:x()==5000 and p:y()==6000 then return 10000 end;return 13000 end}
+source.GetMapSize=map.GetMapSize
 map.height=function() return 20000 end
 capture(map,o,source)
 o.glued=false;o.pos=pt(6667,8000,20000);o.scale=133
@@ -106,6 +107,22 @@ function o:IntersectSegment(low,high) return pt(low:x(),low:y(),14000) end
 check(G.Apply(map,o,1)==1320,'extra seating must be bounded by this mesh surplus height')
 check(o.SuperBigMapRockGroundingLostSupportLowering==660,'native support trigger remains independently visible')
 check(o.SuperBigMapRockGroundingMeshZSurplus==1320,'extra seating cap is geometric')
+
+map,o=scene()
+map.GetMapSize=function() return 5500,6500 end
+map.SuperBigMapSourceWidthTiles=53
+map.SuperBigMapSourceHeightTiles=63
+map.height=function(p)
+	assert(p:x()>=0 and p:y()>=0 and p:x()<5300 and p:y()<6300,'native contact outside source domain')
+	return 10000
+end
+capture(map,o)
+o.scale=133
+map.height=function(p)
+	assert(p:x()>=0 and p:y()>=0 and p:x()<5500 and p:y()<6500,'destination contact outside map')
+	return 10000
+end
+check(G.Apply(map,o,1)==660,'clipped footprints must never query off-map support')
 
 map,o=scene();capture(map,o);G.Clear(map);o.scale=133
 check(G.Apply(map,o,1)==0 and o.moves==0,'clear releases native capture')
