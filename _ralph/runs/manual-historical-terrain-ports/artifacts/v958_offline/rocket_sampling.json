@@ -1,0 +1,10 @@
+{
+  "command": [
+    "lua",
+    "_ralph/tools/parity/rocket_sampling_test.lua"
+  ],
+  "exit": 0,
+  "seconds": 0.43981720006559044,
+  "stdout": "rocket sampling: 81267 checks passed\n",
+  "stderr": ""
+}

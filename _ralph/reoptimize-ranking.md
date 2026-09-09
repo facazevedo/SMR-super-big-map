@@ -804,3 +804,64 @@ same XY/scale/rotation and ground height, all12 sampled native supports retained
 eligible rocks changed; no grounding failure. Both original final screenshots were reviewed,
 and the corrected paused G3 scene is left open. Instrumented START->T1 was153.679s, separately
 recorded in `v957_g3_final/report.json`; it is not an accepted cold timing comparison.
+
+## Owner-selected historical ports — 2026-09-09
+
+Current execution order: (1) rocket winner-only relief and terrain-sample caching,
+(2) native mountain-apron blending, (3) faster crease reads/discovery while retaining
+the current wall/spike formulas. This is a finite manual workflow; Ralph remains stopped.
+Use the full `6afbcd9` tree as reference, not its diagnostics-only final commit.
+
+### Rocket sampling — v958 `1159341`, accepted in five scenarios
+
+The exhaustive candidate order, eligibility, ready-state preference, score and strict
+tie break are unchanged. Height samples are cached by exact axial coordinate only
+within one immutable planning invocation; negative results are cached as well. Live
+clearance, pad spacing and readiness are still checked. Surrounding relief does not
+participate in the score and is evaluated only for the selected winner, with a direct
+center-read certificate before publication. Certificate failure is explicit; there is
+no eager fallback. Terrain writes, resource selection, rock grounding and crease
+repairs are unchanged.
+
+Fresh-process 14N134W, identical START-body and T1 boundaries, game/UG seeds:
+
+| Payload | A | B | C | Median | Native control |
+|---|---:|---:|---:|---:|---:|
+| v957 baseline |164.263s|162.198s|161.749s|162.198s|28.751s|
+| v958 rocket sampling |148.226s|149.898s|146.075s|148.226s|28.388s|
+
+Measured median reduction: **13.972s (8.6%)**. All three optimized runs exactly match
+their predecessors' complete Surface/Underground height/pass grids, resource sites,
+rocket pads and corrected-rock transforms, as well as ordinary/private-stream parity.
+All automated rule gates pass, with source/process review kept separate as usual.
+Each run records3,044,234 cache hits,51,474 misses,33,649 viable candidates and12 winners:
+108 relief/certificate reads replace269,192 eager relief reads. All54 existing offline
+commands pass, plus81,267 production-scorer comparison assertions (proven red first).
+Deployed payload audit38/38. All ten rules are GREEN in the five fixed scenarios:
+eight automated gates plus the separate source/RNG and deployment/process review.
+Every new run exactly matches its accepted v957 predecessor's full grids, sites,
+pads, ordinary/private-stream outputs and corrected-rock records. This exact
+equivalence inherits the prior visual acceptance; no new screenshots are claimed.
+
+| Scenario | v957 matched A | v958 | Reduction |
+|---|---:|---:|---:|
+|15S67E|154.529s|147.265s|7.264s|
+|24S74W|149.682s|142.225s|7.457s|
+|45S120W|139.319s|132.770s|6.549s|
+|61N136W|224.104s|199.791s|24.313s|
+|17S11W|149.806s|139.538s|10.268s|
+
+These five are single matched correctness samples, not three-run performance
+medians. The unchanged native path reuses the five accepted v957 controls; the
+14N benchmark includes a fresh v958 native control. No rule is waived.
+
+Evidence: `_ralph/runs/manual-historical-terrain-ports/artifacts/`, especially
+`v958_reference/reference_audit.json`, both reference matrices, `v958_offline/` and
+`v958_matrix/`, `v958_SOURCE_REVIEW.md` and `v958_SIGN_OFF.md`. The post-T1 counter helper initially rejected the
+native control's empty table; that incomplete capture is preserved separately and
+excluded, the helper is corrected, and a fresh control completed successfully.
+
+Native aprons and crease processing have not been changed in the deployed mod yet.
+Apron prototyping retains full-resolution masks and tests rounding equivalence;
+historical mask coarsening, inner-rectangle restoration and unsafe edge feathers are
+not being copied into the current pipeline.
