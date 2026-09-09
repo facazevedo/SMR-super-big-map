@@ -927,17 +927,24 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 
 	local function scan_line_range(row, axis, along, perp0, perp1, edge)
 		if perp1 < perp0 then return end
+		local max_width = wide_ring_only and 1 or 3
+		local v0, a = at(axis, perp0 - 1, along), at(axis, perp0, along)
+		local n1, n2 = at(axis, perp0 + 1, along), at(axis, perp0 + 2, along)
+		local n3, n4
+		if not wide_ring_only then
+			n3, n4 = at(axis, perp0 + 3, along), at(axis, perp0 + 4, along)
+		end
 		for perp = perp0, perp1 do
 			-- Bilinear resampling spreads a one-source-cell step across two destination cells at
 			-- 6144 -> 8192. Inspect spans through three cells so two half-jumps at a resampled
 			-- x=8160/8161 boundary are evaluated as the original coherent discontinuity. Endpoint
 			-- flanks still reject an ordinary sustained slope. On the vanilla-size source pass the
 			-- discontinuity is still one cell wide, so wider probes only waste startup time.
-			local max_width = wide_ring_only and 1 or 3
 			for width = 1, max_width do
-				local v0, a = at(axis, perp - 1, along), at(axis, perp, along)
-				local b, v3 = at(axis, perp + width, along),
-					at(axis, perp + width + 1, along)
+				local b, v3
+				if width == 1 then b, v3 = n1, n2
+				elseif width == 2 then b, v3 = n2, n3
+				else b, v3 = n3, n4 end
 				if type(v0) == "number" and type(a) == "number" and type(b) == "number"
 					and type(v3) == "number" then
 					local jump = math.abs(b - a)
@@ -954,6 +961,13 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 						offer_candidate(row, axis, perp, width, edge, low_before, jump)
 					end
 				end
+			end
+			-- Samples are local to this read-only invocation. The next refinement call
+			-- observes any height writes made by a previously repaired track.
+			if perp < perp1 then
+				v0, a, n1 = a, n1, n2
+				if wide_ring_only then n2 = at(axis, perp + 3, along)
+				else n2, n3, n4 = n3, n4, at(axis, perp + 5, along) end
 			end
 		end
 	end
@@ -1027,15 +1041,23 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		local lo = math.max(1, predicted - 6)
 		local hi = math.min(track.perp_n - 3, predicted + 6)
 		local best_perp, best_width, best_distance, best_jump
+		if hi < lo then return nil, nil end
+		local max_width = wide_ring_only and 1 or 3
+		local v0, a = at(track.axis, lo - 1, along), at(track.axis, lo, along)
+		local n1, n2 = at(track.axis, lo + 1, along), at(track.axis, lo + 2, along)
+		local n3, n4
+		if not wide_ring_only then
+			n3, n4 = at(track.axis, lo + 3, along), at(track.axis, lo + 4, along)
+		end
 		for perp = lo, hi do
 			-- Source discovery admits only the real one-cell discontinuity.  Allowing the
 			-- validation pass to widen it to three cells moved the recorded edge outward and
 			-- caused every later source-qualified repair to leave the actual wall untouched.
-			local max_width = wide_ring_only and 1 or 3
 			for width = 1, max_width do
-				local v0, a = at(track.axis, perp - 1, along), at(track.axis, perp, along)
-				local b, v3 = at(track.axis, perp + width, along),
-					at(track.axis, perp + width + 1, along)
+				local b, v3
+				if width == 1 then b, v3 = n1, n2
+				elseif width == 2 then b, v3 = n2, n3
+				else b, v3 = n3, n4 end
 				if type(v0) == "number" and type(a) == "number" and type(b) == "number"
 					and type(v3) == "number" then
 					local low_before = a < b
@@ -1056,6 +1078,13 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 						best_distance, best_jump = distance, jump
 					end
 				end
+			end
+			-- Samples are local to this read-only invocation. The next refinement call
+			-- observes any height writes made by a previously repaired track.
+			if perp < hi then
+				v0, a, n1 = a, n1, n2
+				if wide_ring_only then n2 = at(track.axis, perp + 3, along)
+				else n2, n3, n4 = n3, n4, at(track.axis, perp + 5, along) end
 			end
 		end
 		return best_perp, best_width
