@@ -1011,3 +1011,41 @@ Evidence: `_ralph/runs/manual-rocket-pruning/artifacts/`, especially
 
 **The 70s target is not reached:** the accepted median is now 133.666s. This manual
 unit is complete; no additional optimization or unattended loop has been started.
+
+## 2026-09-09 - v962 native crease discovery accepted (first of three requested units)
+
+Production commit `691f900`, v962/guard278. Native U16/F32 predicates identify a
+read-only superset; unchanged scalar acceptance, ordering, live refinement and
+repair formulas handle those candidates. No wall/spike geometry, terrain masks,
+placements, RNG, rock grounding, temporary buttons or rebuild schedule changed.
+
+| Payload | 14N134W A | B | C | Median |
+|---|---:|---:|---:|---:|
+|v961|135.919s|132.839s|133.666s|133.666s|
+|v962|115.718s|115.665s|115.259s|115.665s|
+
+Saving: **18.001s (13.5%)**, same START-action T0 and completed-revalidation T1.
+Fresh native control: 28.808s. All three full predecessor/repeat comparisons pass.
+Source scan exports287 candidates from1,787,904 positions; destination exports
+171,387 unique candidates from3,391,488 width probes. No scalar failure fallback.
+
+| Scenario | v961 | v962 | All ten rules / full predecessor outputs |
+|---|---:|---:|---|
+|15S67E|133.102s|115.003s|PASS / identical|
+|24S74W|132.764s|112.088s|PASS / identical|
+|45S120W|122.423s|102.388s|PASS / identical|
+|61N136W|186.110s|164.357s|PASS / identical|
+|17S11W|131.341s|110.710s|PASS / identical|
+
+Scenario timings are single correctness runs, not medians. All59 offline commands
+pass, plus15,768 real-engine scratch checks with zero candidate/order mismatches.
+Eight automatic gates plus separate source/RNG and process review complete allten;
+raw review-only pending fields were not rewritten. Prior sampled visual acceptance
+is inherited only through identical full outputs; no new screenshot claim.
+Nine distinct acceptance processes shut down normally; installed payload38/38 exact.
+
+Evidence: `_ralph/runs/manual-terrain-three/artifacts/v962_reference/`,
+`v962_matrix/`, `v962_offline/`, `native_crease_probe/`,
+`v962_source_review.md`, and `v962_all_ten_rules_review.json`.
+The 70s target remains unmet. The other two owner-requested units are still under
+investigation in this same manual session; no Ralph loop or goal API is running.

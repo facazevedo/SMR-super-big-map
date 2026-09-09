@@ -18,7 +18,9 @@ Baseline artifacts: manual-rocket-pruning/artifacts/v961_reference and v961_matr
 
 ## Current state
 
-Native discovery helper implemented and wired; v962/guard278 checkpoint prepared.
+Native discovery accepted: code691f900, v962/guard278, median115.665s (saving18.001s).
+All59 offline checks and allten rules in five scenarios pass; full outputs exact.
+Next: mask construction shortcuts and a fresh native buildability-input diagnostic.
 Read-only diagnostic on installed v961 completed; owned game closed normally.
 Prior native discovery implementation inspected; do not copy its old unsafe feather
 or silent fallback. Existing scalar refinement stays live after prior track writes.

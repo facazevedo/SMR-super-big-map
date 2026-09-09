@@ -27,5 +27,11 @@ checks remain. The geometry fixture supplies all scalar positions as its read-on
 backend; it still executes original acceptance and full repair. Native backend is
 covered independently and requires exact full cold predecessor outputs.
 
-All 59 offline commands/checks green. Cold evidence pending; this source review is
-not yet a timing acceptance or full all-ten-rules sign-off.
+All59 offline commands/checks green. All nine fresh acceptance processes completed
+normally on immutable691f900/installed38 payload files. Reference median115.665s
+versus133.666s, saving18.001s; all three predecessor/repeat comparisons exact.
+Five scenario comparisons and all eight automatic gates pass. This source/RNG
+proof and the separately verified process provenance complete the two manual
+review gates without rewriting raw judge fields. Full all-ten sign-off is recorded
+in v962_all_ten_rules_review.json. Previous sampled visual acceptance is inherited
+through exact complete outputs; no newly inspected screenshot is claimed.
