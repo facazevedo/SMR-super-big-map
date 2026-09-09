@@ -1,0 +1,1 @@
+{"test":"lua _ralph/tools/parity/outer_mask_shortcuts_test.lua","baseline":"8342ab2","exit":1,"assertion":"constant regions did not remove trigonometry","note":"Exact mask comparisons passed first; required work reduction failed before implementation."}

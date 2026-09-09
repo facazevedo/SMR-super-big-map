@@ -3226,30 +3226,38 @@ local function PrepareOuterResourceTerrain(map)
 						local x = x0 + coarse_x * sample_step
 						local dx, dy = x - patch.cx, y - patch.cy
 						local distance = math.sqrt(dx * dx + dy * dy)
-						local angle = math.atan2 and math.atan2(dy, dx) or 0
-						local ux, uy = 1, 0
-						if distance > 0.0001 then ux, uy = dx / distance, dy / distance end
-						local along_relief = ux * patch.relief_x + uy * patch.relief_y
-						local harmonic = 0.52 * math.sin(3 * angle + patch.phase)
-							+ 0.30 * math.sin(5 * angle - patch.phase * 1.37)
-							+ 0.18 * math.sin(7 * angle + patch.phase * 0.73)
-						local width_scale = 1 + transition_irregularity * harmonic
-							+ 0.12 * (2 * along_relief * along_relief - 1)
-							- 0.06 * along_relief
-						width_scale = math.max(0.50,
-							math.min(maximum_width_scale, width_scale))
-						local outer_radius = patch.core_cells + base_transition * width_scale
 						local weight = 0
 						if distance <= patch.core_cells then
 							weight = 1
-						elseif distance < outer_radius then
-							local t = (distance - patch.core_cells)
-								/ math.max(0.0001, outer_radius - patch.core_cells)
-							t = math.max(0, math.min(1, t))
-							local smooth = t * t * t * (t * (t * 6 - 15) + 10)
-							weight = 1 - smooth
+						elseif distance < radius then
+							-- width_scale is capped at maximum_width_scale, so radius bounds
+							-- every angular lobe. Neither the exact core nor the guaranteed-zero
+							-- exterior needs trigonometry. Keep transition arithmetic unchanged.
+							local angle = math.atan2 and math.atan2(dy, dx) or 0
+							local ux, uy = 1, 0
+							if distance > 0.0001 then ux, uy = dx / distance, dy / distance end
+							local along_relief = ux * patch.relief_x + uy * patch.relief_y
+							local harmonic = 0.52 * math.sin(3 * angle + patch.phase)
+								+ 0.30 * math.sin(5 * angle - patch.phase * 1.37)
+								+ 0.18 * math.sin(7 * angle + patch.phase * 0.73)
+							local width_scale = 1 + transition_irregularity * harmonic
+								+ 0.12 * (2 * along_relief * along_relief - 1)
+								- 0.06 * along_relief
+							width_scale = math.max(0.50,
+								math.min(maximum_width_scale, width_scale))
+							local outer_radius = patch.core_cells + base_transition * width_scale
+							if distance < outer_radius then
+								local t = (distance - patch.core_cells)
+									/ math.max(0.0001, outer_radius - patch.core_cells)
+								t = math.max(0, math.min(1, t))
+								local smooth = t * t * t * (t * (t * 6 - 15) + 10)
+								weight = 1 - smooth
+							end
 						end
 						for _, protected in ipairs(protection_blends) do
+							-- Zero times any finite protection weight remains zero. Stop only
+							-- at exact zero; do not quantize or prune a small nonzero feather.
+							if weight == 0 then break end
 							local px, py = x - protected.cx, y - protected.cy
 							weight = weight * ProtectedTerrainBlendWeight(math.sqrt(px * px + py * py),
 								protected.radius, protected.transition)
