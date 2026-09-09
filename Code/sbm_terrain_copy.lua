@@ -4509,6 +4509,8 @@ local function AnnotateDecorRelief(map, terrain_source_map)
 	local relief_terrain_available = type(terrain_api) == "table"
 		and type(terrain_api.GetHeight) == "function"
 	local relief_terrain_map = terrain_source_map or map
+	local grounding = SuperBigMap.RockGrounding
+	if grounding then grounding.BeginCapture(map, relief_terrain_map) end
 	if type(box_fn) ~= "function" then return 0 end
 	local const_tbl = Global("const")
 	local hts = (type(const_tbl) == "table" and type(const_tbl.HeightTileSize) == "number") and const_tbl.HeightTileSize or 1
@@ -4579,6 +4581,10 @@ local function AnnotateDecorRelief(map, terrain_source_map)
 		local important_object = IsImportantSectorObject(obj)
 		if cache_eligible_objects and not skip_object and not important_object then
 			eligible_objects[#eligible_objects + 1] = obj
+		end
+		if grounding and not skip_object and not important_object then
+			local ground_ok, ground_err = pcall(grounding.Capture, map, obj)
+			if not ground_ok then grounding.Failure(map, ground_err) end
 		end
 		if IsCaveInObject(obj) then
 			local pos = ObjectPosition(obj)
@@ -4788,11 +4794,16 @@ local function AnnotateDecorRelief(map, terrain_source_map)
 		end
 	end
 	LoadingStep("decoration relief capture complete", decor_relief_stats_by_map[map], map)
+	local grounding_stats = map.SuperBigMapRockGroundingStats
+	if grounding_stats and grounding_stats.failures > 0 then
+		OptimizationFailure("native rock contact capture", grounding_stats.first_error, map)
+	end
 	return annotated
 end
 
 local function ClearDecorRelief(map)
 	if map then
+		if SuperBigMap.RockGrounding then SuperBigMap.RockGrounding.Clear(map) end
 		decor_relief_by_map[map] = nil
 		decor_objects_by_map[map] = nil
 		decor_eligible_objects_by_map[map] = nil
@@ -5222,7 +5233,15 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 						SafeCall(obj.SetScale, obj, ns)
 					end
 				end
-				-- Density top-up: chance to add one jittered clone of this decoration nearby.
+				-- Recover decorative rock support before the existing authoritative passability rebuild.
+				local grounding = SuperBigMap.RockGrounding
+				if grounding then
+					local ground_ok, lowered, ground_err = pcall(grounding.Apply, map, obj, z_scale, scale_x)
+					if not ground_ok or lowered == nil then
+						grounding.Failure(map, ground_ok and ground_err or lowered)
+					end
+				end
+				-- Optional legacy clones use their own terrain snap, not the original's correction.
 				if topup_on and rand_fn(1000) < topup_permille then
 					local jx = rand_fn(2 * TOPUP_JITTER + 1) - TOPUP_JITTER
 					local jy = rand_fn(2 * TOPUP_JITTER + 1) - TOPUP_JITTER
@@ -5263,6 +5282,13 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 		pcall(map.ResumePassEdits, map, "SuperBigMapStretchDecor")
 	end
 	local capture = decor_relief_stats_by_map[map] or {}
+	local grounding_stats = map.SuperBigMapRockGroundingStats
+	if grounding_stats then
+		LoadingStep("native rock support grounding complete", grounding_stats, map)
+		if grounding_stats.failures > 0 then
+			OptimizationFailure("native rock support grounding", grounding_stats.first_error, map)
+		end
+	end
 	if audit_on then
 		UndergroundDecorationAudit("PLACEMENT_SUMMARY", {
 			captured_candidates = capture.audit_candidates or 0,

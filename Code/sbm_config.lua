@@ -501,6 +501,9 @@ config.StretchScaleHeights = true
 -- embedding (half-buried stays proportionally half-buried) and absorbs resample smoothing --
 -- the plain SetTerrainZ snap (used as fallback / when off) forces every base onto the surface.
 config.StretchReliefAwareDecor = true
+-- Lower only decorative rocks whose sampled native support was lost because their mesh grows
+-- more in Z than height-capped terrain. Never reshape terrain or resize/rotate gameplay objects.
+config.StretchGroundUnsupportedRocks = true
 -- STAMP OUT-OF-BOX SOURCE OBJECTS (sbm_terrain_copy AnnotateDecorRelief). Native generation puts a
 -- few objects just BEYOND the source rect, and the stretch passes enumerate that rect only, so
 -- those objects are never stamped with their immutable native transform. The surface path is immune
@@ -1098,6 +1101,7 @@ C.STRETCH_MOVE_ENTRANCE_VISUALS = expansion_step_08
 	and as_bool(config.StretchMoveEntranceVisuals)
 C.STRETCH_SCALE_HEIGHTS = as_bool(config.StretchScaleHeights)
 C.STRETCH_RELIEF_AWARE_DECOR = as_bool(config.StretchReliefAwareDecor)
+C.STRETCH_GROUND_UNSUPPORTED_ROCKS = as_bool(config.StretchGroundUnsupportedRocks)
 C.STRETCH_STAMP_OUT_OF_BOX_SOURCES = as_bool(config.StretchStampOutOfBoxSources)
 C.STRETCH_DESPAWN_OUT_OF_BOX_CONTENT = as_bool(config.StretchDespawnOutOfBoxContent)
 C.STRETCH_DECOR_TOPUP = as_bool(config.StretchDecorTopUp)

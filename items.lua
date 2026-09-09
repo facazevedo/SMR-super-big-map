@@ -68,6 +68,10 @@ return {
 		'CodeFileName', "Code/sbm_provenance.lua",
 	}),
 	PlaceObj('ModItemCode', {
+		'name', "sbm_rock_grounding",
+		'CodeFileName', "Code/sbm_rock_grounding.lua",
+	}),
+	PlaceObj('ModItemCode', {
 		'name', "sbm_terrain_copy",
 		'CodeFileName', "Code/sbm_terrain_copy.lua",
 	}),

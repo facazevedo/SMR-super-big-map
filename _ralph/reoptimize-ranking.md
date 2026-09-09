@@ -730,3 +730,29 @@ Evidence: `_ralph/runs/reoptimize-under-70s/artifacts/manual_direct_seeded_20260
 contains `v955_SIGN_OFF.md`, `v955_acceptance_audit.json`, `SOURCE_REVIEW.md`,
 `v955_offline_final/results.json`, and `v955_matrix/` with the fixed manifest,
 15 process captures, five judgments and the visual review notes.
+
+### v956 - selective rock grounding (verification in progress, 2026-09-09 UTC)
+
+Correctness repair, not a new loading-time optimization. Decorative rocks retain their
+existing XY expansion, uniform mesh scale and rotation. Sampled native support lost to
+adaptive terrain-Z compression triggers a downward-only correction. Additional underside
+seating is capped by that rock's mesh/terrain surplus height. Unaffected rocks, functional
+objects, terrain grids and RNG streams are left alone. No native executable/helper is used.
+
+The G3 reproduction in 14N134W automatically lowers CliffDark_03 by2127wu, close to the
+owner-approved2000wu trial; native supported samples have no remaining positive clearance.
+160 of14447 eligible rocks were corrected. A native-support-only draft lowered G3 just263wu
+and was not accepted as the visual solution. The diagnostic also confirmed native overhangs;
+the defect is not explained by a missing pivot burial offset alone.
+
+54 offline commands pass, including29 new grounding assertions. Five-scenario cold A/B,
+unexpanded-control, terrain/resource/edge visual and per-rock repeatability checks are next.
+No all-rules sign-off yet. Diagnostic G3 START-to-T1 was158.667s; this is an instrumented
+visual reproduction, not an accepted cold comparison or an isolated optimization saving.
+Its337ms contact capture and71ms placement counters excluded some eligibility overhead;
+the final code includes that overhead in the capture counter.
+
+Artifacts: `_ralph/runs/manual-rock-grounding/artifacts/`. The hot-reload attempt retained
+the cached v955 code list and was replaced by a clean launch. Two diagnostic strict-global
+messages came from the temporary reproduction helper, not production; that helper is fixed
+and those runs are excluded from no-errors acceptance. Ralph remains stopped.
