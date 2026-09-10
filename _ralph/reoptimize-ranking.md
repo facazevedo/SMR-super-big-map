@@ -1352,3 +1352,44 @@ the original `verification.json`, `v971_source_review.md`, `v971_visual_review.j
 `v971_bracket/review.json`, two successful `v971_pad_shadow_*_attempt2` runs and
 `v971_all_ten_rules_review.json`. Local mods restored/audited38/38 after comparison.
 Remaining requested units: exact crease refinement and exact dirty-region unions.
+
+## 2026-09-09 - certified native crease refinement accepted (v972)
+
+Code `67fa4ab` (v972/guard288) reuses the existing full-resolution native discovery
+superset for scalar refinement only while every influencing height remains valid.
+Crossing/overlapping prior track writes or incomplete domains use live refinement.
+Position/width order, direction, contrast, flank, strict ties, translation, clipping
+and quintic joins are unchanged. Native float32 join replacement was rejected in
+isolation:239/176520 rounding mismatches. The wall/spike corrections remain intact.
+
+| Reference | START-to-T1 A / B / C | Median |
+|---|---|---:|
+| accepted v971 |103.118 /107.171 /107.329s|107.171s|
+| accepted v972 |103.047 /102.488 /100.688s|102.488s|
+
+Observed median reduction **4.683s (4.37%)**; fresh native control28.611s. All
+samples retained; these are measured comparisons, not guaranteed per-run savings.
+T0 remains after START, with required final revalidation included in T1. Reference
+guide counters:16105 indexed refinements,765 live,16671 conservative write records.
+
+| Scenario | v971 A | v972 | All ten / full predecessor output |
+|---|---:|---:|---|
+|15S67E|109.587s|104.548s|PASS / identical|
+|24S74W|111.442s|105.535s|PASS / identical|
+|45S120W|103.953s|98.976s|PASS / identical|
+|61N136W|157.242s|150.018s|PASS / identical|
+|17S11W|110.353s|105.024s|PASS / identical|
+
+All70 offline commands pass, including16002 dependency-guide and4891922 indexed
+refinement assertions, unchanged full-track-order and physical-edge join tests.
+Complete surface/underground height/pass grids, sites, pads, individual grounding
+and private streams match acceptedv971 in the reference and all five scenarios.
+Eight original gates plus source/RNG/process reviews complete allten. Freshv971
+visual evidence is inherited through identical complete outputs, not newly claimed
+screenshots. All nine owned processes exited normally; local mods audited38/38.
+Temporary buttons, bounded planner, stable seed and full-raster edge guard unchanged.
+
+Evidence: `_ralph/runs/manual-rocket-crease-transactions/artifacts/` contains
+`v972_offline`, `v972_reference`, `v972_matrix`, `v972_source_review.md` and
+`v972_all_ten_rules_review.json`. **70s not reached.** Final requested unit pending:
+exact dirty-region union consolidation; necessary full/final rebuilds stay in place.
