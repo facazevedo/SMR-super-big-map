@@ -2515,6 +2515,22 @@ local function ResolveBoundedRocketSeed(map)
 end
 -- BOUNDED_ROCKET_SEED_END
 
+local function NewRocketBlendEdgeGuard(width, height, core, outer, transition, cells_per_hex)
+	-- Bound the complete native raster, not just the landing footprint. These are
+	-- the raster's adaptive cap and maximum angular width; the regression checks
+	-- them against the application code so a future change cannot stale this bound.
+	local radius = core + math.max(outer - core, transition,
+		36 * cells_per_hex, 2 * cells_per_hex) * 1.35
+	-- Two cells of interpolation margin plus outward four-cell alignment on both
+	-- ends. Keep the physical boundary strictly outside even the rounded rectangle.
+	local clearance = radius + 10
+	return function(cx, cy)
+		return cx > clearance and cy > clearance
+			and cx < width - 1 - clearance and cy < height - 1 - clearance
+	end
+end
+-- ROCKET_BLEND_EDGE_GUARD_END
+
 local function PrepareOuterResourceTerrain(map)
 	if not cfg_bool("PREPARE_OUTER_RESOURCE_TERRAIN", true) then
 		return false, { reason = "disabled", resources = 0, patches = 0 }
@@ -2966,6 +2982,9 @@ local function PrepareOuterResourceTerrain(map)
 	local rocket_level_core = math.ceil(rocket_world_radius + 1)
 	local rocket_required_core = math.ceil(rocket_world_radius + 3)
 	local rocket_outer_radius = rocket_required_core + rocket_extra_feather
+	local rocket_blend_fits = NewRocketBlendEdgeGuard(width, height,
+		rocket_level_core * cells_per_hex, rocket_outer_radius * cells_per_hex,
+		transition_minimum_width * cells_per_hex, cells_per_hex)
 	local resource_clearance_index = NewRocketClearanceIndex(
 		rocket_required_core + maximum_resource_core + 1)
 	for _, entry in ipairs(resources) do resource_clearance_index.Add(entry.q, entry.r) end
@@ -3131,6 +3150,11 @@ local function PrepareOuterResourceTerrain(map)
 				local cq = math.floor(sum_q / #members + 0.5)
 				local cr = math.floor(sum_r / #members + 0.5)
 				local best = rocket_search.Choose(group.plan, function(dq, dr, distance, incumbent)
+					local x, y = world_xy(cq + dq, cr + dr)
+					if not x or not rocket_blend_fits(x / height_tile, y / height_tile) then
+						rocket_sampling.edge_rejected = (rocket_sampling.edge_rejected or 0) + 1
+						return nil
+					end
 					return candidate_score(cq + dq, cr + dr, cq, cr, incumbent, distance)
 				end)
 				if not best then
