@@ -1098,6 +1098,93 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 	local discovery_error, translation_error
 	local discovery_stats = { cells = 0, enumerated = 0, candidates = 0, sampled_rows = 0, copies = 0 }
 
+	-- Reuse immutable native-discovery exclusions only inside their complete domain
+	-- and only until an earlier selected track touches the exact read neighbourhood.
+	local function NewHeightStepRefinementGuide()
+		local domains, writes_x, writes_y, empty = {}, {}, {}, {}
+		local stats = { indexed = 0, live = 0, writes = 0 }
+		local function register_domain(axis, edge, lo, hi, step, rows)
+			if step == 1 then domains[axis .. ":" .. edge] = { lo = lo, hi = hi, rows = rows } end
+		end
+		local function register_write(axis, along, lo, hi)
+			local index = axis == "x" and writes_x or writes_y
+			local row = index[along]
+			if not row then row = {}; index[along] = row end
+			row[#row + 1] = { lo, hi }
+			stats.writes = stats.writes + 1
+		end
+		local function intersects(intervals, lo, hi)
+			for _, interval in ipairs(intervals or empty) do
+				if interval[1] <= hi and interval[2] >= lo then return true end
+			end
+			return false
+		end
+		local function candidates(track, along, lo, hi, last_read)
+			local domain = domains[track.axis .. ":" .. track.edge]
+			if not domain or lo < domain.lo or hi > domain.hi then
+				stats.live = stats.live + 1; return false
+			end
+			local own = track.axis == "x" and writes_x or writes_y
+			local cross = track.axis == "x" and writes_y or writes_x
+			if intersects(own[along], lo - 1, last_read) then
+				stats.live = stats.live + 1; return false
+			end
+			for perp = lo - 1, last_read do
+				if intersects(cross[perp], along, along) then
+					stats.live = stats.live + 1; return false
+				end
+			end
+			stats.indexed = stats.indexed + 1
+			return domain.rows[along] or empty
+		end
+		return { RegisterDomain = register_domain, RegisterWrite = register_write,
+			Candidates = candidates, stats = stats }
+	end
+	-- HEIGHT_REFINEMENT_GUIDE_END
+	-- Read-only scalar confirmation of a certified native discovery superset.
+	-- Ordered perpendicular positions and width order preserve strict tie handling.
+	local function RefineIndexedHeightStep(at, track, along, predicted, lo, hi, max_width, threshold, indexed)
+		local cache = {}
+		local function sample(perp)
+			local value = cache[perp]
+			if value == nil then
+				value = at(track.axis, perp, along)
+				if value == nil then cache[perp] = false else cache[perp] = value end
+			end
+			return value ~= false and value or nil
+		end
+		local before_edge = track.edge == "left" or track.edge == "top"
+		local best_perp, best_width, best_distance, best_jump
+		for _, perp in ipairs(indexed) do
+			if perp > hi then break end
+			if perp >= lo then
+				for width = 1, max_width do
+					local v0, a = sample(perp - 1), sample(perp)
+					local b, v3 = sample(perp + width), sample(perp + width + 1)
+					if type(v0) == "number" and type(a) == "number" and type(b) == "number"
+						and type(v3) == "number" then
+						local low_before = a < b
+						local points_to_edge = (before_edge and low_before)
+							or (not before_edge and not low_before)
+						local jump = math.abs(b - a)
+						local flank = math.max(math.abs(a - v0), math.abs(v3 - b), 1)
+						local distance = math.abs(perp - predicted)
+						if low_before == track.low_before and points_to_edge
+							and jump >= threshold and jump >= flank * 2
+							and (not best_distance or distance < best_distance
+								or (distance == best_distance and jump > best_jump)) then
+							best_perp, best_width = perp, width
+							best_distance, best_jump = distance, jump
+						end
+					end
+				end
+			end
+		end
+		return best_perp, best_width
+	end
+	-- INDEXED_HEIGHT_REFINE_END
+	local refinement_guide = not wide_ring_only and NewHeightStepRefinementGuide() or nil
+
 	local function at(axis, perp, along)
 		if axis == "x" then return grid:get(perp, along) end
 		return grid:get(along, perp)
@@ -1243,6 +1330,10 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		if not before then return end
 		local after = index(after_perp0, after_perp1)
 		if not after then return end
+		if refinement_guide then
+			refinement_guide.RegisterDomain(axis, before_edge, before_perp0, before_perp1, sample_step, before)
+			refinement_guide.RegisterDomain(axis, after_edge, after_perp0, after_perp1, sample_step, after)
+		end
 		for along = 0, along_n - 1, sample_step do
 			local row = {}
 			-- Exact scalar acceptance, width order and edge order are unchanged. Only
@@ -1316,6 +1407,13 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		local best_perp, best_width, best_distance, best_jump
 		if hi < lo then return nil, nil end
 		local max_width = wide_ring_only and 1 or 3
+		-- The native superset remains usable only where every influencing height is
+		-- unchanged. Intersecting earlier translations/joins require live refinement.
+		local indexed = refinement_guide and refinement_guide.Candidates(track, along,
+			lo, hi, hi + max_width + 1)
+		if indexed then
+			return RefineIndexedHeightStep(at, track, along, predicted, lo, hi, max_width, threshold, indexed)
+		end
 		local v0, a = at(track.axis, lo - 1, along), at(track.axis, lo, along)
 		local n1, n2 = at(track.axis, lo + 1, along), at(track.axis, lo + 2, along)
 		local n3, n4
@@ -1476,6 +1574,7 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		collect_ring("x", w, h, "left", "right")
 		collect_ring("y", h, w, "top", "bottom")
 		if discovery_error then return end -- No qualification or height writes on failure.
+		if refinement_guide then discovery_stats.refinement = refinement_guide.stats end
 
 		local qualified = {}
 		for _, track in ipairs(tracks) do
@@ -1634,6 +1733,10 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 				modified = modified + count
 				for _, row in ipairs(translation_rows) do
 					modified = modified + feather_join(selected.axis, row.along, row.join_lo, row.join_hi)
+					-- Include the whole possible join, even when clipping/no-op values made
+					-- fewer writes. Never reuse pre-write exclusions for a later crossing track.
+					refinement_guide.RegisterWrite(selected.axis, row.along,
+						math.min(row.lo, row.join_lo + 1), math.max(row.hi, row.join_hi - 1))
 				end
 			end
 			selected.modified = modified
