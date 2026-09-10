@@ -1290,3 +1290,65 @@ rocket planning7161ms, outer raster7081ms, core harmonization10ms, install33ms.
 (changed pads require fresh visuals and same-version exact repeats), native crease
 refinement/joins, and safe publication/rebuild consolidation. They are not yet
 accepted and must retain all rules and previous geometry corrections.
+
+## 2026-09-09 - bounded seeded rocket planner accepted (v971)
+
+Code `a943db2` (v971/guard287), including earlier test checkpoints `059160a` and
+`8b70e8f`. General seeded256-candidate batches replace exhaustive scoring; the
+5941-offset geometry universe has finite continuation and explicit exhaustion
+failure, never relaxed predicates. Every group in the reference and five sites
+succeeded in its initial batch. Complete adaptive/native raster edge clearance
+prevents pad blending from clipping the physical edge. No scenario special cases.
+
+| Reference | START-to-T1 A / B / C | Median |
+|---|---|---:|
+| accepted v968 |108.573 /107.513 /108.106s|108.106s|
+| accepted v971 |103.118 /107.171 /107.329s|107.171s|
+
+Historical observed median reduction0.935s; native control29.202s. Because that
+gain is marginal, a predeclared fresh968/971/971/968 comparison was also completed:
+**110.114 /105.162 /106.608 /105.259s**. Candidate mean105.885s versus baseline
+107.6865s: observed **1.8015s faster**. All four samples retained and same-version
+outputs/gates pass. This is not a statistical confidence claim; baseline variation
+is substantial. Do not add the two estimates together or report the fastest run
+as the accepted median. T0 starts after START; required final revalidation remains
+inside T1. **70s not reached.**
+
+| Scenario | v971 A / B | Native control | All ten rules |
+|---|---|---:|---|
+|15S67E|109.587 /110.535s|31.221s|PASS|
+|24S74W|111.442 /110.310s|30.103s|PASS|
+|45S120W|103.953 /99.686s|27.834s|PASS|
+|61N136W|157.242 /157.946s|29.855s|PASS|
+|17S11W|110.353 /111.247s|29.619s|PASS|
+
+All68 offline commands pass, including bounded-search, seed-lifetime and590259
+actual native-bound checks. Nineteen main acceptance processes and six supplementary
+processes exited normally with audited payloads. Eight original automated gates
+plus separate source/RNG/process review complete allten; raw gates remain unchanged.
+Fresh sampled resource/pad/edge/rock/entrance visuals reviewed at all six sites.
+61N/17S questioned pad boundaries disappear with native cast shadows disabled at
+verified identical cameras; settings restored. Extra shadow-check times156.391s
+and110.696s are not mixed into primary medians. One JSON-wrapper photography-helper
+failure is preserved separately and does not count as a successful visual run.
+
+This is the explicitly behavior-changing unit: new pads alter surface height/pass
+grids and dependent anomaly/effect selection. Complete same-version results and
+private streams repeat exactly; full underground, resource coordinates, individual
+grounding and seed identities match the predecessor. Full predecessor comparisons
+honestly remain FAIL for intended differences. Initial45S effects278->260 rejection
+is retained; source establishes effects' dependency on prior anomaly candidates,
+sector loads and repulsion, with its own isolated phase seed. Reviewed comparisons
+explicitly name that allowance; no original placement or ten-rule predicate changed.
+
+The15S notch initially blamed onv970 is present in acceptedv957 already; the earlier
+diagnosis is withdrawn. The new edge guard is preventative, not a claimed fix for
+that pre-existing notch. Likewise the background overhang in17S rock01 is visible
+in acceptedv957; it was not introduced or fixed here. Temporary buttons remain.
+
+Evidence: `_ralph/runs/manual-rocket-crease-transactions/artifacts/` contains
+`v971_offline`, `v971_reference`, `v971_matrix/verification_source_reviewed.json`,
+the original `verification.json`, `v971_source_review.md`, `v971_visual_review.json`,
+`v971_bracket/review.json`, two successful `v971_pad_shadow_*_attempt2` runs and
+`v971_all_ten_rules_review.json`. Local mods restored/audited38/38 after comparison.
+Remaining requested units: exact crease refinement and exact dirty-region unions.
