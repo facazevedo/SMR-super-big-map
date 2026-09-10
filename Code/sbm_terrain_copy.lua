@@ -3828,44 +3828,6 @@ end
 -- dependency before it reaches the engine. Buildability remains a single full-map rebuild because
 -- the public API exposes no region form. There is deliberately no whole-map passability fallback.
 local function RebuildOuterResourceTerrainRegions(map, preparation, stage)
-	-- Keep exactly the certified union. No bounding-box enlargement across a gap.
-	local function CoalesceExactRectangles(rectangles)
-		local result = {}
-		for i, a in ipairs(rectangles) do
-			local covered = false
-			for j, b in ipairs(rectangles) do
-				if i ~= j and b.x0 <= a.x0 and b.y0 <= a.y0
-					and b.x1 >= a.x1 and b.y1 >= a.y1 then
-					-- Equal boxes retain the first occurrence; strict containment retains
-					-- the containing box, regardless of which certificate came first.
-					if j < i or b.x0 < a.x0 or b.y0 < a.y0 or b.x1 > a.x1 or b.y1 > a.y1 then
-						covered = true; break
-					end
-				end
-			end
-			if not covered then result[#result + 1] = {x0=a.x0,y0=a.y0,x1=a.x1,y1=a.y1} end
-		end
-		local changed = true
-		while changed do
-			changed = false
-			for i = 1, #result do
-				local a = result[i]
-				for j = i + 1, #result do
-					local b = result[j]
-					local vertical = a.x0 == b.x0 and a.x1 == b.x1 and a.y0 <= b.y1 and b.y0 <= a.y1
-					local horizontal = a.y0 == b.y0 and a.y1 == b.y1 and a.x0 <= b.x1 and b.x0 <= a.x1
-					if vertical or horizontal then
-						a.x0, a.y0 = math.min(a.x0,b.x0), math.min(a.y0,b.y0)
-						a.x1, a.y1 = math.max(a.x1,b.x1), math.max(a.y1,b.y1)
-						table.remove(result,j); changed = true; break
-					end
-				end
-				if changed then break end
-			end
-		end
-		return result
-	end
-	-- EXACT_REGION_COALESCER_END
 	local unit = "outer resource terrain dirty-region rebuild"
 	local function fail(reason)
 		OptimizationFailure(unit, reason, map)
@@ -3907,7 +3869,7 @@ local function RebuildOuterResourceTerrainRegions(map, preparation, stage)
 		return fail("dirty-region rebuild APIs are unavailable")
 	end
 	local dependency_margin = math.floor(pass_tile * 2)
-	local pass_bounds = {}
+	local pass_regions = {}
 	for index, region in ipairs(regions) do
 		local x0, y0, x1, y1 = tonumber(region.x0), tonumber(region.y0),
 			tonumber(region.x1), tonumber(region.y1)
@@ -3925,20 +3887,12 @@ local function RebuildOuterResourceTerrainRegions(map, preparation, stage)
 		if world_x1 <= world_x0 or world_y1 <= world_y0 then
 			return fail("dirty-region certificate box " .. tostring(index) .. " clamps empty")
 		end
-		pass_bounds[index] = { x0 = world_x0, y0 = world_y0, x1 = world_x1, y1 = world_y1 }
-	end
-	-- All certificates are validated before consolidation or native invalidation.
-	-- Eliminate only provably redundant work, retaining exactly the covered union.
-	local coalesced = CoalesceExactRectangles(pass_bounds)
-	local pass_regions = {}
-	for index, region in ipairs(coalesced) do
-		pass_regions[index] = box_fn(region.x0, region.y0, region.x1, region.y1)
+		pass_regions[index] = box_fn(world_x0, world_y0, world_x1, world_y1)
 	end
 
 	stage = tostring(stage or "outer resource terrain")
 	local report = {
 		stage = stage, regions = #pass_regions, dependency_margin = dependency_margin,
-		original_regions = #pass_bounds,
 		passability_ms = 0, buildable_ms = 0, total_ms = 0, error = "",
 	}
 	local total_started = GetPreciseTicks()
