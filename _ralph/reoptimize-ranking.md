@@ -1393,3 +1393,48 @@ Evidence: `_ralph/runs/manual-rocket-crease-transactions/artifacts/` contains
 `v972_offline`, `v972_reference`, `v972_matrix`, `v972_source_review.md` and
 `v972_all_ten_rules_review.json`. **70s not reached.** Final requested unit pending:
 exact dirty-region union consolidation; necessary full/final rebuilds stay in place.
+
+## 2026-09-09 - final requested unit rejected; accepted v972 restored
+
+Test checkpoint `31dc872` (v973/guard289) consolidated only exactly covered dirty
+rectangles. All71 offline commands passed. The fresh reference preserved complete
+predecessor and repeated outputs, private streams and original automated gates.
+The four fresh reference/control processes exited normally; control28.513s.
+
+| Reference | START-to-T1 A / B / C | Median |
+|---|---|---:|
+| accepted v972 |103.047 /102.488 /100.688s|102.488s|
+| rejected v973 |103.877 /104.011 /100.402s|103.877s|
+
+Observed median was **1.389s slower**, so the predeclared performance gate stopped
+before the five-scenario matrix. This is not an all-ten/five-site v973 sign-off.
+The regional work itself fell from56 to30 calls (26 contained regions removed,
+no enlarged union). In reference A, passability cost1125ms versus1626ms, with the
+full buildability rebuild still present. That stage improvement did not establish
+an end-to-end gain; the fastest sample was not selected as acceptance evidence.
+No further optimization loop or selective retries were started.
+
+An earlier reference attempt hit the harness's60-second quit deadline. Generation
+and the canonical snapshot completed; the log ended in Debug::Done and the process
+later exited, with no native crash signature found. Its original evidence is
+preserved in `v973_reference_shutdown_timeout`, excluded from timing acceptance
+and clean-process sign-off. No timeout or rule was weakened to retry it.
+
+Revert `d9b4f5f` restores the complete accepted `67fa4ab`/v972 payload exactly,
+including metadata and guard288. Local mods synced and audited38/38. Existing
+v972 all-ten/five-site evidence therefore applies to the restored payload; no new
+cold-run claim is made for the revert. The removed trial regression remains
+recoverable in `31dc872`; its71-command results and rejected cold evidence remain
+under `_ralph/runs/manual-rocket-crease-transactions/artifacts/`.
+
+All four requested candidates are handled: retain exact rocket clearance (`ee25640`),
+bounded rocket planning (`a943db2`), and certified crease refinement (`67fa4ab`);
+reject dirty-region consolidation for lack of measured total-loading improvement.
+The retained reference median moves from113.024s to102.488s, an observed10.536s
+reduction. Bounded planning intentionally changes pads and dependent terrain;
+the other retained units preserve their predecessor outputs exactly.
+**70s is not reached.** Temporary buttons and all prior protected fixes remain.
+
+Final restored-payload regression replay: **70/70 commands PASS**, recorded in
+`v972_final_restored_offline/all_results.json`. This is a fresh offline replay;
+the five-site cold and visual sign-off remains the identical accepted v972 payload.
