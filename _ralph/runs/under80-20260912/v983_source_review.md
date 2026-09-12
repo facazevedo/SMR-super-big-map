@@ -38,3 +38,9 @@ requires exact complete outputs; no new screenshot claim.
 Require80 offline commands, immutable reference3/control and all five validation
 sites, full deployment audit, unique owned processes and normal shutdowns.
 Effective user target is below85 seconds, not demonstrated by this source review.
+
+Acceptance closed:80 offline commands, reference3/control and all five sites PASS
+under immutable f4d1da6. Full ten-rule/process/source/deployment review is recorded
+in artifacts/v983_all_ten_rules_review.json. Reference median86.718 versus89.425;
+site timings and the45S single-sample slowdown remain explicit in STATUS.md.
+The effective85-second target is NOT reached.

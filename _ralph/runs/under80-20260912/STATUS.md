@@ -4,8 +4,11 @@ CURRENT USER TARGET: revised to strictly UNDER85 SECONDS on2026-09-12, with the
 same reference/five-site scope and correctness requirements. Historical80-second
 headings and evidence below remain unchanged. The active goal-tool record cannot
 edit its objective while unfinished; the latest user instruction is authoritative.
-Do not mark the old80 objective complete to rename it. Accepted reference89.425s
-and worst site94.349s require about5% and10% improvement respectively.
+Do not mark the old80 objective complete to rename it. Current accepted production
+is f4d1da6/v983/sector76/generator298, deployed38/38. Reference median86.718s and
+worst site94.342s still exceed85 by1.718s and9.342s respectively. All80 offline
+commands and all ten correctness rules pass. No owned game or benchmark remains.
+See the v983 acceptance section at the end for complete, unfiltered timings.
 
 User requested implementation after the feasibility assessment. Target: reference
 14N134W and five existing validation scenarios below 80 seconds, measured from START
@@ -564,3 +567,38 @@ Effective target remains under85; accepted median remains89.425 seconds.
 v983 offline33127 CLOSED exit0: all80 commands PASS. Production Terrain text
 matches the complete-map shadow variant3 exactly. No live game remains. Freeze
 this checkpoint before reference3/control; no cold gain or target claim yet.
+
+## v983 accepted; under85 target not reached
+
+Reference82761 CLOSED exit0, owned PIDs45616/29860/14992/control45256; all normally
+quit with flushed logs. Frozen f4d1da6/runtime983, reference86.718/86.676/86.866,
+median86.718 versus89.425 (2.707s/3.027% measured improvement), control28.844.
+Reference audit issues empty; complete predecessor/repeat/private-stream/individual
+rock comparisons and automated gates PASS. No excluded/replaced/rescue samples.
+
+Five-site8931 CLOSED exit0, PIDs15952/45476/41396/33728/35000, all normal quits,
+same immutable code and deployment. All ten rules reviewed PASS,80 offline checks,
+unique9 acceptance process identities and38/38 deployment audit. No live game.
+
+| Scenario | v979 seconds | v983 seconds |
+| --- | ---: | ---: |
+| 14N134W reference median (3 runs) | 89.425 | 86.718 |
+| 15S67E | 92.100 | 90.468 |
+| 24S74W | 90.183 | 89.697 |
+| 45S120W | 84.445 | 84.938 |
+| 61N136W | 94.349 | 94.342 |
+| 17S11W | 89.199 | 87.583 |
+
+Do not claim uniform speedup:45S is0.493s slower in its single sample, and61N is
+effectively unchanged. On61N exact corrections681264->332731 prove active work
+reduction but not a meaningful end-to-end gain. Retainv983 for its repeatable
+reference improvement and exact output, not as a completed under85 result.
+Evidence: artifacts/v983_all_ten_rules_review.json, v983_reference/reference_audit.json,
+v983_matrix/verification.json and v983_source_review.md. Current baseline becomes
+f4d1da6; future regression runs must retain the three Q22 tests as well as all77
+inherited commands. Historical rejected candidates stay rejected.
+
+Next work needs a separate measured bottleneck reduction, particularly the slow
+map's decor stage. Do not rerun the slower radius-expanded query or unchanged
+v982 bindings. A positive whole-cell circle certificate is only an unproved
+hypothesis; see decor_positive_cell_hypothesis.md. No candidate984 exists.
