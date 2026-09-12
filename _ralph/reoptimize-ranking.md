@@ -1504,3 +1504,21 @@ not a new screenshot claim. Evidence: `under80-20260912/artifacts/v975_reference
 `v975_matrix`, `v975_offline`, `v975_all_ten_rules_review.json`, and source review.
 **80s not reached.** Next research retains exact native crease predicate results;
 it is not yet production or a timing claim.
+
+## 2026-09-12: reject v976 crease certificates; restore v975
+
+Candidate `f42aaac`, v976/guard291: reference97.517 /97.146 /97.183s,
+median97.183s versus v97597.914s; saving0.731s (0.75%). Native control28.667s.
+All74 offline commands and native scratch certificate comparisons pass.
+The reference audit has exact predecessor/repeat outputs, original gates and
+normal shutdown for four distinct owned processes. Source/RNG review is recorded.
+No five-site candidate sweep or new visual review was performed or claimed.
+
+Do not retain the additional buffers/packed metadata/decoder branches for this
+small observed improvement. Restore exact accepted v975/guard290 production from
+`1f67811`; keep v976 source in Git and all benchmark/failure/research artifacts.
+Candidate-specific tests are archived under `_ralph/tmp/under80_20260912` so the
+accepted production suite does not pretend the rejected decoder remains installed.
+Evidence: `under80-20260912/artifacts/v976_reference/reference_audit.json`,
+`v976_offline`, `certificate_native_3` (first two setup failures retained), and
+`v975_restored_offline`. Final accepted reference remains97.914s; **80s not reached**.

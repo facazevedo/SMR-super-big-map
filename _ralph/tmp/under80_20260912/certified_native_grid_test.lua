@@ -1,4 +1,4 @@
-arg = {'Code/sbm_terrain_copy.lua'}
+arg = {arg[1] or '_ralph/runs/under80-20260912/artifacts/certified_steps_research/terrain_candidate.lua'}
 dofile('_ralph/tmp/under80_20260912/certificate_offline.lua')
 local f = assert(io.open(arg[1], 'r'))
 local source = f:read('*a'); f:close()

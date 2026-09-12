@@ -90,3 +90,32 @@ offline inclusive/exclusive lower bounds passed5120; actual production offer/win
 branches matched v975 over205096 checks. Invalid certificates fail explicitly;
 guide propagation and write invalidation tests pass. Source review in
 `v976_source_review.md`. Cold output and performance acceptance still pending.
+
+## v976 rejected; v975 restored
+
+v976 checkpoint `f42aaac` reference97.517 /97.146 /97.183s; median97.183s,
+native control28.667s. Full predecessor/repeat/control comparisons and gates pass;
+four owned processes exited normally. Reference audit has no issues. This is only
+0.731s (0.75%) below v975, too small to justify the extra native buffers, packed
+metadata and conditional decoder complexity. All samples preserved. No five-map
+v976 sweep was run and no all-ten/five-site acceptance is claimed for v976.
+
+Restore only production and the guide test to accepted `1f67811` (v975/guard290).
+The two new candidate-specific regression files move into this run's research
+folder and default to its non-deployed candidate source; evidence and candidate
+commit remain recoverable. Do not resurrect v976 as an accepted optimization.
+The fresh restored72-command offline replay passes in `artifacts/v975_restored_offline`.
+Production matches accepted `1f67811` exactly; final deployment must audit38/38.
+
+Under80s is NOT achieved. Accepted reference median97.914s; five sites102.317 /
+100.171 /94.862 /104.302 /102.034s. Overall recorded v972 reference102.488 ->97.914
+(-4.574s,4.46%); slow61N150.018 ->104.302 (-45.716s,30.47%). The slow-map
+comparison is single samples, not a reference median. Full v975 validation remains
+`v975_all_ten_rules_review.json`; inherited visuals require exact restored payload.
+
+Next substantial unimplemented avenue is the remaining scalar apron/outer-mask
+arithmetic (roughly8s and7s respectively in the pre-binding diagnostic stages), possibly native
+arithmetic with rigorous error brackets and exact ambiguous-cell correction.
+Native trig/reciprocal/precision behavior has NOT been proved for such a port.
+Do not approximate shapes, weaken readiness, defer rebuilds, or claim this will
+necessarily reach80s. Existing immediate and post-pipeline rebuilds are required.
