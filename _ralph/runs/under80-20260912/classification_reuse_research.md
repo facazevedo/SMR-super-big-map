@@ -28,3 +28,22 @@ Full exact individual-rock comparison is mandatory, not only count/total lowerin
 Primitive binding in v978 may reduce this hotspot enough to make another change
 unnecessary; measure on accepted v978 before deciding. This file is research, not
 a production change, timing claim or permission to weaken eligibility checks.
+
+A non-deployed generator `classification_candidate.py` is prepared but not run.
+It preserves the default full classification and adds immediate-call checked
+predicate identities. The receiver also requires those identities to match its
+current Clone fields, so rebinding/module reload cannot silently reuse a result
+from different classifiers. This matters because TerrainCopy captures predicate
+aliases while RockGrounding reads the Clone fields dynamically. The prepared
+`classification_test.lua` compares complete private capture records, native-query
+arguments, final positions/stamps/stats, exclusions, rebound classifiers and ray
+failures. Neither generator nor test has run yet; no native measurements exist.
+Do not promote it based on this note.
+
+An independent diagnostic setup `pipeline_function_profile.lua` is prepared to
+measure the remaining full pre-T1 Lua work after v978 acceptance. It starts the
+native profiler before START and stops after the unchanged scheduled surface
+revalidation returns, so its timing is intentionally NOT a benchmark. Use a fresh
+owned process and exact full predecessor comparison. This can distinguish remaining
+shared-helper overhead from arithmetic/native stages before selecting another
+change. No dynamic game-function cache or class-result cache is authorized by it.

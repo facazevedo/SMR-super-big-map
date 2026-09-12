@@ -220,3 +220,38 @@ preserved. Full rerun will be v978_final_offline, used by the v978 review script
 v978_final_offline session60159 closed exit0: all76 commands pass. Production and
 tests are ready for the committed cold checkpoint. Next reference output directory
 is v978_reference; use v977_reference as predecessor. No live game remains.
+
+Current cold checkpoint is **3eafc30**, runtime978/guard293, deployed/audited38/38.
+Reference batch is live in exec session44410; ACTIVE.json records the exact
+command. First reference88.253s, owned PID37364 normally closed. Repeats/control
+are still pending. Poll the actual session handle for live/terminal state; never
+infer it from a stale file. Keep HEAD/production/deployment fixed through all
+acceptance processes. Research notes/setup scripts may remain uncommitted until
+the batch/review closes. Under80s is not reached.
+
+v978 reference session44410 closed exit0:88.253 /91.320 /89.807s,
+median89.807s versus93.635s (3.828s/4.088% improvement). Native control28.510s.
+All four processes captured/normal shutdown; audit_reference.py passes complete
+predecessor/repeat comparisons, native-control gates and private stream checks,
+with no issues. Next is v978_matrix versus v977_matrix at unchanged3eafc30.
+
+v978_matrix is live in exec session12766; reference44410 is terminal/closed.
+First three sites passed exact predecessor output and normal shutdown:15S67E
+93.037s,24S74W91.477s,45S120W85.461s. Keep HEAD3eafc30 fixed until the last two
+sites and final review close. Research now includes an unrun classification
+candidate generator/test, an unrun whole-pipeline function profiler, and a note
+about a narrower already-proved apron bracket. None is deployed or a timing claim.
+
+## v978 accepted; all acceptance processes closed
+
+Session12766 exited0. All five exact predecessor comparisons, eight automated
+gates and normal owned shutdowns passed at fixed3eafc30. Times:93.037 /91.477 /
+85.461 /100.428 /91.172s.61N regressed3.667s versus96.761s; retain this result and
+do not claim uniform improvement or dismiss it as noise. Reference median89.807s
+is3.828s/4.09% faster than93.635s. Full v978_all_ten_rules_review.json passes76
+offline commands, all ten rules, nine unique process identities and deployment38.
+
+No game is currently live. Save validation/research notes, then run the prepared
+whole-pipeline function profile on this accepted v978 before choosing more changes.
+The classification generator/test and narrower-bracket note remain non-deployed.
+All code changes/benchmarks above are progress, not an under80s result; goal active.

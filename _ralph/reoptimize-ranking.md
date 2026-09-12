@@ -1549,3 +1549,36 @@ audited38/38. Visual inheritance follows exact accepted outputs, not a new image
 claim. Evidence: `under80-20260912/artifacts/v977_reference`, `v977_matrix`,
 `v977_offline`, `v977_all_ten_rules_review.json`, `v977_source_review.md` and
 `native_mask_bound.md`. **80s not reached.**
+
+## 2026-09-12: v978 Lua primitives and exact zero-angle cache
+
+Code `3eafc30`, runtime978/guard293. Shared engine helpers bind only Lua type/pcall
+primitives; all game-function lookups stay live. Outer masks cache the literal
+angle0 harmonic within each patch, preserving the existing missing-atan2 fallback
+and invalidating reuse on sine-function rebinding. No arithmetic/order/RNG changes.
+
+Reference88.253 /91.320 /89.807s, median89.807s versus v97793.635s:
+3.828s faster (4.09%). Native control28.510s. All samples retained.
+
+| Scenario | v977 | v978 | All ten / full predecessor output |
+|---|---:|---:|---|
+|15S67E|98.444s|93.037s|PASS / identical|
+|24S74W|94.162s|91.477s|PASS / identical|
+|45S120W|90.365s|85.461s|PASS / identical|
+|61N136W|96.761s|100.428s|PASS / identical|
+|17S11W|94.691s|91.172s|PASS / identical|
+
+The61N sample regressed3.667s (3.79%). Do not claim universal per-map improvement
+or silently attribute it to noise without further measurements. Retain this small
+change for the measured reference gain and four improved validation samples.
+
+All76 commands in `v978_final_offline` pass, including172114 full engine-helper
+result/call-trace checks and86905 exact coarse-mask checks. Initial `v978_offline`
+failed one declaration-format static assertion; it is preserved. That check now
+verifies all three original sine terms explicitly, not declaration formatting.
+Full grids, placements, individual rocks and private streams match; source/RNG/
+process review closes all ten rules. Nine unique owned acceptance processes exited
+normally at one fixed checkpoint; deployment audited38/38. Inherited visuals follow
+exact accepted outputs, not a new screenshot claim. Evidence: `v978_reference`,
+`v978_matrix`, `v978_final_offline`, `v978_all_ten_rules_review.json` and source review
+under `under80-20260912`. **80s not reached.**
