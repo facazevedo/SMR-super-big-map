@@ -1,0 +1,897 @@
+{
+  "sampled_callers": {
+    "@Mod/SuperBigMap/Code/sbm_rock_grounding.lua": {
+      "math": 34,
+      "tostring": 1,
+      "type": 33
+    },
+    "@Mod/SuperBigMap/Code/sbm_zoomplus_integration.lua": {
+      "tostring": 3,
+      "type": 2
+    },
+    "@Mod/SuperBigMap/Code/sbm_decor_topup.lua": {
+      "table": 1,
+      "tonumber": 11,
+      "tostring": 2,
+      "math": 23,
+      "pcall": 14,
+      "type": 41
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua": {
+      "table": 2,
+      "tostring": 69,
+      "ipairs": 16,
+      "math": 133,
+      "pcall": 79,
+      "tonumber": 25,
+      "pairs": 1,
+      "type": 223
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_highlight.lua": {
+      "pcall": 4,
+      "type": 21
+    },
+    "@Mod/SuperBigMap/Code/sbm_engine.lua": {
+      "math": 5
+    },
+    "@Mod/SuperBigMap/Code/ZoomPlus.lua": {
+      "type": 1,
+      "pcall": 1,
+      "select": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua": {
+      "tostring": 5,
+      "GetPreciseTicks": 1,
+      "math": 37,
+      "type": 100,
+      "tonumber": 3,
+      "pcall": 85
+    },
+    "@Mod/SuperBigMap/Code/sbm_lifecycle.lua": {
+      "type": 1,
+      "IsOverviewMode": 1,
+      "string": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_provenance.lua": {
+      "type": 148
+    },
+    "@Mod/SuperBigMap/Code/sbm_overview_camera.lua": {
+      "type": 2
+    },
+    "@Mod/SuperBigMap/Code/sbm_zoom_option.lua": {
+      "table": 1,
+      "tostring": 1,
+      "math": 1,
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_map_generation.lua": {
+      "ipairs": 1,
+      "setmetatable": 1,
+      "string": 2,
+      "const": 1,
+      "GenerateAdditionalMaps": 1,
+      "pairs": 1,
+      "tostring": 1,
+      "FillRandomMapGen": 1,
+      "pcall": 5,
+      "NewComputeGrid": 1,
+      "type": 30
+    },
+    "@Mod/SuperBigMap/Code/sbm_object_clone.lua": {
+      "type": 398,
+      "string": 265
+    },
+    "@D:/PROJS/SMR/super-big-map/_ralph/runs/under80-20260912/artifacts/v982_lookup_profile_reference/diagnostic_setup.lua": {
+      "debug": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_exploration.lua": {
+      "InitialReveal": 1,
+      "tostring": 2,
+      "BuildableGridRatio": 1,
+      "GetMapSectorTileSize": 1,
+      "tonumber": 1,
+      "pairs": 12,
+      "math": 12,
+      "const": 7,
+      "IsValid": 90,
+      "assert": 1,
+      "GetMapSectorXY": 1,
+      "pcall": 97,
+      "buildUnbuildableZ": 1,
+      "InitSector": 1,
+      "type": 150
+    },
+    "@Mod/SuperBigMap/Code/sbm_loading_ui.lua": {
+      "rawset": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_map_bounds.lua": {
+      "type": 1,
+      "box": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_grid.lua": {
+      "tostring": 5,
+      "string": 12,
+      "type": 14,
+      "math": 8,
+      "pcall": 9
+    }
+  },
+  "calls": [
+    {
+      "stage": "after last object-grid transaction",
+      "keys": {
+        "FillRandomMapGen": 10,
+        "buildUnbuildableZ": 2,
+        "const": 7211,
+        "GenerateAdditionalMaps": 10,
+        "IsOverviewMode": 19,
+        "GetPreciseTicks": 8,
+        "table": 3286,
+        "math": 258916,
+        "rawset": 73,
+        "debug": 1,
+        "assert": 563,
+        "pcall": 295016,
+        "InitialReveal": 1,
+        "setmetatable": 12,
+        "box": 812,
+        "string": 285905,
+        "GetMapSectorTileSize": 1,
+        "InitSector": 800,
+        "pairs": 14260,
+        "ipairs": 17281,
+        "tonumber": 40041,
+        "IsValid": 89208,
+        "GetMapSectorXY": 1,
+        "select": 24,
+        "BuildableGridRatio": 800,
+        "tostring": 90570,
+        "NewComputeGrid": 3,
+        "type": 1029741
+      }
+    },
+    {
+      "stage": "post-pipeline scheduled revalidation",
+      "keys": {
+        "FillRandomMapGen": 10,
+        "buildUnbuildableZ": 3,
+        "const": 7212,
+        "GenerateAdditionalMaps": 10,
+        "IsOverviewMode": 19,
+        "GetPreciseTicks": 10,
+        "table": 3286,
+        "math": 258917,
+        "rawset": 73,
+        "debug": 1,
+        "assert": 563,
+        "pcall": 300641,
+        "InitialReveal": 1,
+        "setmetatable": 12,
+        "box": 813,
+        "string": 285906,
+        "GetMapSectorTileSize": 1,
+        "InitSector": 800,
+        "pairs": 14263,
+        "ipairs": 17282,
+        "tonumber": 40041,
+        "IsValid": 91608,
+        "GetMapSectorXY": 1,
+        "select": 25,
+        "BuildableGridRatio": 800,
+        "tostring": 90686,
+        "NewComputeGrid": 3,
+        "type": 1193876
+      }
+    }
+  ],
+  "sampled_functions": {
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:2020": {
+      "table": 1,
+      "math": 2
+    },
+    "@Mod/SuperBigMap/Code/sbm_object_clone.lua:119": {
+      "string": 117,
+      "type": 205
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:3643": {
+      "math": 1,
+      "pcall": 1,
+      "type": 4
+    },
+    "@D:/PROJS/SMR/super-big-map/_ralph/runs/under80-20260912/artifacts/v982_lookup_profile_reference/diagnostic_setup.lua:0": {
+      "debug": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_object_clone.lua:258": {
+      "type": 4
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_exploration.lua:722": {
+      "pcall": 1,
+      "type": 7
+    },
+    "@Mod/SuperBigMap/Code/sbm_map_generation.lua:2751": {
+      "type": 11,
+      "pcall": 4
+    },
+    "@Mod/SuperBigMap/Code/sbm_provenance.lua:92": {
+      "type": 12
+    },
+    "@Mod/SuperBigMap/Code/sbm_rock_grounding.lua:112": {
+      "tostring": 1,
+      "math": 17
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua:7510": {
+      "type": 16,
+      "pcall": 19
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_exploration.lua:675": {
+      "pairs": 12
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:2235": {
+      "type": 3,
+      "math": 5
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua:3998": {
+      "GetPreciseTicks": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:342": {
+      "math": 5
+    },
+    "@Mod/SuperBigMap/Code/sbm_decor_topup.lua:95": {
+      "type": 2,
+      "pcall": 6
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:7209": {
+      "math": 12,
+      "pcall": 1,
+      "type": 8
+    },
+    "@Mod/SuperBigMap/Code/sbm_object_clone.lua:162": {
+      "type": 26
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_exploration.lua:1035": {
+      "math": 9
+    },
+    "@Mod/SuperBigMap/Code/sbm_decor_topup.lua:695": {
+      "math": 3,
+      "type": 4,
+      "pcall": 1
+    },
+    "@Mod/SuperBigMap/Code/ZoomPlus.lua:817": {
+      "select": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_provenance.lua:47": {
+      "type": 52
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua:2939": {
+      "pcall": 2
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua:6334": {
+      "pcall": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:689": {
+      "type": 3
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua:5396": {
+      "type": 15,
+      "pcall": 16
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:4993": {
+      "type": 3,
+      "math": 14
+    },
+    "@Mod/SuperBigMap/Code/sbm_decor_topup.lua:149": {
+      "math": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_provenance.lua:107": {
+      "type": 2
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:1344": {
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_map_generation.lua:9004": {
+      "tostring": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:11167": {
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/ZoomPlus.lua:308": {
+      "pcall": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua:2660": {
+      "math": 5
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_exploration.lua:609": {
+      "type": 12
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:1276": {
+      "tostring": 8,
+      "type": 9
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:2309": {
+      "ipairs": 4,
+      "math": 1,
+      "type": 2
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:1893": {
+      "type": 3
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_exploration.lua:2309": {
+      "assert": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_exploration.lua:688": {
+      "IsValid": 14
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:5392": {
+      "tostring": 8,
+      "type": 7
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:2567": {
+      "tostring": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_lifecycle.lua:400": {
+      "IsOverviewMode": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:4108": {
+      "ipairs": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_exploration.lua:1290": {
+      "pcall": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:205": {
+      "type": 2
+    },
+    "@Mod/SuperBigMap/Code/sbm_map_generation.lua:6609": {
+      "pairs": 1,
+      "ipairs": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:5238": {
+      "pcall": 1,
+      "type": 4
+    },
+    "@Mod/SuperBigMap/Code/sbm_overview_camera.lua:232": {
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:3242": {
+      "tonumber": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_exploration.lua:1572": {
+      "tostring": 1,
+      "tonumber": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_exploration.lua:136": {
+      "type": 2
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_exploration.lua:547": {
+      "pcall": 12,
+      "IsValid": 20
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua:818": {
+      "tostring": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:3509": {
+      "tostring": 2,
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:2930": {
+      "pcall": 4,
+      "type": 5
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_exploration.lua:481": {
+      "BuildableGridRatio": 1,
+      "InitSector": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua:7256": {
+      "pcall": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua:1977": {
+      "pcall": 2
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua:6368": {
+      "type": 12
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:589": {
+      "type": 2
+    },
+    "@Mod/SuperBigMap/Code/sbm_provenance.lua:57": {
+      "type": 65
+    },
+    "@Mod/SuperBigMap/Code/sbm_map_bounds.lua:202": {
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_highlight.lua:21": {
+      "type": 10
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua:7431": {
+      "tostring": 2
+    },
+    "@Mod/SuperBigMap/Code/sbm_decor_topup.lua:354": {
+      "tonumber": 1,
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua:7253": {
+      "tostring": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:2398": {
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua:7370": {
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua:7204": {
+      "pcall": 19
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_grid.lua:489": {
+      "math": 4
+    },
+    "@Mod/SuperBigMap/Code/sbm_engine.lua:55": {
+      "math": 5
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua:5208": {
+      "tonumber": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua:118": {
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua:7587": {
+      "tostring": 1,
+      "pcall": 1,
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua:7483": {
+      "type": 1,
+      "pcall": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_zoomplus_integration.lua:43": {
+      "tostring": 1,
+      "type": 2
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:2897": {
+      "tonumber": 5,
+      "type": 2
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:9086": {
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:2099": {
+      "ipairs": 6
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua:2678": {
+      "math": 31
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_grid.lua:149": {
+      "type": 11,
+      "pcall": 9
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_exploration.lua:694": {
+      "tostring": 1,
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_exploration.lua:2267": {
+      "buildUnbuildableZ": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:2205": {
+      "type": 8,
+      "pcall": 3
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:1380": {
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:241": {
+      "pcall": 1,
+      "type": 4
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:1281": {
+      "pcall": 2,
+      "type": 9
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_highlight.lua:395": {
+      "type": 2
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:737": {
+      "math": 2
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:8241": {
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:1861": {
+      "pcall": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua:5097": {
+      "tonumber": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:8086": {
+      "ipairs": 1,
+      "pcall": 1,
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_provenance.lua:131": {
+      "type": 17
+    },
+    "@Mod/SuperBigMap/Code/sbm_decor_topup.lua:393": {
+      "tonumber": 2,
+      "type": 12
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:2508": {
+      "pcall": 1,
+      "type": 2
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:6137": {
+      "tostring": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_map_generation.lua:2738": {
+      "pcall": 1,
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:799": {
+      "type": 3
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_exploration.lua:82": {
+      "math": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua:4153": {
+      "math": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_zoom_option.lua:178": {
+      "tostring": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua:2856": {
+      "pcall": 17
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_exploration.lua:601": {
+      "type": 32
+    },
+    "@Mod/SuperBigMap/Code/ZoomPlus.lua:363": {
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_zoom_option.lua:307": {
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua:3672": {
+      "pcall": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_map_bounds.lua:144": {
+      "box": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_object_clone.lua:133": {
+      "type": 32
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:2611": {
+      "tostring": 12,
+      "pcall": 24
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:5603": {
+      "ipairs": 1,
+      "tostring": 1,
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_map_generation.lua:4416": {
+      "type": 1,
+      "setmetatable": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:384": {
+      "type": 5,
+      "pcall": 5
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:2068": {
+      "math": 5
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:5978": {
+      "tostring": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:4980": {
+      "tostring": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_object_clone.lua:23": {
+      "type": 57
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua:2964": {
+      "pcall": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:4051": {
+      "math": 3
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:2249": {
+      "tostring": 2
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:5041": {
+      "math": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_exploration.lua:2696": {
+      "IsValid": 3
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_exploration.lua:921": {
+      "const": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:5372": {
+      "math": 3
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:5587": {
+      "ipairs": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:852": {
+      "ipairs": 1,
+      "tostring": 1,
+      "type": 2
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:5446": {
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:3380": {
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:2187": {
+      "math": 6
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_highlight.lua:300": {
+      "pcall": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:4846": {
+      "tostring": 2
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:1988": {
+      "tostring": 1,
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_exploration.lua:243": {
+      "type": 9
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua:4131": {
+      "pcall": 4,
+      "type": 6
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:769": {
+      "tostring": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:3224": {
+      "type": 6,
+      "tostring": 1,
+      "pairs": 1,
+      "pcall": 13
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:228": {
+      "pcall": 3,
+      "type": 2
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:318": {
+      "tonumber": 16,
+      "math": 12,
+      "type": 16
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:967": {
+      "math": 7,
+      "type": 11
+    },
+    "@Mod/SuperBigMap/Code/sbm_rock_grounding.lua:13": {
+      "type": 33
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:167": {
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:676": {
+      "pcall": 2,
+      "type": 6
+    },
+    "@Mod/SuperBigMap/Code/sbm_loading_ui.lua:360": {
+      "rawset": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:4588": {
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:419": {
+      "type": 6
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:2694": {
+      "tostring": 1,
+      "type": 2,
+      "pcall": 2
+    },
+    "@Mod/SuperBigMap/Code/sbm_zoom_option.lua:220": {
+      "table": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua:185": {
+      "type": 25
+    },
+    "@Mod/SuperBigMap/Code/sbm_zoomplus_integration.lua:83": {
+      "tostring": 2
+    },
+    "@Mod/SuperBigMap/Code/sbm_object_clone.lua:374": {
+      "string": 18,
+      "type": 52
+    },
+    "@Mod/SuperBigMap/Code/sbm_object_clone.lua:98": {
+      "type": 22,
+      "string": 130
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:256": {
+      "type": 2,
+      "pcall": 2
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:1183": {
+      "math": 8,
+      "type": 11
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua:4108": {
+      "tonumber": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:811": {
+      "ipairs": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:4294": {
+      "math": 20
+    },
+    "@Mod/SuperBigMap/Code/sbm_map_generation.lua:10268": {
+      "NewComputeGrid": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_exploration.lua:629": {
+      "IsValid": 50,
+      "pcall": 19,
+      "type": 23
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:2022": {
+      "type": 4,
+      "math": 8
+    },
+    "@Mod/SuperBigMap/Code/sbm_map_generation.lua:8642": {
+      "FillRandomMapGen": 1,
+      "GenerateAdditionalMaps": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:1886": {
+      "type": 23
+    },
+    "@Mod/SuperBigMap/Code/sbm_map_generation.lua:2399": {
+      "const": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:4076": {
+      "math": 2
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:4061": {
+      "math": 6
+    },
+    "@Mod/SuperBigMap/Code/sbm_decor_topup.lua:510": {
+      "tostring": 2,
+      "math": 13,
+      "pcall": 7,
+      "type": 18
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:4171": {
+      "math": 4,
+      "tostring": 6,
+      "type": 4
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:5209": {
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_grid.lua:438": {
+      "type": 3
+    },
+    "@Mod/SuperBigMap/Code/sbm_overview_camera.lua:132": {
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_exploration.lua:2434": {
+      "const": 5,
+      "IsValid": 3
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:4154": {
+      "math": 2
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_highlight.lua:411": {
+      "pcall": 3,
+      "type": 9
+    },
+    "@Mod/SuperBigMap/Code/sbm_rock_grounding.lua:53": {
+      "math": 17
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:2282": {
+      "type": 3
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:4965": {
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:4559": {
+      "math": 1,
+      "pcall": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_exploration.lua:999": {
+      "GetMapSectorTileSize": 1,
+      "InitialReveal": 1,
+      "GetMapSectorXY": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:5260": {
+      "tostring": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_exploration.lua:909": {
+      "const": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_lifecycle.lua:329": {
+      "string": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua:2594": {
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_grid.lua:457": {
+      "string": 12,
+      "math": 4
+    },
+    "@Mod/SuperBigMap/Code/sbm_zoom_option.lua:55": {
+      "math": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_exploration.lua:1808": {
+      "math": 2
+    },
+    "@Mod/SuperBigMap/Code/sbm_decor_topup.lua:238": {
+      "table": 1,
+      "math": 2,
+      "tonumber": 1,
+      "type": 4
+    },
+    "@Mod/SuperBigMap/Code/sbm_decor_topup.lua:455": {
+      "math": 4,
+      "tonumber": 7
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_exploration.lua:591": {
+      "type": 64,
+      "pcall": 64
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_grid.lua:467": {
+      "tostring": 5
+    },
+    "@Mod/SuperBigMap/Code/sbm_map_generation.lua:66": {
+      "type": 17
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua:7470": {
+      "type": 21
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:2644": {
+      "table": 1,
+      "tostring": 18
+    },
+    "@Mod/SuperBigMap/Code/sbm_lifecycle.lua:842": {
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:2544": {
+      "pcall": 11,
+      "type": 18
+    },
+    "@Mod/SuperBigMap/Code/sbm_map_generation.lua:419": {
+      "string": 2
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua:2435": {
+      "math": 3,
+      "tonumber": 3,
+      "type": 3
+    }
+  },
+  "status": "pass",
+  "restored": true,
+  "debug_still_blocked": true,
+  "keys": {
+    "FillRandomMapGen": 10,
+    "buildUnbuildableZ": 3,
+    "const": 7212,
+    "GenerateAdditionalMaps": 10,
+    "IsOverviewMode": 19,
+    "GetPreciseTicks": 10,
+    "table": 3286,
+    "math": 258917,
+    "rawset": 73,
+    "debug": 1,
+    "assert": 563,
+    "pcall": 300641,
+    "InitialReveal": 1,
+    "setmetatable": 12,
+    "NewComputeGrid": 3,
+    "string": 285906,
+    "GetMapSectorTileSize": 1,
+    "box": 813,
+    "pairs": 14263,
+    "tostring": 90686,
+    "BuildableGridRatio": 800,
+    "IsValid": 91608,
+    "select": 25,
+    "GetMapSectorXY": 1,
+    "tonumber": 40041,
+    "ipairs": 17282,
+    "InitSector": 800,
+    "type": 1193876
+  }
+}

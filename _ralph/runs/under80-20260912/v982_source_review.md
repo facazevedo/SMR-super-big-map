@@ -1,5 +1,21 @@
 # v982 hot-function standard-library bindings
 
+REJECTED: frozen6daf174 cold reference90.168/89.495/89.343s, median89.495s
+versus accepted89.425s (0.070s slower). Native control29.683s. All78 offline
+checks and full native predecessor/repeat/private-stream/individual-rock output
+checks pass, no audit issues; all four owned games normally quit. No excluded
+sample, rescue repeat or five-site promotion. Source restored exactly to c4d3e67
+v979/sector76/generator294; candidate-only fixture recoverable in6daf174.
+
+Follow-up v982_lookup_profile_reference (46150/PID43600) closed normally, full
+exact parity PASS, hooks restored and mod debug still blocked. Compared with the
+same v979 census, stdlib fallback reads5779032->2204898 (3574134 fewer), including
+math1641102->258917, type2406779->1193876, string933828->285906. The bindings DID
+remove their intended lookup work. That was not enough to establish a lower cold
+median; do not blame an inactive implementation or rerun unchanged as a rescue.
+Diagnostic time is not cold acceptance evidence. This directs future work toward
+larger reductions than standard-library environment lookups alone.
+
 Candidate against accepted c4d3e67/v979, not a measured gain yet. The restored
 v979 native global_lookup_function_profile_reference completed normally in owned
 PID34568, exact predecessor/private-stream/individual-rock parity PASS; diagnostic

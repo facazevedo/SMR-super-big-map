@@ -1,5 +1,12 @@
 # Under-80-second optimization, 2026-09-12
 
+CURRENT USER TARGET: revised to strictly UNDER85 SECONDS on2026-09-12, with the
+same reference/five-site scope and correctness requirements. Historical80-second
+headings and evidence below remain unchanged. The active goal-tool record cannot
+edit its objective while unfinished; the latest user instruction is authoritative.
+Do not mark the old80 objective complete to rename it. Accepted reference89.425s
+and worst site94.349s require about5% and10% improvement respectively.
+
 User requested implementation after the feasibility assessment. Target: reference
 14N134W and five existing validation scenarios below 80 seconds, measured from START
 through required surface post-pipeline revalidation. All current rules, geometry
@@ -482,3 +489,23 @@ Offline39468 CLOSED exit0: all78 commands PASS. Source hygiene and full-module
 parse pass, including final sector77/generator297 guards. Freeze this checkpoint
 for reference3/control, with exact acceptedv979 predecessor comparisons. No native
 v982 timing or acceptance claim yet.
+
+## v982 rejected; accepted v979 restored; user target revised to85s
+
+Cold58936 CLOSED exit0, reference PIDs21672/9916/40696, control47288, all normal
+shutdowns and immutable6daf174/runtime982 deployment. Reference90.168/89.495/89.343,
+median89.495 versus89.425 (0.070s slower), control29.683. Exact predecessor/repeat/
+private-stream/individual-rock and automated gates pass, audit issues empty.
+No five-site promotion, excluded sample or rescue repeat.
+
+Diagnostic46150/PID43600 CLOSED, statuspass/hooksrestored/debugblocked/full exact
+parity PASS. Actual stdlib lookup count5779032->2204898,3574134 fewer. Thus the
+candidate was active and removed intended work, but did not establish a cold gain.
+Do not rerun unchanged bindings or use diagnostic elapsed time as acceptance.
+Restore all production byte-for-byte to acceptedc4d3e67/v979/sector76/generator294;
+remove only candidate parity fixture, recoverable6daf174. All owned games closed.
+
+Latest user asks whether85s is possible: plausible, not demonstrated or promised.
+Reference needs4.425s and worst site9.349s. Next work needs a larger measured
+bottleneck reduction while retaining all existing rules, RNG, terrain fixes,
+individual rock support, buttons and scheduled revalidation. Target not reached.
