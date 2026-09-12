@@ -539,3 +539,12 @@ decor_radius_query and three-way fixture prepare one-point-bucket queries using
 conservative radius-expanded circle groups; see decor_radius_research.md.
 Also recorded an UNPROVED signed-coordinate precision hypothesis for apron masks;
 no new production candidate, lower bracket or cold claim exists.
+
+decor_radius_shadow_61n53366/PID9160 CLOSED,775867 exact queries/full parity PASS,
+but new3263ms vsold2618ms diagnostic: reject before promotion. No cache limit hit.
+Higher-precision apron first signed-set prototype failed offline/native (unsigned
+setter); preserve failure. Replaced by adaptive positive bias with exact signed
+native decode, no residual-check change. Offline38115 exact cells plus221 inherited
+failure checks and new encoding-domain edges pass. Adaptive native646checks PASS,
+PID28588 normally closed. Rational proof now documented. Next real native33-case
+and full reference shadow, no production v983 or cold gain yet.

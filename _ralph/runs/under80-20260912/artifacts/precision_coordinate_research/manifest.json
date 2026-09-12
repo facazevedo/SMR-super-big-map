@@ -1,0 +1,10 @@
+{
+  "production_changed": false,
+  "before_sha256": "73b028c0a1ceb1ac75e2a7af979283e07d3d9ad8edf38e0047ec67f944409129",
+  "generated_sha256": {
+    "terrain_candidate.lua": "f4a9c3eafd9e8d6d3a021183615b39eac952c3128eeebcc45971b9d89ceed34d",
+    "offline_test.lua": "9f70f65af109d02885036f63a6d7bb37cf8880e7ed9bd7ffb9d9907a0b28a50a",
+    "native_probe.lua": "55ce898df94c5ea00d279c55cc6b7df8ef0241272a3d7cf1be6878acb2123cc9",
+    "shadow.lua": "60e3266f9e6b6fb93cc099cccd1aea6eb166c54bdeddc08a4e5d32ebd0a54378"
+  }
+}

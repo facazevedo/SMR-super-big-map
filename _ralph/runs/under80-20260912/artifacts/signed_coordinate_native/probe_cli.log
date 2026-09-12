@@ -1,0 +1,7 @@
+{
+  "ok": true,
+  "exit": 0,
+  "data": {
+    "result": "fail {\n\tmetatable = table: 000002B17FB94780 [1]\n}"
+  }
+}

@@ -1,0 +1,111 @@
+{
+  "status": "pass",
+  "restored": true,
+  "calls": [
+    {
+      "indexes": [
+        {
+          "groups": [
+            {
+              "slots": 15449,
+              "invalid": false,
+              "queries": 208939,
+              "count": 336,
+              "upper": 8192
+            },
+            {
+              "slots": 0,
+              "invalid": false,
+              "queries": 1,
+              "count": 0,
+              "upper": 36864
+            },
+            {
+              "slots": 0,
+              "invalid": false,
+              "queries": 1,
+              "count": 0,
+              "upper": 28672
+            },
+            {
+              "slots": 0,
+              "invalid": false,
+              "queries": 26,
+              "count": 0,
+              "upper": 24576
+            },
+            {
+              "slots": 19871,
+              "invalid": false,
+              "queries": 86932,
+              "count": 336,
+              "upper": 16384
+            },
+            {
+              "slots": 17440,
+              "invalid": false,
+              "queries": 401920,
+              "count": 336,
+              "upper": 12288
+            },
+            {
+              "slots": 22282,
+              "invalid": false,
+              "queries": 16944,
+              "count": 336,
+              "upper": 20480
+            }
+          ],
+          "circles": 336,
+          "radii": 140
+        },
+        {
+          "groups": [
+            {
+              "slots": 6711,
+              "invalid": false,
+              "queries": 32467,
+              "count": 565,
+              "upper": 12288
+            },
+            {
+              "slots": 11235,
+              "invalid": false,
+              "queries": 367,
+              "count": 565,
+              "upper": 20480
+            },
+            {
+              "slots": 0,
+              "invalid": false,
+              "queries": 2,
+              "count": 0,
+              "upper": 24576
+            },
+            {
+              "slots": 4932,
+              "invalid": false,
+              "queries": 24179,
+              "count": 565,
+              "upper": 8192
+            },
+            {
+              "slots": 8843,
+              "invalid": false,
+              "queries": 4089,
+              "count": 565,
+              "upper": 16384
+            }
+          ],
+          "circles": 566,
+          "radii": 97
+        }
+      ],
+      "mismatches": 0,
+      "queries": 775867,
+      "old_ms": 2618,
+      "environment": "Surface",
+      "new_ms": 3263
+    }
+  ]
+}

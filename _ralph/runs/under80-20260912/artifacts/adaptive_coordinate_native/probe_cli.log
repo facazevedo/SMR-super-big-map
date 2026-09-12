@@ -1,0 +1,7 @@
+{
+  "ok": true,
+  "exit": 0,
+  "data": {
+    "result": "pass {\n\tmetatable = table: 00000159E5A34780 [1]\n}"
+  }
+}
