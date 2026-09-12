@@ -5,7 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 TMP = Path(__file__).resolve().parent
-research_name = 'precision_coordinate_research_2'
+research_name = 'precision_coordinate_research_3'
 out = ROOT / '_ralph/runs/under80-20260912/artifacts' / research_name
 source = (ROOT / 'Code/sbm_terrain_copy.lua').read_text()
 candidate = source
@@ -16,6 +16,8 @@ def once(old, new):
     candidate = candidate.replace(old, new)
 
 once('local S, W = 1048576, 16777216', 'local Q, S, W = 4194304, 1048576, 16777216')
+once('or short_radius<=0 or long_radius<=0 or w<2 or h<2',
+     'or short_radius<0.00000095367431640625 or long_radius<0.00000095367431640625 or w<2 or h<2')
 once('if math.abs(xv[x]+yv[y])>4 then return nil end',
      'if math.abs(xv[x]+yv[y])>4 then return nil end\n'
      '\t            -- Quantized corner sums must still be exactly representable f32 integers.\n'

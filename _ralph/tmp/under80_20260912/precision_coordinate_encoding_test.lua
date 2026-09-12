@@ -1,4 +1,4 @@
-local path=arg[1] or '_ralph/runs/under80-20260912/artifacts/precision_coordinate_research_2/terrain_candidate.lua'
+local path=arg[1] or '_ralph/runs/under80-20260912/artifacts/precision_coordinate_research_3/terrain_candidate.lua'
 local f=assert(io.open(path,'r'));local source=f:read('*a');f:close()
 local a=assert(source:find('local NativeApronMask = function(',1,true))
 local b=assert(source:find('\n\tlocal required =',a,true))
@@ -22,6 +22,12 @@ local Q=4194304
 local tie={x=0,y=0,mountain_x=2-.5/Q,mountain_y=2+.5/Q}
 local mask,why,allocations=run(tie,2,2,0,0,1,1)
 assert(not mask and not why and allocations==0,'quantized corner sum exceeded exact f32 integer domain')
+local zero_axis={x=0,y=0,mountain_x=0,mountain_y=0}
+local smallest=0.00000095367431640625
+local mask,why,allocations=run(zero_axis,2,2,0,0,smallest*.5,smallest)
+assert(not mask and not why and allocations==0,'sub-domain radius must use the scalar path')
+local mask,why=run(zero_axis,2,2,0,0,smallest,smallest)
+assert(mask and not why,'radius domain endpoint rejected')
 -- Reuse the complete production native allocation/clone/power-error/lifetime test
 -- against this candidate, without changing the accepted fixture or production.
 local io_proxy=setmetatable({open=function(name,...)

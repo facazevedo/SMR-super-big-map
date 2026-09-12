@@ -23,6 +23,17 @@ power/census/ownership checks. Rational propagation passes as recorded below.
 Next: larger real-engine scratch raster comparison and complete-map shadow.
 No cold gain or production promotion yet.
 
+Native scratch5657/PID32976 (variant2) CLOSED PASS523776 exact cells,33 cases,
+zero differences between literal scalar, accepted v979 and Q22 candidate. Cases
+cover flat/rough/capped terrain, multiple patches and certified core endpoints.
+Summed exact corrections41470->31891; these small-grid times are not a cold gain.
+
+Variant3 adds ONLY radius>=2^-20 qualification to bound double-association and
+subnormal amplification explicitly; smaller radii keep the existing scalar path.
+This does not change any qualified arithmetic from variant2. Existing production
+radii and all33 native fixture radii are above this threshold. Offline endpoint
+and below-endpoint checks verify the new boundary. Use variant3 for full shadow.
+
 ## Bound derivation
 
 Let u=2^-24 and coordinate error E=2^-21. Each rounded contribution is within
