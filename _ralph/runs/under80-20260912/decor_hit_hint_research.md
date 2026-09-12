@@ -55,3 +55,11 @@ storage cap and unsupported query domains. Native complete-query shadow is next;
 reject before production if it does not reduce real native query cost. No v984
 candidate or cold gain exists yet. The older expanded-radius-list query remains
 rejected and the whole-cell-certificate note remains an untested different idea.
+
+Native shadow76800/PID43660 at ac7c847 CLOSED normally, full output/private/rock
+parity PASS. All775867 old/new queries agree. Diagnostic old2566ms/new1682ms;
+679685 positive hints avoid the full index. Obstruction cache25756 slots with
+623382 hits/714763 queries; decor cache3601 slots with56303 hits/61104 queries.
+No cold gain yet. Next prepare an inline, counter-free equivalent and exact
+cursor-width precomputation/entry primitive bindings, with independent oracles
+and native argument/stream shadow before any production promotion.

@@ -1,0 +1,31 @@
+{
+  "restored": true,
+  "calls": [
+    {
+      "new_ms": 1682,
+      "old_ms": 2566,
+      "environment": "Surface",
+      "indexes": [
+        {
+          "queries": 714763,
+          "tests": 658968,
+          "slots": 25756,
+          "circles": 336,
+          "hits": 623382,
+          "index_queries": 91349
+        },
+        {
+          "queries": 61104,
+          "tests": 57314,
+          "slots": 3601,
+          "circles": 566,
+          "hits": 56303,
+          "index_queries": 4769
+        }
+      ],
+      "mismatches": 0,
+      "queries": 775867
+    }
+  ],
+  "status": "pass"
+}
