@@ -602,3 +602,29 @@ Next work needs a separate measured bottleneck reduction, particularly the slow
 map's decor stage. Do not rerun the slower radius-expanded query or unchanged
 v982 bindings. A positive whole-cell circle certificate is only an unproved
 hypothesis; see decor_positive_cell_hypothesis.md. No candidate984 exists.
+
+## Continue from accepted v983: candidate v984
+
+Previous turn classified PROGRESS (accepted v983 and full verification). Rechecked
+cleanb81263c,38/38 deployment and no game. Isolated decor helper diagnostic at
+ee5266b/session72865/PID5016 CLOSED with full parity; see decor_hit_hint_research.md.
+Its721100 native type queries cost427ms; avoid an unproved GetTypeGrid rewrite.
+
+Last-hit circle hint at ac7c847/session76800/PID43660 CLOSED full parity PASS,
+775867 equal queries,679685 index bypasses, diagnostic2566ms->1682ms. Inline
+counter-free variant2 plus exact partial-cell cursor precomputation/entry bindings
+passed combined native shadow8392/PID21672 at f16b8ed, all normally shut down.
+775867 circle queries,701139 cursor calls and1402786 cursor RNG arguments/values
+match; full predecessor/private/rock outputs PASS. Rational margin proof passes.
+Variant1's unrun lexical-collision artifact remains rejected, never deployed.
+
+Promote only validated variant2 to candidate984/generator299, keep sector76 and
+all other acceptedv983 code. Require82 offline tests, then frozen reference3/control
+and all five sites. Reference median and targeted61N must improve before acceptance.
+No cold gain or under85 claim exists yet; v983 remains the accepted baseline.
+
+v984 offline78252 CLOSED exit0: all82 commands PASS, including the complete
+inherited terrain/rock/RNG/readiness suite and new decor oracles/proof. Full source
+parse and hygiene PASS. Freeze this checkpoint for reference3/control; test payload
+will be candidate984, not an accepted replacement until all performance/output
+gates pass. No owned game is live. Candidate DecorTopUp matches native variant2.

@@ -147,6 +147,35 @@ local function map_stretch(map)
 end
 
 local function circle_hits(list, x, y, radius)
+	-- Private last-hit hints only accelerate definite positives. Every miss still
+	-- runs the complete accepted index, including its append catch-up.
+	local cache = list.hit_hint_cache
+	if not cache then
+		cache = { rows = {}, queries = 0, slots = 0, floor = math.floor }
+		list.hit_hint_cache = cache
+	end
+	local floor, cell = cache.floor, 16384
+	local active, hint_x, hint_y, hint_row, hint
+	if cache.queries < 32 then
+		cache.queries = cache.queries + 1
+	else
+		active = x >= -67108864 and x <= 67108864 and y >= -67108864 and y <= 67108864
+			and radius >= 0 and radius <= 65536
+		if active then
+			hint_x, hint_y = floor((x + 0.0) / 4096), floor((y + 0.0) / 4096)
+			hint_row = cache.rows[hint_x]
+			hint = hint_row and hint_row[hint_y]
+			if hint then
+				local dx, dy = x - hint.x, y - hint.y
+				local reach = radius + hint.r
+				local distance2 = dx * dx + dy * dy
+				-- Exact predicate plus an inward one-unit margin: the old bounding
+				-- box index must include this immutable circle despite roundoff.
+				if distance2 < reach * reach and reach > 1
+					and distance2 < (reach - 1) * (reach - 1) then return true end
+			end
+		end
+	end
 	-- These circles are private to one Run and only appended after a stamp.
 	-- Index their full bounding boxes; the original strict circle predicate still
 	-- decides every possible hit. No candidate, rejection precedence or draw changes.
@@ -155,7 +184,6 @@ local function circle_hits(list, x, y, radius)
 		index = { rows = {}, count = 0, serial = 0, seen = {} }
 		list.spatial_index = index
 	end
-	local floor, cell = math.floor, 16384
 	for i = index.count + 1, #list do
 		local c = list[i]
 		for bx = floor((c.x - c.r + 0.0) / cell), floor((c.x + c.r + 0.0) / cell) do
@@ -182,7 +210,16 @@ local function circle_hits(list, x, y, radius)
 						seen[c] = serial
 						local dx, dy = x - c.x, y - c.y
 						local reach = radius + c.r
-						if dx * dx + dy * dy < reach * reach then return true end
+						if dx * dx + dy * dy < reach * reach then
+							if active and c ~= hint and (hint or cache.slots < 32768)
+								and c.x >= -67108864 and c.x <= 67108864
+								and c.y >= -67108864 and c.y <= 67108864 and c.r >= 0 and c.r <= 67108864 then
+								if not hint_row then hint_row = {}; cache.rows[hint_x] = hint_row end
+								if not hint then cache.slots = cache.slots + 1 end
+								hint_row[hint_y] = c
+							end
+							return true
+						end
 					end
 				end
 			end
@@ -218,13 +255,31 @@ local function NewDecorInteriorCursor(x0, y0, x1, y1, step, rand)
 	end
 	while gcd(stride, count) ~= 1 do stride = stride % count + 1 end
 	local remaining = count
+	local floor = math.floor
+	if count > 67108864 or step > 67108864 or index ~= floor(index) or stride ~= floor(stride)
+		or math.abs(x0) > 67108864 or math.abs(x1) > 67108864
+		or math.abs(y0) > 67108864 or math.abs(y1) > 67108864 then
+		return function()
+			if remaining == 0 then return nil end
+			local cx = x0 + (index % nx) * step
+			local cy = y0 + math.floor(index / nx) * step
+			index, remaining = (index + stride) % count, remaining - 1
+			-- One seeded candidate per cell, created only when requested; no candidate pool.
+			return cx + rand(math.min(step, x1 - cx)), cy + rand(math.min(step, y1 - cy))
+		end
+	end
+	-- Every non-final cell has full width/height. Only the final column/row
+	-- can be partial; preserve the original integer expression for those limits.
+	local last_w = math.min(step, x1 - (x0 + (nx - 1) * step))
+	local last_h = math.min(step, y1 - (y0 + (ny - 1) * step))
 	return function()
 		if remaining == 0 then return nil end
-		local cx = x0 + (index % nx) * step
-		local cy = y0 + math.floor(index / nx) * step
+		local ix, iy = index % nx, floor(index / nx)
+		local cx, cy = x0 + ix * step, y0 + iy * step
+		local width = ix == nx - 1 and last_w or step
+		local height = iy == ny - 1 and last_h or step
 		index, remaining = (index + stride) % count, remaining - 1
-		-- One seeded candidate per cell, created only when requested; no candidate pool.
-		return cx + rand(math.min(step, x1 - cx)), cy + rand(math.min(step, y1 - cy))
+		return cx + rand(width), cy + rand(height)
 	end
 end
 -- DECOR_FINITE_SITES_END
@@ -233,6 +288,10 @@ end
 -- ScaleMarkersToFull have moved every marker to its stretched position. Failures are recorded
 -- explicitly; a partially completed pass is never advertised as complete or rolled back.
 function DecorTopUp.Run(map, pass_edits_already_suspended)
+	-- Bind standard primitives/tables once for this pass, retaining
+	-- per-Run lookup and all original call arguments, order and arithmetic.
+	local type, tonumber, tostring, ipairs, pairs, pcall = type, tonumber, tostring, ipairs, pairs, pcall
+	local math, string, table = math, string, table
 	local stats = { version = DecorTopUp.VERSION, enabled = false, placed = 0, objects = 0 }
 	DecorTopUp.LastStats = stats
 	local ok, err = pcall(function()
@@ -691,9 +750,10 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 			local jitter_max = math.max(100, math.floor(
 				cfg_number("STRETCH_DECOR_ENGINE_PASS_SYNTHETIC_JITTER_MAX_PERCENT", 350)))
 			local get_type = terrain_api.GetTerrainType
+			local has_get_type = type(get_type) == "function"
 			local type_cache = {}
 			local function terrain_type_at(x, y)
-				if type(get_type) ~= "function" then return 0 end
+				if not has_get_type then return 0 end
 				local key = math.floor(x / type_tile) * 1000003 + math.floor(y / type_tile)
 				local cached = type_cache[key]
 				if cached ~= nil then return cached end

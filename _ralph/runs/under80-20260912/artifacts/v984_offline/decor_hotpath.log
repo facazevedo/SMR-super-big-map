@@ -1,0 +1,3 @@
+PASS 64009 old/hint/exhaustive comparisons; hint hits 801; appends, boundaries, storage limit and unsupported numeric domains
+PASS cursor 80340 coordinates and 160598 exact random-call arguments/values
+PASS terrain type cache values, native query arguments, failures and entry binding
