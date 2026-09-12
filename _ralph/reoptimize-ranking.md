@@ -1480,3 +1480,27 @@ judgments, and `v974_all_ten_rules_review.json`. Diagnostic profiles remain sepa
 The native function profile identified about20million sandbox-global lookups in
 crease/outer terrain helpers; an exact entry-scoped binding candidate is next.
 **80s not reached.**
+
+## 2026-09-12: v975 terrain standard-library bindings
+
+Code `1f67811`, v975/guard290. Five entry-local bindings eliminate repeated
+mod-environment lookups while preserving the literal calculations and call order.
+Reference 99.851 / 97.892 / 97.914s, median97.914s versus fresh v974105.174s:
+7.260s faster (6.90%). Native control30.817s. No samples excluded.
+
+| Scenario | v974 | v975 | All ten / full predecessor output |
+|---|---:|---:|---|
+|15S67E|106.689s|102.317s|PASS / identical|
+|24S74W|105.515s|100.171s|PASS / identical|
+|45S120W|101.427s|94.862s|PASS / identical|
+|61N136W|108.707s|104.302s|PASS / identical|
+|17S11W|107.850s|102.034s|PASS / identical|
+
+All72 offline commands pass. Exact full grids, placements, individual rocks,
+private streams and original gates pass; source/RNG and normal-process review
+complete all ten. Nine unique owned acceptance processes closed normally;
+deployment audited38/38. Visual inheritance is through exact accepted outputs,
+not a new screenshot claim. Evidence: `under80-20260912/artifacts/v975_reference`,
+`v975_matrix`, `v975_offline`, `v975_all_ten_rules_review.json`, and source review.
+**80s not reached.** Next research retains exact native crease predicate results;
+it is not yet production or a timing claim.

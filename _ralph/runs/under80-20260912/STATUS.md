@@ -61,3 +61,23 @@ Non-deployed candidate and literal-body certificate are in `artifacts/binding_re
 Focused test: 3,500 exact fixture comparisons; math lookups 29,612 -> 8, with
 between-call library rebinding preserved. Candidate parses. The v974 matrix is
 closed; production can now advance to the next isolated checkpoint.
+
+## Terrain standard-library bindings v975 (checkpoint 1f67811)
+
+Runtime v975/guard290, deployed and audited38/38. Exactly five entry-scoped
+declarations in the terrain module; arithmetic and call order are unchanged.
+All72 offline commands pass. Source review: `v975_source_review.md`.
+
+Fresh reference samples99.851 /97.892 /97.914s; median97.914s versus fresh v974
+105.174s: reduction7.260s (6.90%). Native control30.817s. Complete predecessor and
+repeat outputs, original gates and normal shutdown all pass (`v975_reference/reference_audit.json`).
+Five-site `v975_matrix` completed against v974: 102.317 / 100.171 / 94.862 /
+104.302 / 102.034s in manifest order. All exact outputs and eight automated gates
+pass. Primary source/RNG/process review closes all ten rules; nine distinct
+acceptance processes exited normally. `v975_all_ten_rules_review.json` records
+the complete review. Production checkpoint is accepted; the batch is closed.
+Under80s is still not reached; do not mark the optimization goal complete.
+
+Non-deployed next research: packed exact native crease certificates. The prototype
+passes205,096 offer/winner/51-bit packing comparisons; native production integration
+and real-engine validation have NOT been done. See `native_certificate_research.md`.
