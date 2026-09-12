@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[3]
 parser = argparse.ArgumentParser()
 parser.add_argument('--name', required=True)
 parser.add_argument('--extra', action='append', default=[])
+parser.add_argument('--extra-python', action='append', default=[])
 args = parser.parse_args()
 out = ROOT / '_ralph/runs/under80-20260912/artifacts' / args.name
 out.mkdir(parents=True, exist_ok=False)
@@ -17,6 +18,8 @@ commands = json.loads(baseline.read_text())
 commands.append(dict(name='decor_circle_index', command=['lua', '_ralph/tools/parity/decor_circle_index_test.lua']))
 for name in args.extra:
     commands.append(dict(name=name, command=['lua', '_ralph/tools/parity/' + name + '_test.lua']))
+for name in args.extra_python:
+    commands.append(dict(name=name, command=['python', '_ralph/tools/parity/' + name + '_test.py']))
 results = []
 for row in commands:
     start = time.monotonic()

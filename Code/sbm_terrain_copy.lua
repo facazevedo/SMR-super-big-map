@@ -1980,10 +1980,10 @@ local function RasterNaturalMountainBaseAprons(api, grid, selected, policy)
 		native_mask_cells=0, native_mask_patches=0, scalar_mask_patches=0 }
 	local W, H = 16777216, 256
 	local NativeApronMask = function(api, own, candidate, policy, short_radius, long_radius, x0, y0, w, h)
-	    local S, W = 1048576, 16777216
+	    local Q, S, W = 4194304, 1048576, 16777216
 	    local function finite(v) return type(v)=='number' and v==v and math.abs(v)<=1048576 end
 	    if not finite(policy.core_fraction) or policy.core_fraction<0.2 or policy.core_fraction>0.75
-	        or short_radius<=0 or long_radius<=0 or w<2 or h<2 or w>16384 or h>16384 then return nil end
+	        or short_radius<0.00000095367431640625 or long_radius<0.00000095367431640625 or w<2 or h<2 or w>16384 or h>16384 then return nil end
 	    for _,v in ipairs({candidate.x,candidate.y,candidate.mountain_x,candidate.mountain_y,
 	        short_radius,long_radius,x0,y0}) do if not finite(v) then return nil end end
 	    local specs={}
@@ -1999,14 +1999,26 @@ local function RasterNaturalMountainBaseAprons(api, grid, selected, policy)
 	        end
 	        for _,x in ipairs({0,w-1}) do for _,y in ipairs({0,h-1}) do
 	            if math.abs(xv[x]+yv[y])>4 then return nil end
+	            -- Quantized corner sums must still be exactly representable f32 integers.
+	            if math.abs(math.floor(xv[x]*Q+0.5)+math.floor(yv[y]*Q+0.5))>W then return nil end
 	        end end
 	        specs[component]={x=xv,y=yv}
 	    end
 	    local function field(values,axis)
+	        -- The native setter is unsigned even for f32. Adapt the positive
+	        -- bias to this axis, then decode with native signed arithmetic.
+	        local encoded_values,minimum,maximum={},nil,nil
+	        for index,value in pairs(values) do
+	            local encoded=math.floor(value*Q+0.5)
+	            encoded_values[index]=encoded
+	            minimum=minimum and math.min(minimum,encoded) or encoded
+	            maximum=maximum and math.max(maximum,encoded) or encoded
+	        end
+	        if maximum-minimum>W then return nil end
 	        local grid=own(api.NewComputeGrid(w,h,'f',32))
 	        if not grid then return nil,'native mask coordinate allocation failed' end
-	        for index,value in pairs(values) do
-	            local encoded=math.floor(value*S+0.5)+4*S
+	        for index,value in pairs(encoded_values) do
+	            local encoded=value-minimum
 	            if axis=='x' then grid:set(index,0,encoded) else grid:set(0,index,encoded) end
 	        end
 	        local filled,extent=1,axis=='x' and h or w
@@ -2017,8 +2029,8 @@ local function RasterNaturalMountainBaseAprons(api, grid, selected, policy)
 	            grid:copyrect(grid,bounds,destination)
 	            filled=filled+count
 	        end
-	        api.GridMulDivAdd(grid,1,1,-4*S)
-	        api.GridMulDivAdd(grid,1,S,0)
+	        api.GridMulDivAdd(grid,1,1,minimum)
+	        api.GridMulDivAdd(grid,1,Q,0)
 	        return grid
 	    end
 	    local function plane(component)
@@ -2237,17 +2249,19 @@ local function RasterNaturalMountainBaseAprons(api, grid, selected, policy)
 				api.GridMulDivAdd(result,1,1,-candidate.center)
 				local relative_min,relative_max=api.GridMinMax(result)
 				api.GridMulDivAdd(result,H,1,0)
-				-- Certified domain and root/reciprocal residuals bound mask error by1/4096.
+				-- Adaptively biased Q22 coordinates and the unchanged residual certificate bound error
+				-- by5/65536 through core0.60, and7/65536 for the remaining qualified cores.
+				local error_numerator = policy.core_fraction <= 0.60 and 5 or 7
 				-- Cubic Lipschitz bound uses the upper possible local weight, not global 1.
 				local uncertainty=own(result:clone())
 				if not uncertainty then return "native apron uncertainty allocation failed" end
 				api.GridAddMulDiv(uncertainty,plane,-1);api.GridAbs(uncertainty)
 				local sensitivity=own(mask:clone())
 				if not sensitivity then return "native apron sensitivity allocation failed" end
-				api.GridMulDivAdd(sensitivity,1,1,4096);api.GridClamp(sensitivity,0,W)
+				api.GridMulDivAdd(sensitivity,1,1,error_numerator*256);api.GridClamp(sensitivity,0,W)
 				api.GridMulDivAdd(sensitivity,sensitivity,W,0)
 				api.GridMulDivAdd(uncertainty,sensitivity,W,0)
-				api.GridMulDivAdd(uncertainty,3,4096,0)
+				api.GridMulDivAdd(uncertainty,3*error_numerator,65536,0)
 				if not native_mask then api.GridFill(uncertainty,0) end
 				api.GridMulDivAdd(result,inverse,W,0)
 				api.GridMulDivAdd(plane,cube,W,0)

@@ -548,3 +548,19 @@ native decode, no residual-check change. Offline38115 exact cells plus221 inheri
 failure checks and new encoding-domain edges pass. Adaptive native646checks PASS,
 PID28588 normally closed. Rational proof now documented. Next real native33-case
 and full reference shadow, no production v983 or cold gain yet.
+
+## v983 candidate: adaptive Q22 coordinates
+
+Full shadow84055/PID48564 CLOSED exit0, diagnostic PASS, zero complete8192x8192
+differences and full predecessor/private/individual-rock parity PASS. All50
+patches qualified; exact corrections808696->396398, raster cells5039674 unchanged.
+Ordered diagnostic3350ms old/1635ms new is not a cold gain. Promote only variant3
+coordinate encoding/bracket to candidate983/generator298; retain sector76 and all
+other acceptedv979 modules. New production fixtures cover three-way raster,
+encoding/failure domain and rational proof. Require80 offline checks before
+immutable reference3/control, then five sites only if reference improves.
+Effective target remains under85; accepted median remains89.425 seconds.
+
+v983 offline33127 CLOSED exit0: all80 commands PASS. Production Terrain text
+matches the complete-map shadow variant3 exactly. No live game remains. Freeze
+this checkpoint before reference3/control; no cold gain or target claim yet.

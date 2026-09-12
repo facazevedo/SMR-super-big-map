@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[3]
 RUN = ROOT / '_ralph/runs/under80-20260912'
 ART = RUN / 'artifacts'
 parser = argparse.ArgumentParser()
-parser.add_argument('--version', choices=['974', '975', '977', '978', '979', '980', '981', '982'], default='974')
+parser.add_argument('--version', choices=['974', '975', '977', '978', '979', '980', '981', '982', '983'], default='974')
 args = parser.parse_args()
 version = args.version
 baseline, expected_tests, expected_files = {
@@ -20,6 +20,7 @@ baseline, expected_tests, expected_files = {
     '979': ('3eafc30', 77, ['Code/sbm_rock_grounding.lua', 'Code/sbm_terrain_copy.lua', 'Code/sbm_version.lua', 'metadata.lua']),
     '980': ('c4d3e67', 79, ['Code/sbm_engine.lua', 'Code/sbm_object_clone.lua', 'Code/sbm_terrain_copy.lua', 'Code/sbm_version.lua', 'metadata.lua']),
     '981': ('c4d3e67', 78, ['Code/sbm_terrain_copy.lua', 'Code/sbm_version.lua', 'metadata.lua']),
+    '983': ('c4d3e67', 80, ['Code/sbm_terrain_copy.lua', 'Code/sbm_version.lua', 'metadata.lua']),
     '982': ('c4d3e67', 78, ['Code/sbm_deposits.lua', 'Code/sbm_map_generation.lua', 'Code/sbm_object_clone.lua', 'Code/sbm_rock_grounding.lua', 'Code/sbm_sector_exploration.lua', 'Code/sbm_terrain_copy.lua', 'Code/sbm_version.lua', 'metadata.lua']),
 }[version]
 target = ART / f'v{version}_all_ten_rules_review.json'
@@ -28,7 +29,7 @@ if target.exists():
 read = lambda p: json.loads(p.read_text())
 reference = read(ART / f'v{version}_reference/reference_audit.json')
 assert reference['clean_exact_evidence'] and not reference['issues']
-if version in ('975', '977', '978', '979', '980', '981', '982'):
+if version in ('975', '977', '978', '979', '980', '981', '982', '983'):
     assert reference['median_s'] < reference['prior_median_s'], 'No measured reference improvement'
 offline_name = 'v978_final_offline' if version == '978' else f'v{version}_offline'
 offline = read(ART / offline_name / 'all_results.json')
@@ -65,5 +66,8 @@ review = dict(code_commit=code_commit, version=version, offline_commands_passed=
     unique_acceptance_processes=9, scenarios=scenarios, raw_judgments_unchanged=True,
     under_80_s_reached=reference['median_s'] < 80 and all(row['t0_to_t1_s'] < 80 for row in scenarios),
     timing_qualification='Reference and scenario results are separate: do not infer a reference speedup from the slow-map gain.')
+if version == '983':
+    review.update(target_seconds=85, under_target_reached=reference['median_s'] < 85
+        and all(row['t0_to_t1_s'] < 85 for row in scenarios))
 target.write_text(json.dumps(review, indent=2), encoding='utf-8')
 print(json.dumps(review, indent=2))
