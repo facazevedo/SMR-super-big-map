@@ -51,6 +51,7 @@ end
 -- returned false for this unchanged object. Default callers and rebound
 -- classifiers retain the complete classification path.
 local function Capture(map, obj, checked_skip, checked_important)
+	local math = math
 	local context = captures[map]
 	if not context then return end
 	local stats = context.stats
@@ -109,6 +110,7 @@ local function Capture(map, obj, checked_skip, checked_important)
 end
 
 local function Apply(map, obj, terrain_z_scale, xy_scale)
+	local math = math
 	local context = captures[map]
 	local record = context and context.objects[obj]
 	if not record then return 0 end

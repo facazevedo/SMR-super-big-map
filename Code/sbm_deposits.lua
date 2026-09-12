@@ -382,6 +382,7 @@ local function NewDepositValidationContext(map)
 end
 
 local function IsBuildableAt(map, pt, strict, context)
+	local type, pcall = type, pcall
 	context = type(context) == "table" and context.map == map and context or nil
 	local buildable = context and context.buildable or (map and map.buildable)
 	local get_z = context and context.buildable_get_z or (buildable and buildable.GetZ)
@@ -2306,6 +2307,7 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers, capture_rej
 
 	local can_place_minimum
 	local function can_place(candidate, profile)
+		local type, math, ipairs = type, math, ipairs
 		stats.checks = stats.checks + 1
 		if not profile then
 			stats.missing_profile_rejects = stats.missing_profile_rejects + 1
@@ -2431,6 +2433,7 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers, capture_rej
 	-- but every pair involving an extractor, anomaly, or effect marker keeps the configured axial
 	-- distance. Same-hex placement is never permitted, including surface/surface pairs.
 	can_place_minimum = function(candidate, candidate_is_surface, minimum_distance)
+		local math, type = math, type
 		minimum_distance = math.max(1, math.floor(tonumber(minimum_distance)
 			or TopUpEnrichmentMinimumHexDistance()))
 		local q, r = candidate and candidate.q, candidate and candidate.r
@@ -7291,6 +7294,7 @@ end
 -- unique hexes, at least 10 hexes from every other anomaly, and no more than three top-ups inside
 -- any detected resource cluster. There is no per-sector cap and no interior fallback.
 RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
+	local math, type, ipairs, pairs, table, pcall, tostring, tonumber = math, type, ipairs, pairs, table, pcall, tostring, tonumber
 	local stats = {
 		moved = 0, planned = 0, ring_sectors = 0, expected_ring_sectors = 0,
 		inner_sectors = 0, bottom_sectors = 0, right_sectors = 0,
@@ -8658,6 +8662,7 @@ end
 -- preference: if impossible, density wins and the farthest valid closer position is retained.
 -- This runs after position corrections.
 function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
+	local math, type, ipairs, pairs, table, pcall, tostring, tonumber = math, type, ipairs, pairs, table, pcall, tostring, tonumber
 	map = map or Global("CurrentMap")
 	local point_fn = Global("point")
 	local world_to_hex = Global("WorldToHex")

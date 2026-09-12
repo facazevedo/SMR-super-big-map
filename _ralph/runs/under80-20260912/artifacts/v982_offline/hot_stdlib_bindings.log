@@ -1,0 +1,1 @@
+PASS 55033 exact checks; 20 entry bindings; clone string lookups 221000 -> 45009; invocation rebinding and live fields preserved

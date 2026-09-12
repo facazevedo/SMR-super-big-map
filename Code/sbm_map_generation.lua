@@ -3016,6 +3016,7 @@ end
 SuperBigMap.ReleaseRetainedNativeSourceMap = ReleaseRetainedNativeSourceMap
 
 local function TransferGeneratedObjects(source, destination, source_baseline, excluded_objects)
+	local type, pcall, table, tostring, pairs = type, pcall, table, tostring, pairs
 	local objects, err = MapObjects(source)
 	if not objects then error("could not enumerate source objects: " .. tostring(err)) end
 	local source_manifest = cfg_bool("NATIVE_SOURCE_MANIFEST", false) and {} or nil

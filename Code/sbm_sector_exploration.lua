@@ -589,6 +589,7 @@ local function ForEachSectorDecalObject(map, callback, reason)
 end
 
 local function PointXY(value)
+	local type = type
 	if not value then return nil end
 	local ok, x, y = pcall(function() return value:x(), value:y() end)
 	if ok and type(x) == "number" and type(y) == "number" then
@@ -606,6 +607,7 @@ local function PositionMatches(obj, target)
 end
 
 local function ExpectedSectorDecalScale(sector)
+	local type = type
 	local area = sector and sector.area
 	if not area or type(area.sizex) ~= "function" then return nil end
 	local size = SafeCall(area.sizex, area)
@@ -625,6 +627,7 @@ end
 -- numbers use area:Center(); keeping the two sources synchronized prevents the huge displaced
 -- scan/grid rectangle seen when the queue became active around nightfall.
 local function NormalizeSectorVisualGeometry(sector)
+	local type, pcall = type, pcall
 	local stats = {
 		sectors = 0, sector_positions = 0, decal_positions = 0, decal_scales = 0,
 		scan_positions = 0, queue_text_positions = 0,

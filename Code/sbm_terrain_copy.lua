@@ -950,6 +950,7 @@ end
 -- Batched translation of independent rows within ONE already-selected track.
 -- No feather/refinement/track reordering. Caller feathers these rows immediately.
 local function TranslateHeightTrack(api, grid, axis, before_edge, rows, maximum)
+	local math, type = math, type
 	if #rows==0 then return 0 end
 	for _,name in ipairs({'NewComputeGrid','GridRepack',
 		'GridFill','GridMulDivAdd','GridAdd','GridMask','GridClamp','box','point','IsComputeGrid'}) do
@@ -1813,6 +1814,7 @@ end
 -- Discovery remains the strict, sign-agnostic outer-ring pass above; this function never scans or
 -- admits additional terrain.
 local function RepairQualifiedSourceHeightSteps(grid, source_tracks)
+	local math, type, ipairs, pcall = math, type, ipairs, pcall
 	if not grid or type(grid.size) ~= "function" or type(grid.get) ~= "function"
 		or type(grid.set) ~= "function" or type(source_tracks) ~= "table"
 		or #source_tracks == 0 then
@@ -2321,6 +2323,7 @@ local function RasterNaturalMountainBaseAprons(api, grid, selected, policy)
 end
 
 local function CreateNaturalMountainBaseBuildableAprons(map, grid)
+	local math, type, ipairs, pairs, table, pcall, tonumber, tostring = math, type, ipairs, pairs, table, pcall, tonumber, tostring
 	if not cfg_bool("CREATE_NATURAL_MOUNTAIN_BASE_BUILDABLE_APRONS", true) then
 		return false, { reason = "disabled", created = 0, modified = 0 }
 	end
@@ -5391,6 +5394,7 @@ end
 -- RandomMapGenerator exactly: CObject:IsValidZ is authoritative, with point:IsValidZ
 -- and the sentinel comparison retained only as compatibility fallbacks.
 local function ObjectHasExplicitZ(obj, pos)
+	local type, pcall = type, pcall
 	if obj and type(obj.IsValidZ) == "function" then
 		local ok, valid = pcall(obj.IsValidZ, obj)
 		if ok then return valid == true end
@@ -5491,6 +5495,7 @@ end
 -- before objects transfer, so its destination objects must be enumerated on map while their
 -- pre-stretch ground heights are still sampled from the untouched temporary source.
 local function AnnotateDecorRelief(map, terrain_source_map)
+	local math, type, pcall, ipairs, pairs, table, tostring = math, type, pcall, ipairs, pairs, table, tostring
 	if not map then return 0 end
 	if type(map.MapForEach) ~= "function" then return 0 end
 	local relief_enabled = cfg_bool("STRETCH_RELIEF_AWARE_DECOR", true)
@@ -5985,6 +5990,7 @@ end
 -- Returns the number of decorations moved. When pass_edits_already_suspended is true, the
 -- caller owns the balanced ResumePassEdits after this pass and any adjacent mass edits.
 local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
+	local math, type, pcall, ipairs, pairs, table, tostring = math, type, pcall, ipairs, pairs, table, tostring
 	local terrain_api_g = Global("terrain") -- for relief-aware Z placement
 	if not map then return 0 end
 	local const_tbl = Global("const")

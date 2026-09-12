@@ -455,8 +455,30 @@ two Code processes0.328/0.203, PowerShell0.156 and smaller background activity.
 This is not sufficient evidence that background load explains the regression;
 do not normalize/subtract control drift or claim a speed gain. No processes changed.
 
-Prepared unrun outer_coarse_profile.lua: instrument ONLY PrepareOuterResourceTerrain
+Prepared outer_coarse_profile.lua: instrument ONLY PrepareOuterResourceTerrain
 with all original upvalue cells joined, split coarse-mask/native patch timing and
 count zero/core/transition cells. It parses but has no runtime verdict. Run it next
 on restored v979 after commit/deployment audit, full exact predecessor capture.
 Production remains accepted89.425s reference /94.349s worst; under80 not reached.
+
+## Broader hot-function census and v982 candidate
+
+All three new diagnostics closed normally with exact predecessor/private-stream/
+individual-rock parity: outer_coarse_profile_reference PID7060;
+global_lookup_profile_reference PID43368; global_lookup_function_profile_reference
+PID34568. Both lookup diagnostics restored their hooks, statuspass/debugblocked.
+No owned game remains before v982 offline regression.
+
+Outer coarse raster:948237 samples,508958 zero before protection/513213 after,
+223421 outside existing radius;56 patches, coarse2675ms of instrumented3771ms.
+No raster algorithm change promoted. Lookup census found about5.7M stdlib fallback
+reads, with repeated calls in specific hot functions; see v982_source_review.md.
+Promoted only20 entry-local standard-library bindings, runtime982/generator297/
+sector77. New source/lifetime fixture55033checks passes. Full78-command offline
+regression running. This is PROGRESS via new cost evidence and a bounded candidate,
+not an accepted performance gain; v979 remains the accepted baseline.
+
+Offline39468 CLOSED exit0: all78 commands PASS. Source hygiene and full-module
+parse pass, including final sector77/generator297 guards. Freeze this checkpoint
+for reference3/control, with exact acceptedv979 predecessor comparisons. No native
+v982 timing or acceptance claim yet.

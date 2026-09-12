@@ -1,0 +1,221 @@
+{
+  "sampled_callers": {
+    "@Mod/SuperBigMap/Code/ZoomPlus.lua": {
+      "select": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_decor_topup.lua": {
+      "math": 23,
+      "type": 43,
+      "tostring": 2,
+      "tonumber": 11,
+      "pcall": 12
+    },
+    "@Mod/SuperBigMap/Code/sbm_object_clone.lua": {
+      "type": 389,
+      "string": 898
+    },
+    "@D:/PROJS/SMR/super-big-map/_ralph/runs/under80-20260912/artifacts/global_lookup_profile_reference/diagnostic_setup.lua": {
+      "debug": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_highlight.lua": {
+      "type": 27,
+      "pcall": 5
+    },
+    "@Mod/SuperBigMap/Code/sbm_map_generation.lua": {
+      "type": 274,
+      "pairs": 1,
+      "GenerateAdditionalMaps": 1,
+      "ipairs": 1,
+      "string": 2,
+      "NewComputeGrid": 1,
+      "setmetatable": 1,
+      "table": 16,
+      "FillRandomMapGen": 1,
+      "tostring": 81,
+      "const": 1,
+      "pcall": 85
+    },
+    "@Mod/SuperBigMap/Code/sbm_deposits.lua": {
+      "ipairs": 23,
+      "math": 715,
+      "pairs": 1,
+      "tonumber": 25,
+      "type": 346,
+      "tostring": 73,
+      "table": 3,
+      "pcall": 88
+    },
+    "@Mod/SuperBigMap/Code/sbm_place_elevator_button.lua": {
+      "type": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_diagnostics.lua": {
+      "type": 1,
+      "tostring": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_loading_ui.lua": {
+      "rawset": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_lifecycle.lua": {
+      "string": 1,
+      "type": 2,
+      "IsOverviewMode": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_zoomplus_integration.lua": {
+      "type": 2,
+      "tostring": 2
+    },
+    "@Mod/SuperBigMap/Code/sbm_terrain_copy.lua": {
+      "math": 690,
+      "GetPreciseTicks": 1,
+      "pcall": 216,
+      "type": 741,
+      "tostring": 5,
+      "tonumber": 3,
+      "ipairs": 12
+    },
+    "@Mod/SuperBigMap/Code/sbm_provenance.lua": {
+      "type": 149
+    },
+    "@Mod/SuperBigMap/Code/sbm_rock_grounding.lua": {
+      "type": 33,
+      "math": 139
+    },
+    "@Mod/SuperBigMap/Code/sbm_engine.lua": {
+      "math": 9
+    },
+    "@Mod/SuperBigMap/Code/sbm_zoom_option.lua": {
+      "type": 1,
+      "tostring": 1,
+      "table": 1,
+      "math": 1
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_grid.lua": {
+      "string": 11,
+      "math": 13,
+      "type": 9,
+      "tostring": 7,
+      "pcall": 5
+    },
+    "@Mod/SuperBigMap/Code/sbm_sector_exploration.lua": {
+      "InitialReveal": 1,
+      "GetMapSectorXY": 1,
+      "buildUnbuildableZ": 1,
+      "BuildableGridRatio": 1,
+      "pairs": 12,
+      "tonumber": 1,
+      "math": 13,
+      "assert": 1,
+      "IsValid": 90,
+      "const": 7,
+      "InitSector": 1,
+      "type": 333,
+      "tostring": 1,
+      "GetMapSectorTileSize": 1,
+      "pcall": 87
+    },
+    "@Mod/SuperBigMap/Code/sbm_map_bounds.lua": {
+      "box": 1
+    }
+  },
+  "status": "pass",
+  "restored": true,
+  "keys": {
+    "IsOverviewMode": 19,
+    "InitialReveal": 1,
+    "rawset": 73,
+    "ipairs": 36784,
+    "string": 933828,
+    "math": 1641102,
+    "const": 7212,
+    "GetPreciseTicks": 10,
+    "select": 25,
+    "box": 813,
+    "tonumber": 40080,
+    "pcall": 509233,
+    "IsValid": 91608,
+    "InitSector": 800,
+    "GetMapSectorXY": 1,
+    "BuildableGridRatio": 800,
+    "type": 2406784,
+    "pairs": 14261,
+    "FillRandomMapGen": 10,
+    "buildUnbuildableZ": 3,
+    "NewComputeGrid": 3,
+    "assert": 563,
+    "setmetatable": 12,
+    "table": 19934,
+    "GenerateAdditionalMaps": 10,
+    "tostring": 176900,
+    "GetMapSectorTileSize": 1,
+    "debug": 1
+  },
+  "debug_still_blocked": true,
+  "calls": [
+    {
+      "keys": {
+        "IsOverviewMode": 19,
+        "InitialReveal": 1,
+        "rawset": 73,
+        "ipairs": 36783,
+        "box": 812,
+        "IsValid": 89208,
+        "const": 7211,
+        "math": 1641101,
+        "select": 24,
+        "string": 933827,
+        "BuildableGridRatio": 800,
+        "pcall": 504408,
+        "GenerateAdditionalMaps": 10,
+        "table": 19934,
+        "GetMapSectorXY": 1,
+        "setmetatable": 12,
+        "InitSector": 800,
+        "pairs": 14258,
+        "tonumber": 40080,
+        "buildUnbuildableZ": 2,
+        "NewComputeGrid": 3,
+        "assert": 563,
+        "GetPreciseTicks": 8,
+        "FillRandomMapGen": 10,
+        "type": 2233865,
+        "tostring": 176784,
+        "GetMapSectorTileSize": 1,
+        "debug": 1
+      },
+      "stage": "after last object-grid transaction"
+    },
+    {
+      "keys": {
+        "IsOverviewMode": 19,
+        "InitialReveal": 1,
+        "rawset": 73,
+        "ipairs": 36784,
+        "box": 813,
+        "IsValid": 91608,
+        "const": 7212,
+        "math": 1641102,
+        "select": 25,
+        "string": 933828,
+        "BuildableGridRatio": 800,
+        "pcall": 509233,
+        "GenerateAdditionalMaps": 10,
+        "table": 19934,
+        "GetMapSectorXY": 1,
+        "setmetatable": 12,
+        "InitSector": 800,
+        "pairs": 14261,
+        "tonumber": 40080,
+        "buildUnbuildableZ": 3,
+        "NewComputeGrid": 3,
+        "assert": 563,
+        "GetPreciseTicks": 10,
+        "FillRandomMapGen": 10,
+        "type": 2406784,
+        "tostring": 176900,
+        "GetMapSectorTileSize": 1,
+        "debug": 1
+      },
+      "stage": "post-pipeline scheduled revalidation"
+    }
+  ]
+}

@@ -96,6 +96,7 @@ local mystery_kinds = {
 	"BlackCubeDumpSite",
 }
 local function IsMysteryRelatedObject(obj)
+	local string = string
 	if not obj then
 		return false
 	end
@@ -116,6 +117,7 @@ local function IsMysteryRelatedObject(obj)
 end
 
 local function MatchUndergroundAccessName(field, value)
+	local string = string
 	if type(value) ~= "string" then
 		return false
 	end
@@ -370,6 +372,7 @@ local scale_stretch_allowlist = {
 -- True when this class name is expected to grow by the stretch ratio. Name-based, matching
 -- the parity gate `class-scale-expected`, so the mod and the gate cannot drift apart.
 local function ClassScalesWithTerrain(cls)
+	local string = string
 	if type(cls) ~= "string" or cls == "" then
 		return true                        -- unknown class: keep the decoration default
 	end
