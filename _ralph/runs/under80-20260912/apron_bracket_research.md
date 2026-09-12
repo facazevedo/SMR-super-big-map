@@ -90,3 +90,8 @@ Exact corrections808696 ->576132, shaped50/modified1910302 unchanged. Its ordere
 The offline f32 raster adds38115 exact three-way cells,21 reduced cases and no
 increase in ambiguous cells. Promoted into pending v980 with guarded class-list
 batching; the old unused [0.25,0.55] proposal remains rejected.
+
+Combined v980 cold median89.687s is slower than v97989.425s, despite exactly576132
+correction callbacks in cold reports and full predecessor parity. Rejected before
+five-site acceptance and restored v979. The arithmetic proof/native tests remain
+valid research evidence, not evidence of an accepted end-to-end speedup.

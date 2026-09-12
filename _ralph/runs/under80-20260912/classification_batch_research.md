@@ -96,3 +96,10 @@ negative shortcuts, only482 scalar calls, zero failures. Surface annotation1434m
 underground600ms. Do not compare its timing to the failed zero-shortcut profile
 as if that were accepted-v979 cold timing: that profile added redundant queries.
 Candidate4 is now promoted into pending v980; cold acceptance is still required.
+
+v980 cold acceptance subsequently FAILED the performance criterion: median89.687
+versus accepted89.425s; all exact outputs pass. Combined candidate rejected before
+the five-site sweep, production restored at8af568f. A separate full native phase
+probe confirms native pair/live identities/current public and captured helpers
+all match; batching was active after normal startup. Do not claim a cold saving
+from the earlier instrumented measurements or rerun unchanged as a rescue.

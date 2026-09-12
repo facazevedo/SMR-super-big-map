@@ -1,0 +1,31 @@
+{
+  "status": "pass",
+  "calls": [
+    {
+      "records_equal": true,
+      "new_read_calls": 1148,
+      "pass": true,
+      "candidate_ms": 193,
+      "accepted_ms": 298,
+      "old_read_calls": 1148,
+      "original_singletons": 287,
+      "wide_ring_only": true,
+      "positions": 287,
+      "height_differences": 0,
+      "ranges": 287
+    },
+    {
+      "records_equal": true,
+      "new_read_calls": 348097,
+      "pass": true,
+      "candidate_ms": 3426,
+      "accepted_ms": 4080,
+      "old_read_calls": 1028322,
+      "original_singletons": 171387,
+      "wide_ring_only": false,
+      "positions": 171387,
+      "height_differences": 0,
+      "ranges": 35342
+    }
+  ]
+}

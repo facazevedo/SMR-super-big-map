@@ -403,3 +403,26 @@ Preserve every indexed position, width/edge order, scalar predicates, tie behavi
 grid writes and refinement invalidation. No packed buffers or result cache.
 Not implemented/validated yet. Goal active, accepted reference89.425s /worst94.349s;
 under80 still not reached.
+
+## Restored baseline and next isolated candidate verified
+
+Restore checkpoint8af568f is byte-identical to c4d3e67 across all production,
+runtime979/guard294; inherited Engine fixture172114checks passes, deployment38/38.
+v980 candidate-only parity files removed from the active suite, recoverable in
+4c50265; equivalent research fixtures remain. No existing fixes/buttons removed.
+
+New nondeployed crease_ranges_research implements only consecutive-index grouping.
+Offline263494 exact offers/read-coordinate checks pass, including changed terrain
+between calls. Native crease_ranges_shadow_reference (29448/PID31080) closed
+normally with full exact predecessor/individual-rock/private-stream parity.
+Source287positions/287ranges, calculated reads1148 unchanged (298vs193ms is noise/
+order evidence, NOT gain). Destination171387positions/35342ranges, calculated reads
+1028322->348097, exact complete heights/return records;4080vs3426ms diagnostic only.
+See crease_ranges_research.md. No production promotion/version981 exists yet.
+
+All owned games/sessions now closed. Current turn outcome: no accepted performance
+gain (v980 rejected); useful progress is a simpler exact candidate with native
+work-reduction evidence. Next action is isolated v981 source/test/version review
+and78-command regression, then fixed cold reference3/control and only if faster,
+five scenarios. Keep v979 as the accepted baseline; never resurrect packed crease
+buffers, unused bracket branches, blind rebuild skips or unchanged rescue repeats.
