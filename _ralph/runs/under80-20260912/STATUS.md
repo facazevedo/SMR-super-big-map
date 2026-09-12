@@ -509,3 +509,13 @@ Latest user asks whether85s is possible: plausible, not demonstrated or promised
 Reference needs4.425s and worst site9.349s. Next work needs a larger measured
 bottleneck reduction while retaining all existing rules, RNG, terrain fixes,
 individual rock support, buttons and scheduled revalidation. Target not reached.
+
+## Continue after revised target
+
+Previous turn classified PROGRESS: v982 rejected/restored, with actual native
+lookup reduction proving that micro-optimization was active yet insufficient.
+Revalidated cleanf27625b, deployed38/38 and no game. Next bounded diagnostic uses
+only existing coarse LoadingTiming spans (no function-call profiler or module
+reload) to obtain a current wall-stage breakdown on reference and slow61N136W.
+Preserve full exact output and close owned games normally. No new production
+candidate exists; effective human-requested target remains under85 seconds.
