@@ -426,3 +426,17 @@ work-reduction evidence. Next action is isolated v981 source/test/version review
 and78-command regression, then fixed cold reference3/control and only if faster,
 five scenarios. Keep v979 as the accepted baseline; never resurrect packed crease
 buffers, unused bracket branches, blind rebuild skips or unchanged rescue repeats.
+
+## v981 isolated candidate in regression
+
+Previous goal turn classified PROGRESS: slower v980 rejected/restored, and native
+exact adjacent-read evidence changed the next action. Continuation revalidated
+cleanf040dfa, acceptedv979 production, deployment38/38 and no live game.
+Promoted ONLY crease_ranges_research into v981/guard296. New production regression
+compiles c4d3e67 predecessor separately and passes263494 checks. Full78-command
+offline suite is running. See v981_source_review.md. No v981 cold result yet;
+keep v97989.425s reference /94.349s worst validation as accepted.
+
+Offline87500 closed exit0: all78 commands PASS. Freeze the v981 code checkpoint
+for reference-three/control. Require positive median gain and full exact output
+before five-site acceptance; no sample exclusions or unchanged rescue repeats.

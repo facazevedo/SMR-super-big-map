@@ -1315,6 +1315,23 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		end
 	end
 
+	-- Consecutive certified positions use the existing rolling read window.
+	-- Discovery is read-only: preserve every position, edge/width order and tie.
+	-- Never bridge a gap or reuse these samples after a terrain write.
+	local function scan_indexed_ranges(row, axis, along, positions, edge)
+		if not positions then return end
+		local first, last
+		for _, perp in ipairs(positions) do
+			if last and perp == last + 1 then
+				last = perp
+			else
+				if first then scan_line_range(row, axis, along, first, last, edge) end
+				first, last = perp, perp
+			end
+		end
+		if first then scan_line_range(row, axis, along, first, last, edge) end
+	end
+
 	local function collect_axis(axis, perp_n, along_n, before_edge, after_edge,
 			before_perp0, before_perp1, after_perp0, after_perp1, sample_step)
 		if discovery_error then return end
@@ -1341,12 +1358,8 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 			local row = {}
 			-- Exact scalar acceptance, width order and edge order are unchanged. Only
 			-- positions proven unable to offer any width are omitted by the native index.
-			for _, perp in ipairs(before[along] or {}) do
-				scan_line_range(row, axis, along, perp, perp, before_edge)
-			end
-			for _, perp in ipairs(after[along] or {}) do
-				scan_line_range(row, axis, along, perp, perp, after_edge)
-			end
+			scan_indexed_ranges(row, axis, along, before[along], before_edge)
+			scan_indexed_ranges(row, axis, along, after[along], after_edge)
 
 			local used = {}
 			for _, candidate in ipairs(row) do
