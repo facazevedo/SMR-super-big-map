@@ -708,6 +708,7 @@ local Z_FLOOR_WU = 1000
 -- Detection is read-only and orientation-independent; normal slopes, downward skirts, isolated
 -- peaks, and every sample farther than three cells from the boundary remain untouched.
 local function RepairRaisedTerminalHeightStrips(grid)
+	local math, type, ipairs, pairs, table = math, type, ipairs, pairs, table
 	local w, h = grid:size()
 	if w < 16 or h < 16 then return false, { reason = "height grid too small", modified = 0 } end
 	local mn, mx = Global("GridMinMax")(grid)
@@ -816,6 +817,7 @@ end
 -- in RepairInternalHeightStep; refinement never reuses these discovery indexes.
 local function BuildHeightStepDiscoveryIndex(api, grid, axis, perp0, perp1, along_n,
 		sample_step, max_width, threshold)
+	local math, type, ipairs, pairs, table = math, type, ipairs, pairs, table
 	local required = { "IsComputeGrid", "GridRepack", "GridMulDivAdd", "GridAdd",
 		"GridAbs", "GridMask", "GridCount", "GridForeach", "NewComputeGrid", "box", "point" }
 	for _, key in ipairs(required) do
@@ -1045,6 +1047,7 @@ local function TranslateHeightTrack(api, grid, axis, before_edge, rows, maximum)
 end
 
 local function RepairInternalHeightStep(grid, wide_ring_only)
+	local math, type, ipairs, pairs, table = math, type, ipairs, pairs, table
 	local GridMinMax = Global("GridMinMax")
 	if type(GridMinMax) ~= "function" or not grid or type(grid.size) ~= "function"
 		or type(grid.get) ~= "function" or type(grid.set) ~= "function" then
@@ -1970,6 +1973,7 @@ end
 -- Full-resolution native apron blend. Ambiguous U16 rounding cells use the original
 -- scalar expression; no mask coarsening, terrain redesign or failure fallback.
 local function RasterNaturalMountainBaseAprons(api, grid, selected, policy)
+	local math, type, ipairs, pairs, table = math, type, ipairs, pairs, table
 	local floor, ceil, min, max, sqrt = math.floor, math.ceil, math.min, math.max, math.sqrt
 	local stats = { modified=0, shaped=0, raster_cells=0, mask_samples=0, exact_samples=0,
 		mask_cells_skipped=0, mask_fast_zero=0, mask_fast_one=0 }
@@ -2635,6 +2639,7 @@ end
 -- ROCKET_BLEND_EDGE_GUARD_END
 
 local function PrepareOuterResourceTerrain(map)
+	local math, type, ipairs, pairs, table = math, type, ipairs, pairs, table
 	if not cfg_bool("PREPARE_OUTER_RESOURCE_TERRAIN", true) then
 		return false, { reason = "disabled", resources = 0, patches = 0 }
 	end
