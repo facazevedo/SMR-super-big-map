@@ -1,0 +1,171 @@
+					Render 0:00:00:324
+*** executable info
+Timestamp:     	69e75da5
+Date:          	Tue Apr 21 07:21:09 2026
+Command line:  	-nointro -no_interactive_asserts -stdout -crash_folder D:\PROJS\SMR\smr-harness\.state\game-crashes\20260912-201343-18d4abf5ae965568 -hidden
+Compiler:      	194435214, 142 (VS 2019) or newer
+
+
+*** hardware info
+CPU name      	Intel(R) Core(TM) i9-10900X CPU @ 3.70GHz
+CPU MHz       	3696
+CPU cores     	10/20
+Phys. Memory   	130752 MBytes
+Memory In Use  	24%
+Disk Free      	95436 MBytes
+
+
+*** OS info
+OS:            	Windows 11
+Version:       	10.0.26100 
+
+
+*** Debug::Init()
+
+
+					Render 0:00:00:703
+Steam initialized (AppId 3215050, Beta branch ???)
+SteamFilterText is unavailable for user's language and will act as a passthrough.
+					Render 0:00:00:707
+Drive type for game installation: SSD, savegames: SSD
+Language: English
+					Render 0:00:01:523
+Starting hidden
+					Render 0:00:03:685
+*** graphics info
+GPU                            	NVIDIA GeForce RTX 5090 Feature Level: 12.1 {  DoublePrecisionFloatShaderOps: 1 OutputMergerLogicOp: 1 MinPrecisionSupport: 2 TiledResourcesTier: 3 ResourceBindingTier: 3 PSSpecifiedStencilRefSupported: 0 TypedUAVLoadAdditionalFormats: 1 ROVsSupported: 1 ConservativeRasterizationTier: 3 MaxGPUVirtualAddressBitsPerResource: 40 StandardSwizzle64KBSupported: 0 CrossNodeSharingTier: 0 CrossAdapterRowMajorTextureSupported: 0 VPAndRTArrayIndexFromAnyShaderFeedingRasterizerSupportedWithoutGSEmulation: 1 ResourceHeapTier: 2 NotZeroedPools: 1 UMA: 0 UnalignedBlockTextures: 1}
+API                            	d3d12
+GPU Driver Version             	32.0.15.7688
+GPU Driver Package Version     	576.88
+GPU Dedicated Video Memory     	32101 MB
+					Render 0:00:03:910
+
+Libs: Network, Sequences, MouseTrackWin, DumbAI, MapGen, Paradox, TriggersAndEvents, Notifications, Research, Resources, DevToolsPublic, DebugAdapter 
+
+					Render 0:00:04:311
+
+Platform: asserts, cheats, debug, desktop, editor, goldmaster, paradox, pc, steam
+
+						Game Task 0:00:04:318
+
+** Entity stats:
+  entities: 2920
+  unique state names: 335 / 1023
+  unique spot names: 370
+  unique spot transforms: 19621
+  max surface radius: 47680 cm
+
+					Render 0:00:05:705
+*** audio info
+Audio Endpoint                 	Speakers (Realtek(R) Audio)
+							Lua 0:00:05:773
+Lua revision: 392284
+Assets revision: 30889
+Steam AppID: 3215050
+Build version: 1.0.7.392284
+Build branch:  Release
+							Lua 0:00:05:775
+[DebugAdapter] Started at 127.0.0.1:8165
+							Lua 0:00:05:784
+Account storage loaded successfully in 8 ms
+DLC thomas loaded, lua revision 392284, assets revision 30889
+							Lua 0:00:05:795
+[mod] Loaded mod def Super Big Map (id SuperBigMap, v0.00-979) unpacked from appdata
+[mod] Loaded mod def Rover Drive Mode (id RoverDriveMode, v0.00-195) unpacked from appdata
+[mod] Loaded mod def Humpback Whale - Aquatic Life for Mars Seas (id HumpbackWhale, v0.00-10009) unpacked from appdata
+[mod] Loaded mod def DLSS 5 Neural Rendering - Experimental (id vzlLtM, v0.00-002) unpacked from appdata
+[mod] Loaded mod def Real Mars Terrain (id RealMarsTerrain, v0.00-007) unpacked from appdata
+[mod] Loaded mod def Filter Landing Spots (id FilterLandingSpots, v0.00-018) packed from pops
+[mod] Loaded mod def insert-objects (id insert-objects, v0.00-005) unpacked from appdata
+[mod] Loaded mod def Martian Waters Snow (id MartianWatersSnow, v0.00-407) unpacked from appdata
+[mod] Loaded mod def Bridges (id Bridges, v0.00-099) unpacked from appdata
+[mod] Loaded mod def My Wild Pet (id MyWildPet, v0.00-005) unpacked from appdata
+[mod] Loaded mod def Project Ark (id ProjectArk, v0.00-004) unpacked from appdata
+[mod] Loaded mod def Toggle Console Log Off (id TCLoff7, v1.00-005) unpacked from appdata
+[mod] Loaded mod def Auto Clear Rubble (id AutoClearRubble, v1.00-023) unpacked from appdata
+[mod] Loaded mod def Colony Control (id ColonyControl, v0.00-014) unpacked from appdata
+[mod] Loaded mod def Bridges Blender (id bridges-blender, v0.00-008) unpacked from appdata
+[mod] Loaded mod def invisible-passage-ramp (id IPRAMP, v0.00-068) unpacked from appdata
+[mod] Loaded mod def Scenario Editor Terrains (id SRM-scenario-editor-terrains, v0.00-001) unpacked from appdata
+[mod] Loaded mod def Scenario Editor (id SRM-scenario-editor, v0.00-045) unpacked from appdata
+[mod] Loaded mod def No Wonders (id no-wonders, v0.00-001) unpacked from appdata
+[mod] Loaded mod def Buried Cables and Pipes (id bcp, v0.00-433) unpacked from appdata
+[mod] Loaded mod def Mute Notifications (id MuteNotifications, v0.00-060) unpacked from appdata
+[mod] Loaded mod def Planet Dawn (id PlanetDawn, v1.00-193) unpacked from appdata
+[mod] Loaded mod def Disable All Mods (id DisableAllMods, v0.00-012) unpacked from appdata
+[mod] Loaded mod def Copy Move (id CopyMove, v0.00-001) unpacked from appdata
+[mod] Loaded mod def Whale - Aquatic Life for Mars Seas (id Whale, v0.00-10033) unpacked from appdata
+[mod] Loaded mod def Attribute Inspector (id AttributeInspector, v0.00-014) unpacked from appdata							Lua 0:00:05:796
+
+[mod] Loaded mod def Animalia - Restored Wildlife (id Animalia, v0.00-018) unpacked from appdata
+[mod] Loaded mod def Extra Maps (id ExtraMaps, v0.00-011) unpacked from appdata
+							Lua 0:00:07:808
+Reloading done in 1998 ms
+							Lua 0:00:07:809
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:60222
+Available DLCs: 							Lua 0:00:07:810
+thomas(Interplanetary Codex) 
+							Lua 0:00:08:730
+[preset] Preset postprocess took 160 ms.							Lua 0:00:08:731
+
+							Lua 0:00:08:848
+479 / 479 particle streams loaded in 106 ms.
+							Lua 0:00:08:986
+[PdxSDK] Started up. Took 3177
+							Lua 0:00:09:836
+Received achievements from Steam.
+							Lua 0:00:10:137
+[mod] Loaded mod items for: TCLoff7, SuperBigMap
+							Lua 0:00:10:866
+[Braze] Initialized. SE: true, SB false
+							Lua 0:00:10:965
+[Braze] ContentCards 2/2. FullSync true. Headers nil. Retry 0
+							Lua 0:00:11:142
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:60242
+							Lua 0:00:11:219
+[PdxSDKMods] Mod 147865 v 6 is up to date. Nothing to download.
+							Lua 0:00:11:315
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:60244
+							Lua 0:00:12:860
+SBM_NATIVE_APRON_PROBE fail 523776 4647 
+							Lua 0:00:12:861
+[DebugAdapter] Connection lost to 127.0.0.1:60242 
+[DebugAdapter] Connection lost to 127.0.0.1:60222 
+							Lua 0:00:13:029
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:60247
+							Lua 0:00:13:241
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:60250
+							Lua 0:00:13:422
+[DebugAdapter] Connection lost to 127.0.0.1:60250 
+[DebugAdapter] Connection lost to 127.0.0.1:60247 
+[DebugAdapter] Connection lost to 127.0.0.1:60244 
+							Lua 0:00:13:742
+
+
+Stopping the game threads from the Lua side with exit code 0.
+
+					Render 0:00:13:787
+
+
+Stopping the game threads after receiving WM_QUIT.
+
+[QUIT] Waiting the game state to finish...
+							Lua 0:00:13:990
+[QUIT] Game state finished.
+[QUIT] Stopping game state thread...
+[Sound] Stopping...
+					Render 0:00:13:996
+[Sound] Done.
+					Render 0:00:13:997
+Hook 'Shader :: CompileEffect' not found!
+					Render 0:00:14:066
+DestroyVideos: 1 videos not cleaned up
+					Render 0:00:14:094
+[DebugAdapter] Stopped
+					Render 0:00:14:218
+
+
+*** Debug::Done()
+Time (ms)	14218
+
+

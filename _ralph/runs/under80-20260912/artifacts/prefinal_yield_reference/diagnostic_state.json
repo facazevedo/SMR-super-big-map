@@ -1,0 +1,92 @@
+{
+  "status": "pass",
+  "calls": [
+    {
+      "real_time": 9905,
+      "suspend_reasons": [],
+      "aggregate": "8866464044280494327",
+      "hashes": [
+        "8044847184966396978",
+        "8044847184966396978"
+      ],
+      "label": "before_yield",
+      "game_time": 0
+    },
+    {
+      "real_time": 9906,
+      "suspend_reasons": [],
+      "aggregate": "8866464044280494327",
+      "hashes": [
+        "8044847184966396978",
+        "8044847184966396978"
+      ],
+      "label": "after_yield",
+      "game_time": 0
+    },
+    {
+      "real_time": 9906,
+      "suspend_reasons": [],
+      "aggregate": "-6029211315239114117",
+      "hashes": [
+        "4476470600821498358",
+        "4476470600821498358"
+      ],
+      "label": "after_immediate",
+      "game_time": 0
+    },
+    {
+      "real_time": 9906,
+      "suspend_reasons": [],
+      "aggregate": "-6029211315239114117",
+      "hashes": [
+        "4476470600821498358",
+        "4476470600821498358"
+      ],
+      "label": "scheduled_entry",
+      "game_time": 0
+    },
+    {
+      "real_time": 9906,
+      "suspend_reasons": [],
+      "aggregate": "-6029211315239114117",
+      "hashes": [
+        "4476470600821498358",
+        "4476470600821498358"
+      ],
+      "label": "scheduled_after",
+      "game_time": 0
+    }
+  ],
+  "comparisons": [
+    {
+      "left": "before_yield",
+      "exact_exposed_grids": true,
+      "aggregate_equal": true,
+      "right": "after_yield"
+    },
+    {
+      "left": "after_yield",
+      "exact_exposed_grids": false,
+      "aggregate_equal": false,
+      "right": "after_immediate"
+    },
+    {
+      "left": "after_immediate",
+      "exact_exposed_grids": true,
+      "aggregate_equal": true,
+      "right": "scheduled_entry"
+    },
+    {
+      "left": "scheduled_entry",
+      "exact_exposed_grids": true,
+      "aggregate_equal": true,
+      "right": "scheduled_after"
+    },
+    {
+      "left": "after_immediate",
+      "exact_exposed_grids": true,
+      "aggregate_equal": true,
+      "right": "scheduled_after"
+    }
+  ]
+}

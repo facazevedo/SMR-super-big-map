@@ -325,3 +325,34 @@ PASS, including binary0.55's exact value. Generated artifact is non-deployed;
 native33-case and full shadow probes are parsed, NOT executed. See research notes.
 An additional native class-list batching note documents an API and unresolved
 custom-hook compatibility; no batching implementation or timing evidence exists.
+
+## Follow-up diagnostics closed; production remains accepted v979
+
+Research/docs HEAD f8d0c50, code c4d3e67. Prefinal yield73556/PID38032 and matched
+no-yield control2079/PID5732 both pass exact full outputs and normal shutdown.
+Both show the same aggregate/exposed-grid sequence: immediate rebuild changes it,
+scheduled entry/rebuild do not. This does NOT demonstrate benefit from adding a
+yield or justify skipping either rebuild. Source also identifies the intervening
+RefreshSectors buildability read. Set the narrow yield hypothesis aside.
+
+Native class-list probe2233/PID39560 passes35785 comparisons across7157 class
+definitions and five existing lists, no query errors; both APIs report C functions.
+No live-object/classifier candidate or timing yet. ObjectScalesWithTerrain remains
+name-based and must not be changed to ancestry. Compatibility guards are unresolved.
+
+First bracket native9170/PID8600 FAILED4647 of523776 checks: fixture integer
+arithmetic evaluated2^-30 as1 and1/3 as0. Corrected explicit-float18550/PID47608
+records actual cores and all three old/new/scalar comparisons:523776PASS, zero
+mismatches. Both processes normally closed; preserve the first failure unchanged.
+Full shadow96547/PID45896 also passes full8192-square height and predecessor
+outputs, but both versions still execute808696 corrections. Config defaults
+4/20=0.20, outside the proposed[0.25,0.55] branch; withdraw the old4/12 assumption.
+Do NOT promote this unused-branch candidate or call2781vs3313ms a proven gain.
+See apron_bracket_research.md for an unimplemented integer-numerator bound that
+covers the actual default domain; future probes must record actual policy/branch.
+
+All owned games and exec sessions above are closed. Save diagnostic artifacts and
+research. Next meaningful avenues: guarded native class-list batching (larger
+potential, no candidate yet), or the revised whole-domain bracket (proof/fixtures/
+actual-policy shadow first). Goal active: reference89.425s, worst validation94.349s;
+under80 not reached. Do not repeat completed acceptance or resurrect rejected skips.

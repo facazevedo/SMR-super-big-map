@@ -1,0 +1,40 @@
+{
+  "mismatches": [],
+  "calls": [
+    {
+      "positives": 21,
+      "list": "mystery_kinds",
+      "errors": 0,
+      "kinds": 4
+    },
+    {
+      "positives": 18,
+      "list": "underground_access_clone_kinds",
+      "errors": 0,
+      "kinds": 6
+    },
+    {
+      "positives": 3,
+      "list": "resources",
+      "errors": 0,
+      "kinds": 3
+    },
+    {
+      "positives": 643,
+      "list": "skip_clone_kinds",
+      "errors": 0,
+      "kinds": 15
+    },
+    {
+      "positives": 31,
+      "list": "spawned",
+      "errors": 0,
+      "kinds": 4
+    }
+  ],
+  "checks": 35785,
+  "batch_kind": "C",
+  "single_kind": "C",
+  "classes": 7157,
+  "status": "pass"
+}

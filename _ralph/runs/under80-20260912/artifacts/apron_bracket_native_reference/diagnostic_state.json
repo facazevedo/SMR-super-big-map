@@ -1,0 +1,338 @@
+{
+  "status": "fail",
+  "checks": 523776,
+  "error": "",
+  "mismatches": 4647,
+  "cases": [
+    {
+      "cells": 9802,
+      "case": 1,
+      "old_ms": 2,
+      "native_ms": 3,
+      "differing": 0,
+      "new_exact": 514,
+      "scalar_ms": 15,
+      "old_exact": 514
+    },
+    {
+      "cells": 9802,
+      "case": 2,
+      "old_ms": 10,
+      "native_ms": 13,
+      "differing": 0,
+      "new_exact": 57,
+      "scalar_ms": 14,
+      "old_exact": 57
+    },
+    {
+      "cells": 10082,
+      "case": 3,
+      "old_ms": 11,
+      "native_ms": 11,
+      "differing": 0,
+      "new_exact": 3014,
+      "scalar_ms": 14,
+      "old_exact": 3234
+    },
+    {
+      "cells": 10082,
+      "case": 4,
+      "old_ms": 7,
+      "native_ms": 8,
+      "differing": 779,
+      "new_exact": 232,
+      "scalar_ms": 14,
+      "old_exact": 232
+    },
+    {
+      "cells": 10370,
+      "case": 5,
+      "old_ms": 10,
+      "native_ms": 13,
+      "differing": 0,
+      "new_exact": 66,
+      "scalar_ms": 14,
+      "old_exact": 66
+    },
+    {
+      "cells": 10370,
+      "case": 6,
+      "old_ms": 3,
+      "native_ms": 2,
+      "differing": 0,
+      "new_exact": 427,
+      "scalar_ms": 16,
+      "old_exact": 689
+    },
+    {
+      "cells": 10090,
+      "case": 7,
+      "old_ms": 9,
+      "native_ms": 10,
+      "differing": 741,
+      "new_exact": 1222,
+      "scalar_ms": 15,
+      "old_exact": 1222
+    },
+    {
+      "cells": 10090,
+      "case": 8,
+      "old_ms": 5,
+      "native_ms": 5,
+      "differing": 0,
+      "new_exact": 1307,
+      "scalar_ms": 14,
+      "old_exact": 1307
+    },
+    {
+      "cells": 9522,
+      "case": 9,
+      "old_ms": 11,
+      "native_ms": 13,
+      "differing": 0,
+      "new_exact": 117,
+      "scalar_ms": 14,
+      "old_exact": 117
+    },
+    {
+      "cells": 9802,
+      "case": 10,
+      "old_ms": 2,
+      "native_ms": 2,
+      "differing": 0,
+      "new_exact": 295,
+      "scalar_ms": 15,
+      "old_exact": 485
+    },
+    {
+      "cells": 9802,
+      "case": 11,
+      "old_ms": 11,
+      "native_ms": 12,
+      "differing": 0,
+      "new_exact": 3921,
+      "scalar_ms": 15,
+      "old_exact": 3921
+    },
+    {
+      "cells": 10082,
+      "case": 12,
+      "old_ms": 2,
+      "native_ms": 3,
+      "differing": 0,
+      "new_exact": 534,
+      "scalar_ms": 16,
+      "old_exact": 534
+    },
+    {
+      "cells": 10082,
+      "case": 13,
+      "old_ms": 10,
+      "native_ms": 13,
+      "differing": 0,
+      "new_exact": 47,
+      "scalar_ms": 14,
+      "old_exact": 47
+    },
+    {
+      "cells": 10370,
+      "case": 14,
+      "old_ms": 2,
+      "native_ms": 2,
+      "differing": 0,
+      "new_exact": 200,
+      "scalar_ms": 15,
+      "old_exact": 281
+    },
+    {
+      "cells": 10370,
+      "case": 15,
+      "old_ms": 9,
+      "native_ms": 10,
+      "differing": 761,
+      "new_exact": 1232,
+      "scalar_ms": 15,
+      "old_exact": 1232
+    },
+    {
+      "cells": 10090,
+      "case": 16,
+      "old_ms": 11,
+      "native_ms": 12,
+      "differing": 0,
+      "new_exact": 96,
+      "scalar_ms": 14,
+      "old_exact": 96
+    },
+    {
+      "cells": 10090,
+      "case": 17,
+      "old_ms": 4,
+      "native_ms": 3,
+      "differing": 0,
+      "new_exact": 593,
+      "scalar_ms": 14,
+      "old_exact": 1005
+    },
+    {
+      "cells": 9522,
+      "case": 18,
+      "old_ms": 7,
+      "native_ms": 8,
+      "differing": 815,
+      "new_exact": 243,
+      "scalar_ms": 15,
+      "old_exact": 243
+    },
+    {
+      "cells": 9802,
+      "case": 19,
+      "old_ms": 12,
+      "native_ms": 13,
+      "differing": 0,
+      "new_exact": 4288,
+      "scalar_ms": 14,
+      "old_exact": 4288
+    },
+    {
+      "cells": 9802,
+      "case": 20,
+      "old_ms": 10,
+      "native_ms": 13,
+      "differing": 0,
+      "new_exact": 123,
+      "scalar_ms": 15,
+      "old_exact": 123
+    },
+    {
+      "cells": 10082,
+      "case": 21,
+      "old_ms": 3,
+      "native_ms": 3,
+      "differing": 0,
+      "new_exact": 420,
+      "scalar_ms": 15,
+      "old_exact": 729
+    },
+    {
+      "cells": 10082,
+      "case": 22,
+      "old_ms": 3,
+      "native_ms": 3,
+      "differing": 0,
+      "new_exact": 630,
+      "scalar_ms": 15,
+      "old_exact": 630
+    },
+    {
+      "cells": 10370,
+      "case": 23,
+      "old_ms": 10,
+      "native_ms": 11,
+      "differing": 0,
+      "new_exact": 3058,
+      "scalar_ms": 15,
+      "old_exact": 3058
+    },
+    {
+      "cells": 10370,
+      "case": 24,
+      "old_ms": 10,
+      "native_ms": 13,
+      "differing": 0,
+      "new_exact": 60,
+      "scalar_ms": 14,
+      "old_exact": 60
+    },
+    {
+      "cells": 10090,
+      "case": 25,
+      "old_ms": 3,
+      "native_ms": 2,
+      "differing": 0,
+      "new_exact": 365,
+      "scalar_ms": 15,
+      "old_exact": 609
+    },
+    {
+      "cells": 10090,
+      "case": 26,
+      "old_ms": 7,
+      "native_ms": 7,
+      "differing": 785,
+      "new_exact": 224,
+      "scalar_ms": 14,
+      "old_exact": 224
+    },
+    {
+      "cells": 9522,
+      "case": 27,
+      "old_ms": 13,
+      "native_ms": 15,
+      "differing": 0,
+      "new_exact": 648,
+      "scalar_ms": 15,
+      "old_exact": 648
+    },
+    {
+      "cells": 9802,
+      "case": 28,
+      "old_ms": 3,
+      "native_ms": 3,
+      "differing": 0,
+      "new_exact": 555,
+      "scalar_ms": 15,
+      "old_exact": 963
+    },
+    {
+      "cells": 9802,
+      "case": 29,
+      "old_ms": 7,
+      "native_ms": 8,
+      "differing": 760,
+      "new_exact": 236,
+      "scalar_ms": 14,
+      "old_exact": 236
+    },
+    {
+      "cells": 10082,
+      "case": 30,
+      "old_ms": 4,
+      "native_ms": 4,
+      "differing": 0,
+      "new_exact": 927,
+      "scalar_ms": 17,
+      "old_exact": 927
+    },
+    {
+      "cells": 10082,
+      "case": 31,
+      "old_ms": 13,
+      "native_ms": 19,
+      "differing": 0,
+      "new_exact": 713,
+      "scalar_ms": 15,
+      "old_exact": 713
+    },
+    {
+      "cells": 10370,
+      "case": 32,
+      "old_ms": 3,
+      "native_ms": 3,
+      "differing": 0,
+      "new_exact": 464,
+      "scalar_ms": 15,
+      "old_exact": 776
+    },
+    {
+      "cells": 10370,
+      "case": 33,
+      "old_ms": 4,
+      "native_ms": 4,
+      "differing": 0,
+      "new_exact": 1063,
+      "scalar_ms": 15,
+      "old_exact": 1063
+    }
+  ]
+}

@@ -25,3 +25,16 @@ custom classification hooks, infer classes from names, or cache g_Classes result
 First step is a native scratch/read-only actual-object comparison and call counts,
 then a narrow reviewed candidate only if the compatibility contract is sound.
 This note authorizes no production changes and establishes no performance gain.
+
+Native scratch probe native_class_batch_reference completed at accepted v979.
+Both named APIs report C functions. Across7157 current g_Classes definitions and
+five kind lists,35785 exact boolean comparisons passed with no query errors.
+Positive counts: mystery21, underground access18, resources3, skip kinds643,
+spawned deposits31. Owned PID39560 normally quit. This compares class definitions,
+not live-object validity/parent/name behavior; no candidate or timing claim yet.
+
+ObjectScalesWithTerrain is currently NAME-based (ClassScalesWithTerrain), not an
+IsKindOf loop. It must not be converted to native ancestry semantics. Potential
+batching is confined to existing ancestry checks. An Engine-level qualified helper
+could preserve scalar fallback for captured/custom/rebound IsKindOf helpers and
+live native pair changes, but its implementation/compatibility proof remains open.
