@@ -1,0 +1,19 @@
+{
+  "status": "pass",
+  "calls": [
+    {
+      "failures": 0,
+      "joined_upvalues": 26,
+      "elapsed_ms": 2138,
+      "first_return": "1021",
+      "environment": "Surface"
+    },
+    {
+      "failures": 0,
+      "joined_upvalues": 26,
+      "elapsed_ms": 849,
+      "first_return": "587",
+      "environment": "Underground"
+    }
+  ]
+}

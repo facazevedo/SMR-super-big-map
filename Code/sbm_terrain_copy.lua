@@ -5579,7 +5579,10 @@ local function AnnotateDecorRelief(map, terrain_source_map)
 			eligible_objects[#eligible_objects + 1] = obj
 		end
 		if grounding and not skip_object and not important_object then
-			local ground_ok, ground_err = pcall(grounding.Capture, map, obj)
+			-- Both shared exclusion predicates just returned false; only
+			-- a private-list append intervened. Do not carry this fact past a yield.
+			local ground_ok, ground_err = pcall(grounding.Capture, map, obj,
+				ShouldSkipObject, IsImportantSectorObject)
 			if not ground_ok then grounding.Failure(map, ground_err) end
 		end
 		if IsCaveInObject(obj) then

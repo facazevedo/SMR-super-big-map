@@ -10,8 +10,12 @@ local function Enabled()
 	return (SBM.Config or {}).STRETCH_GROUND_UNSUPPORTED_ROCKS ~= false
 end
 
-local function Eligible(obj)
-	if not obj or Clone.ShouldSkipObject(obj) or Clone.IsImportantSectorObject(obj)
+local function Eligible(obj, checked_skip, checked_important)
+	local classified_for_transform = checked_skip ~= nil and checked_important ~= nil
+		and checked_skip == Clone.ShouldSkipObject
+		and checked_important == Clone.IsImportantSectorObject
+	if not obj or (not classified_for_transform
+		and (Clone.ShouldSkipObject(obj) or Clone.IsImportantSectorObject(obj)))
 		or not Clone.ObjectScalesWithTerrain(obj) then return false end
 	if obj:GetParent() then return false end -- attachments follow their parent exactly once
 	local entities = Global("EntityData")
@@ -43,13 +47,16 @@ local function InBounds(x, y, width, height)
 	return x >= 0 and y >= 0 and x < width and y < height
 end
 
-local function Capture(map, obj)
+-- Checked predicate identities qualify only an immediate call after both
+-- returned false for this unchanged object. Default callers and rebound
+-- classifiers retain the complete classification path.
+local function Capture(map, obj, checked_skip, checked_important)
 	local context = captures[map]
 	if not context then return end
 	local stats = context.stats
 	local ticks, point_fn = Global("GetPreciseTicks"), Global("point")
 	local started = ticks()
-	if not Eligible(obj) then
+	if not Eligible(obj, checked_skip, checked_important) then
 		stats.capture_ms = stats.capture_ms + ticks() - started
 		return
 	end

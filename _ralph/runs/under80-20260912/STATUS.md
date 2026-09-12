@@ -284,3 +284,17 @@ profile.py (query SBM_CLASSIFICATION_DIAGNOSTIC), then decide on production only
 after exact full/individual-rock parity and a measured stage improvement. The
 smaller apron-bracket proof is another unimplemented option. Goal remains active;
 current accepted reference89.807s, slowest current validation100.428s, not under80.
+
+## v979 classification candidate in regression
+
+Continuation revalidated clean1e20b17 and deployed38/38 v978. Diagnostic84572
+completed: PID48692 normal quit, full exact predecessor/individual-rock/private
+parity, zero failures; surface annotation2138ms, underground849ms, T1=88.538s.
+Promoted the narrow identity-qualified immediate classification reuse into a
+v979/guard294 candidate. See v979_source_review.md. Offline77-command suite is
+running in session22431. No cold acceptance yet; keep v978 as accepted baseline.
+
+Offline22431 closed exit0: all77 commands PASS. Freeze this candidate checkpoint
+for reference3/control and, only with positive reference gain and exact parity,
+five-site acceptance. The new prefinal_yield_probe.lua is parsed but unrun and
+must not execute until that immutable suite closes. It removes no rebuilds.

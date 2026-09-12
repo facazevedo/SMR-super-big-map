@@ -1,0 +1,24 @@
+{
+  "pid": 48692,
+  "exe": "C:\\Games\\Surviving Mars Relaunched\\MarsDebug.exe",
+  "port": 8165,
+  "log": "D:\\PROJS\\SMR\\smr-harness\\logs\\daemon-20260912-193047.log",
+  "crash_dir": "D:\\PROJS\\SMR\\smr-harness\\.state\\game-crashes\\20260912-193047-18d4a99dcd2c61fc",
+  "incident_id": "20260912-193047-18d4a99dcd2c61fc",
+  "artifact_root": "D:\\PROJS\\SMR\\smr-harness\\logs",
+  "ralph_workspace": null,
+  "cmdline": [
+    "C:\\Games\\Surviving Mars Relaunched\\MarsDebug.exe",
+    "-nointro",
+    "-no_interactive_asserts",
+    "-stdout",
+    "-crash_folder",
+    "D:\\PROJS\\SMR\\smr-harness\\.state\\game-crashes\\20260912-193047-18d4a99dcd2c61fc",
+    "-hidden"
+  ],
+  "window": "hidden",
+  "breakaway_from_job": true,
+  "started_utc": "2026-09-12T19:30:47Z",
+  "process_started_utc": "2026-09-12T19:30:47.191Z",
+  "process_creation_filetime": 134337150471917921
+}
