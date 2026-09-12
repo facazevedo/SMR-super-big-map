@@ -2619,6 +2619,12 @@ local function IsEligibleMapData(map_slot, mapdata, map_instance)
 		return false, "feature disabled"
 	end
 
+	-- 1.1.0 COMPAT FIX: defensive per-call backfill in case this mapdata wasn't part
+	-- of the bulk Global("MapData") pass (e.g. a dynamically-created entry).
+	if type(Engine.EnsureMapDataEnvironment) == "function" then
+		Engine.EnsureMapDataEnvironment(mapdata)
+	end
+
 	-- Underground expansion (config STRETCH_UNDERGROUND): the underground map generates in its
 	-- own slot with Environment=="Underground"; when the flag is on it is exempt from the
 	-- main-slot-only and surface-only gates, so it gets the same 8192 allocation + native-capped
@@ -5822,9 +5828,14 @@ local function CaptureDeferredWonderSourceFlattenTarget(map, marker, wonder_clas
 	if type(entity) ~= "string" or entity == "" then
 		return false, "building template entity unavailable"
 	end
-	local shape = Global("GetEnclosedShape")(entity)
+	-- 1.1.0 COMPAT FIX: GetEnclosedShape was removed from the engine entirely (confirmed
+	-- absent from the current reference source, not just renamed), so calling it directly
+	-- crashes with "attempt to call a nil value". Fall through to the pre-existing
+	-- outline+shrink fallback below, same as when it used to return an empty shape.
+	local get_enclosed_shape = Global("GetEnclosedShape")
+	local shape = type(get_enclosed_shape) == "function" and get_enclosed_shape(entity) or {}
 	if type(shape) ~= "table" then
-		return false, "vanilla enclosed shape unavailable"
+		shape = {}
 	end
 	if #shape == 0 then
 		shape = Global("ShrinkShape")(Global("GetEntityOutlineShape")(entity), 2)
@@ -6565,7 +6576,8 @@ function WonderVerticalDiagnostics.ReserveDeferredUndergroundWonderFootprints(ma
 			end
 			local ok_direction, direction = pcall(angle_to_direction, marker)
 			if not ok_direction or type(direction) ~= "number" then direction = 0 end
-			local shapes = { get_enclosed(entity), get_outline(entity) }
+			-- 1.1.0 COMPAT FIX: GetEnclosedShape no longer exists in the engine at all.
+			local shapes = { type(get_enclosed) == "function" and get_enclosed(entity) or nil, get_outline(entity) }
 			local instance_hexes = 0
 			for _, source_shape in ipairs(shapes) do
 				if type(source_shape) == "table" and #source_shape > 0 then
@@ -7135,7 +7147,9 @@ function WonderVerticalDiagnostics.FlattenDeferredWonder(
 	local flatten = Global("FlattenTerrainInShape")
 	local unbuildable = Global("buildUnbuildableZ")()
 	local map = wonder:GetMap()
-	local shape = get_enclosed(wonder:GetEntity())
+	-- 1.1.0 COMPAT FIX: GetEnclosedShape no longer exists in the engine at all.
+	local shape = type(get_enclosed) == "function" and get_enclosed(wonder:GetEntity()) or {}
+	if type(shape) ~= "table" then shape = {} end
 	if #shape == 0 then shape = shrink(get_outline(wonder:GetEntity()), 2) end
 	if type(ratios) == "table" then
 		shape = ScaleHexShapeForExpansion(shape, ratios.scale_x, ratios.scale_y)
@@ -7380,8 +7394,10 @@ function WonderVerticalDiagnostics.ReseatAll(map, reason)
 			wonder.SuperBigMapWonderExpectedY = target_y
 			wonder.SuperBigMapWonderXYTransformMode = "exact_world_affine"
 			local entity = type(wonder.GetEntity) == "function" and wonder:GetEntity() or nil
-			local shape = type(entity) == "string" and get_enclosed(entity) or nil
-			if type(shape) == "table" and #shape == 0 then
+			-- 1.1.0 COMPAT FIX: GetEnclosedShape no longer exists in the engine at all.
+			local shape = type(entity) == "string" and type(get_enclosed) == "function"
+				and get_enclosed(entity) or nil
+			if type(shape) ~= "table" or #shape == 0 then
 				shape = shrink(get_outline(entity), 2)
 			end
 			if type(shape) ~= "table" or #shape == 0 then
@@ -14576,6 +14592,13 @@ function SuperBigMap.FinalizeDeferredBreakthroughAnomalyInitialization(map, reas
 end
 
 local function PatchRandomMapGenerator()
+	-- 1.1.0 COMPAT FIX: backfill mapdata.Environment (removed by Haemimont in 1.1.0; see
+	-- Engine.BackfillAllMapDataEnvironments). IsEligibleMapData below reads it raw, and
+	-- without this every map is silently classified "not a surface map" -- the whole
+	-- expansion pipeline installs and reports success while never actually engaging.
+	if type(Engine.BackfillAllMapDataEnvironments) == "function" then
+		Engine.BackfillAllMapDataEnvironments()
+	end
 	-- This class hook is independent from the generator wrapper identity. Re-verify it before the
 	-- version guard because ClassesBuilt can replace class methods without replacing the generator.
 	SuperBigMap.PatchDeferredBreakthroughAnomalyInitialization()
