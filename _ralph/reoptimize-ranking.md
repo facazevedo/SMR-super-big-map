@@ -1438,3 +1438,45 @@ the other retained units preserve their predecessor outputs exactly.
 Final restored-payload regression replay: **70/70 commands PASS**, recorded in
 `v972_final_restored_offline/all_results.json`. This is a fresh offline replay;
 the five-site cold and visual sign-off remains the identical accepted v972 payload.
+
+## 2026-09-12 - exact decor obstruction index (v974), slow-map improvement
+
+Code `2c68ff3`, v974/guard288. Private append-only obstruction/decor circles are
+spatially indexed. Candidate/RNG order, strict circle intersection, rejection
+precedence, stamping and all terrain/placement logic remain unchanged.
+
+| Reference | START-to-T1 A / B / C | Median |
+|---|---|---:|
+| recorded v972 |103.047 /102.488 /100.688s|102.488s|
+| v974 |106.491 /104.523 /105.174s|105.174s|
+
+The reference median is **2.686s slower (2.62%)**, not an accepted reference
+speedup. All samples are retained. Fresh native control28.649s. The index is
+retained for its substantial decor-heavy-map benefit, reported separately below;
+this must not be described as reaching the current under-80-second objective.
+
+| Scenario | v972 | v974 | All ten / full predecessor output |
+|---|---:|---:|---|
+|15S67E|104.548s|106.689s|PASS / identical|
+|24S74W|105.535s|105.515s|PASS / identical|
+|45S120W|98.976s|101.427s|PASS / identical|
+|61N136W|150.018s|108.707s|PASS / identical|
+|17S11W|105.024s|107.850s|PASS / identical|
+
+The61N single sample improves by41.311s (27.54%). Its decor stage took9.778s,
+versus54.680s in a fresh v972 diagnostic profile. This stage comparison is not a
+repeated cold timing median. Regular reference decor was already under one second.
+
+All71 offline commands pass, including48,171 circle queries and complete stamping
+outcome/weight/RNG trace comparison with the old exhaustive predicate. Complete
+surface/underground outputs, private streams, individual grounding and original
+gates match v972. Primary source/RNG/process review completes all ten; accepted
+visual evidence is inherited only through those exact outputs. Nine fresh owned
+acceptance processes exited normally; deployment audited38/38. Buttons unchanged.
+
+Evidence: `_ralph/runs/under80-20260912/` contains source review and artifacts
+`v974_offline`, `v974_reference/reference_audit.json`, all five `v974_matrix`
+judgments, and `v974_all_ten_rules_review.json`. Diagnostic profiles remain separate.
+The native function profile identified about20million sandbox-global lookups in
+crease/outer terrain helpers; an exact entry-scoped binding candidate is next.
+**80s not reached.**
