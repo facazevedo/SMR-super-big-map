@@ -1,5 +1,11 @@
 # v981 consecutive indexed crease reads
 
+REJECTED after fixed cold reference:90.687 /90.595 /92.489s, median90.687s
+versus accepted89.425s (1.262s slower); control28.882s. Full predecessor/repeat/
+individual-rock/private output audit passes. No excluded samples or rescue repeats;
+five-site acceptance NOT started. Production restored to accepted v979.
+Candidate-specific regression is recoverable in d71e6eb; research fixture remains.
+
 Baseline c4d3e67 (accepted v979). Candidate changes only one terrain discovery
 caller plus runtime981/generator guard296. Rejected v980's class-list helper and
 tighter apron bound are NOT reintroduced. Existing Engine/ObjectClone/grounding,

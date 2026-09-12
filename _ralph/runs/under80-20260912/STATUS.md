@@ -440,3 +440,23 @@ keep v97989.425s reference /94.349s worst validation as accepted.
 Offline87500 closed exit0: all78 commands PASS. Freeze the v981 code checkpoint
 for reference-three/control. Require positive median gain and full exact output
 before five-site acceptance; no sample exclusions or unchanged rescue repeats.
+
+## v981 rejected after cold reference
+
+Candidate d71e6eb /981 /guard296. Fixed90322 closed with all four owned games
+normally quit:90.687 /90.595 /92.489s, median90.687 vs89.425s (1.262s slower);
+control28.882s. audit_reference reports no issues and exact predecessor/repeat/
+individual-rock/private-stream parity. No five-site run, excluded sample or rescue.
+Restored all production exactly to accepted c4d3e67 /979 /guard294. Removed only
+the candidate-specific parity file (recoverable d71e6eb; research fixture remains).
+
+One read-only1s CPU sample during reference B showed MarsDebug3.797CPU-seconds,
+two Code processes0.328/0.203, PowerShell0.156 and smaller background activity.
+This is not sufficient evidence that background load explains the regression;
+do not normalize/subtract control drift or claim a speed gain. No processes changed.
+
+Prepared unrun outer_coarse_profile.lua: instrument ONLY PrepareOuterResourceTerrain
+with all original upvalue cells joined, split coarse-mask/native patch timing and
+count zero/core/transition cells. It parses but has no runtime verdict. Run it next
+on restored v979 after commit/deployment audit, full exact predecessor capture.
+Production remains accepted89.425s reference /94.349s worst; under80 not reached.

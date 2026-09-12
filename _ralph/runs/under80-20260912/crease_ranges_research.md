@@ -61,3 +61,11 @@ single isolated change as v981, add its regression to the77 inherited commands,
 review/bump the generator guard, commit/deploy, and perform immutable reference3/
 control before any five-site sweep. Do not automatically reintroduce v980's two
 rejected combined changes or use their diagnostic timings to justify it.
+
+Promoted as isolated v981 at d71e6eb with78 passing offline commands. Its fixed
+cold reference90322 closed normally:90.687 /90.595 /92.489s, median90.687s vs89.425s,
+control28.882s. Full exact predecessor/repeat/private/individual-rock evidence
+passes, but performance criterion fails; rejected before five-site acceptance and
+restored v979. Do not promote this unchanged read-grouping candidate again based
+only on its native shadow counts/timings. Native work reduction did not demonstrate
+an end-to-end gain. The next investigation needs a larger cost center.
