@@ -119,3 +119,18 @@ arithmetic with rigorous error brackets and exact ambiguous-cell correction.
 Native trig/reciprocal/precision behavior has NOT been proved for such a port.
 Do not approximate shapes, weaken readiness, defer rebuilds, or claim this will
 necessarily reach80s. Existing immediate and post-pipeline rebuilds are required.
+
+## Native apron-mask research continuation
+
+New non-deployed prototype now has evidence worth pursuing: native scratch math
+API verified with integer fixed-point arguments;211848 mask samples measured;
+317440 three-way final U16 comparisons and15414 offline checks pass. A full fresh
+reference shadow run compares candidate/accepted algorithms on identical grids:
+2663ms versus7591ms, zero differing full8192x8192 height cells, complete predecessor
+output parity and normal shutdown. See `native_mask_research.md` and artifacts
+`native_mask_shadow_reference`, `native_apron_probe_1`, `native_mask_probe_1`.
+
+This is diagnostic-only, not deployed or accepted. Production remains exact v975.
+Before promotion, prove the error bound across the full allowed input domain,
+guard added allocation failures, clarify work counters, and run all cold/gates.
+The80s goal stays active. No game process remains after this continuation.

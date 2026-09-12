@@ -12,6 +12,7 @@ import measure_port
 suite = measure_port.suite
 parser = argparse.ArgumentParser()
 parser.add_argument('--name', default='certificate_native')
+parser.add_argument('--probe', type=Path, default=Path(__file__).with_suffix('.lua'))
 args = parser.parse_args()
 out = ROOT / '_ralph/runs/under80-20260912/artifacts' / args.name
 assert not out.exists(), 'Preserve evidence'
@@ -25,7 +26,7 @@ identity = suite.HARNESS / '.daemon.json'
 assert identity.exists() and identity.stat().st_mtime >= started
 pid = json.loads(identity.read_text())['pid']
 try:
-    probe = suite.cli('run-file', str(Path(__file__).with_suffix('.lua')), '--json', timeout=180)
+    probe = suite.cli('run-file', str(args.probe.resolve()), '--json', timeout=180)
     (out / 'probe_cli.log').write_text(probe.stdout + probe.stderr)
 finally:
     # No map exists: skip the post-T1 snapshot, but always capture/quit owned process.

@@ -15,6 +15,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--name', required=True)
 parser.add_argument('--prior', required=True)
 parser.add_argument('--function-profile', action='store_true')
+parser.add_argument('--setup', type=Path)
+parser.add_argument('--diagnostic-query')
 args = parser.parse_args()
 out = ROOT / '_ralph/runs/under80-20260912/artifacts' / args.name
 if out.exists():
@@ -27,7 +29,8 @@ head = suite.command('git', 'rev-parse', 'HEAD')
 out.mkdir(parents=True)
 setup_name = 'function_profile_setup.lua' if args.function_profile else 'profile_setup.lua'
 setup = out / 'diagnostic_setup.lua'
-setup.write_text(Path(__file__).with_name(setup_name).read_text().replace(
+setup_source = args.setup or Path(__file__).with_name(setup_name)
+setup.write_text(setup_source.read_text().replace(
     '__PROFILE_OUTPUT__', out.as_posix()), encoding='utf-8')
 started = time.time()
 proc = subprocess.run([sys.executable, '-u', '_ralph/tools/rules/run_rules.py',
@@ -40,7 +43,7 @@ identity = suite.HARNESS / '.daemon.json'
 if not identity.exists() or identity.stat().st_mtime < started:
     raise RuntimeError('No fresh owned process')
 metadata = json.loads(identity.read_text())
-suite.capture(out, metadata['pid'], failed=proc.returncode != 0)
+suite.capture(out, metadata['pid'], failed=proc.returncode != 0, diagnostic_query=args.diagnostic_query)
 if proc.returncode:
     raise RuntimeError('Diagnostic failed')
 if suite.command('git', 'rev-parse', 'HEAD') != head:
@@ -55,5 +58,8 @@ summary = [line for line in stages if 'SUMMARY ' in line and 'environment=Surfac
 print(json.dumps(dict(parity=comparison, stages=summary[:35]), indent=2), flush=True)
 instrumented = (len(list(out.glob('function_*.txt'))) >= 4 if args.function_profile
                 else any('split rocket planning' in line for line in stages))
+if args.diagnostic_query:
+    diagnostic = json.loads((out / 'diagnostic_state.json').read_text())
+    instrumented = diagnostic.get('status') == 'pass' and bool(diagnostic.get('calls'))
 if comparison['verdict'] != 'pass' or not instrumented:
     raise RuntimeError('Diagnostic parity or instrumentation failed')
