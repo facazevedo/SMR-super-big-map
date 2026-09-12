@@ -134,3 +134,19 @@ This is diagnostic-only, not deployed or accepted. Production remains exact v975
 Before promotion, prove the error bound across the full allowed input domain,
 guard added allocation failures, clarify work counters, and run all cold/gates.
 The80s goal stays active. No game process remains after this continuation.
+
+## v977 certified apron-mask candidate
+
+Strengthened native coordinate construction removes interpolation assumptions;
+runtime whole-grid sqrt/reciprocal residual checks support the documented error
+bound. Original scalar mask handles numeric domains outside the certificate;
+native failures stay explicit.317440 native final-cell comparisons,15414 existing
+raster checks,16170 domain/core-endpoint cells and221 failure/ownership checks pass.
+Fresh strengthened shadow:2728ms versus7602ms, full8192x8192 grid identical,
+complete predecessor outputs identical, owned process normally closed.
+
+Production v977/guard292 integrated; full74-command `v977_offline` passes.
+Next: commit, deploy/audit38, fresh `v977_reference` (three plus control), audit
+against `v975_reference`, then `v977_matrix` against `v975_matrix` and final
+`review_v974.py --version 977`. No change to HEAD/production while a cold batch
+runs. Still not accepted and not under80s. Source/bound reviews are in this folder.

@@ -79,3 +79,24 @@ the native reciprocal/sqrt accuracy assumptions and boundary cases. Then integra
 an isolated production unit with new guard292/runtime977, complete all offline
 regressions, commit/deploy/audit, and run fresh three-reference/control plus five
 scenario acceptance. Keep any hypotheses about total runtime separate from proof.
+
+## Strengthened candidate and production integration
+
+Current helper supersedes the corner-resampling prototype: exact copied row/column
+fields, explicit numeric-domain qualification, and whole-grid square-root and
+reciprocal residual checks. `native_mask_bound.md` derives the1/4096 allowance;
+`mask_bound_test.py` checks its conservative envelope with exact rational arithmetic.
+`native_mask_failures_test.lua` passes221 checks covering every added allocation,
+all three corrupted power calls, invalid census, domain rejection and ownership.
+Unchanged raster regression15414 checks plus16170 core/domain cell comparisons pass.
+
+`certified_apron_probe_1`:317440 native U16 cell comparisons pass. The strengthened
+`certified_mask_shadow_reference` passes complete full outputs; zero differing
+8192x8192 cells, candidate2728ms versus accepted7602ms. Its808696 exact corrections
+preserve1910302 modified cells/50 shaped patches. Normal owned-process shutdown.
+These are still diagnostics, never acceptance timings.
+
+Production v977/guard292 is now integrated, including explicit GridPow access,
+allocation guards and native/scalar work counters. Source review in
+`v977_source_review.md`. Full offline replay and cold acceptance are next. Do not
+claim the under80s goal, or v977 success, before those complete.

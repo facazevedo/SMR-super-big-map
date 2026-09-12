@@ -66,6 +66,10 @@ function api.GridAdd(grid,other)
 	mutate(grid,function(v,x,y) return f32(v+other:get(x,y)) end)
 end
 function api.GridAbs(grid) mutate(grid,math.abs) end
+function api.GridPow(grid,mul,div)
+	local power=mul/(div or 1)
+	mutate(grid,function(value) return f32(value^power) end)
+end
 function api.GridRound(grid) mutate(grid,function(v) return math.floor(v+0.5) end) end
 function api.GridClamp(grid,lo,hi) mutate(grid,function(v) return math.max(lo,math.min(hi,v)) end) end
 function api.GridMinMax(grid)

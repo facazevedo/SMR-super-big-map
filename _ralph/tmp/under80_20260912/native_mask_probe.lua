@@ -32,7 +32,7 @@ local ok,why=pcall(function()
         ..source:sub(first,last-1)..'\nreturn weight end','@scalar-mask')
     local api={}
     for _,name in ipairs({'NewComputeGrid','GridMulDivAdd','GridAddMulDiv','GridAdd','GridPow',
-        'GridClamp','GridResample','GridRound'}) do api[name]=sbm.Engine.Global(name) end
+        'GridClamp','GridResample','GridRound','GridCount','box','point'}) do api[name]=sbm.Engine.Global(name) end
     local function own(g) owned[#owned+1]=g;return g end
     for case=1,24 do
         local w,h=97,91
