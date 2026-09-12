@@ -33,3 +33,15 @@ for _, axis in ipairs({'x','y'}) do
     check(guide.Candidates(track,20,10,25,29) == false, 'coarse source rows cannot certify refinement')
 end
 print('production refinement guide: ' .. checks .. ' checks passed')
+for _, axis in ipairs({'x','y'}) do
+    local edge = axis=='x' and 'left' or 'top'
+    local track, guide = {axis=axis,edge=edge}, factory()
+    local row, words = {12,17}, {[12]=65664,[17]=65408}
+    guide.RegisterDomain(axis,edge,8,30,1,{[20]=row},{[20]=words})
+    local positions, certificates = guide.Candidates(track,20,10,25,29)
+    check(positions==row and certificates==words,'certificate identity not propagated')
+    guide.RegisterWrite(axis,20,14,15)
+    positions, certificates = guide.Candidates(track,20,10,25,29)
+    check(positions==false and certificates==nil,'stale certificate survived write')
+end
+print('certificate guide propagation/invalidation: 4 checks passed')

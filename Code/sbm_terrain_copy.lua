@@ -813,7 +813,8 @@ end
 -- and version 738's affine transform still runs exactly once.
 -- Read-only native prefilter. U16 differences/doubled flanks are exact in f32.
 -- Export a superset (both edge directions) of the original scalar offers, sorted
--- back into perpendicular order. The scalar predicates/ties and ALL writes stay
+-- back into perpendicular order. Exact signed width certificates reuse the native
+-- predicates; edge filtering, ties and ALL writes stay
 -- in RepairInternalHeightStep; refinement never reuses these discovery indexes.
 local function BuildHeightStepDiscoveryIndex(api, grid, axis, perp0, perp1, along_n,
 		sample_step, max_width, threshold)
@@ -835,7 +836,7 @@ local function BuildHeightStepDiscoveryIndex(api, grid, axis, perp0, perp1, alon
 		return nil, "invalid native crease discovery bounds"
 	end
 	local stats = { cells = 0, enumerated = 0, candidates = 0, sampled_rows = 0, copies = 0 }
-	if perp1 < perp0 then return {}, stats end
+	if perp1 < perp0 then return {}, stats, {} end
 	local owned, owned_set = {}, {}
 	local function own(value)
 		if not value or value == grid then return nil end
@@ -885,7 +886,10 @@ local function BuildHeightStepDiscoveryIndex(api, grid, axis, perp0, perp1, alon
 				if not flank0 or not flank1 or not magnitude then return nil, "native crease clone failed" end
 				api.GridMulDivAdd(v0, -1, 1, 0); api.GridAdd(flank0, v0); api.GridAbs(flank0)
 				api.GridMulDivAdd(b, -1, 1, 0); api.GridAdd(flank1, b); api.GridAbs(flank1)
-				api.GridMulDivAdd(a, -1, 1, 0); api.GridAdd(magnitude, a); api.GridAbs(magnitude)
+				api.GridMulDivAdd(a, -1, 1, 0); api.GridAdd(magnitude, a)
+				local signed = own(magnitude:clone())
+				if not signed then return nil, "native crease signed clone failed" end
+				api.GridAbs(magnitude)
 				local accepted, mask = own(api.NewComputeGrid(local_w, local_h, "f", 32)),
 					own(api.NewComputeGrid(local_w, local_h, "f", 32))
 				local doubled = own(magnitude:clone())
@@ -905,8 +909,19 @@ local function BuildHeightStepDiscoveryIndex(api, grid, axis, perp0, perp1, alon
 				api.GridMulDivAdd(magnitude, accepted, 1, 0)
 				local expected = api.GridCount(magnitude, 1, 2147483647)
 				local count, callback_error, emitted = 0, nil, {}
-				api.GridForeach(magnitude, function(jump, x, y)
+				-- Bias and double exact signed U16 differences. Accepted codes are >=2;
+				-- zero remains rejected under either native lower-bound convention.
+				api.GridMulDivAdd(signed, 2, 1, 131072)
+				api.GridMulDivAdd(signed, accepted, 1, 0)
+				local factor = width == 1 and 1 or width == 2 and 131072 or 17179869184
+				api.GridForeach(signed, function(encoded, x, y)
 					if callback_error then return end
+					if type(encoded) ~= "number" or encoded ~= math.floor(encoded)
+						or encoded % 2 ~= 0 or encoded < 2 or encoded > 262142 then
+						callback_error = "native crease signed certificate invalid"; return
+					end
+					local code = encoded / 2
+					local jump = math.abs(code - 65536)
 					if type(x) ~= "number" or type(y) ~= "number" or type(jump) ~= "number"
 						or x ~= math.floor(x) or y ~= math.floor(y) or jump ~= math.floor(jump)
 						or x < 0 or y < 0 or x >= local_w or y >= local_h
@@ -920,10 +935,13 @@ local function BuildHeightStepDiscoveryIndex(api, grid, axis, perp0, perp1, alon
 					local perp = perp0 + (axis == "x" and x or y)
 					local seen = row_seen[along]
 					if not seen then seen = {}; row_seen[along] = seen; rows[along] = {} end
-					if not seen[perp] then
-						seen[perp] = true; rows[along][#rows[along] + 1] = perp
+					local prior = seen[perp]
+					if not prior then
+						rows[along][#rows[along] + 1] = perp
 						stats.candidates = stats.candidates + 1
 					end
+					-- Three 17-bit width slots fit exactly in binary64 as well as int64.
+					seen[perp] = (prior or 0) + code * factor
 				end, 1, 2147483647)
 				if callback_error then return nil, callback_error end
 				if type(expected) ~= "number" or count ~= expected then
@@ -934,9 +952,9 @@ local function BuildHeightStepDiscoveryIndex(api, grid, axis, perp0, perp1, alon
 			end
 		end
 		for _, row in pairs(rows) do table.sort(row) end
-		return rows, stats
+		return rows, stats, row_seen
 	end
-	local ok, rows, detail = pcall(work)
+	local ok, rows, detail, certificates = pcall(work)
 	local cleanup_error
 	for i = #owned, 1, -1 do
 		local freed, err = pcall(owned[i].free, owned[i])
@@ -944,7 +962,7 @@ local function BuildHeightStepDiscoveryIndex(api, grid, axis, perp0, perp1, alon
 	end
 	if not ok then return nil, tostring(rows) end
 	if cleanup_error then return nil, "native crease cleanup failed: " .. cleanup_error end
-	return rows, detail
+	return rows, detail, certificates
 end
 
 -- Batched translation of independent rows within ONE already-selected track.
@@ -1106,8 +1124,8 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 	local function NewHeightStepRefinementGuide()
 		local domains, writes_x, writes_y, empty = {}, {}, {}, {}
 		local stats = { indexed = 0, live = 0, writes = 0 }
-		local function register_domain(axis, edge, lo, hi, step, rows)
-			if step == 1 then domains[axis .. ":" .. edge] = { lo = lo, hi = hi, rows = rows } end
+		local function register_domain(axis, edge, lo, hi, step, rows, certificates)
+			if step == 1 then domains[axis .. ":" .. edge] = { lo = lo, hi = hi, rows = rows, certificates = certificates } end
 		end
 		local function register_write(axis, along, lo, hi)
 			local index = axis == "x" and writes_x or writes_y
@@ -1138,15 +1156,45 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 				end
 			end
 			stats.indexed = stats.indexed + 1
-			return domain.rows[along] or empty
+			return domain.rows[along] or empty, domain.certificates and (domain.certificates[along] or empty)
 		end
 		return { RegisterDomain = register_domain, RegisterWrite = register_write,
 			Candidates = candidates, stats = stats }
 	end
 	-- HEIGHT_REFINEMENT_GUIDE_END
-	-- Read-only scalar confirmation of a certified native discovery superset.
+	-- Reuse exact predicates only under the guide's unchanged-neighborhood proof.
 	-- Ordered perpendicular positions and width order preserve strict tie handling.
-	local function RefineIndexedHeightStep(at, track, along, predicted, lo, hi, max_width, threshold, indexed)
+	local function RefineCertifiedHeightStep(track, predicted, lo, hi, max_width, indexed, certificates)
+	    local before = track.edge == 'left' or track.edge == 'top'
+	    local best_perp, best_width, best_distance, best_jump
+	    for _,perp in ipairs(indexed) do
+	        if perp > hi then break end
+	        if perp >= lo then
+	            local word = certificates[perp]
+	            for width=1,max_width do
+	                local code = word % 131072
+	                word = math.floor(word / 131072)
+	                if code ~= 0 then
+	                    local delta = code - 65536
+	                    local low_before = delta > 0
+	                    local jump = math.abs(delta)
+	                    local distance = math.abs(perp-predicted)
+	                    if low_before == track.low_before
+	                        and ((before and low_before) or (not before and not low_before))
+	                        and (not best_distance or distance < best_distance
+	                            or (distance == best_distance and jump > best_jump)) then
+	                        best_perp, best_width, best_distance, best_jump = perp,width,distance,jump
+	                    end
+	                end
+	            end
+	        end
+	    end
+	    return best_perp, best_width
+	end
+	local function RefineIndexedHeightStep(at, track, along, predicted, lo, hi, max_width, threshold, indexed, certificates)
+		if certificates then
+			return RefineCertifiedHeightStep(track, predicted, lo, hi, max_width, indexed, certificates)
+		end
 		local cache = {}
 		local function sample(perp)
 			local value = cache[perp]
@@ -1268,9 +1316,27 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		if #row > max_per_row then row[#row] = nil end
 	end
 
-	local function scan_line_range(row, axis, along, perp0, perp1, edge)
+	local function scan_line_range(row, axis, along, perp0, perp1, edge, certificates)
 		if perp1 < perp0 then return end
 		local max_width = wide_ring_only and 1 or 3
+		if certificates then
+			local before = edge == "left" or edge == "top"
+			for perp = perp0, perp1 do
+				local word = certificates[perp] or 0
+				for width = 1, max_width do
+					local code = word % 131072
+					word = math.floor(word / 131072)
+					if code ~= 0 then
+						local delta = code - 65536
+						local low_before = delta > 0
+						if wide_ring_only or (before and low_before) or (not before and not low_before) then
+							offer_candidate(row, axis, perp, width, edge, low_before, math.abs(delta))
+						end
+					end
+				end
+			end
+			return
+		end
 		local v0, a = at(axis, perp0 - 1, along), at(axis, perp0, along)
 		local n1, n2 = at(axis, perp0 + 1, along), at(axis, perp0 + 2, along)
 		local n3, n4
@@ -1321,31 +1387,31 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		local active = {}
 		sample_step = math.max(1, sample_step or 1)
 		local function index(lo, hi)
-			local rows, detail = BuildHeightStepDiscoveryIndex(discovery_api, grid, axis,
+			local rows, detail, certificates = BuildHeightStepDiscoveryIndex(discovery_api, grid, axis,
 				lo, hi, along_n, sample_step, wide_ring_only and 1 or 3, threshold)
 			if not rows then discovery_error = tostring(detail); return nil end
 			for key in pairs(discovery_stats) do
 				discovery_stats[key] = discovery_stats[key] + (detail[key] or 0)
 			end
-			return rows
+			return rows, certificates
 		end
-		local before = index(before_perp0, before_perp1)
+		local before, before_certificates = index(before_perp0, before_perp1)
 		if not before then return end
-		local after = index(after_perp0, after_perp1)
+		local after, after_certificates = index(after_perp0, after_perp1)
 		if not after then return end
 		if refinement_guide then
-			refinement_guide.RegisterDomain(axis, before_edge, before_perp0, before_perp1, sample_step, before)
-			refinement_guide.RegisterDomain(axis, after_edge, after_perp0, after_perp1, sample_step, after)
+			refinement_guide.RegisterDomain(axis, before_edge, before_perp0, before_perp1, sample_step, before, before_certificates)
+			refinement_guide.RegisterDomain(axis, after_edge, after_perp0, after_perp1, sample_step, after, after_certificates)
 		end
 		for along = 0, along_n - 1, sample_step do
 			local row = {}
-			-- Exact scalar acceptance, width order and edge order are unchanged. Only
+			-- Exact acceptance, width order and edge order are unchanged. Only
 			-- positions proven unable to offer any width are omitted by the native index.
 			for _, perp in ipairs(before[along] or {}) do
-				scan_line_range(row, axis, along, perp, perp, before_edge)
+				scan_line_range(row, axis, along, perp, perp, before_edge, before_certificates and before_certificates[along])
 			end
 			for _, perp in ipairs(after[along] or {}) do
-				scan_line_range(row, axis, along, perp, perp, after_edge)
+				scan_line_range(row, axis, along, perp, perp, after_edge, after_certificates and after_certificates[along])
 			end
 
 			local used = {}
@@ -1412,10 +1478,12 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		local max_width = wide_ring_only and 1 or 3
 		-- The native superset remains usable only where every influencing height is
 		-- unchanged. Intersecting earlier translations/joins require live refinement.
-		local indexed = refinement_guide and refinement_guide.Candidates(track, along,
-			lo, hi, hi + max_width + 1)
+		local indexed, certificates
+		if refinement_guide then
+			indexed, certificates = refinement_guide.Candidates(track, along, lo, hi, hi + max_width + 1)
+		end
 		if indexed then
-			return RefineIndexedHeightStep(at, track, along, predicted, lo, hi, max_width, threshold, indexed)
+			return RefineIndexedHeightStep(at, track, along, predicted, lo, hi, max_width, threshold, indexed, certificates)
 		end
 		local v0, a = at(track.axis, lo - 1, along), at(track.axis, lo, along)
 		local n1, n2 = at(track.axis, lo + 1, along), at(track.axis, lo + 2, along)

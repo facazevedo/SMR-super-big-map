@@ -81,3 +81,12 @@ Under80s is still not reached; do not mark the optimization goal complete.
 Non-deployed next research: packed exact native crease certificates. The prototype
 passes205,096 offer/winner/51-bit packing comparisons; native production integration
 and real-engine validation have NOT been done. See `native_certificate_research.md`.
+
+## Native crease certificates v976 candidate
+
+Production integration completed, runtime976/guard291. All74 offline commands pass
+(`v976_offline`). Actual native-grid scratch comparison passed2560 checks;
+offline inclusive/exclusive lower bounds passed5120; actual production offer/winner
+branches matched v975 over205096 checks. Invalid certificates fail explicitly;
+guide propagation and write invalidation tests pass. Source review in
+`v976_source_review.md`. Cold output and performance acceptance still pending.
