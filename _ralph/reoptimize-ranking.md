@@ -1522,3 +1522,30 @@ accepted production suite does not pretend the rejected decoder remains installe
 Evidence: `under80-20260912/artifacts/v976_reference/reference_audit.json`,
 `v976_offline`, `certificate_native_3` (first two setup failures retained), and
 `v975_restored_offline`. Final accepted reference remains97.914s; **80s not reached**.
+
+## 2026-09-12: v977 certified native apron masks
+
+Code `b5fb059`, runtime977/guard292. Native fixed-point coordinate construction
+and whole-grid power residual certificates accelerate the mask; an explicit
+rounding-error bracket routes every ambiguous final height to the literal scalar
+expression. Unqualified numeric domains retain the scalar path; native failures
+are explicit. No shape, RNG, placement, readiness or passability changes.
+
+Reference94.353 /93.635 /93.610s, median93.635s versus v97597.914s:
+4.279s faster (4.37%). Native control29.748s. No samples excluded.
+
+| Scenario | v975 | v977 | All ten / full predecessor output |
+|---|---:|---:|---|
+|15S67E|102.317s|98.444s|PASS / identical|
+|24S74W|100.171s|94.162s|PASS / identical|
+|45S120W|94.862s|90.365s|PASS / identical|
+|61N136W|104.302s|96.761s|PASS / identical|
+|17S11W|102.034s|94.691s|PASS / identical|
+
+All74 offline commands pass. Full grids, placements, individual rocks and private
+streams match; source/RNG/process review closes all ten. Nine unique owned
+acceptance processes exited normally at one fixed code checkpoint; deployment
+audited38/38. Visual inheritance follows exact accepted outputs, not a new image
+claim. Evidence: `under80-20260912/artifacts/v977_reference`, `v977_matrix`,
+`v977_offline`, `v977_all_ten_rules_review.json`, `v977_source_review.md` and
+`native_mask_bound.md`. **80s not reached.**

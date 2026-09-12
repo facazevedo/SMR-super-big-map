@@ -150,3 +150,43 @@ Next: commit, deploy/audit38, fresh `v977_reference` (three plus control), audit
 against `v975_reference`, then `v977_matrix` against `v975_matrix` and final
 `review_v974.py --version 977`. No change to HEAD/production while a cold batch
 runs. Still not accepted and not under80s. Source/bound reviews are in this folder.
+
+v977 code checkpoint `b5fb059`: fresh reference94.353 /93.635 /93.610s,
+median93.635s versus v97597.914s (saving4.279s,4.37%). Native control29.748s.
+Complete predecessor/repeat/native-control audit passes with no issues; four
+distinct owned processes exited normally. Next is five-site `v977_matrix` against
+`v975_matrix`. Keep HEAD at `b5fb059` until the whole version's acceptance closes.
+No under80s or full five-site acceptance claim yet.
+
+During the closed-reference interval, a scratch-only outer harmonic probe tests
+an uninstalled complex-power approximation to repeated trigonometry. Files
+`outer_harmonic_research.lua`, `outer_harmonic_probe.lua`, `outer_mask_research.md`
+remain research; exact coarse-mask rounding/protection proof would be required.
+
+v977 five-site matrix is live in exec session83806 at unchanged `b5fb059`.
+Poll the handle to establish live/terminal state; do not infer it from ACTIVE.json.
+No second game or HEAD/production/deployment change until it closes. Reference
+batch10667 has a captured terminal exit0 and complete clean reference audit.
+
+Outer harmonic scratch attempt failed because math.atan2 is absent. A separate
+fresh probe confirms the mod and global math tables are identical, atan2 nil,
+atan available and sin a native C function. Existing outer masks therefore use
+angle0. Do NOT replace this fallback with atan: that changes terrain. Next useful
+hypothesis is exact per-patch caching of the angle0 sine combination; details in
+`outer_mask_research.md`. Both diagnostic processes closed normally; the failed
+attempt remains failed evidence. Research files/notes are uncommitted solely to
+keep v977's acceptance checkpoint unchanged.
+
+## v977 accepted, all batches closed
+
+Session83806 exited0; all five exact predecessor comparisons and normal owned
+shutdowns passed at unchanged b5fb059. Times in manifest order:98.444 /94.162 /
+90.365 /96.761 /94.691s. `v977_all_ten_rules_review.json` closes all ten rules,
+74 offline commands, nine unique acceptance identities and deployment38/38.
+Reference median93.635s versus v97597.914s. No under80s claim; goal remains active.
+
+Non-deployed zero-angle cache passes86,905 exact coarse/domain/lifetime checks.
+Missing-atan2 sine calls62892 ->648; present-atan2 path62892 ->61002. Candidate
+and fresh diagnostic setup parse. Next diagnostic installs only the candidate
+outer helper in its owned process and profiles the separate transferred-relief
+capture hotspot. Production remains v977; diagnostic timings are not cold samples.
