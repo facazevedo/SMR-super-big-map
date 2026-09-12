@@ -375,3 +375,31 @@ worst validation. Do not claim under80 or remove scheduled rebuilds.
 Offline8613 closed exit0: all79 commands PASS. Freeze the v980 code checkpoint
 for reference-three/control and, with positive reference gain plus full exact
 parity, the five validation scenarios. No sample exclusion or rescue repeats.
+
+## v980 rejected; v979 restored
+
+Candidate code 4c50265. Cold56294 closed: reference89.687 /88.991 /90.421s,
+median89.687 versus89.425 (0.262s slower); native control29.334s. All exact
+predecessor/repeat/individual-rock/private-stream checks and automated gates pass,
+four owned normal shutdowns, fixed checkpoint/deployment. No samples excluded.
+Five-site acceptance NOT started. Control is also slower than prior27.890s, but
+subtracting/normalizing that difference would not establish an actual under80 gain.
+Combined v980 is rejected and production restored exactly to accepted v979.
+
+Separate diagnostic v980_crease_phase_reference (75384/PID44664) passes full
+predecessor/rock/private parity and normal shutdown. Native class pair, both live
+native identities, captured scalar/batch helpers and annotation public/captured
+classifiers all match: startup qualification was NOT the performance issue.
+One recompiled crease function joined all original upvalue cells; no module reload.
+Source pass242ms: discovery/tracks102ms (native94), qualification95, selected12.
+Destination3390ms: discovery/tracks2068ms (native644), qualification33, selected1239.
+Four native discovery calls each; destination171387 positions /220059 offers.
+These are diagnostics, not replacement cold samples. Additional read-only state
+query81224 closed cleanly; no game remains.
+
+Next bounded idea: join only consecutive indexed perpendicular positions into
+ranges so the EXISTING rolling scan reuses overlapping read neighbourhoods.
+Preserve every indexed position, width/edge order, scalar predicates, tie behavior,
+grid writes and refinement invalidation. No packed buffers or result cache.
+Not implemented/validated yet. Goal active, accepted reference89.425s /worst94.349s;
+under80 still not reached.

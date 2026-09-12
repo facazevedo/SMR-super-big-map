@@ -2237,20 +2237,17 @@ local function RasterNaturalMountainBaseAprons(api, grid, selected, policy)
 				api.GridMulDivAdd(result,1,1,-candidate.center)
 				local relative_min,relative_max=api.GridMinMax(result)
 				api.GridMulDivAdd(result,H,1,0)
-				-- The same residual/domain certificate bounds error by9/65536
-				-- for core<=0.60, and12/65536 for the remaining qualified cores.
-				-- U24 mask allowances and native API arguments stay integral.
-				local error_numerator = policy.core_fraction <= 0.60 and 9 or 12
+				-- Certified domain and root/reciprocal residuals bound mask error by1/4096.
 				-- Cubic Lipschitz bound uses the upper possible local weight, not global 1.
 				local uncertainty=own(result:clone())
 				if not uncertainty then return "native apron uncertainty allocation failed" end
 				api.GridAddMulDiv(uncertainty,plane,-1);api.GridAbs(uncertainty)
 				local sensitivity=own(mask:clone())
 				if not sensitivity then return "native apron sensitivity allocation failed" end
-				api.GridMulDivAdd(sensitivity,1,1,error_numerator*256);api.GridClamp(sensitivity,0,W)
+				api.GridMulDivAdd(sensitivity,1,1,4096);api.GridClamp(sensitivity,0,W)
 				api.GridMulDivAdd(sensitivity,sensitivity,W,0)
 				api.GridMulDivAdd(uncertainty,sensitivity,W,0)
-				api.GridMulDivAdd(uncertainty,3*error_numerator,65536,0)
+				api.GridMulDivAdd(uncertainty,3,4096,0)
 				if not native_mask then api.GridFill(uncertainty,0) end
 				api.GridMulDivAdd(result,inverse,W,0)
 				api.GridMulDivAdd(plane,cube,W,0)

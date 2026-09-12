@@ -1,0 +1,108 @@
+{
+  "live_class_single": true,
+  "live_class_many": true,
+  "clone_current_scalar": true,
+  "clone_current_batch": true,
+  "annotation_current_important": true,
+  "calls": [
+    {
+      "stats": {
+        "candidates": 287,
+        "cells": 1787904,
+        "copies": 3072,
+        "sampled_rows": 3072,
+        "enumerated": 287
+      },
+      "phases": {
+        "discovery_and_tracks": 102,
+        "qualification": 95,
+        "selected_refinement_and_writes": 12
+      },
+      "report": {
+        "threshold": 128,
+        "edge": "right,right",
+        "rows": 200,
+        "outer_guard": 6,
+        "reason": "vanilla outer-ring steps qualified for pre-resample repair",
+        "first_along": 5351,
+        "min": 2129,
+        "edge_margin": 614,
+        "max_offset": 898,
+        "max": 65535,
+        "left_tracks": 61,
+        "repairs": 2,
+        "top_tracks": 83,
+        "bottom_tracks": 42,
+        "right_tracks": 41,
+        "axis": "x,x",
+        "modified": 0,
+        "detected": 433,
+        "min_offset": 128,
+        "qualified": 2,
+        "edge_perp": 5927,
+        "last_along": 5553
+      },
+      "native_discovery_calls": 4,
+      "width": 6144,
+      "ok": true,
+      "height": 6144,
+      "elapsed_ms": 242,
+      "wide_ring_only": true,
+      "native_discovery_ms": 94
+    },
+    {
+      "stats": {
+        "candidates": 171387,
+        "cells": 3391488,
+        "copies": 4,
+        "sampled_rows": 32768,
+        "enumerated": 220059,
+        "refinement": {
+          "indexed": 16105,
+          "live": 765,
+          "writes": 16671
+        }
+      },
+      "phases": {
+        "discovery_and_tracks": 2068,
+        "qualification": 33,
+        "selected_refinement_and_writes": 1239
+      },
+      "report": {
+        "threshold": 317,
+        "edge": "bottom,right,right,bottom,bottom,bottom,right,right,right,right,bottom,bottom,right,bottom",
+        "rows": 3018,
+        "outer_guard": 8,
+        "reason": "destination edge lower regions translated with slope-matched feathered joins",
+        "first_along": 1348,
+        "min": 2148,
+        "edge_margin": 42,
+        "max_offset": 2634,
+        "max": 65535,
+        "left_tracks": 167,
+        "repairs": 14,
+        "top_tracks": 112,
+        "bottom_tracks": 409,
+        "right_tracks": 370,
+        "axis": "y,x,x,y,y,y,x,x,x,x,y,y,x,y",
+        "modified": 688775,
+        "detected": 16671,
+        "min_offset": 317,
+        "qualified": 14,
+        "edge_perp": 8171,
+        "last_along": 4365
+      },
+      "native_discovery_calls": 4,
+      "width": 8192,
+      "ok": true,
+      "height": 8192,
+      "elapsed_ms": 3390,
+      "wide_ring_only": false,
+      "native_discovery_ms": 644
+    }
+  ],
+  "native_class_pair": true,
+  "annotation_current_skip": true,
+  "status": "pass",
+  "annotation_current": true
+}

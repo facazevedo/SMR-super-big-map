@@ -1,5 +1,12 @@
 # v980 guarded class-list negatives and whole-domain apron bound
 
+REJECTED after cold reference: 89.687 / 88.991 / 90.421s, median 89.687s
+versus v979 89.425s (0.262s slower). Exact predecessor/repeat/control audit passes,
+but no speed gain; five-site acceptance was NOT started. Production and inherited
+Engine fixture restored to accepted v979. The two candidate-only parity files
+are recoverable in 4c50265; equivalent nondeployed research fixtures remain.
+Do not rerun or accept this combined candidate without a new hypothesis.
+
 Baseline c4d3e67 (accepted v979), runtime 980 / generator guard 295. Only Engine,
 ObjectClone and the apron raster change, plus version/guard. No other production
 files, game binaries/settings, dependencies or debug/elevator buttons change.
