@@ -1,0 +1,113 @@
+{
+  "status": "pass",
+  "calls": [
+    {
+      "total_ms": 17285,
+      "helpers": {
+        "native_get_type": {
+          "exclusive_ms": 427,
+          "calls": 721100,
+          "inclusive_ms": 427
+        },
+        "cursor": {
+          "exclusive_ms": 2920,
+          "calls": 701139,
+          "inclusive_ms": 3952
+        },
+        "seed": {
+          "exclusive_ms": 0,
+          "calls": 218,
+          "inclusive_ms": 0
+        },
+        "try_stamp": {
+          "exclusive_ms": 2942,
+          "calls": 714763,
+          "inclusive_ms": 5775
+        },
+        "terrain_type_at": {
+          "exclusive_ms": 2945,
+          "calls": 727244,
+          "inclusive_ms": 3372
+        },
+        "rand": {
+          "exclusive_ms": 1635,
+          "calls": 2184096,
+          "inclusive_ms": 1635
+        },
+        "place_prefab": {
+          "exclusive_ms": 105,
+          "calls": 194,
+          "inclusive_ms": 105
+        },
+        "circle_hits": {
+          "exclusive_ms": 2727,
+          "calls": 775867,
+          "inclusive_ms": 2727
+        }
+      },
+      "environment": "Surface",
+      "ok": true,
+      "stats": {
+        "synthetic_templates_exhausted": 0,
+        "markers_resolved": 1911,
+        "environment": "Surface",
+        "synthetic_allowed_types": 17,
+        "ring_objects": 0,
+        "synthetic_rejected_decorated": 60756,
+        "skipped_by_obstruct": 1077,
+        "skipped_by_decorated": 130,
+        "seed_source": "generator",
+        "unused_sites": 1216,
+        "placed_synthetic": 181,
+        "vanilla_decor_groups": 245,
+        "version": 10,
+        "objects": 5456,
+        "area_factor": 1.778,
+        "decorated_circles": 376,
+        "synthetic_max_reach_percent": 2800,
+        "decor_sites": 1461,
+        "ms": 17285,
+        "dropped_out_of_band": 13,
+        "enabled": true,
+        "synthetic_templates": 254,
+        "synthetic_templates_left": 0,
+        "synthetic_rejected_empty": 4,
+        "seed": -8390921514018468018,
+        "synthetic_reach_cap_percent": 2800,
+        "synthetic_random_attempts": 26108,
+        "synthetic_finite_templates_left": 254,
+        "synthetic_rejected_failed": 0,
+        "skipped_bounds": 0,
+        "target": 190,
+        "sites_prestretched": 1461,
+        "synthetic_escalations": 762,
+        "skipped_obstructed": 1207,
+        "skipped_no_match": 0,
+        "obstruct_circles": 302,
+        "sites_exhausted": true,
+        "failed": 0,
+        "synthetic_rejected_bounds": 502,
+        "markers_unresolved": 116,
+        "decoration_ratio": 25,
+        "synthetic_rejected_obstruct": 652582,
+        "band_known": true,
+        "placed": 190,
+        "synthetic_finite_attempts": 701139,
+        "generator_present": true,
+        "fallback_sites": 131,
+        "synthetic_attempts": 727247,
+        "synthetic_budget": 36200,
+        "skipped_band": 0,
+        "preset": "MAIN",
+        "synthetic_rejected_terrain": 13198,
+        "synthetic_rejected_band": 24,
+        "sites_relocated": 0,
+        "placed_authored": 9,
+        "dropped_non_cosmetic": 51,
+        "synthetic_rejected_no_match": 0,
+        "decoration_passes": 2
+      }
+    }
+  ],
+  "restored": true
+}
