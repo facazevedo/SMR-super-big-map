@@ -1,0 +1,48 @@
+{
+  "calls": [
+    {
+      "kinds": 6,
+      "errors": 0,
+      "list": "underground_access_clone_kinds",
+      "positives": 18
+    },
+    {
+      "kinds": 15,
+      "errors": 0,
+      "list": "skip_clone_kinds",
+      "positives": 643
+    },
+    {
+      "kinds": 4,
+      "errors": 0,
+      "list": "mystery_kinds",
+      "positives": 21
+    },
+    {
+      "kinds": 3,
+      "errors": 0,
+      "list": "resources",
+      "positives": 3
+    },
+    {
+      "kinds": 4,
+      "errors": 0,
+      "list": "spawned",
+      "positives": 31
+    }
+  ],
+  "mismatches": [],
+  "single_returns": {
+    "boolean:true": 716,
+    "nil:nil": 219577
+  },
+  "batch_kind": "C",
+  "status": "pass",
+  "batch_returns": {
+    "boolean:true": 716,
+    "nil:nil": 35069
+  },
+  "single_kind": "C",
+  "classes": 7157,
+  "checks": 35785
+}

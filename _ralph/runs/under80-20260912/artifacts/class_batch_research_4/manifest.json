@@ -1,0 +1,11 @@
+{
+  "production_changed": false,
+  "engine": {
+    "before_sha256": "4189d04243a96b93e2ef6353ff4f97a13acca1141ff3753272a6a9a7f3cefaea",
+    "candidate_sha256": "178c80f6873d4451e90e30bfa42de63720406b786226b24fae981aa0a520671e"
+  },
+  "object_clone": {
+    "before_sha256": "14e985e8df2c6542dfefcddf8e9bed61a7a81ddfc0fdf9dde2c9fffd14e1d74b",
+    "candidate_sha256": "337da4c31f2d5c9ec2e219b933b4fe5fb7be586aec14e7f521449f558d7e7e1c"
+  }
+}

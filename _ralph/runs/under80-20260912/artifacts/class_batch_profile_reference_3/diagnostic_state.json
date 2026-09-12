@@ -1,0 +1,26 @@
+{
+  "status": "pass",
+  "scalar_calls": 482,
+  "batch_calls": 163834,
+  "negative_batches": 163550,
+  "native_pair": true,
+  "calls": [
+    {
+      "scalar_calls": 0,
+      "environment": "Surface",
+      "negative_batches": 99931,
+      "failures": 0,
+      "elapsed_ms": 1434,
+      "batch_calls": 99931
+    },
+    {
+      "scalar_calls": 458,
+      "environment": "Underground",
+      "negative_batches": 156402,
+      "failures": 0,
+      "elapsed_ms": 600,
+      "batch_calls": 156677
+    }
+  ],
+  "replaced_cells": 2
+}

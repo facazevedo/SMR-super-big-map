@@ -356,3 +356,22 @@ research. Next meaningful avenues: guarded native class-list batching (larger
 potential, no candidate yet), or the revised whole-domain bracket (proof/fixtures/
 actual-policy shadow first). Goal active: reference89.425s, worst validation94.349s;
 under80 not reached. Do not repeat completed acceptance or resurrect rejected skips.
+
+## v980 candidate prepared
+
+Previous turn classified PROGRESS: accepted v979 plus useful negative diagnostics.
+Current continuation confirmed clean684295c, deployment38/38 and no live game
+before research. Guarded native class-list candidate4 and generalized apron bound
+both pass focused offline and native full-output diagnostics with actual work
+reductions. See v980_source_review.md and updated research notes for failures,
+proof/compatibility constraints, exact comparisons and diagnostic-only timings.
+
+Production candidate v980/guard295 combines only those two changes. The focused
+tests pass667222 class-query checks,38115 f32 raster cells and172103 inherited
+Engine result/trace checks. The full79-command offline suite is running (8613).
+No cold v980 acceptance yet; v979 remains accepted at89.425s reference /94.349s
+worst validation. Do not claim under80 or remove scheduled rebuilds.
+
+Offline8613 closed exit0: all79 commands PASS. Freeze the v980 code checkpoint
+for reference-three/control and, with positive reference gain plus full exact
+parity, the five validation scenarios. No sample exclusion or rescue repeats.

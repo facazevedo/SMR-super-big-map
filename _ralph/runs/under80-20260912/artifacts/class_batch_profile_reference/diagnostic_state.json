@@ -1,0 +1,10 @@
+{
+  "error": "native class pair did not qualify",
+  "scalar_calls": 0,
+  "calls": [],
+  "replaced_cells": 0,
+  "status": "fail",
+  "native_pair": false,
+  "batch_calls": 0,
+  "negative_batches": 0
+}

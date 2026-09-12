@@ -1,0 +1,53 @@
+{
+  "status": "pass",
+  "baseline_failed": true,
+  "dump_available": true,
+  "calls": [
+    {
+      "native": true,
+      "name": "pcall",
+      "dump_ok": false,
+      "bytes": 0,
+      "match": true,
+      "classified_native": true,
+      "error": "unable to dump given function"
+    },
+    {
+      "native": true,
+      "name": "IsKindOf",
+      "dump_ok": false,
+      "bytes": 0,
+      "match": true,
+      "classified_native": true,
+      "error": "unable to dump given function"
+    },
+    {
+      "native": true,
+      "name": "IsKindOfClasses",
+      "dump_ok": false,
+      "bytes": 0,
+      "match": true,
+      "classified_native": true,
+      "error": "unable to dump given function"
+    },
+    {
+      "native": false,
+      "name": "Lua closure",
+      "dump_ok": true,
+      "bytes": 181,
+      "match": true,
+      "classified_native": false,
+      "error": ""
+    },
+    {
+      "native": false,
+      "name": "mod classifier",
+      "dump_ok": true,
+      "bytes": 1134,
+      "match": true,
+      "classified_native": false,
+      "error": ""
+    }
+  ],
+  "debug_blocked": true
+}

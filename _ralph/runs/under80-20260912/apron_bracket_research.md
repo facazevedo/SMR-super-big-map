@@ -78,3 +78,15 @@ arguments stay integral, no Lua negative powers/division ambiguity, and the4H
 reserve remains. This covers the source default without changing the mask/oracle.
 Require exact-rational checks, revised endpoint native fixtures, actual-policy
 full shadow evidence and measured useful work reduction before any promotion.
+
+The generalized candidate now has all prerequisite evidence:
+apron_bracket_general_bound_test.py passes exact rational endpoint checks;
+apron_bracket_general_native_reference (17529/PID41884) passes523776 three-way
+native comparisons, zero mismatches; revised full shadow
+apron_bracket_general_shadow_reference (80161/PID43784) passes full height and
+predecessor/individual-rock/private parity and records actual core0.2/numerator9.
+Exact corrections808696 ->576132, shaped50/modified1910302 unchanged. Its ordered
+2122vs3320ms is diagnostic, not cold evidence. Both games closed normally.
+The offline f32 raster adds38115 exact three-way cells,21 reduced cases and no
+increase in ambiguous cells. Promoted into pending v980 with guarded class-list
+batching; the old unused [0.25,0.55] proposal remains rejected.

@@ -1,0 +1,7 @@
+{
+  "ok": true,
+  "exit": 0,
+  "data": {
+    "result": "FUNCTION_KIND_PROBE_COMPLETE {\n\tmetatable = table: 000001A7E5C74780 [1]\n}"
+  }
+}

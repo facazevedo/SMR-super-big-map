@@ -1,0 +1,16 @@
+native	scalar	41906	->	4243	batch	9613
+native_nil	scalar	41906	->	4243	batch	9613
+missing_helper	scalar	41906	->	41906	batch	0
+lua_pair	scalar	41906	->	41906	batch	0
+missing_dump	scalar	41906	->	41906	batch	0
+inspection_error	scalar	41906	->	41906	batch	0
+missing_batch	scalar	41906	->	41906	batch	0
+custom_engine	scalar	41459	->	41459	batch	0
+rebound_single	scalar	41906	->	41906	batch	0
+rebound_batch	scalar	41906	->	41906	batch	0
+rebound_safe_call	scalar	41906	->	41906	batch	0
+rebound_engine_field	scalar	41906	->	41906	batch	0
+missing_single	scalar	0	->	0	batch	0
+batch_error	scalar	41906	->	41906	batch	9613
+rebound_global_and_single	scalar	14082	->	14082	batch	0
+PASS class-list candidate: 667222 exact return/query-order checks

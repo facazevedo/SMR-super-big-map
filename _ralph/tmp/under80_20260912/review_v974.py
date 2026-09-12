@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[3]
 RUN = ROOT / '_ralph/runs/under80-20260912'
 ART = RUN / 'artifacts'
 parser = argparse.ArgumentParser()
-parser.add_argument('--version', choices=['974', '975', '977', '978', '979'], default='974')
+parser.add_argument('--version', choices=['974', '975', '977', '978', '979', '980'], default='974')
 args = parser.parse_args()
 version = args.version
 baseline, expected_tests, expected_files = {
@@ -18,6 +18,7 @@ baseline, expected_tests, expected_files = {
     '977': ('1f67811', 74, ['Code/sbm_terrain_copy.lua', 'Code/sbm_version.lua', 'metadata.lua']),
     '978': ('b5fb059', 76, ['Code/sbm_engine.lua', 'Code/sbm_terrain_copy.lua', 'Code/sbm_version.lua', 'metadata.lua']),
     '979': ('3eafc30', 77, ['Code/sbm_rock_grounding.lua', 'Code/sbm_terrain_copy.lua', 'Code/sbm_version.lua', 'metadata.lua']),
+    '980': ('c4d3e67', 79, ['Code/sbm_engine.lua', 'Code/sbm_object_clone.lua', 'Code/sbm_terrain_copy.lua', 'Code/sbm_version.lua', 'metadata.lua']),
 }[version]
 target = ART / f'v{version}_all_ten_rules_review.json'
 if target.exists():
@@ -25,7 +26,7 @@ if target.exists():
 read = lambda p: json.loads(p.read_text())
 reference = read(ART / f'v{version}_reference/reference_audit.json')
 assert reference['clean_exact_evidence'] and not reference['issues']
-if version in ('975', '977', '978', '979'):
+if version in ('975', '977', '978', '979', '980'):
     assert reference['median_s'] < reference['prior_median_s'], 'No measured reference improvement'
 offline_name = 'v978_final_offline' if version == '978' else f'v{version}_offline'
 offline = read(ART / offline_name / 'all_results.json')

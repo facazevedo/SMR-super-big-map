@@ -1,0 +1,13 @@
+{
+  "site": "14N134W",
+  "lat": -840,
+  "lon": -8040,
+  "status": "engine_error",
+  "expand_map": "on",
+  "pin_ug_seed": 5083534300309579687,
+  "pin_game_seed": "ralph_seed_parity_14n134w",
+  "elapsed_s": 59.8,
+  "diagnostic_setup_probe": "D:\\PROJS\\SMR\\super-big-map\\_ralph\\runs\\under80-20260912\\artifacts\\class_batch_profile_reference\\diagnostic_setup.lua",
+  "rules": false,
+  "error": false
+}

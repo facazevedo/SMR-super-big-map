@@ -1,0 +1,7 @@
+{
+  "ok": true,
+  "exit": 0,
+  "data": {
+    "result": "NATIVE_CLASS_LIST_COMPARISON_COMPLETE {\n\tmetatable = table: 000001A4569D4780 [1]\n}"
+  }
+}

@@ -6,11 +6,17 @@ end
 local source=read('Code/sbm_engine.lua')
 local declaration='local type, pcall = type, pcall\n'
 local current=source
+-- The separately tested FirstKindOf helper adds module-load qualification only.
+-- Strip that exact block for the inherited-method source invariant, but execute
+-- the complete module below; class_batch_test covers qualification and fallbacks.
+local helper_first=assert(source:find('-- Native list negatives',1,true))
+local helper_last=assert(source:find('-- Best-effort world position',helper_first,true))
+local inherited=source:sub(1,helper_first-1)..source:sub(helper_last)
 assert(source:find(declaration,1,true),'primitive binding missing')
 local p=assert(io.popen('git show b5fb059:Code/sbm_engine.lua','r'))
 local previous=p:read('*a'):gsub('\r\n','\n');assert(p:close())
-local first,last=assert(current:find(declaration,1,true))
-assert(current:sub(1,first-1)..current:sub(last+1)==previous,'unexpected engine helper change')
+local first,last=assert(inherited:find(declaration,1,true))
+assert(inherited:sub(1,first-1)..inherited:sub(last+1)==previous,'unexpected inherited engine helper change')
 local function compile(text)
     local reads,trace={},{}
     local function record(...) trace[#trace+1]=table.pack(...) end
@@ -29,6 +35,10 @@ local function compile(text)
 end
 local old,a,old_reads,old_trace=compile(previous)
 local new,b,new_reads,new_trace=compile(current)
+-- New helper metadata probes are intentional initialization, not hot-method
+-- calls. Keep all runtime traces and primitive global-lookup counts intact.
+for i=#old_trace,1,-1 do old_trace[i]=nil end
+for i=#new_trace,1,-1 do new_trace[i]=nil end
 local checks=0
 local function check(ok,why) assert(ok,why);checks=checks+1 end
 local function same(x,y)

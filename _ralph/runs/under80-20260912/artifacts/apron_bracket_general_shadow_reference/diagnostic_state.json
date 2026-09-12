@@ -1,0 +1,42 @@
+{
+  "status": "pass",
+  "calls": [
+    {
+      "native_stats": {
+        "mask_samples": 0,
+        "scalar_mask_patches": 0,
+        "shaped": 50,
+        "mask_fast_zero": 0,
+        "modified": 1910302,
+        "native_mask_patches": 50,
+        "exact_samples": 576132,
+        "mask_cells_skipped": 0,
+        "mask_fast_one": 15691,
+        "native_mask_cells": 5039674,
+        "raster_cells": 5039674
+      },
+      "accepted_ok": true,
+      "accepted_ms": 3320,
+      "core_fraction": 0.2,
+      "native_ms": 2122,
+      "accepted_stats": {
+        "mask_samples": 0,
+        "scalar_mask_patches": 0,
+        "shaped": 50,
+        "mask_fast_zero": 0,
+        "modified": 1910302,
+        "native_mask_patches": 50,
+        "exact_samples": 808696,
+        "mask_cells_skipped": 0,
+        "mask_fast_one": 22677,
+        "native_mask_cells": 5039674,
+        "raster_cells": 5039674
+      },
+      "native_ok": true,
+      "native_error": "",
+      "error_numerator": 9,
+      "different": 0,
+      "accepted_error": ""
+    }
+  ]
+}
