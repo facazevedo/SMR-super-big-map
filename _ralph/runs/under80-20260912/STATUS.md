@@ -255,3 +255,32 @@ No game is currently live. Save validation/research notes, then run the prepared
 whole-pipeline function profile on this accepted v978 before choosing more changes.
 The classification generator/test and narrower-bracket note remain non-deployed.
 All code changes/benchmarks above are progress, not an under80s result; goal active.
+
+## Follow-up profiling completed; production still accepted v978
+
+Validation/docs checkpoint4049d85 retained v978 production exactly. The uninstalled
+classification-reuse generator/test now passes892079 exact record/query/result
+checks. Candidate artifact manifest fingerprints rock and terrain predecessors.
+No live engine candidate test has run; classification_profile.lua is prepared and
+parses, with original annotation private upvalues explicitly joined for correctness.
+
+Whole-pipeline profile33512/PID41332 closed normally with exact runtime parity but
+FAILED instrumentation: stock GridProc.Run stopped/dumped the profiler in PreGame.
+The default report was preserved as default_early_profile.txt. That stock call can
+open the configured editor; no surviving direct child was found and no existing
+editor was closed. An explicit instrumentation_review.json supersedes the naive
+hook-status success; this is not a valid full-pipeline profile.
+
+Corrected profile48212/PID27260 also closed normally and passes exact full outputs.
+It intercepted8 stock stops/0 starts, restored original profiler controls and
+explicitly wrote its report without opening an editor. The requested36710-byte
+report includes terrain/generation work:109334659 calls,6387910 mod-env lookups,
+1573005 IsKindOf helper calls and808696 exact apron callbacks. Native profiler
+overhead is substantial; never use its durations as cold timing acceptance.
+Artifacts: v978_pipeline_profile_reference_2. No owned game remains running.
+
+Next: run the prepared fresh classification_profile.lua diagnostic on v978 via
+profile.py (query SBM_CLASSIFICATION_DIAGNOSTIC), then decide on production only
+after exact full/individual-rock parity and a measured stage improvement. The
+smaller apron-bracket proof is another unimplemented option. Goal remains active;
+current accepted reference89.807s, slowest current validation100.428s, not under80.

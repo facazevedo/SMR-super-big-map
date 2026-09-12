@@ -37,8 +37,10 @@ from different classifiers. This matters because TerrainCopy captures predicate
 aliases while RockGrounding reads the Clone fields dynamically. The prepared
 `classification_test.lua` compares complete private capture records, native-query
 arguments, final positions/stamps/stats, exclusions, rebound classifiers and ray
-failures. Neither generator nor test has run yet; no native measurements exist.
-Do not promote it based on this note.
+failures. Generator and test now ran:892079 exact checks passed,546 duplicate
+predicate calls removed in the fixtures. Candidate sources/manifest are under
+`artifacts/classification_reuse_research`. Production remains unchanged v978.
+No native candidate measurement exists yet; do not promote based on fixtures.
 
 An independent diagnostic setup `pipeline_function_profile.lua` is prepared to
 measure the remaining full pre-T1 Lua work after v978 acceptance. It starts the
@@ -47,3 +49,29 @@ revalidation returns, so its timing is intentionally NOT a benchmark. Use a fres
 owned process and exact full predecessor comparison. This can distinguish remaining
 shared-helper overhead from arithmetic/native stages before selecting another
 change. No dynamic game-function cache or class-result cache is authorized by it.
+
+Whole-profile first attempt stopped during PreGame because GridProc.Run calls
+FunctionProfilerStop unconditionally. Its runtime outputs pass, but its own
+instrumentation_review.json marks the incomplete profile as failed. The corrected
+setup suppresses only native profiler start/stop controls for this diagnostic,
+restores them at the required scheduled revalidation, and dumps with dont_open.
+It requires the actual report to contain both terrain and generation modules.
+`v978_pipeline_profile_reference_2` passes that test and exact full predecessor
+comparison; PID27260 normally closed. Eight stock profiler stops were intercepted,
+zero starts; originals restored. It records109334659 calls across369 coroutines,
+including6387910 mod-environment lookups,1573005 IsKindOf helper calls and808696
+exact apron correction callbacks. Those broad counters include pregame/native
+work; profiled time is heavily distorted and not a benchmark. Do not rank callers
+by the tiny/overflowed trace-event timestamps in the JSON export.
+
+Next concrete experiment: `classification_profile.lua` (parsed, not yet executed)
+recompiles only AnnotateDecorRelief from the candidate, joining every private
+upvalue cell to the original helper. This is essential: loading a separate full
+TerrainCopy module's annotation would fill private tables that later placement
+does not read. It loads the complete candidate RockGrounding context module before
+any maps exist, then updates the already-captured annotation cell and public API.
+All grounding consumers in production read that module dynamically. Run through
+profile.py with diagnostic query SBM_CLASSIFICATION_DIAGNOSTIC, predecessor
+v978_reference/14n134w_a, and a fresh artifact name. Preserve failed attempts;
+require complete individual-rock/private/full-output parity and normal shutdown.
+Regenerate from a matching baseline if production changes before this experiment.
