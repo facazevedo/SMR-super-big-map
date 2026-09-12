@@ -519,3 +519,13 @@ only existing coarse LoadingTiming spans (no function-call profiler or module
 reload) to obtain a current wall-stage breakdown on reference and slow61N136W.
 Preserve full exact output and close owned games normally. No new production
 candidate exists; effective human-requested target remains under85 seconds.
+
+wall_stage_reference25420/PID21972 closed normally with exact full output PASS.
+Diagnostic T188.296s is not a new cold acceptance sample. Surface height stretch
+9468ms, outer preparation4252ms, combined pass-edit resume5093ms, immediate final
+pass4770ms/build1012ms, scheduled pass5079ms/build995ms. The hook restores timing
+settings at T1, deliberately excluding later underground first-access expansion
+from this startup breakdown. Full underground expansion is NOT a pre-T1 target;
+its native source/bootstrap during surface startup remains included.
+Next61N diagnostic adds three native component timers inside each final rebuild
+to distinguish invalidation cost from the rebuild itself. No operation skipped.

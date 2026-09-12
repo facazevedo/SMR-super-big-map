@@ -1,0 +1,894 @@
+					Render 0:00:00:065
+*** executable info
+
+Timestamp:     	69e75da5
+
+Date:          	Tue Apr 21 07:21:09 2026
+
+Command line:  	-nointro -no_interactive_asserts -stdout -crash_folder D:\PROJS\SMR\smr-harness\.state\game-crashes\20260912-221458-18d4b2938c5ae578 -hidden
+Compiler:      	194435214, 142 (VS 2019) or newer
+
+					Render 0:00:00:066
+
+
+
+
+*** hardware info
+
+CPU name      	Intel(R) Core(TM) i9-10900X CPU @ 3.70GHz
+
+CPU MHz       	3696
+
+CPU cores     	10/20
+
+Phys. Memory   	130752 MBytes
+
+Memory In Use  	25%
+
+Disk Free      	95357 MBytes
+
+
+
+
+
+*** OS info
+
+OS:            	Windows 11
+
+Version:       	10.0.26100 
+
+
+
+
+
+*** Debug::Init()
+
+
+
+
+
+					Render 0:00:00:463
+Steam initialized (AppId 3215050, Beta branch ???)
+SteamFilterText is unavailable for user's language and will act as a passthrough.
+					Render 0:00:00:467
+Drive type for game installation: SSD, savegames: SSD
+Language: English
+					Render 0:00:01:410
+Starting hidden
+					Render 0:00:03:491
+*** graphics info
+GPU                            	NVIDIA GeForce RTX 5090 Feature Level: 12.1 {  DoublePrecisionFloatShaderOps: 1 OutputMergerLogicOp: 1 MinPrecisionSupport: 2 TiledResourcesTier: 3 ResourceBindingTier: 3 PSSpecifiedStencilRefSupported: 0 TypedUAVLoadAdditionalFormats: 1 ROVsSupported: 1 ConservativeRasterizationTier: 3 MaxGPUVirtualAddressBitsPerResource: 40 StandardSwizzle64KBSupported: 0 CrossNodeSharingTier: 0 CrossAdapterRowMajorTextureSupported: 0 VPAndRTArrayIndexFromAnyShaderFeedingRasterizerSupportedWithoutGSEmulation: 1 ResourceHeapTier: 2 NotZeroedPools: 1 UMA: 0 UnalignedBlockTextures: 1}
+
+API                            	d3d12
+
+GPU Driver Version             	32.0.15.7688
+
+GPU Driver Package Version     	576.88
+
+GPU Dedicated Video Memory     	32101 MB
+
+					Render 0:00:03:719
+
+Libs: Network, Sequences, MouseTrackWin, DumbAI, MapGen, Paradox, TriggersAndEvents, Notifications, Research, Resources, DevToolsPublic, DebugAdapter 
+
+					Render 0:00:04:155
+
+Platform: asserts, cheats, debug, desktop, editor, goldmaster, paradox, pc, steam
+
+						Game Task 0:00:04:162
+
+** Entity stats:
+  entities: 2920
+  unique state names: 335 / 1023
+  unique spot names: 370
+  unique spot transforms: 19621
+  max surface radius: 47680 cm
+
+					Render 0:00:05:614
+*** audio info
+Audio Endpoint                 	Speakers (Realtek(R) Audio)
+
+							Lua 0:00:05:678
+Lua revision: 392284
+							Lua 0:00:05:679
+Assets revision: 30889
+Steam AppID: 3215050
+Build version: 1.0.7.392284
+Build branch:  Release
+							Lua 0:00:05:681
+[DebugAdapter] Started at 127.0.0.1:8165
+							Lua 0:00:05:690
+Account storage loaded successfully in 8 ms
+							Lua 0:00:05:691
+DLC thomas loaded, lua revision 392284, assets revision 30889
+							Lua 0:00:05:703
+[mod] Loaded mod def Scenario Editor (id SRM-scenario-editor, v0.00-045) unpacked from appdata
+
+[mod] Loaded mod def Project Ark (id ProjectArk, v0.00-004) unpacked from appdata
+
+[mod] Loaded mod def Buried Cables and Pipes (id bcp, v0.00-433) unpacked from appdata
+
+[mod] Loaded mod def Animalia - Restored Wildlife (id Animalia, v0.00-018) unpacked from appdata
+
+[mod] Loaded mod def No Wonders (id no-wonders, v0.00-001) unpacked from appdata
+
+[mod] Loaded mod def Martian Waters Snow (id MartianWatersSnow, v0.00-407) unpacked from appdata
+
+[mod] Loaded mod def Real Mars Terrain (id RealMarsTerrain, v0.00-007) unpacked from appdata
+
+[mod] Loaded mod def Filter Landing Spots (id FilterLandingSpots, v0.00-018) packed from pops
+
+							Lua 0:00:05:704
+[mod] Loaded mod def Mute Notifications (id MuteNotifications, v0.00-060) unpacked from appdata
+
+[mod] Loaded mod def Whale - Aquatic Life for Mars Seas (id Whale, v0.00-10033) unpacked from appdata
+
+[mod] Loaded mod def Auto Clear Rubble (id AutoClearRubble, v1.00-023) unpacked from appdata
+
+[mod] Loaded mod def Toggle Console Log Off (id TCLoff7, v1.00-005) unpacked from appdata
+
+[mod] Loaded mod def Humpback Whale - Aquatic Life for Mars Seas (id HumpbackWhale, v0.00-10009) unpacked from appdata
+
+[mod] Loaded mod def invisible-passage-ramp (id IPRAMP, v0.00-068) unpacked from appdata
+
+[mod] Loaded mod def Scenario Editor Terrains (id SRM-scenario-editor-terrains, v0.00-001) unpacked from appdata
+
+[mod] Loaded mod def My Wild Pet (id MyWildPet, v0.00-005) unpacked from appdata
+
+[mod] Loaded mod def Planet Dawn (id PlanetDawn, v1.00-193) unpacked from appdata
+
+[mod] Loaded mod def Bridges (id Bridges, v0.00-099) unpacked from appdata
+
+[mod] Loaded mod def Extra Maps (id ExtraMaps, v0.00-011) unpacked from appdata
+
+[mod] Loaded mod def DLSS 5 Neural Rendering - Experimental (id vzlLtM, v0.00-002) unpacked from appdata
+
+[mod] Loaded mod def Rover Drive Mode (id RoverDriveMode, v0.00-195) unpacked from appdata
+
+[mod] Loaded mod def Super Big Map (id SuperBigMap, v0.00-979) unpacked from appdata
+
+[mod] Loaded mod def Disable All Mods (id DisableAllMods, v0.00-012) unpacked from appdata
+
+[mod] Loaded mod def Copy Move (id CopyMove, v0.00-001) unpacked from appdata
+
+[mod] Loaded mod def Colony Control (id ColonyControl, v0.00-014) unpacked from appdata
+
+[mod] Loaded mod def Attribute Inspector (id AttributeInspector, v0.00-014) unpacked from appdata
+
+[mod] Loaded mod def insert-objects (id insert-objects, v0.00-005) unpacked from appdata
+
+[mod] Loaded mod def Bridges Blender (id bridges-blender, v0.00-008) unpacked from appdata
+
+							Lua 0:00:07:645
+Reloading done in 1924 ms
+							Lua 0:00:07:646
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:61355
+Available DLCs: thomas(Interplanetary Codex) 
+							Lua 0:00:08:535
+[preset] Preset postprocess took 157 ms.
+
+							Lua 0:00:08:653
+479 / 479 particle streams loaded in 106 ms.
+							Lua 0:00:08:790
+[PdxSDK] Started up. Took 3069
+
+							Lua 0:00:09:636
+Received achievements from Steam.
+							Lua 0:00:09:963
+[mod] Loaded mod items for: TCLoff7, SuperBigMap
+
+							Lua 0:00:10:722
+[Braze] Initialized. SE: true, SB false
+
+							Lua 0:00:10:894
+[Braze] ContentCards 2/2. FullSync true. Headers nil. Retry 0
+
+							Lua 0:00:10:969
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:61370
+							Lua 0:00:11:152
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:61372
+							Lua 0:00:11:214
+[PdxSDKMods] Mod 147865 v 6 is up to date. Nothing to download.
+
+							Lua 0:00:11:321
+[DebugAdapter] Connection lost to 127.0.0.1:61372 
+[DebugAdapter] Connection lost to 127.0.0.1:61370 
+[DebugAdapter] Connection lost to 127.0.0.1:61355 
+							Lua 0:00:11:333
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:61374
+							Lua 0:00:11:372
+Game Seed:  ralph_seed_parity_14n134w 7803657426806324293 
+							Lua 0:00:11:518
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:61376
+							Lua 0:00:11:525
+*** Reloading assets from folder 'BinAssets/'
+							Lua 0:00:14:631
+*** Assets reloaded in 3.1 s, read 205.5 MB, read speed 66.2 MB/s, average read 5023 bytes.
+[DebugAdapter] Connection lost to 127.0.0.1:61374 
+[DebugAdapter] Connection lost to 127.0.0.1:61376 
+							Lua 0:00:17:434
+Map::Init: 0.40000 ms
+							Lua 0:00:17:435
+Map::Load: 67.71000 ms
+CreateMap: 67.82000 ms
+							Lua 0:00:17:457
+MapLoadRandom:  -6547363612841328389 
+							Lua 0:00:20:911
+Map (slot 1) changed to "PreGame" in 9530 ms.
+							Lua 0:00:21:010
+[Super Big Map][LoadingTiming] SESSION_BEGIN {destination_tiles=8192x8192, environment=Surface, hex_size=nilxnil, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, reason=expanded map allocation, session=1, slot=nil, source_tiles=6144x6144}
+[Super Big Map][LoadingTiming] STEP session inputs {destination_tiles=8192x8192, environment=Surface, hex_size=nilxnil, map=BlankBigTerraceCMix_02, map_name=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, map_slot=1, mapdata_size=8192x8192, sequence=1, session=1, since_previous_ms=1, slot=nil, source_tiles=6144x6144, total_ms=1}
+							Lua 0:00:21:216
+[Super Big Map][LoadingTiming] STEP lifecycle: NewMapObject {destination_tiles=8192x8192, environment=Surface, hex_size=nilxnil, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=2, session=1, since_previous_ms=206, slot=1, source_tiles=6144x6144, total_ms=207}
+							Lua 0:00:22:085
+Map::Done: 0.38000 ms
+							Lua 0:00:22:380
+Map::Init: 0.52000 ms
+Map::Load: 279.45001 ms
+CreateMap: 279.60001 ms
+							Lua 0:00:22:397
+[Super Big Map][LoadingTiming] STEP lifecycle: PreNewMap {destination_tiles=8192x8192, environment=Surface, hex_size=nilxnil, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata=table: 000002C85FB30678, mapdata_size=8192x8192, sequence=3, session=1, since_previous_ms=1180, slot=1, source_tiles=6144x6144, total_ms=1387}
+							Lua 0:00:22:413
+game_settings:
+    sponsor: IMM
+    profile: rocketscientist
+    founding_faction: MarsDemocraticParty
+    rival_colonies: Roscosmos, NASA, Japan
+    mystery_random: 
+    game_rules: RoughTerrain
+more_game_settings: save_game_id: ikJy71PxTSxCftjU, mystery: BlackCubeMystery, coordinates: 14N134W, landing_spot: , logo: IMM
+map_conditions: altitude: 6457, temperature: -15, cold_wave: 36, dust_devils: 127, dust_storm: 219, meteors: 36
+map_resources: concrete: 109, metals: 109, precious_metals: 109, water: 102
+							Lua 0:00:22:440
+[Super Big Map][LoadingTiming] STEP lifecycle: NewMap {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata=table: 000002C85FB30678, mapdata_size=8192x8192, sequence=4, session=1, since_previous_ms=44, slot=1, source_tiles=6144x6144, total_ms=1431}
+							Lua 0:00:22:442
+[Super Big Map][LoadingTiming] STEP prefab feature game logic correspondence {actual_safari=0, created_safari=0, destination_tiles=8192x8192, environment=Surface, expected_safari=0, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, markers=0, matched_safari=0, removed_orphan_safari=0, replayed_markers=0, sequence=5, session=1, since_previous_ms=2, slot=1, source_tiles=6144x6144, total_ms=1433}
+							Lua 0:00:22:443
+[Super Big Map][LoadingTiming] STEP lifecycle: UndergroundDarknessState {after=0, before=0, destination_tiles=8192x8192, environment=Surface, forced_reveal=false, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=6, session=1, since_previous_ms=1, slot=1, source_tiles=6144x6144, total_ms=1434}
+							Lua 0:00:22:456
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:61382
+							Lua 0:00:22:462
+MapLoadRandom:  -5538293783684720034 
+							Lua 0:00:22:532
+[Super Big Map][LoadingTiming] STEP lifecycle: NewMapLoaded {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata=table: 000002C85FB30678, mapdata_size=8192x8192, sequence=7, session=1, since_previous_ms=89, slot=1, source_tiles=6144x6144, total_ms=1523}
+							Lua 0:00:22:533
+[Super Big Map][LoadingTiming] STEP prefab feature game logic correspondence {actual_safari=0, created_safari=0, destination_tiles=8192x8192, environment=Surface, expected_safari=0, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, markers=0, matched_safari=0, removed_orphan_safari=0, replayed_markers=0, sequence=8, session=1, since_previous_ms=1, slot=1, source_tiles=6144x6144, total_ms=1524}
+							Lua 0:00:22:534
+[Super Big Map][LoadingTiming] STEP lifecycle: UndergroundDarknessState {after=0, before=0, destination_tiles=8192x8192, environment=Surface, forced_reveal=false, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=9, session=1, since_previous_ms=1, slot=1, source_tiles=6144x6144, total_ms=1525}
+							Lua 0:00:26:793
+[Super Big Map][LoadingTiming] STEP lifecycle: PostNewMapLoaded {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata=table: 000002C85FB30678, mapdata_size=8192x8192, sequence=10, session=1, since_previous_ms=4259, slot=1, source_tiles=6144x6144, total_ms=5784}
+							Lua 0:00:26:795
+[Super Big Map][LoadingTiming] STEP prefab feature game logic correspondence {actual_safari=0, created_safari=0, destination_tiles=8192x8192, environment=Surface, expected_safari=0, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, markers=0, matched_safari=0, removed_orphan_safari=0, replayed_markers=0, sequence=11, session=1, since_previous_ms=1, slot=1, source_tiles=6144x6144, total_ms=5785}
+[Super Big Map][LoadingTiming] STEP lifecycle: UndergroundDarknessState {after=0, before=0, destination_tiles=8192x8192, environment=Surface, forced_reveal=false, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=12, session=1, since_previous_ms=1, slot=1, source_tiles=6144x6144, total_ms=5786}
+							Lua 0:00:27:245
+[Super Big Map][LoadingTiming] STEP lifecycle: CurrentMapChangeDone {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, map_slot=1, mapdata_size=8192x8192, sequence=13, session=1, since_previous_ms=450, slot=1, source_tiles=6144x6144, total_ms=6236}
+							Lua 0:00:27:247
+[Super Big Map][LoadingTiming] STEP prefab feature game logic correspondence {actual_safari=0, created_safari=0, destination_tiles=8192x8192, environment=Surface, expected_safari=0, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, markers=0, matched_safari=0, removed_orphan_safari=0, replayed_markers=0, sequence=14, session=1, since_previous_ms=1, slot=1, source_tiles=6144x6144, total_ms=6237}
+[Super Big Map][LoadingTiming] STEP lifecycle: UndergroundDarknessState {after=0, before=0, destination_tiles=8192x8192, environment=Surface, forced_reveal=false, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=15, session=1, since_previous_ms=1, slot=1, source_tiles=6144x6144, total_ms=6238}
+							Lua 0:00:27:265
+[Super Big Map][LoadingTiming] STEP lifecycle: UndergroundDarknessState {after=0, before=0, destination_tiles=8192x8192, environment=Surface, forced_reveal=false, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=16, session=1, since_previous_ms=18, slot=1, source_tiles=6144x6144, total_ms=6256}
+							Lua 0:00:27:322
+[DebugAdapter] Connection lost to 127.0.0.1:61382 
+							Lua 0:00:28:443
+Map (slot 1) changed to "BlankBigTerraceCMix_02" in 7450 ms.
+[Super Big Map][LoadingTiming] STEP session continues: RandomMapGenerator.DoGenerate {destination_tiles=8192x8192, environment=Surface, expansion_pending=true, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=17, session=1, since_previous_ms=1178, slot=1, source_tiles=6144x6144, total_ms=7434, vanilla_source_migration=false}
+							Lua 0:00:28:444
+[Super Big Map][LoadingTiming] STEP attempt exact temporary-source transaction {destination_tiles=8192x8192, environment=Surface, generator_limit_tiles=6144, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, map_tiles=8192x8192, mapdata_size=8192x8192, sequence=18, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=7434}
+[Super Big Map][LoadingTiming] PHASE_BEGIN Generating the exact vanilla source terrain... {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=19, session=1, slot=1, source_tiles=6144x6144, total_ms=7435}
+[Super Big Map][LoadingTiming] STEP temporary source transaction begin {destination_slot=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, pass_border=102400, sequence=20, session=1, since_previous_ms=0, slot=1, source_slot=15, source_tiles=6144x6144, total_ms=7435}
+[Super Big Map][LoadingTiming] STEP BEGIN allocate temporary vanilla backing {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=21, session=1, since_previous_ms=0, slot=1, source_slot=15, source_tiles=6144x6144, total_ms=7435}
+							Lua 0:00:29:439
+Map::Init: 0.17000 ms
+							Lua 0:00:29:440
+Map::Load: 109.86000 ms
+CreateMap: 109.93000 ms
+							Lua 0:00:29:842
+Buildable grid ready: 8/596 valid zones.
+							Lua 0:00:29:854
+MapLoadRandom:  -9132043453725689908 
+							Lua 0:00:31:550
+Map (slot 15) changed to "BlankBigTerraceCMix_02" in 3106 ms.
+[Super Big Map][LoadingTiming] STEP END allocate temporary vanilla backing {begin_session=1, destination_tiles=8192x8192, duration_ms=3106, environment=Surface, error=nil, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=22, session=1, since_previous_ms=3106, slot=1, source_tiles=6144x6144, total_ms=10541}
+[Super Big Map][LoadingTiming] STEP temporary source backing verified {actual_tiles=6144x6144, baseline_objects=0, destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, sequence=23, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, total_ms=10541}
+[Super Big Map][LoadingTiming] STEP BEGIN switch temporary generator current slot {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, sequence=24, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, target_slot=15, total_ms=10541}
+							Lua 0:00:31:984
+[Super Big Map][LoadingTiming] STEP lifecycle: CurrentMapChangeDone {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, map_slot=15, mapdata_size=6144x6144, sequence=25, session=1, since_previous_ms=434, slot=15, source_tiles=nilxnil, total_ms=10975}
+							Lua 0:00:31:985
+[Super Big Map][LoadingTiming] STEP lifecycle: UndergroundDarknessState {after=0, before=0, destination_tiles=nilxnil, environment=Surface, forced_reveal=false, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, sequence=26, session=1, since_previous_ms=1, slot=15, source_tiles=nilxnil, total_ms=10976}
+							Lua 0:00:31:986
+[Super Big Map][LoadingTiming] STEP lifecycle: UndergroundDarknessState {after=0, before=0, destination_tiles=nilxnil, environment=Surface, forced_reveal=false, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, sequence=27, session=1, since_previous_ms=1, slot=15, source_tiles=nilxnil, total_ms=10977}
+[Super Big Map][LoadingTiming] STEP lifecycle: UndergroundDarknessState {after=0, before=0, destination_tiles=nilxnil, environment=Surface, forced_reveal=false, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, sequence=28, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, total_ms=10977}
+							Lua 0:00:32:052
+[Super Big Map][LoadingTiming] STEP END switch temporary generator current slot {begin_session=1, destination_tiles=nilxnil, duration_ms=502, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, mode=ChangeCurrentMapSlot, ok=true, sequence=29, session=1, since_previous_ms=66, slot=15, source_tiles=nilxnil, target_slot=15, total_ms=11043}
+							Lua 0:00:32:053
+[Super Big Map][LoadingTiming] STEP native clutter access probe {clutter_tile_size=nil, destination_tiles=nilxnil, environment=Surface, global_terrain=table: 000002C85C4A6DE0, grid_names=none, height_tile_size=100, hex_size=615x710, map=BlankBigTerraceCMix_02, map_fields=none, map_import_terrain=false, map_is_current=true, map_ref=table: 000002C85DD541D8, map_reset_terrain=false, mapdata_size=6144x6144, refs=editor.map.clutter=nil | orig.map.clutter=nil | editor.map.clutter_density=nil | orig.map.clutter_density=nil | editor.map.grass_density=nil | orig.map.grass_density=nil, samples=origin=nil | center=nil, sequence=30, session=1, since_previous_ms=1, slot=15, source_tiles=nilxnil, stage=temporary source before DoGenerate, total_ms=11044}
+[Super Big Map][LoadingTiming] STEP BEGIN vanilla RandomMapGenerator.DoGenerate {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, sequence=31, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, total_ms=11044}
+							Lua 0:00:36:079
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMapGenerator.OnGenerateLogic {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, sequence=32, session=1, since_previous_ms=4025, slot=15, source_tiles=nilxnil, total_ms=15069}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: ResolveBuildable {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=nil, sequence=33, session=1, since_previous_ms=1, slot=15, source_tiles=nilxnil, tag=ResolveBuildable, total_ms=15070}
+							Lua 0:00:36:339
+Buildable grid ready: 39/838 valid zones.
+							Lua 0:00:36:460
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: ResolveBuildable {begin_session=1, destination_tiles=nilxnil, duration_ms=381, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=34, session=1, since_previous_ms=381, slot=15, source_tiles=nilxnil, tag=ResolveBuildable, total_ms=15451}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceColdAreas {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=nil, sequence=35, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceColdAreas, total_ms=15451}
+							Lua 0:00:36:461
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceColdAreas {begin_session=1, destination_tiles=nilxnil, duration_ms=1, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=36, session=1, since_previous_ms=1, slot=15, source_tiles=nilxnil, tag=PlaceColdAreas, total_ms=15452}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceArtefacts {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=nil, sequence=37, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceArtefacts, total_ms=15452}
+							Lua 0:00:36:462
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceArtefacts {begin_session=1, destination_tiles=nilxnil, duration_ms=0, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=38, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceArtefacts, total_ms=15452}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=nil, sequence=39, session=1, since_previous_ms=1, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies, total_ms=15453}
+							Lua 0:00:36:466
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindFeatures {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=true, sequence=40, session=1, since_previous_ms=4, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindFeatures, total_ms=15457}
+							Lua 0:00:36:470
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindFeatures_RepulseDeposits {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=nil, sequence=41, session=1, since_previous_ms=4, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindFeatures_RepulseDeposits, total_ms=15461}
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindFeatures_RepulseDeposits {begin_session=1, destination_tiles=nilxnil, duration_ms=0, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=42, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindFeatures_RepulseDeposits, total_ms=15461}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindFeatures_Deposits {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=nil, sequence=43, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindFeatures_Deposits, total_ms=15461}
+							Lua 0:00:36:512
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindFeatures_Deposits {begin_session=1, destination_tiles=nilxnil, duration_ms=42, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=44, session=1, since_previous_ms=42, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindFeatures_Deposits, total_ms=15503}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindFeatures_Anomalies {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=nil, sequence=45, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindFeatures_Anomalies, total_ms=15503}
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindFeatures_Anomalies {begin_session=1, destination_tiles=nilxnil, duration_ms=0, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=46, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindFeatures_Anomalies, total_ms=15503}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindFeatures_EffectDeposits {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=nil, sequence=47, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindFeatures_EffectDeposits, total_ms=15503}
+							Lua 0:00:36:519
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindFeatures_EffectDeposits {begin_session=1, destination_tiles=nilxnil, duration_ms=7, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=48, session=1, since_previous_ms=7, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindFeatures_EffectDeposits, total_ms=15510}
+							Lua 0:00:36:522
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindFeatures {begin_session=1, destination_tiles=nilxnil, duration_ms=56, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=49, session=1, since_previous_ms=3, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindFeatures, total_ms=15513}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindClusters {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=nil, sequence=50, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindClusters, total_ms=15513}
+							Lua 0:00:36:524
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindClusters {begin_session=1, destination_tiles=nilxnil, duration_ms=2, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=51, session=1, since_previous_ms=2, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindClusters, total_ms=15515}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindAnomalies_Breakthrough {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=nil, sequence=52, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindAnomalies_Breakthrough, total_ms=15515}
+							Lua 0:00:36:566
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindAnomalies_Breakthrough {begin_session=1, destination_tiles=nilxnil, duration_ms=42, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=53, session=1, since_previous_ms=42, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindAnomalies_Breakthrough, total_ms=15557}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindDeposits {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=true, sequence=54, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindDeposits, total_ms=15557}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindDeposits_surf_Metals {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=nil, sequence=55, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindDeposits_surf_Metals, total_ms=15557}
+							Lua 0:00:36:568
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindDeposits_surf_Metals {begin_session=1, destination_tiles=nilxnil, duration_ms=2, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=56, session=1, since_previous_ms=2, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindDeposits_surf_Metals, total_ms=15559}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindDeposits_subs_Metals {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=nil, sequence=57, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindDeposits_subs_Metals, total_ms=15559}
+							Lua 0:00:36:570
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindDeposits_subs_Metals {begin_session=1, destination_tiles=nilxnil, duration_ms=1, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=58, session=1, since_previous_ms=1, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindDeposits_subs_Metals, total_ms=15560}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindDeposits_subs_PreciousMetals {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=nil, sequence=59, session=1, since_previous_ms=1, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindDeposits_subs_PreciousMetals, total_ms=15561}
+							Lua 0:00:36:571
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindDeposits_subs_PreciousMetals {begin_session=1, destination_tiles=nilxnil, duration_ms=0, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=60, session=1, since_previous_ms=1, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindDeposits_subs_PreciousMetals, total_ms=15562}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindDeposits_subs_Water {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=nil, sequence=61, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindDeposits_subs_Water, total_ms=15562}
+							Lua 0:00:36:572
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindDeposits_subs_Water {begin_session=1, destination_tiles=nilxnil, duration_ms=1, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=62, session=1, since_previous_ms=1, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindDeposits_subs_Water, total_ms=15563}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindDeposits_terr_Concrete {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=nil, sequence=63, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindDeposits_terr_Concrete, total_ms=15563}
+							Lua 0:00:36:574
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindDeposits_terr_Concrete {begin_session=1, destination_tiles=nilxnil, duration_ms=1, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=64, session=1, since_previous_ms=1, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindDeposits_terr_Concrete, total_ms=15564}
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindDeposits {begin_session=1, destination_tiles=nilxnil, duration_ms=8, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=65, session=1, since_previous_ms=1, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindDeposits, total_ms=15565}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindAnomalies {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=true, sequence=66, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindAnomalies, total_ms=15565}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindAnomalies_TechUnlock {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=nil, sequence=67, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindAnomalies_TechUnlock, total_ms=15565}
+							Lua 0:00:36:576
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindAnomalies_TechUnlock {begin_session=1, destination_tiles=nilxnil, duration_ms=1, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=68, session=1, since_previous_ms=1, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindAnomalies_TechUnlock, total_ms=15566}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindAnomalies_Event {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=nil, sequence=69, session=1, since_previous_ms=1, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindAnomalies_Event, total_ms=15567}
+							Lua 0:00:36:577
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindAnomalies_Event {begin_session=1, destination_tiles=nilxnil, duration_ms=1, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=70, session=1, since_previous_ms=1, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindAnomalies_Event, total_ms=15568}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindAnomalies_FreeTech {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=nil, sequence=71, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindAnomalies_FreeTech, total_ms=15568}
+							Lua 0:00:36:578
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindAnomalies_FreeTech {begin_session=1, destination_tiles=nilxnil, duration_ms=1, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=72, session=1, since_previous_ms=1, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindAnomalies_FreeTech, total_ms=15569}
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindAnomalies {begin_session=1, destination_tiles=nilxnil, duration_ms=4, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=73, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindAnomalies, total_ms=15569}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindEffectDeposits {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=nil, sequence=74, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindEffectDeposits, total_ms=15569}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindEffectDeposits_ResearchEffectDeposit {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=nil, sequence=75, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindEffectDeposits_ResearchEffectDeposit, total_ms=15569}
+							Lua 0:00:36:579
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindEffectDeposits_ResearchEffectDeposit {begin_session=1, destination_tiles=nilxnil, duration_ms=1, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=76, session=1, since_previous_ms=1, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindEffectDeposits_ResearchEffectDeposit, total_ms=15570}
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindEffectDeposits {begin_session=1, destination_tiles=nilxnil, duration_ms=1, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=77, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_FindEffectDeposits, total_ms=15570}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_AlignToHexGrid {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=true, sequence=78, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_AlignToHexGrid, total_ms=15570}
+							Lua 0:00:36:580
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_AlignToHexGrid {begin_session=1, destination_tiles=nilxnil, duration_ms=1, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=79, session=1, since_previous_ms=1, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_AlignToHexGrid, total_ms=15571}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_PlaceDeposits {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=nil, sequence=80, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_PlaceDeposits, total_ms=15571}
+							Lua 0:00:36:612
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_PlaceDeposits {begin_session=1, destination_tiles=nilxnil, duration_ms=32, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=81, session=1, since_previous_ms=32, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_PlaceDeposits, total_ms=15603}
+							Lua 0:00:36:613
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_PlaceBreakthroughAnomalies {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=nil, sequence=82, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_PlaceBreakthroughAnomalies, total_ms=15603}
+							Lua 0:00:36:614
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_PlaceBreakthroughAnomalies {begin_session=1, destination_tiles=nilxnil, duration_ms=1, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=83, session=1, since_previous_ms=1, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_PlaceBreakthroughAnomalies, total_ms=15604}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_PlaceTechUnlockAnomalies {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=nil, sequence=84, session=1, since_previous_ms=1, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_PlaceTechUnlockAnomalies, total_ms=15605}
+							Lua 0:00:36:615
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_PlaceTechUnlockAnomalies {begin_session=1, destination_tiles=nilxnil, duration_ms=1, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=85, session=1, since_previous_ms=1, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_PlaceTechUnlockAnomalies, total_ms=15606}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_PlaceFreeTechAnomalies {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=nil, sequence=86, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_PlaceFreeTechAnomalies, total_ms=15606}
+							Lua 0:00:36:616
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_PlaceFreeTechAnomalies {begin_session=1, destination_tiles=nilxnil, duration_ms=0, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=87, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_PlaceFreeTechAnomalies, total_ms=15606}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_PlaceEventAnomalies {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=nil, sequence=88, session=1, since_previous_ms=1, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_PlaceEventAnomalies, total_ms=15607}
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_PlaceEventAnomalies {begin_session=1, destination_tiles=nilxnil, duration_ms=0, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=89, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_PlaceEventAnomalies, total_ms=15607}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_PlaceEffectDeposits {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=nil, sequence=90, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_PlaceEffectDeposits, total_ms=15607}
+							Lua 0:00:36:617
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_PlaceEffectDeposits {begin_session=1, destination_tiles=nilxnil, duration_ms=1, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=91, session=1, since_previous_ms=1, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies_PlaceEffectDeposits, total_ms=15608}
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies {begin_session=1, destination_tiles=nilxnil, duration_ms=155, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=92, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceAnomalies, total_ms=15608}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceObstructions {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=nil, sequence=93, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceObstructions, total_ms=15608}
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceObstructions {begin_session=1, destination_tiles=nilxnil, duration_ms=0, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=94, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=PlaceObstructions, total_ms=15608}
+							Lua 0:00:36:618
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: ClearLandingZones {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, randless=nil, sequence=95, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, tag=ClearLandingZones, total_ms=15608}
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: ClearLandingZones {begin_session=1, destination_tiles=nilxnil, duration_ms=1, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=96, session=1, since_previous_ms=1, slot=15, source_tiles=nilxnil, tag=ClearLandingZones, total_ms=15609}
+[Super Big Map][LoadingTiming] STEP END RandomMapGenerator.OnGenerateLogic {begin_session=1, destination_tiles=nilxnil, duration_ms=540, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=97, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, total_ms=15609}
+							Lua 0:00:36:626
+[Super Big Map][LoadingTiming] STEP captured vanilla native clutter operation {destination_tiles=nilxnil, environment=Surface, error=, grid_cells=none, hex_size=615x710, kind=none, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, sequence=98, session=1, since_previous_ms=8, slot=15, source_tiles=nilxnil, terrain_candidates=global=table: 000002C85C4A6DE0 | DoGenerate_env=nil | MapImport_env=nil | MapReset_env=nil | MapExport_env=nil, total_ms=15617, write_sources=global:0, writes=0}
+[Super Big Map][LoadingTiming] STEP END vanilla RandomMapGenerator.DoGenerate {begin_session=1, destination_tiles=nilxnil, duration_ms=4573, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=99, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, total_ms=15617}
+							Lua 0:00:36:627
+[Super Big Map][LoadingTiming] STEP native clutter access probe {clutter_tile_size=nil, destination_tiles=nilxnil, environment=Surface, global_terrain=table: 000002C85C4A6DE0, grid_names=none, height_tile_size=100, hex_size=615x710, map=BlankBigTerraceCMix_02, map_fields=none, map_import_terrain=false, map_is_current=true, map_ref=table: 000002C85DD541D8, map_reset_terrain=false, mapdata_size=6144x6144, refs=editor.map.clutter=nil | orig.map.clutter=nil | editor.map.clutter_density=nil | orig.map.clutter_density=nil | editor.map.grass_density=nil | orig.map.grass_density=nil, samples=origin=nil | center=nil, sequence=100, session=1, since_previous_ms=1, slot=15, source_tiles=nilxnil, stage=temporary source after DoGenerate, total_ms=15618}
+[Super Big Map][LoadingTiming] STEP BEGIN refresh temporary source object radius {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, sequence=101, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, total_ms=15618}
+							Lua 0:00:36:648
+[Super Big Map][LoadingTiming] STEP END refresh temporary source object radius {begin_session=1, destination_tiles=nilxnil, duration_ms=21, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=102, session=1, since_previous_ms=21, slot=15, source_tiles=nilxnil, total_ms=15639}
+[Super Big Map][LoadingTiming] STEP BEGIN finalize temporary source pass edits {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, mode=flush, sequence=103, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, total_ms=15639}
+							Lua 0:00:38:331
+[Super Big Map][LoadingTiming] STEP END finalize temporary source pass edits {begin_session=1, destination_tiles=nilxnil, duration_ms=1683, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, mode=flushed, ok=true, sequence=104, session=1, since_previous_ms=1683, slot=15, source_tiles=nilxnil, total_ms=17322}
+[Super Big Map][LoadingTiming] STEP native surface passage buildable retained {destination_tiles=8192x8192, environment=Surface, height=710, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=6144x6144, sequence=105, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=17322, width=615}
+[Super Big Map][UndergroundSeedReservation] RESERVATION {authority_tag=ralph_seed_parity, boundary=fresh_vanilla_twin_test_seam, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=6144x6144, reserved_seed=5083534300309579687, slot=1, source_tiles=6144x6144}
+[Super Big Map][LoadingTiming] STEP BEGIN capture native enrichment coordinates {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, sequence=106, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, total_ms=17322}
+							Lua 0:00:38:336
+[Super Big Map][LoadingTiming] STEP END capture native enrichment coordinates {begin_session=1, coordinate_count=354, destination_tiles=nilxnil, duration_ms=5, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, sequence=107, session=1, since_previous_ms=5, slot=15, source_tiles=nilxnil, total_ms=17327}
+[Super Big Map][LoadingTiming] STEP BEGIN capture native enrichment value records {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, sequence=108, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, total_ms=17327}
+							Lua 0:00:38:417
+[Super Big Map][LoadingTiming] STEP END capture native enrichment value records {begin_session=1, destination_tiles=nilxnil, duration_ms=80, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, record_count=354, sequence=109, session=1, since_previous_ms=81, slot=15, source_tiles=nilxnil, total_ms=17408}
+[Super Big Map][LoadingTiming] STEP native enrichment records captured {coordinate_count=354, destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, record_count=354, record_signature=5127262807174329434, sequence=110, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, total_ms=17408}
+[Super Big Map][LoadingTiming] STEP BEGIN capture vanilla initial sector {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, sequence=111, session=1, since_previous_ms=0, slot=15, source_tiles=nilxnil, total_ms=17408}
+							Lua 0:00:38:423
+[Super Big Map][LoadingTiming] STEP END capture vanilla initial sector {begin_session=1, destination_tiles=nilxnil, duration_ms=6, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, ok=true, selection=table: 000002C86038AB40, sequence=112, session=1, since_previous_ms=6, slot=15, source_tiles=nilxnil, total_ms=17414}
+							Lua 0:00:38:424
+[Super Big Map][LoadingTiming] STEP vanilla initial sector captured {destination_tiles=nilxnil, environment=Surface, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, selection=table: 000002C86038AB40, sequence=113, session=1, since_previous_ms=1, slot=15, source_tiles=nilxnil, total_ms=17415}
+[Super Big Map][LoadingTiming] STEP BEGIN switch temporary generator current slot {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=114, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, target_slot=1, total_ms=17415}
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:61393
+							Lua 0:00:38:717
+[Super Big Map][LoadingTiming] STEP lifecycle: UndergroundDarknessState {after=0, before=0, destination_tiles=nilxnil, environment=Surface, forced_reveal=false, hex_size=615x710, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85DD541D8, mapdata_size=6144x6144, sequence=115, session=1, since_previous_ms=293, slot=15, source_tiles=nilxnil, total_ms=17708}
+							Lua 0:00:39:016
+[Super Big Map][LoadingTiming] STEP lifecycle: CurrentMapChangeDone {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, map_slot=1, mapdata_size=8192x8192, sequence=116, session=1, since_previous_ms=299, slot=1, source_tiles=6144x6144, total_ms=18007}
+							Lua 0:00:39:018
+[Super Big Map][LoadingTiming] STEP prefab feature game logic correspondence {actual_safari=0, created_safari=0, destination_tiles=8192x8192, environment=Surface, expected_safari=0, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, markers=0, matched_safari=0, removed_orphan_safari=0, replayed_markers=0, sequence=117, session=1, since_previous_ms=1, slot=1, source_tiles=6144x6144, total_ms=18008}
+[Super Big Map][LoadingTiming] STEP lifecycle: UndergroundDarknessState {after=0, before=0, destination_tiles=8192x8192, environment=Surface, forced_reveal=false, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=118, session=1, since_previous_ms=1, slot=1, source_tiles=6144x6144, total_ms=18009}
+							Lua 0:00:39:036
+[Super Big Map][LoadingTiming] STEP lifecycle: UndergroundDarknessState {after=0, before=0, destination_tiles=8192x8192, environment=Surface, forced_reveal=false, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=119, session=1, since_previous_ms=18, slot=1, source_tiles=6144x6144, total_ms=18027}
+							Lua 0:00:39:123
+[Super Big Map][LoadingTiming] STEP END switch temporary generator current slot {begin_session=1, destination_tiles=8192x8192, duration_ms=698, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, mode=ChangeCurrentMapSlot, ok=true, sequence=120, session=1, since_previous_ms=86, slot=1, source_tiles=6144x6144, target_slot=1, total_ms=18113}
+[Super Big Map][LoadingTiming] PHASE_END Generating the exact vanilla source terrain... {destination_tiles=8192x8192, duration_ms=10679, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=121, session=1, slot=1, source_tiles=6144x6144, total_ms=18114}
+[Super Big Map][LoadingTiming] PHASE_BEGIN Migrating the vanilla source into the expanded terrain... {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=122, session=1, slot=1, source_tiles=6144x6144, total_ms=18114}
+[Super Big Map][LoadingTiming] STEP BEGIN stretch temporary source terrain directly to destination {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=123, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=18114}
+[Super Big Map][LoadingTiming] STEP BEGIN terrain grid stretch: height {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, interpolate=true, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, scale_values=true, sequence=124, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=18114}
+							Lua 0:00:39:422
+[Super Big Map][TerrainCreaseRepair] SOURCE_DETECTED {axis=x,x, bottom_tracks=42, destination_tiles=8192x8192, detected=433, edge=right,right, edge_margin=614, edge_perp=5927, environment=Surface, first_along=5351, hex_size=820x946, last_along=5553, left_tracks=61, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max=65535, max_offset=898, min=2129, min_offset=128, modified=0, outer_guard=6, qualified=2, reason=vanilla outer-ring steps qualified for pre-resample repair, repairs=2, right_tracks=41, rows=200, slot=1, source_tiles=6144x6144, threshold=128, top_tracks=83}
+							Lua 0:00:39:755
+[Super Big Map][TerrainCreaseRepair] SOURCE_REPAIRED {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, modified=50895, reason=qualified vanilla crease side tilted before resampling, rows=567, slot=1, source_tiles=6144x6144, tracks=2}
+							Lua 0:00:44:843
+[Super Big Map][TerrainCreaseRepair] DESTINATION_REPAIRED {axis=y,x,x,y,y,y,x,x,x,x,y,y,x,y, bottom_tracks=409, destination_tiles=8192x8192, detected=16671, edge=bottom,right,right,bottom,bottom,bottom,right,right,right,right,bottom,bottom,right,bottom, edge_margin=42, edge_perp=8171, environment=Surface, first_along=1348, hex_size=820x946, last_along=4365, left_tracks=167, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max=65535, max_offset=2634, min=2148, min_offset=317, modified=688775, outer_guard=8, qualified=14, reason=destination edge lower regions translated with slope-matched feathered joins, repairs=14, right_tracks=370, rows=3018, slot=1, source_tiles=6144x6144, threshold=317, top_tracks=112}
+							Lua 0:00:44:973
+[Super Big Map][LoadingTiming] STEP terrain height similarity transform {destination_tiles=8192x8192, environment=Surface, final_max=65535, final_min=1020, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, projected_max=85541, sequence=125, session=1, since_previous_ms=5850, slot=1, source_min=2129, source_tiles=6144x6144, terrain_max=65535, total_ms=23964, uniform_applied=false, uniform_required=false, whole_map_normalized=true, xy_scale_div=6144, xy_scale_mul=8192, z_scale_add=-1166, z_scale_div=63406, z_scale_mul=64535}
+							Lua 0:00:48:556
+[Super Big Map][LoadingTiming] STEP natural mountain-base buildable aprons {candidates=116, considered=9216, created=73, destination_tiles=8192x8192, environment=Surface, error=, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, modified=1910302, reason=reserved, relief_rejections=190, ring_sectors=2, sequence=126, session=1, shaped=50, since_previous_ms=3583, slope_rejections=6401, slot=1, source_tiles=6144x6144, total_ms=27547, unchanged=23}
+							Lua 0:00:48:591
+[Super Big Map][LoadingTiming] STEP END terrain grid stretch: height {begin_session=1, destination_tiles=8192x8192, duration_ms=9468, environment=Surface, error=, extraction_path=direct_source_compute, full_cells=8192x8192, hex_size=820x946, internal_step_modified=739670, internal_step_repair=vanilla outer-ring steps qualified for pre-resample repair; qualified vanilla crease side tilted before resampling; destination edge lower regions translated with slope-matched feathered joins, internal_step_rows=3785, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=127, session=1, since_previous_ms=35, slot=1, source_tiles=6144x6144, total_ms=27582}
+[Super Big Map][LoadingTiming] STEP BEGIN terrain grid stretch: type {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, interpolate=false, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, scale_values=false, sequence=128, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=27582}
+							Lua 0:00:49:272
+[Super Big Map][LoadingTiming] STEP END terrain grid stretch: type {begin_session=1, destination_tiles=8192x8192, duration_ms=681, environment=Surface, error=, extraction_path=direct_source_compute, full_cells=8192x8192, hex_size=820x946, internal_step_modified=0, internal_step_repair=not requested, internal_step_rows=0, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=129, session=1, since_previous_ms=681, slot=1, source_tiles=6144x6144, total_ms=28263}
+							Lua 0:00:49:273
+[Super Big Map][LoadingTiming] STEP BEGIN terrain clutter grid stretch {destination_tiles=8192x8192, direct_source=true, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=130, session=1, since_previous_ms=1, slot=1, source_tiles=6144x6144, total_ms=28264}
+[Super Big Map][LoadingTiming] STEP ERROR terrain clutter grid stretch {begin_session=1, destination_alias=none, destination_tiles=8192x8192, duration_ms=0, environment=Surface, error=captured/native clutter source unavailable, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=false, sequence=131, session=1, since_previous_ms=0, slot=1, source_alias=none, source_tiles=6144x6144, total_ms=28264}
+[Super Big Map][LoadingTiming] STEP direct source terrain grid suite complete {clutter=false, completed_grids=2, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=132, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=28264}
+							Lua 0:00:49:274
+[Super Big Map][LoadingTiming] STEP END stretch temporary source terrain directly to destination {begin_session=1, completed_grids=2, destination_tiles=8192x8192, duration_ms=10150, environment=Surface, error=, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=133, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=28264}
+[Super Big Map][LoadingTiming] STEP BEGIN copy generated map state {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=134, session=1, since_previous_ms=1, slot=1, source_tiles=6144x6144, total_ms=28265}
+[Super Big Map][LoadingTiming] STEP END copy generated map state {begin_session=1, destination_tiles=8192x8192, duration_ms=0, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=135, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=28265}
+							Lua 0:00:49:275
+[Super Big Map][LoadingTiming] STEP native enrichment records staged on destination {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, record_count=354, sequence=136, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=28265}
+[Super Big Map][LoadingTiming] STEP BEGIN transfer generated non-enrichment objects {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=137, session=1, since_previous_ms=1, slot=1, source_tiles=6144x6144, total_ms=28266}
+							Lua 0:00:50:681
+[Super Big Map][LoadingTiming] STEP END transfer generated non-enrichment objects {begin_session=1, destination_tiles=8192x8192, duration_ms=1405, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=138, session=1, since_previous_ms=1405, slot=1, source_tiles=6144x6144, total_ms=29671, transferred=16651}
+[Super Big Map][LoadingTiming] STEP BEGIN capture transferred decor relief from temporary terrain {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=139, session=1, since_previous_ms=1, slot=1, source_tiles=6144x6144, total_ms=29672}
+							Lua 0:00:52:861
+[Super Big Map][LoadingTiming] STEP decoration relief capture complete {audit_candidates=0, destination_tiles=8192x8192, eligible=16579, environment=Surface, explicit_z=1021, height_failures=0, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_abs_relief=8330, out_of_box_despawned=0, out_of_box_stamped=350, scanned=17030, sequence=140, session=1, since_previous_ms=2179, slot=1, source_tiles=6144x6144, terrain_glued=15558, terrain_source_is_destination=false, total_ms=31851}
+							Lua 0:00:52:862
+[Super Big Map][LoadingTiming] STEP END capture transferred decor relief from temporary terrain {begin_session=1, destination_tiles=8192x8192, duration_ms=2181, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=141, session=1, since_previous_ms=2, slot=1, source_tiles=6144x6144, total_ms=31853}
+[Super Big Map][LoadingTiming] STEP BEGIN rebuild destination grids after source migration {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=142, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=31853}
+[Super Big Map][LoadingTiming] STEP END rebuild destination grids after source migration {begin_session=1, destination_tiles=8192x8192, duration_ms=0, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=143, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=31853}
+[Super Big Map][LoadingTiming] STEP temporary vanilla backing retained for the passage passability bridge {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, pass_edits_deferred=false, sequence=144, session=1, since_previous_ms=0, slot=1, source_slot=15, source_tiles=6144x6144, total_ms=31853}
+							Lua 0:00:52:869
+[Super Big Map][LoadingTiming] STEP staged enrichment records survived source unload {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, record_count=354, sequence=145, session=1, since_previous_ms=7, slot=1, source_tiles=6144x6144, total_ms=31860, verified=true}
+							Lua 0:00:52:870
+[Super Big Map][LoadingTiming] PHASE_END Migrating the vanilla source into the expanded terrain... {destination_tiles=8192x8192, duration_ms=13746, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=146, session=1, slot=1, source_tiles=6144x6144, total_ms=31860}
+[Super Big Map][LoadingTiming] PHASE_BEGIN Finishing the expanded map... {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=147, session=1, slot=1, source_tiles=6144x6144, total_ms=31860}
+[Super Big Map][LoadingTiming] STEP temporary source transaction complete {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=148, session=1, since_previous_ms=1, slot=1, source_tiles=6144x6144, total_ms=31861}
+							Lua 0:00:57:497
+[Super Big Map][LoadingTiming] STEP lifecycle: MapGenerated {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, mod_map=true, sequence=149, session=1, since_previous_ms=4626, slot=1, source_tiles=6144x6144, total_ms=36487}
+							Lua 0:00:57:644
+[Super Big Map][LoadingTiming] STEP prefab feature game logic correspondence {actual_safari=42, created_safari=42, destination_tiles=8192x8192, environment=Surface, expected_safari=42, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, markers=130, matched_safari=0, removed_orphan_safari=0, replayed_markers=130, sequence=150, session=1, since_previous_ms=148, slot=1, source_tiles=6144x6144, total_ms=36635}
+[Super Big Map][LoadingTiming] STEP lifecycle: UndergroundDarknessState {after=0, before=0, destination_tiles=8192x8192, environment=Surface, forced_reveal=false, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=151, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=36635}
+							Lua 0:00:57:666
+[Super Big Map][LoadingTiming] STEP lifecycle: UndergroundDarknessState {after=0, before=0, destination_tiles=8192x8192, environment=Surface, forced_reveal=false, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=152, session=1, since_previous_ms=22, slot=1, source_tiles=6144x6144, total_ms=36657}
+							Lua 0:00:57:667
+[Super Big Map][UndergroundSeedReservation] CONSUMER {boundary=fresh_vanilla_twin_test_seam, consumer_seed=5083534300309579687, consumer_status=pending_injected, destination_tiles=8192x8192, environment=Surface, fill_ok=true, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, reserved_seed=5083534300309579687, seeded_params_seed=5083534300309579687, slot=1, source_tiles=6144x6144}
+							Lua 0:00:57:668
+[Super Big Map][LoadingTiming] STEP session continues: expanded map allocation {destination_tiles=8192x8192, environment=Underground, hex_size=nilxnil, map=BlankUnderground_04, map_name=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, map_slot=2, mapdata_size=8192x8192, sequence=153, session=1, since_previous_ms=2, slot=nil, source_tiles=6144x6144, total_ms=36659}
+							Lua 0:00:57:669
+[Super Big Map][LoadingTiming] STEP lifecycle: NewMapObject {destination_tiles=8192x8192, environment=Underground, hex_size=nilxnil, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=8192x8192, sequence=154, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, total_ms=36659}
+							Lua 0:00:57:704
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:61398
+[DebugAdapter] Connection lost to 127.0.0.1:61393 
+							Lua 0:00:58:955
+Map::Init: 0.23000 ms
+Map::Load: 252.69000 ms
+CreateMap: 252.84000 ms
+[Super Big Map][LoadingTiming] STEP lifecycle: PreNewMap {destination_tiles=8192x8192, environment=Underground, hex_size=nilxnil, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata=table: 000002C86BBFB5D0, mapdata_size=8192x8192, sequence=155, session=1, since_previous_ms=1287, slot=2, source_tiles=6144x6144, total_ms=37946}
+							Lua 0:00:59:252
+Buildable grid ready: 1/5 valid zones.
+							Lua 0:00:59:260
+[Super Big Map][LoadingTiming] STEP lifecycle: NewMap {destination_tiles=8192x8192, environment=Underground, hex_size=820x946, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata=table: 000002C86BBFB5D0, mapdata_size=8192x8192, sequence=156, session=1, since_previous_ms=304, slot=2, source_tiles=6144x6144, total_ms=38250}
+							Lua 0:00:59:261
+[Super Big Map][LoadingTiming] STEP prefab feature game logic correspondence {actual_safari=0, created_safari=0, destination_tiles=8192x8192, environment=Underground, expected_safari=0, hex_size=820x946, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=8192x8192, markers=0, matched_safari=0, removed_orphan_safari=0, replayed_markers=0, sequence=157, session=1, since_previous_ms=2, slot=2, source_tiles=6144x6144, total_ms=38252}
+							Lua 0:00:59:556
+Buildable grid ready: 1/5 valid zones.
+[Super Big Map][LoadingTiming] STEP lifecycle: UndergroundDarknessState {after=90, before=0, destination_tiles=8192x8192, environment=Underground, forced_reveal=false, hex_size=820x946, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=8192x8192, sequence=158, session=1, since_previous_ms=295, slot=2, source_tiles=6144x6144, total_ms=38547}
+							Lua 0:00:59:561
+MapLoadRandom:  1704688611871215472 
+							Lua 0:00:59:661
+[Super Big Map][LoadingTiming] STEP lifecycle: NewMapLoaded {destination_tiles=8192x8192, environment=Underground, hex_size=820x946, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata=table: 000002C86BBFB5D0, mapdata_size=8192x8192, sequence=159, session=1, since_previous_ms=105, slot=2, source_tiles=6144x6144, total_ms=38652}
+							Lua 0:00:59:662
+[Super Big Map][LoadingTiming] STEP prefab feature game logic correspondence {actual_safari=0, created_safari=0, destination_tiles=8192x8192, environment=Underground, expected_safari=0, hex_size=820x946, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=8192x8192, markers=0, matched_safari=0, removed_orphan_safari=0, replayed_markers=0, sequence=160, session=1, since_previous_ms=1, slot=2, source_tiles=6144x6144, total_ms=38653}
+							Lua 0:00:59:663
+[Super Big Map][LoadingTiming] STEP lifecycle: UndergroundDarknessState {after=90, before=90, destination_tiles=8192x8192, environment=Underground, forced_reveal=false, hex_size=820x946, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=8192x8192, sequence=161, session=1, since_previous_ms=1, slot=2, source_tiles=6144x6144, total_ms=38654}
+							Lua 0:01:04:202
+[Super Big Map][LoadingTiming] STEP lifecycle: PostNewMapLoaded {destination_tiles=8192x8192, environment=Underground, hex_size=820x946, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata=table: 000002C86BBFB5D0, mapdata_size=8192x8192, sequence=162, session=1, since_previous_ms=4539, slot=2, source_tiles=6144x6144, total_ms=43193}
+							Lua 0:01:04:204
+[Super Big Map][LoadingTiming] STEP prefab feature game logic correspondence {actual_safari=0, created_safari=0, destination_tiles=8192x8192, environment=Underground, expected_safari=0, hex_size=820x946, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=8192x8192, markers=0, matched_safari=0, removed_orphan_safari=0, replayed_markers=0, sequence=163, session=1, since_previous_ms=2, slot=2, source_tiles=6144x6144, total_ms=43195}
+[Super Big Map][LoadingTiming] STEP lifecycle: UndergroundDarknessState {after=90, before=90, destination_tiles=8192x8192, environment=Underground, forced_reveal=false, hex_size=820x946, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=8192x8192, sequence=164, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, total_ms=43195}
+							Lua 0:01:04:220
+Map (slot 2) changed to "BlankUnderground_04" in 6553 ms.
+[Super Big Map][LoadingTiming] STEP session continues: RandomMapGenerator.DoGenerate {destination_tiles=8192x8192, environment=Underground, expansion_pending=true, hex_size=820x946, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=8192x8192, sequence=165, session=1, since_previous_ms=16, slot=2, source_tiles=6144x6144, total_ms=43211, vanilla_source_migration=false}
+[Super Big Map][LoadingTiming] STEP attempt exact temporary-source transaction {destination_tiles=8192x8192, environment=Underground, generator_limit_tiles=6144, hex_size=820x946, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, map_tiles=8192x8192, mapdata_size=8192x8192, sequence=166, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, total_ms=43211}
+							Lua 0:01:05:133
+Buildable grid ready: 79/8708 valid zones.
+[Super Big Map][LoadingTiming] STEP surface passage pairing grid ready {created=false, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=167, session=1, since_previous_ms=913, slot=1, source_tiles=6144x6144, total_ms=44124}
+[Super Big Map][LoadingTiming] STEP BEGIN source-view RandomMapGenerator.DoGenerate on expanded backing {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, sequence=168, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, total_ms=44124}
+[Super Big Map][LoadingTiming] STEP native clutter access probe {clutter_tile_size=nil, destination_tiles=8192x8192, environment=Underground, global_terrain=table: 000002C85C4A6DE0, grid_names=none, height_tile_size=100, hex_size=615x710, map=BlankUnderground_04, map_fields=none, map_import_terrain=false, map_is_current=false, map_ref=table: 000002C86BBFB6A8, map_reset_terrain=false, mapdata_size=6144x6144, refs=editor.map.clutter=nil | orig.map.clutter=nil | editor.map.clutter_density=nil | orig.map.clutter_density=nil | editor.map.grass_density=nil | orig.map.grass_density=nil, samples=not-current-or-unavailable, sequence=169, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, stage=expanded backing before underground DoGenerate, total_ms=44124}
+							Lua 0:01:10:535
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:61401
+							Lua 0:01:10:536
+[DebugAdapter] Connection lost to 127.0.0.1:61398 
+							Lua 0:01:11:335
+[DebugAdapter] Connection lost to 127.0.0.1:61401 
+							Lua 0:01:12:889
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMapGenerator.OnGenerateLogic {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, sequence=170, session=1, since_previous_ms=7756, slot=2, source_tiles=6144x6144, total_ms=51880}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: ResolveBuildable {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=nil, sequence=171, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=ResolveBuildable, total_ms=51880}
+							Lua 0:01:13:082
+Buildable grid ready: 1/6 valid zones.
+							Lua 0:01:13:839
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: ResolveBuildable {begin_session=1, destination_tiles=8192x8192, duration_ms=949, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=172, session=1, since_previous_ms=949, slot=2, source_tiles=6144x6144, tag=ResolveBuildable, total_ms=52829}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceColdAreas {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=nil, sequence=173, session=1, since_previous_ms=1, slot=2, source_tiles=6144x6144, tag=PlaceColdAreas, total_ms=52830}
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceColdAreas {begin_session=1, destination_tiles=8192x8192, duration_ms=0, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=174, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceColdAreas, total_ms=52830}
+[Super Big Map][LoadingTiming] STEP BEGIN deferred underground passage bootstrap {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, sequence=175, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, total_ms=52830}
+							Lua 0:01:14:051
+[Super Big Map][LoadingTiming] STEP underground buried wonder source vertical geometry {class=BottomlessPit, destination_tiles=8192x8192, entity=WonderBottomlessPit, environment=Underground, flatten_shape_hexes=1162, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, marker_scale=100, sequence=176, session=1, since_previous_ms=212, slot=2, source_flatten_z=10000, source_tiles=6144x6144, total_ms=53042}
+							Lua 0:01:14:320
+[Super Big Map][LoadingTiming] STEP underground buried wonder source vertical geometry {class=AncientArtifact, destination_tiles=8192x8192, entity=WonderAncientArtifact, environment=Underground, flatten_shape_hexes=1283, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, marker_scale=100, sequence=177, session=1, since_previous_ms=269, slot=2, source_flatten_z=10000, source_tiles=6144x6144, total_ms=53311}
+							Lua 0:01:14:611
+[Super Big Map][LoadingTiming] STEP native underground wonder footprint cleared {class=BottomlessPit, clearance_mode=native_vanilla_flatten_shape, destination_tiles=8192x8192, environment=Underground, flatten_z=10000, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, sequence=178, session=1, since_previous_ms=291, slot=2, source_tiles=6144x6144, total_ms=53602}
+							Lua 0:01:15:161
+[Super Big Map][LoadingTiming] STEP native underground wonder footprint cleared {class=AncientArtifact, clearance_mode=native_vanilla_flatten_shape, destination_tiles=8192x8192, environment=Underground, flatten_z=10000, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, sequence=179, session=1, since_previous_ms=549, slot=2, source_tiles=6144x6144, total_ms=54151}
+							Lua 0:01:15:310
+[Super Big Map][LoadingTiming] STEP native surface passage buildable bridge installed {destination_tiles=8192x8192, environment=Surface, expanded_height=946, expanded_width=820, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=180, session=1, since_previous_ms=150, slot=1, source_height=710, source_tiles=6144x6144, source_width=615, total_ms=54301}
+[Super Big Map][LoadingTiming] STEP native surface passage fallback radius pinned to the source extent {destination_tiles=8192x8192, environment=Surface, expanded_height=819200, expanded_width=819200, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_radius=307200, sequence=181, session=1, since_previous_ms=0, slot=1, source_height=614400, source_tiles=6144x6144, source_width=614400, total_ms=54301}
+							Lua 0:01:15:311
+[Super Big Map][LoadingTiming] STEP native surface passage passability bridged to the retained source map {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=182, session=1, since_previous_ms=0, slot=1, source_slot=15, source_tiles=6144x6144, total_ms=54301}
+							Lua 0:01:16:098
+[Super Big Map][LoadingTiming] STEP BEGIN unload retained vanilla source backing {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, reason=passage bootstrap selection window closed, sequence=183, session=1, since_previous_ms=787, slot=1, source_slot=15, source_tiles=6144x6144, total_ms=55088}
+							Lua 0:01:16:388
+Map::Done: 0.49000 ms
+							Lua 0:01:16:402
+[Super Big Map][LoadingTiming] STEP END unload retained vanilla source backing {begin_session=1, destination_tiles=8192x8192, duration_ms=305, environment=Surface, error=nil, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=184, session=1, since_previous_ms=305, slot=1, source_tiles=6144x6144, total_ms=55393}
+							Lua 0:01:16:684
+[Super Big Map][LoadingTiming] STEP END deferred underground passage bootstrap {begin_session=1, destination_tiles=8192x8192, duration_ms=2845, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, passages=2, planned_pairs=2, sequence=185, session=1, since_previous_ms=282, slot=2, source_tiles=6144x6144, total_ms=55675, wonders_deferred=2}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=nil, sequence=186, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies, total_ms=55675}
+							Lua 0:01:16:689
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindFeatures {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=true, sequence=187, session=1, since_previous_ms=4, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindFeatures, total_ms=55679}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindFeatures_RepulseDeposits {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=nil, sequence=188, session=1, since_previous_ms=1, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindFeatures_RepulseDeposits, total_ms=55680}
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindFeatures_RepulseDeposits {begin_session=1, destination_tiles=8192x8192, duration_ms=0, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=189, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindFeatures_RepulseDeposits, total_ms=55680}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindFeatures_Deposits {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=nil, sequence=190, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindFeatures_Deposits, total_ms=55680}
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindFeatures_Deposits {begin_session=1, destination_tiles=8192x8192, duration_ms=0, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=191, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindFeatures_Deposits, total_ms=55680}
+							Lua 0:01:16:690
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindFeatures_Anomalies {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=nil, sequence=192, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindFeatures_Anomalies, total_ms=55680}
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindFeatures_Anomalies {begin_session=1, destination_tiles=8192x8192, duration_ms=1, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=193, session=1, since_previous_ms=1, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindFeatures_Anomalies, total_ms=55681}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindFeatures_EffectDeposits {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=nil, sequence=194, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindFeatures_EffectDeposits, total_ms=55681}
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindFeatures_EffectDeposits {begin_session=1, destination_tiles=8192x8192, duration_ms=0, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=195, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindFeatures_EffectDeposits, total_ms=55681}
+							Lua 0:01:16:693
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindFeatures {begin_session=1, destination_tiles=8192x8192, duration_ms=5, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=196, session=1, since_previous_ms=3, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindFeatures, total_ms=55684}
+							Lua 0:01:16:694
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindClusters {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=nil, sequence=197, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindClusters, total_ms=55684}
+							Lua 0:01:16:699
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindClusters {begin_session=1, destination_tiles=8192x8192, duration_ms=6, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=198, session=1, since_previous_ms=6, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindClusters, total_ms=55690}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindAnomalies_Breakthrough {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=nil, sequence=199, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindAnomalies_Breakthrough, total_ms=55690}
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindAnomalies_Breakthrough {begin_session=1, destination_tiles=8192x8192, duration_ms=0, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=200, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindAnomalies_Breakthrough, total_ms=55690}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindDeposits {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=true, sequence=201, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindDeposits, total_ms=55690}
+							Lua 0:01:16:700
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindDeposits_surf_Metals {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=nil, sequence=202, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindDeposits_surf_Metals, total_ms=55690}
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindDeposits_surf_Metals {begin_session=1, destination_tiles=8192x8192, duration_ms=1, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=203, session=1, since_previous_ms=1, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindDeposits_surf_Metals, total_ms=55691}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindDeposits_subs_Metals {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=nil, sequence=204, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindDeposits_subs_Metals, total_ms=55691}
+							Lua 0:01:16:702
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindDeposits_subs_Metals {begin_session=1, destination_tiles=8192x8192, duration_ms=2, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=205, session=1, since_previous_ms=2, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindDeposits_subs_Metals, total_ms=55693}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindDeposits_subs_PreciousMetals {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=nil, sequence=206, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindDeposits_subs_PreciousMetals, total_ms=55693}
+							Lua 0:01:16:703
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindDeposits_subs_PreciousMetals {begin_session=1, destination_tiles=8192x8192, duration_ms=1, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=207, session=1, since_previous_ms=1, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindDeposits_subs_PreciousMetals, total_ms=55694}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindDeposits_subs_Water {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=nil, sequence=208, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindDeposits_subs_Water, total_ms=55694}
+							Lua 0:01:16:704
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindDeposits_subs_Water {begin_session=1, destination_tiles=8192x8192, duration_ms=1, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=209, session=1, since_previous_ms=1, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindDeposits_subs_Water, total_ms=55695}
+							Lua 0:01:16:705
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindDeposits_terr_Concrete {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=nil, sequence=210, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindDeposits_terr_Concrete, total_ms=55695}
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindDeposits_terr_Concrete {begin_session=1, destination_tiles=8192x8192, duration_ms=1, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=211, session=1, since_previous_ms=1, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindDeposits_terr_Concrete, total_ms=55696}
+							Lua 0:01:16:706
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindDeposits {begin_session=1, destination_tiles=8192x8192, duration_ms=7, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=212, session=1, since_previous_ms=1, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindDeposits, total_ms=55697}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindAnomalies {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=true, sequence=213, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindAnomalies, total_ms=55697}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindAnomalies_TechUnlock {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=nil, sequence=214, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindAnomalies_TechUnlock, total_ms=55697}
+							Lua 0:01:16:707
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindAnomalies_TechUnlock {begin_session=1, destination_tiles=8192x8192, duration_ms=1, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=215, session=1, since_previous_ms=1, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindAnomalies_TechUnlock, total_ms=55698}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindAnomalies_Event {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=nil, sequence=216, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindAnomalies_Event, total_ms=55698}
+							Lua 0:01:16:708
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindAnomalies_Event {begin_session=1, destination_tiles=8192x8192, duration_ms=1, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=217, session=1, since_previous_ms=1, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindAnomalies_Event, total_ms=55699}
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindAnomalies {begin_session=1, destination_tiles=8192x8192, duration_ms=2, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=218, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindAnomalies, total_ms=55699}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindEffectDeposits {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=nil, sequence=219, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindEffectDeposits, total_ms=55699}
+							Lua 0:01:16:709
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_FindEffectDeposits_ResearchEffectDeposit {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=nil, sequence=220, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindEffectDeposits_ResearchEffectDeposit, total_ms=55699}
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindEffectDeposits_ResearchEffectDeposit {begin_session=1, destination_tiles=8192x8192, duration_ms=1, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=221, session=1, since_previous_ms=1, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindEffectDeposits_ResearchEffectDeposit, total_ms=55700}
+							Lua 0:01:16:710
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_FindEffectDeposits {begin_session=1, destination_tiles=8192x8192, duration_ms=1, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=222, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_FindEffectDeposits, total_ms=55700}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_AlignToHexGrid {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=true, sequence=223, session=1, since_previous_ms=1, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_AlignToHexGrid, total_ms=55701}
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_AlignToHexGrid {begin_session=1, destination_tiles=8192x8192, duration_ms=0, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=224, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_AlignToHexGrid, total_ms=55701}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_PlaceDeposits {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=nil, sequence=225, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_PlaceDeposits, total_ms=55701}
+							Lua 0:01:16:719
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_PlaceDeposits {begin_session=1, destination_tiles=8192x8192, duration_ms=9, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=226, session=1, since_previous_ms=9, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_PlaceDeposits, total_ms=55710}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_PlaceBreakthroughAnomalies {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=nil, sequence=227, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_PlaceBreakthroughAnomalies, total_ms=55710}
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_PlaceBreakthroughAnomalies {begin_session=1, destination_tiles=8192x8192, duration_ms=0, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=228, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_PlaceBreakthroughAnomalies, total_ms=55710}
+							Lua 0:01:16:720
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_PlaceTechUnlockAnomalies {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=nil, sequence=229, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_PlaceTechUnlockAnomalies, total_ms=55710}
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_PlaceTechUnlockAnomalies {begin_session=1, destination_tiles=8192x8192, duration_ms=1, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=230, session=1, since_previous_ms=1, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_PlaceTechUnlockAnomalies, total_ms=55711}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_PlaceFreeTechAnomalies {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=nil, sequence=231, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_PlaceFreeTechAnomalies, total_ms=55711}
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_PlaceFreeTechAnomalies {begin_session=1, destination_tiles=8192x8192, duration_ms=0, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=232, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_PlaceFreeTechAnomalies, total_ms=55711}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_PlaceEventAnomalies {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=nil, sequence=233, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_PlaceEventAnomalies, total_ms=55711}
+							Lua 0:01:16:721
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_PlaceEventAnomalies {begin_session=1, destination_tiles=8192x8192, duration_ms=1, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=234, session=1, since_previous_ms=1, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_PlaceEventAnomalies, total_ms=55712}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceAnomalies_PlaceEffectDeposits {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=nil, sequence=235, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_PlaceEffectDeposits, total_ms=55712}
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies_PlaceEffectDeposits {begin_session=1, destination_tiles=8192x8192, duration_ms=0, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=236, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies_PlaceEffectDeposits, total_ms=55712}
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceAnomalies {begin_session=1, destination_tiles=8192x8192, duration_ms=37, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=237, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceAnomalies, total_ms=55712}
+							Lua 0:01:16:722
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: PlaceObstructions {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=nil, sequence=238, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=PlaceObstructions, total_ms=55712}
+							Lua 0:01:16:744
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: PlaceObstructions {begin_session=1, destination_tiles=8192x8192, duration_ms=23, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=239, session=1, since_previous_ms=23, slot=2, source_tiles=6144x6144, tag=PlaceObstructions, total_ms=55735}
+							Lua 0:01:16:745
+[Super Big Map][LoadingTiming] STEP temporary native underground wonders removed {cleaned=2, destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, reason=after stock PlaceObstructions, sequence=240, session=1, since_previous_ms=1, slot=2, source_tiles=6144x6144, temporary_flight_queues=3, total_ms=55736}
+[Super Big Map][LoadingTiming] STEP BEGIN RandomMap procedure: ClearLandingZones {destination_tiles=8192x8192, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, randless=nil, sequence=241, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=ClearLandingZones, total_ms=55736}
+[Super Big Map][LoadingTiming] STEP END RandomMap procedure: ClearLandingZones {begin_session=1, destination_tiles=8192x8192, duration_ms=0, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=242, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, tag=ClearLandingZones, total_ms=55736}
+							Lua 0:01:16:746
+[Super Big Map][LoadingTiming] STEP END RandomMapGenerator.OnGenerateLogic {begin_session=1, destination_tiles=8192x8192, duration_ms=3857, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=243, session=1, since_previous_ms=1, slot=2, source_tiles=6144x6144, total_ms=55737}
+							Lua 0:01:16:753
+[Super Big Map][LoadingTiming] STEP captured vanilla native clutter operation {destination_tiles=8192x8192, environment=Underground, error=, grid_cells=none, hex_size=615x710, kind=none, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, sequence=244, session=1, since_previous_ms=7, slot=2, source_tiles=6144x6144, terrain_candidates=global=table: 000002C85C4A6DE0 | DoGenerate_env=nil | MapImport_env=nil | MapReset_env=nil | MapExport_env=nil, total_ms=55744, write_sources=global:0, writes=0}
+							Lua 0:01:16:754
+[Super Big Map][LoadingTiming] STEP underground mark grid allocated at backing scale {backing_world=819200, destination_tiles=8192x8192, environment=Underground, grid_cells=768x768->1024x1024, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, mark_phases=3, scaled_grids=4, sequence=245, session=1, since_previous_ms=0, slot=2, source_tiles=6144x6144, source_world=614400, total_ms=55744, unscaled_grids=15}
+[Super Big Map][LoadingTiming] STEP source prefab raster transaction serialized {destination_tiles=8192x8192, environment=Underground, generation_ok=true, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, previous_parallel_div=8, restored_parallel_div=8, sequence=246, session=1, since_previous_ms=1, slot=2, source_tiles=6144x6144, total_ms=55745}
+							Lua 0:01:16:755
+[Super Big Map][UndergroundSeedReservation] HOLDER {boundary=fresh_vanilla_twin_test_seam, consumer_seed=5083534300309579687, consumer_status=pending_injected, destination_tiles=8192x8192, environment=Underground, generation_ok=true, hex_size=615x710, holder_generation_hash=-1768524702444233987, holder_seed=5083534300309579687, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, reserved_seed=5083534300309579687, seeded_params_seed=5083534300309579687, slot=2, source_tiles=6144x6144}
+							Lua 0:01:16:756
+[Super Big Map][LoadingTiming] STEP native clutter access probe {clutter_tile_size=nil, destination_tiles=8192x8192, environment=Underground, global_terrain=table: 000002C85C4A6DE0, grid_names=none, height_tile_size=100, hex_size=615x710, map=BlankUnderground_04, map_fields=none, map_import_terrain=false, map_is_current=false, map_ref=table: 000002C86BBFB6A8, map_reset_terrain=false, mapdata_size=6144x6144, refs=editor.map.clutter=nil | orig.map.clutter=nil | editor.map.clutter_density=nil | orig.map.clutter_density=nil | editor.map.grass_density=nil | orig.map.grass_density=nil, samples=not-current-or-unavailable, sequence=247, session=1, since_previous_ms=1, slot=2, source_tiles=6144x6144, stage=expanded backing after underground DoGenerate, total_ms=55746}
+[Super Big Map][LoadingTiming] STEP END source-view RandomMapGenerator.DoGenerate on expanded backing {begin_session=1, destination_tiles=8192x8192, duration_ms=11623, environment=Underground, hex_size=615x710, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=6144x6144, ok=true, sequence=248, session=1, since_previous_ms=1, slot=2, source_tiles=6144x6144, total_ms=55747}
+							Lua 0:01:18:743
+[Super Big Map][LoadingTiming] STEP lifecycle: MapGenerated {destination_tiles=8192x8192, environment=Underground, hex_size=820x946, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=8192x8192, mod_map=true, sequence=249, session=1, since_previous_ms=1987, slot=2, source_tiles=6144x6144, total_ms=57734}
+							Lua 0:01:18:784
+[Super Big Map][LoadingTiming] STEP prefab feature game logic correspondence {actual_safari=0, created_safari=0, destination_tiles=8192x8192, environment=Underground, expected_safari=0, hex_size=820x946, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=8192x8192, markers=0, matched_safari=0, removed_orphan_safari=0, replayed_markers=0, sequence=250, session=1, since_previous_ms=40, slot=2, source_tiles=6144x6144, total_ms=57774}
+[Super Big Map][LoadingTiming] STEP lifecycle: UndergroundDarknessState {after=90, before=90, destination_tiles=8192x8192, environment=Underground, forced_reveal=false, hex_size=820x946, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=8192x8192, sequence=251, session=1, since_previous_ms=1, slot=2, source_tiles=6144x6144, total_ms=57775}
+							Lua 0:01:18:806
+[Super Big Map][LoadingTiming] STEP lifecycle: UndergroundDarknessState {after=0, before=90, destination_tiles=8192x8192, environment=Surface, forced_reveal=false, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=252, session=1, since_previous_ms=22, slot=1, source_tiles=6144x6144, total_ms=57797}
+							Lua 0:01:18:853
+no sectors found with enough average expected metals
+no resources expected at all on the map
+[Super Big Map][LoadingTiming] STEP lifecycle: MapSectorsReady {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=253, session=1, since_previous_ms=47, slot=1, source_tiles=6144x6144, total_ms=57844}
+							Lua 0:01:18:881
+[Super Big Map][LoadingTiming] STEP lifecycle: CityInitialized {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=254, session=1, since_previous_ms=28, slot=1, source_tiles=6144x6144, total_ms=57872}
+							Lua 0:01:18:942
+[Super Big Map][LoadingTiming] STEP lifecycle: MapSectorsReady {destination_tiles=8192x8192, environment=Underground, hex_size=820x946, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=8192x8192, sequence=255, session=1, since_previous_ms=61, slot=2, source_tiles=6144x6144, total_ms=57933}
+							Lua 0:01:18:967
+[Super Big Map][LoadingTiming] STEP lifecycle: CityInitialized {destination_tiles=8192x8192, environment=Underground, hex_size=820x946, map=BlankUnderground_04, map_ref=table: 000002C86BBFB6A8, mapdata_size=8192x8192, sequence=256, session=1, since_previous_ms=25, slot=2, source_tiles=6144x6144, total_ms=57958}
+							Lua 0:01:19:117
+[Super Big Map][LoadingTiming] STEP BEGIN surface expansion pipeline {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=257, session=1, since_previous_ms=150, slot=1, source_tiles=6144x6144, total_ms=58108}
+							Lua 0:01:19:126
+[Super Big Map][LoadingTiming] PHASE_END Finishing the expanded map... {destination_tiles=8192x8192, duration_ms=26256, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=258, session=1, slot=1, source_tiles=6144x6144, total_ms=58116}
+[Super Big Map][LoadingTiming] PHASE_BEGIN Please wait. {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=259, session=1, slot=1, source_tiles=6144x6144, total_ms=58116}
+							Lua 0:01:19:242
+[Super Big Map][LoadingTiming] STEP surface custom loading handoff {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, milestone=before_pass_edit_suspension_and_terrain_stretch, sequence=260, session=1, since_previous_ms=116, slot=1, source_tiles=6144x6144, started=true, total_ms=58232, visible=true}
+[Super Big Map][LoadingTiming] STEP using decor relief captured from temporary source {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=261, session=1, since_previous_ms=1, slot=1, source_tiles=6144x6144, total_ms=58233}
+[Super Big Map][LoadingTiming] STEP terrain grids already stretched directly from temporary source {destination_tiles=8192x8192, environment=Surface, height=true, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=262, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, terrain_type=true, total_ms=58233}
+[Super Big Map][LoadingTiming] STEP BEGIN terrain clutter grid stretch {destination_tiles=8192x8192, direct_source=false, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=263, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=58233}
+[Super Big Map][LoadingTiming] STEP ERROR terrain clutter grid stretch {begin_session=1, destination_alias=none, destination_tiles=8192x8192, duration_ms=0, environment=Surface, error=captured/native clutter source unavailable, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=false, sequence=264, session=1, since_previous_ms=0, slot=1, source_alias=none, source_tiles=6144x6144, total_ms=58233}
+[Super Big Map][LoadingTiming] STEP terrain clutter grid unavailable; continuing diagnostic generation {destination_tiles=8192x8192, direct_source=false, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=265, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=58233}
+							Lua 0:01:19:243
+[Super Big Map][LoadingTiming] STEP BEGIN terrain map grid stretch: colorize {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, interpolate=false, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=266, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=58233}
+[Super Big Map][LoadingTiming] STEP BEGIN terrain map grid colorize: source extraction {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=267, session=1, since_previous_ms=1, slot=1, source_tiles=6144x6144, total_ms=58234}
+							Lua 0:01:19:247
+[Super Big Map][LoadingTiming] STEP END terrain map grid colorize: source extraction {begin_session=1, destination_tiles=8192x8192, duration_ms=4, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=268, session=1, since_previous_ms=4, slot=1, source_cells=3072x3072, source_tiles=6144x6144, total_ms=58238}
+							Lua 0:01:19:248
+[Super Big Map][LoadingTiming] STEP BEGIN terrain map grid colorize: destination metadata {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=269, session=1, since_previous_ms=1, slot=1, source_tiles=6144x6144, total_ms=58239}
+[Super Big Map][LoadingTiming] STEP END terrain map grid colorize: destination metadata {begin_session=1, destination_cells=4096x4096, destination_tiles=8192x8192, duration_ms=0, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=270, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, target_bits=?, target_format=hierarchical, total_ms=58239}
+[Super Big Map][LoadingTiming] STEP BEGIN terrain map grid colorize: compute conversion {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=271, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=58239}
+							Lua 0:01:19:301
+[Super Big Map][LoadingTiming] STEP END terrain map grid colorize: compute conversion {begin_session=1, destination_tiles=8192x8192, duration_ms=53, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=272, session=1, since_previous_ms=53, slot=1, source_tiles=6144x6144, total_ms=58292}
+[Super Big Map][LoadingTiming] STEP BEGIN terrain map grid colorize: resample {destination_cells=4096x4096, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, interpolate=false, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=273, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=58292}
+							Lua 0:01:19:427
+[Super Big Map][LoadingTiming] STEP END terrain map grid colorize: resample {begin_session=1, destination_tiles=8192x8192, duration_ms=125, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=274, session=1, since_previous_ms=125, slot=1, source_tiles=6144x6144, total_ms=58417}
+[Super Big Map][LoadingTiming] STEP BEGIN terrain map grid colorize: destination write {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=275, session=1, since_previous_ms=1, slot=1, source_tiles=6144x6144, total_ms=58418}
+							Lua 0:01:20:028
+[Super Big Map][LoadingTiming] STEP END terrain map grid colorize: destination write {begin_session=1, destination_tiles=8192x8192, duration_ms=600, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, mode=editor_set_grid, ok=true, sequence=276, session=1, since_previous_ms=600, slot=1, source_tiles=6144x6144, total_ms=59018}
+							Lua 0:01:20:035
+[Super Big Map][LoadingTiming] STEP END terrain map grid stretch: colorize {begin_session=1, destination_tiles=8192x8192, duration_ms=793, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=277, session=1, since_previous_ms=8, slot=1, source_tiles=6144x6144, total_ms=59026}
+[Super Big Map][LoadingTiming] STEP BEGIN terrain map grid stretch: BiomeGrid {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, interpolate=false, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=278, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=59026}
+[Super Big Map][LoadingTiming] STEP BEGIN terrain map grid BiomeGrid: source extraction {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=279, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=59026}
+[Super Big Map][LoadingTiming] STEP END terrain map grid BiomeGrid: source extraction {begin_session=1, destination_tiles=8192x8192, duration_ms=0, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=280, session=1, since_previous_ms=0, slot=1, source_cells=6144x6144, source_tiles=6144x6144, total_ms=59026}
+[Super Big Map][LoadingTiming] STEP BEGIN terrain map grid BiomeGrid: destination metadata {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=281, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=59026}
+							Lua 0:01:20:036
+[Super Big Map][LoadingTiming] STEP END terrain map grid BiomeGrid: destination metadata {begin_session=1, destination_cells=8192x8192, destination_tiles=8192x8192, duration_ms=0, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=282, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, target_bits=?, target_format=hierarchical, total_ms=59026}
+[Super Big Map][LoadingTiming] STEP BEGIN terrain map grid BiomeGrid: compute conversion {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=283, session=1, since_previous_ms=1, slot=1, source_tiles=6144x6144, total_ms=59027}
+							Lua 0:01:20:159
+[Super Big Map][LoadingTiming] STEP END terrain map grid BiomeGrid: compute conversion {begin_session=1, destination_tiles=8192x8192, duration_ms=123, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=284, session=1, since_previous_ms=123, slot=1, source_tiles=6144x6144, total_ms=59150}
+[Super Big Map][LoadingTiming] STEP BEGIN terrain map grid BiomeGrid: resample {destination_cells=8192x8192, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, interpolate=false, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=285, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=59150}
+							Lua 0:01:20:667
+[Super Big Map][LoadingTiming] STEP END terrain map grid BiomeGrid: resample {begin_session=1, destination_tiles=8192x8192, duration_ms=508, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=286, session=1, since_previous_ms=508, slot=1, source_tiles=6144x6144, total_ms=59658}
+[Super Big Map][LoadingTiming] STEP BEGIN terrain map grid BiomeGrid: destination write {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=287, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=59658}
+							Lua 0:01:20:967
+[Super Big Map][LoadingTiming] STEP END terrain map grid BiomeGrid: destination write {begin_session=1, destination_tiles=8192x8192, duration_ms=300, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, mode=vanilla_map_import_direct_copy, ok=true, sequence=288, session=1, since_previous_ms=300, slot=1, source_tiles=6144x6144, total_ms=59958}
+							Lua 0:01:20:987
+[Super Big Map][LoadingTiming] STEP END terrain map grid stretch: BiomeGrid {begin_session=1, destination_tiles=8192x8192, duration_ms=951, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=289, session=1, since_previous_ms=19, slot=1, source_tiles=6144x6144, total_ms=59977}
+[Super Big Map][LoadingTiming] STEP BEGIN invalidate expanded terrain {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=290, session=1, since_previous_ms=1, slot=1, source_tiles=6144x6144, total_ms=59978}
+							Lua 0:01:21:028
+[Super Big Map][LoadingTiming] STEP END invalidate expanded terrain {begin_session=1, deferred_gameplay_rebuild=false, destination_tiles=8192x8192, duration_ms=41, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=291, session=1, since_previous_ms=41, slot=1, source_tiles=6144x6144, total_ms=60019}
+[Super Big Map][LoadingTiming] STEP terrain stretch grid suite complete {completed_grids=4, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=292, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=60019}
+							Lua 0:01:21:029
+[Super Big Map][LoadingTiming] PHASE_END Please wait. {destination_tiles=8192x8192, duration_ms=1904, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=293, session=1, slot=1, source_tiles=6144x6144, total_ms=60020}
+[Super Big Map][LoadingTiming] PHASE_BEGIN Repositioning surface rocks and decorations {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=294, session=1, slot=1, source_tiles=6144x6144, total_ms=60020}
+							Lua 0:01:21:590
+[Super Big Map][LoadingTiming] STEP native rock support grounding complete {apply_ms=78, capture_ms=537, contacts=6342, destination_tiles=8192x8192, eligible=14447, environment=Surface, failures=0, hex_size=820x946, lowered=160, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_lowering=2127, probes=69640, rays=29309, sequence=295, session=1, since_previous_ms=560, slot=1, source_tiles=6144x6144, total_lowering=118268, total_ms=60580, unchanged=217}
+[Super Big Map][LoadingTiming] STEP decoration stretch placement complete {cave_in_expanded_shape_hexes=0, cave_in_rubble=0, cave_in_source_shape_hexes=0, cave_ins_transformed=0, destination_tiles=8192x8192, environment=Surface, explicit_z_captured=1021, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, moved=16579, placement_inputs=16579, preclassified=true, relief_placed=1021, reused_collection=true, rubble_walls_transformed=0, scanned=17030, sequence=296, session=1, setpos_failures=0, since_previous_ms=1, slot=1, source_tiles=6144x6144, terrain_glued_captured=15558, terrain_snapped=15558, topup_clones=0, total_ms=60581, tunnel_blocker_rubble=0, unresolved_z=0}
+							Lua 0:01:21:692
+[Super Big Map][LoadingTiming] STEP prefab feature game logic correspondence {actual_safari=42, created_safari=42, destination_tiles=8192x8192, environment=Surface, expected_safari=42, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, markers=130, matched_safari=0, removed_orphan_safari=42, replayed_markers=0, sequence=297, session=1, since_previous_ms=101, slot=1, source_tiles=6144x6144, total_ms=60682}
+[Super Big Map][LoadingTiming] PHASE_END Repositioning surface rocks and decorations {destination_tiles=8192x8192, duration_ms=663, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=298, session=1, slot=1, source_tiles=6144x6144, total_ms=60683}
+[Super Big Map][LoadingTiming] PHASE_BEGIN Restoring the vanilla resources and anomalies {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=299, session=1, slot=1, source_tiles=6144x6144, total_ms=60683}
+							Lua 0:01:21:762
+[Super Big Map][LoadingTiming] STEP deferred vanilla breakthrough initialization complete {after=9, before=13, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, reason=surface after native enrichment recreation, removed=4, sequence=300, session=1, since_previous_ms=69, slot=1, source_tiles=6144x6144, staged_extra=0, staged_missing=0, staged_order=13, staged_resolved=13, total_ms=60752}
+[Super Big Map][LoadingTiming] PHASE_END Restoring the vanilla resources and anomalies {destination_tiles=8192x8192, duration_ms=70, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=301, session=1, slot=1, source_tiles=6144x6144, total_ms=60753}
+[Super Big Map][LoadingTiming] PHASE_BEGIN Repositioning surface resource deposits {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=302, session=1, slot=1, source_tiles=6144x6144, total_ms=60753}
+[Super Big Map][LoadingTiming] STEP BEGIN surface scale marker objects {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=303, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=60753}
+							Lua 0:01:21:783
+[Super Big Map][LoadingTiming] STEP END surface scale marker objects {begin_session=1, destination_tiles=8192x8192, duration_ms=21, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, moved=0, ok=true, sequence=304, session=1, since_previous_ms=21, slot=1, source_tiles=6144x6144, total_ms=60774}
+[Super Big Map][LoadingTiming] STEP BEGIN surface verify native enrichment transform {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=305, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=60774}
+							Lua 0:01:21:790
+[Super Big Map][LoadingTiming] STEP END surface verify native enrichment transform {begin_session=1, destination_tiles=8192x8192, duration_ms=7, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, mismatches=0, ok=true, sequence=306, session=1, since_previous_ms=7, slot=1, source_tiles=6144x6144, total_ms=60781}
+[Super Big Map][LoadingTiming] PHASE_END Repositioning surface resource deposits {destination_tiles=8192x8192, duration_ms=28, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=307, session=1, slot=1, source_tiles=6144x6144, total_ms=60781}
+[Super Big Map][LoadingTiming] PHASE_BEGIN Restoring surface decoration density {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=308, session=1, slot=1, source_tiles=6144x6144, total_ms=60781}
+[Super Big Map][LoadingTiming] STEP BEGIN surface engine decor pass {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=309, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=60781}
+							Lua 0:01:21:855
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:61409
+							Lua 0:01:22:218
+[Super Big Map][LoadingTiming] STEP END surface engine decor pass {area_factor=1.778, band_known=true, begin_session=1, decor_sites=203, decorated_circles=72, decoration_passes=2, decoration_ratio=25, destination_tiles=8192x8192, dropped_non_cosmetic=26, dropped_out_of_band=0, duration_ms=427, enabled=true, environment=Surface, failed=3, fallback_sites=21, generator_present=true, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, markers_resolved=1510, markers_unresolved=216, ms=427, objects=1832, obstruct_circles=270, ok=true, placed=40, placed_authored=5, placed_synthetic=35, preset=MAIN, ring_objects=0, seed=-8909488827485014858, seed_source=generator, sequence=310, session=1, since_previous_ms=427, sites_exhausted=true, sites_prestretched=203, sites_relocated=0, skipped_band=0, skipped_bounds=0, skipped_by_decorated=7, skipped_by_obstruct=137, skipped_no_match=0, skipped_obstructed=144, slot=1, source_tiles=6144x6144, synthetic_allowed_types=11, synthetic_attempts=1597, synthetic_budget=7000, synthetic_escalations=23, synthetic_finite_attempts=0, synthetic_finite_templates_left=56, synthetic_max_reach_percent=700, synthetic_random_attempts=1597, synthetic_reach_cap_percent=2800, synthetic_rejected_band=0, synthetic_rejected_bounds=0, synthetic_rejected_decorated=148, synthetic_rejected_empty=19, synthetic_rejected_failed=0, synthetic_rejected_no_match=0, synthetic_rejected_obstruct=1235, synthetic_rejected_terrain=160, synthetic_templates=56, synthetic_templates_exhausted=0, synthetic_templates_left=56, target=40, total_ms=61208, unused_sites=152, vanilla_decor_groups=51, version=10}
+[Super Big Map][LoadingTiming] STEP BEGIN surface resume combined pass edits {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=311, session=1, since_previous_ms=1, slot=1, source_tiles=6144x6144, total_ms=61209}
+							Lua 0:01:27:311
+[Super Big Map][LoadingTiming] STEP END surface resume combined pass edits {authoritative_passability_rebuild=true, begin_session=1, destination_tiles=8192x8192, duration_ms=5093, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=312, session=1, since_previous_ms=5093, slot=1, source_tiles=6144x6144, total_ms=66302}
+[Super Big Map][LoadingTiming] STEP BEGIN surface select stretched vanilla initial reveal {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=313, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=66302}
+							Lua 0:01:27:381
+[Super Big Map][LoadingTiming] STEP END surface select stretched vanilla initial reveal {begin_session=1, destination_tiles=8192x8192, duration_ms=70, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, scanned=1, sequence=314, session=1, since_previous_ms=70, slot=1, source_tiles=6144x6144, total_ms=66372}
+[Super Big Map][LoadingTiming] PHASE_END Restoring surface decoration density {destination_tiles=8192x8192, duration_ms=5591, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=315, session=1, slot=1, source_tiles=6144x6144, total_ms=66372}
+[Super Big Map][LoadingTiming] PHASE_BEGIN Rebuilding the surface build grid {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=316, session=1, slot=1, source_tiles=6144x6144, total_ms=66372}
+[Super Big Map][LoadingTiming] STEP BEGIN surface final RebuildBuildableGrid {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=317, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=66372}
+							Lua 0:01:28:327
+Buildable grid ready: 75/8512 valid zones.
+							Lua 0:01:28:328
+[Super Big Map][LoadingTiming] STEP END surface final RebuildBuildableGrid {begin_session=1, destination_tiles=8192x8192, duration_ms=947, environment=Surface, error=, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=318, session=1, since_previous_ms=947, slot=1, source_tiles=6144x6144, total_ms=67319}
+[Super Big Map][LoadingTiming] STEP natural mountain-base buildable apron audit {buildable_centers=17, created=73, destination_tiles=8192x8192, environment=Surface, failed_centers=56, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, reason=final grid contains usable apron centers, sequence=319, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=67319}
+[Super Big Map][LoadingTiming] STEP surface mountain-base apron buildable verdict {buildable_centers=17, created=73, destination_tiles=8192x8192, environment=Surface, failed_centers=56, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, reason=final grid contains usable apron centers, sequence=320, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=67319}
+[Super Big Map][LoadingTiming] STEP BEGIN surface enforce scan gate {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=321, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=67319}
+							Lua 0:01:28:333
+[Super Big Map][LoadingTiming] STEP END surface enforce scan gate {begin_session=1, destination_tiles=8192x8192, duration_ms=5, environment=Surface, first_result=nil, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=322, session=1, since_previous_ms=5, slot=1, source_tiles=6144x6144, total_ms=67324}
+[Super Big Map][LoadingTiming] PHASE_END Rebuilding the surface build grid {destination_tiles=8192x8192, duration_ms=952, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=323, session=1, slot=1, source_tiles=6144x6144, total_ms=67324}
+[Super Big Map][LoadingTiming] PHASE_BEGIN Distributing surface resources and anomalies {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=324, session=1, slot=1, source_tiles=6144x6144, total_ms=67324}
+[Super Big Map][LoadingTiming] STEP BEGIN surface top-up resources {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=325, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=67324}
+							Lua 0:01:28:943
+[Super Big Map][TopUpCandidatePool] kind=resources target=0 valid=280 sampled=2518 deferred=406 promoted=26 added=232 sequential=true surface_sector_filter=true buildable_sectors=219 unbuildable_sectors=180 unknown_sectors=0 selector_load_cache_reuses=197 planned_sector_fast_path=2518 deferred_reachability=false reachability_checks=0 reachability_rejections=0 remaining=0
+[Super Big Map][LoadingTiming] STEP END surface top-up resources {begin_session=1, destination_tiles=8192x8192, duration_ms=610, environment=Surface, first_result=nil, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=326, session=1, since_previous_ms=610, slot=1, source_tiles=6144x6144, total_ms=67934}
+							Lua 0:01:28:944
+[Super Big Map][LoadingTiming] STEP BEGIN surface prepare outer resource terrain {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=327, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=67934}
+							Lua 0:01:33:166
+[Super Big Map][TerrainCreaseRepair] TERMINAL_STRIP_SKIPPED {destination_tiles=8192x8192, dirty_regions=table: 000002C86B677F60, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_drop=0, modified=0, reason=no coherent raised terminal strip, slot=1, source_tiles=6144x6144, spans=, threshold=129, width=3}
+							Lua 0:01:33:195
+[Super Big Map][LoadingTiming] STEP outer resource access and cluster landing terrain {destination_tiles=8192x8192, dirty_height_regions=table: 000002C860B45330, dirty_region_certificate_version=1, dirty_region_count=56, environment=Surface, error=, extractor_resources=18, forced_resource_repairs=0, height_grid_height=8192, height_grid_width=8192, height_tile_size=100, hex_size=820x946, map=BlankBigTerraceCMix_02, map_height=819200, map_ref=table: 000002C85FE5A300, map_width=819200, mapdata_size=8192x8192, modified_cells=4303261, native_mask_samples=948237, native_raster_cells=15007032, native_sample_step=4, patches=56, reason=minimal resource terrain prepared, resource_clusters=12, resource_sites_modified=44, resources=46, ring_sectors=2, rocket_pads=12, rocket_pads_modified=12, rocket_sampling=table: 000002C86AFCFF90, rocket_shape_hexes=91, rocket_shape_radius=6, sequence=328, session=1, since_previous_ms=4252, slot=1, source_tiles=6144x6144, surface_resources=28, total_ms=72186}
+[Super Big Map][OuterResourceTerrain] resources=46 surface=28 extractor=18 resource_modified=44 rocket_pads=12 rocket_modified=12 rocket_shape_radius=6 patches=56 modified_cells=4303261 native_cells=15007032 native_samples=948237 error=
+[Super Big Map][LoadingTiming] STEP END surface prepare outer resource terrain {begin_session=1, destination_tiles=8192x8192, duration_ms=4252, environment=Surface, first_result=true, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=329, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=72186}
+							Lua 0:01:33:196
+[Super Big Map][LoadingTiming] STEP BEGIN surface outer resource dirty-region RebuildPassability (after outer resource terrain preparation) {dependency_margin=100, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, regions=56, sequence=330, session=1, since_previous_ms=1, slot=1, source_tiles=6144x6144, total_ms=72187}
+							Lua 0:01:34:827
+[Super Big Map][LoadingTiming] STEP END surface outer resource dirty-region RebuildPassability (after outer resource terrain preparation) {begin_session=1, destination_tiles=8192x8192, duration_ms=1631, environment=Surface, error=, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, regions=56, sequence=331, session=1, since_previous_ms=1631, slot=1, source_tiles=6144x6144, total_ms=73818}
+[Super Big Map][LoadingTiming] STEP BEGIN surface outer resource RebuildBuildableGrid (after outer resource terrain preparation) {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=332, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=73818}
+							Lua 0:01:35:754
+Buildable grid ready: 86/8340 valid zones.
+[Super Big Map][LoadingTiming] STEP END surface outer resource RebuildBuildableGrid (after outer resource terrain preparation) {begin_session=1, destination_tiles=8192x8192, duration_ms=927, environment=Surface, error=, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=333, session=1, since_previous_ms=927, slot=1, source_tiles=6144x6144, total_ms=74745}
+							Lua 0:01:35:761
+[Super Big Map][LoadingTiming] STEP outer resource terrain final audit {cluster_anchor_failures=0, cluster_excess=0, cluster_extractor_excess=0, cluster_extractor_maximum=3, cluster_extractor_minimum=1, cluster_extractor_shortfall=0, cluster_maximum=12, cluster_minimum=8, cluster_premium_excess=0, cluster_resource_excess=0, cluster_resource_maximum=5, cluster_resource_minimum=1, cluster_resource_shortfall=0, cluster_shortfall=0, cluster_weighted_composition_failures=0, destination_tiles=8192x8192, environment=Surface, extractor_buildable=18, first_resource_failure=, first_rocket_failure=, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, maximum_cluster_extractors=3, maximum_cluster_resources=4, minimum_cluster_extractors=1, minimum_cluster_resources=3, passability_clears=0, reason=all outer resource terrain contracts verified, resource_clusters=12, resource_failure_breakdown=table: 000002C86C45F0E8, resource_failures=0, resources=46, rocket_failure_breakdown=table: 000002C86B1D0AE0, rocket_failures=0, rocket_pads=12, sequence=334, session=1, since_previous_ms=6, slot=1, source_tiles=6144x6144, surface_passable=28, total_ms=74751, verified_modified_mountain_rocket_pads=7}
+[Super Big Map][OuterResourceTerrainAudit] resources=46 surface_passable=28 extractor_buildable=18 resource_failures=0 rocket_pads=12 rocket_failures=0 passability_clears=0 resource_clusters=12 cluster_shortfall=0 cluster_excess=0 cluster_resources=3-4 cluster_resource_excess=0 cluster_min_extractors=1 cluster_max_extractors=3 cluster_extractor_shortfall=0 cluster_extractor_excess=0 weighted_failures=0 anchor_failures=0 premium_excess=0 first_resource_failure= first_rocket_failure= verified_mountain_effect_candidates=7
+[Super Big Map][LoadingTiming] STEP BEGIN surface top-up anomalies {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=335, session=1, since_previous_ms=1, slot=1, source_tiles=6144x6144, total_ms=74752}
+							Lua 0:01:35:784
+[Super Big Map][OuterRingTopUpAnomalies] BEFORE count=24 sectors=144 bottom_sectors=40 right_sectors=40
+							Lua 0:01:36:010
+[Super Big Map][OuterRingTopUpAnomalies] AFTER count=24 sectors=144 bottom_sectors=40 right_sectors=40 inner_sectors=256 outer_count=24 inner_fallback_count=0 outer_reachable_candidates=126 inner_reachable_candidates=0 outer_random_samples=2016 inner_random_samples=0 inner_reused_candidates=0 buildable_filter=true buildable_outer_sectors=48 unbuildable_outer_sectors=96 unknown_buildable_sectors=0 planning_attempts=1 minimum_hex_distance=10 minimum_enrichment_hex_distance=3 maximum_per_sector=2 maximum_anomalies_in_resource_cluster=1
+							Lua 0:01:36:011
+[Super Big Map][AnomalyTopUp] source=breakthrough:9|complete:7|sequence:5|unlock:19 target=breakthrough:9|complete:12|sequence:9|unlock:34 final=breakthrough:9|complete:12|sequence:9|unlock:34 added=complete:5|sequence:4|unlock:15 added_total=24 remaining=0 candidates=0 sampled=0 mountain_base=0/18 base_quota_shortfall=18 reused=false sequential=false deferred_reachability=false reachability_checks=0 reachability_rejections=0
+[Super Big Map][LoadingTiming] STEP END surface top-up anomalies {begin_session=1, destination_tiles=8192x8192, duration_ms=250, environment=Surface, first_result=nil, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=336, session=1, since_previous_ms=250, slot=1, source_tiles=6144x6144, total_ms=75002}
+							Lua 0:01:36:012
+[Super Big Map][LoadingTiming] STEP BEGIN surface top-up effect deposits {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=337, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=75002}
+							Lua 0:01:36:058
+[Super Big Map][TopUpCandidatePool] kind=effects valid=9 sampled=220 reused=false sequential=true shared_samples=0 sector_samples=0 whole_map_samples=0 shared_published=0 deferred_reachability=false reachability_checks=0 reachability_rejections=0 exclusion_ring=2 ring_rejected=82 remaining=0
+[Super Big Map][LoadingTiming] STEP END surface top-up effect deposits {begin_session=1, destination_tiles=8192x8192, duration_ms=47, environment=Surface, first_result=nil, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=338, session=1, since_previous_ms=47, slot=1, source_tiles=6144x6144, total_ms=75049}
+[Super Big Map][LoadingTiming] STEP BEGIN surface register top-up markers {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=339, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=75049}
+							Lua 0:01:36:063
+[Super Big Map][LoadingTiming] STEP END surface register top-up markers {begin_session=1, destination_tiles=8192x8192, duration_ms=5, environment=Surface, first_result=nil, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=340, session=1, since_previous_ms=5, slot=1, source_tiles=6144x6144, total_ms=75054}
+[Super Big Map][LoadingTiming] STEP BEGIN surface resolve marker overlaps {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=341, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=75054}
+							Lua 0:01:36:090
+[Super Big Map][LoadingTiming] STEP END surface resolve marker overlaps {begin_session=1, destination_tiles=8192x8192, duration_ms=27, environment=Surface, first_result=0, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=342, session=1, since_previous_ms=27, slot=1, source_tiles=6144x6144, total_ms=75081}
+[Super Big Map][LoadingTiming] STEP BEGIN surface hard top-up spacing audit {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=343, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=75081}
+							Lua 0:01:36:158
+[Super Big Map][LoadingTiming] STEP END surface hard top-up spacing audit {begin_session=1, density_status=resources=true anomalies=true effects=true, destination_tiles=8192x8192, duplicate_hex_pairs=0, duration_ms=68, environment=Surface, first_duplicate_hex_pair=, first_repulsion_violation=, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, markers=615, ok=true, outer_ring_spacing_violations=0, sequence=344, session=1, since_previous_ms=68, slot=1, source_tiles=6144x6144, surface_quota_spacing_violations=0, surface_quota_topups=43, topups=265, total_ms=75149, violations=0}
+[Super Big Map][LoadingTiming] STEP BEGIN surface top-up placement audit {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=345, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=75149}
+[Super Big Map][LoadingTiming] STEP END surface top-up placement audit {begin_session=1, destination_tiles=8192x8192, duration_ms=0, environment=Surface, first_result=true, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=346, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=75149}
+							Lua 0:01:36:169
+[Super Big Map][OuterResourceTopUpCensus] phase=pre-reveal marker census surface final ordinary_resource_topups=46 ordinary_resource_topups_placed=0 ordinary_resource_topups_visible=0 ordinary_resource_topups_outermost=27 guaranteed_resource_topups_outermost=25 guaranteed_resource_topups_inner_band=18 anomaly_topups=24 anomaly_topups_total=24 anomaly_topups_placed=0 anomaly_topups_outside_ring=0 maximum_anomalies_in_resource_cluster=1 anomaly_resource_cluster_overflow=0 maximum_total_members_in_resource_cluster=4 cluster_total_member_overflow=0 effect_topups=0 effect_topups_placed=0 verified_mountain_rocket_pad_effect_topups=0 unverified_outer_effect_topups=0 native_resources=0 resource_breakdown=Concrete:1|Metals:34|Polymers:9|PreciousMetals:2 anomaly_breakdown=complete:5|false:4|unlock:15 effect_breakdown=BeautyEffectDeposit:5|ResearchEffectDeposit:4 require_placed=false minimum=0 outermost_minimum=0 inner_band_minimum=0 shortfall=0 outermost_shortfall=0 inner_band_shortfall=0
+[Super Big Map][LoadingTiming] STEP BEGIN diagnostic surface enrichment audit {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=347, session=1, since_previous_ms=11, slot=1, source_tiles=6144x6144, total_ms=75160}
+[Super Big Map][LoadingTiming] STEP END diagnostic surface enrichment audit {audit_ok=true, begin_session=1, destination_tiles=8192x8192, duration_ms=0, environment=Surface, error=, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=348, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=75160}
+							Lua 0:01:36:474
+[Super Big Map][LoadingTiming] PHASE_END Distributing surface resources and anomalies {destination_tiles=8192x8192, duration_ms=8141, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=349, session=1, slot=1, source_tiles=6144x6144, total_ms=75465}
+[Super Big Map][LoadingTiming] PHASE_BEGIN Aligning the underground entrances {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=350, session=1, slot=1, source_tiles=6144x6144, total_ms=75465}
+							Lua 0:01:37:015
+[Super Big Map][LoadingTiming] PHASE_END Aligning the underground entrances {destination_tiles=8192x8192, duration_ms=541, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=351, session=1, slot=1, source_tiles=6144x6144, total_ms=76006}
+[Super Big Map][LoadingTiming] PHASE_BEGIN Finalizing surface gameplay grids {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=352, session=1, slot=1, source_tiles=6144x6144, total_ms=76006}
+							Lua 0:01:37:032
+[Super Big Map][LoadingTiming] STEP BEGIN surface final RebuildPassability (after last object-grid transaction) {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=353, session=1, since_previous_ms=16, slot=1, source_tiles=6144x6144, total_ms=76022}
+							Lua 0:01:41:801
+[Super Big Map][LoadingTiming] STEP END surface final RebuildPassability (after last object-grid transaction) {begin_session=1, destination_tiles=8192x8192, duration_ms=4770, environment=Surface, error=, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=354, session=1, since_previous_ms=4770, slot=1, source_tiles=6144x6144, total_ms=80792}
+							Lua 0:01:41:817
+[Super Big Map][LoadingTiming] PHASE_END Finalizing surface gameplay grids {destination_tiles=8192x8192, duration_ms=4802, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=355, session=1, slot=1, source_tiles=6144x6144, total_ms=80808}
+[Super Big Map][LoadingTiming] PHASE_BEGIN Rebuilding the final surface build grid {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=356, session=1, slot=1, source_tiles=6144x6144, total_ms=80808}
+[Super Big Map][LoadingTiming] STEP BEGIN surface final RebuildBuildableGrid (after last object-grid transaction) {destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, sequence=357, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, total_ms=80808}
+							Lua 0:01:42:829
+Buildable grid ready: 86/8338 valid zones.
+Buildable grid computing too slow! Took 1012
+[Super Big Map][LoadingTiming] STEP END surface final RebuildBuildableGrid (after last object-grid transaction) {begin_session=1, destination_tiles=8192x8192, duration_ms=1012, environment=Surface, error=, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=358, session=1, since_previous_ms=1012, slot=1, source_tiles=6144x6144, total_ms=81820}
+[Super Big Map][LoadingTiming] STEP END surface expansion pipeline {begin_session=1, destination_tiles=8192x8192, duration_ms=23712, environment=Surface, error=, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=359, session=1, since_previous_ms=0, slot=1, source_tiles=6144x6144, terrain_grids=4, total_ms=81820}
+							Lua 0:01:43:012
+[Super Big Map][LoadingTiming] STEP derived object provenance recorded {derived=15, destination_tiles=8192x8192, environment=Surface, error=, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, reason=surface stretch complete, sequence=360, session=1, since_previous_ms=182, slot=1, source_tiles=6144x6144, total_ms=82002, unresolved=2897}
+							Lua 0:01:43:013
+[Super Big Map][LoadingTiming] PHASE_END Rebuilding the final surface build grid {destination_tiles=8192x8192, duration_ms=1196, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, ok=true, sequence=361, session=1, slot=1, source_tiles=6144x6144, total_ms=82004}
+							Lua 0:01:43:014
+[Super Big Map][LoadingTiming] SUMMARY phase: Finishing the expanded map... {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=26256, rank=1, session=1, slot=1, source_tiles=6144x6144, total_ms=26256}
+[Super Big Map][LoadingTiming] SUMMARY surface expansion pipeline {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=23712, rank=2, session=1, slot=1, source_tiles=6144x6144, total_ms=23712}
+[Super Big Map][LoadingTiming] SUMMARY phase: Migrating the vanilla source into the expanded terrain... {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=13746, rank=3, session=1, slot=1, source_tiles=6144x6144, total_ms=13746}
+[Super Big Map][LoadingTiming] SUMMARY source-view RandomMapGenerator.DoGenerate on expanded backing {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=11623, rank=4, session=1, slot=1, source_tiles=6144x6144, total_ms=11623}
+[Super Big Map][LoadingTiming] SUMMARY phase: Generating the exact vanilla source terrain... {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=10679, rank=5, session=1, slot=1, source_tiles=6144x6144, total_ms=10679}
+[Super Big Map][LoadingTiming] SUMMARY stretch temporary source terrain directly to destination {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=10150, rank=6, session=1, slot=1, source_tiles=6144x6144, total_ms=10150}
+[Super Big Map][LoadingTiming] SUMMARY terrain grid stretch: height {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=9468, rank=7, session=1, slot=1, source_tiles=6144x6144, total_ms=9468}
+[Super Big Map][LoadingTiming] SUMMARY phase: Distributing surface resources and anomalies {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=8141, rank=8, session=1, slot=1, source_tiles=6144x6144, total_ms=8141}
+[Super Big Map][LoadingTiming] SUMMARY phase: Restoring surface decoration density {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=5591, rank=9, session=1, slot=1, source_tiles=6144x6144, total_ms=5591}
+[Super Big Map][LoadingTiming] SUMMARY surface resume combined pass edits {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=5093, rank=10, session=1, slot=1, source_tiles=6144x6144, total_ms=5093}
+							Lua 0:01:43:015
+[Super Big Map][LoadingTiming] SUMMARY phase: Finalizing surface gameplay grids {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=4802, rank=11, session=1, slot=1, source_tiles=6144x6144, total_ms=4802}
+[Super Big Map][LoadingTiming] SUMMARY surface final RebuildPassability (after last object-grid transaction) {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=4770, rank=12, session=1, slot=1, source_tiles=6144x6144, total_ms=4770}
+[Super Big Map][LoadingTiming] SUMMARY vanilla RandomMapGenerator.DoGenerate {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=4573, rank=13, session=1, slot=1, source_tiles=6144x6144, total_ms=4573}
+[Super Big Map][LoadingTiming] SUMMARY RandomMapGenerator.OnGenerateLogic {calls=2, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=3857, rank=14, session=1, slot=1, source_tiles=6144x6144, total_ms=4397}
+[Super Big Map][LoadingTiming] SUMMARY surface prepare outer resource terrain {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=4252, rank=15, session=1, slot=1, source_tiles=6144x6144, total_ms=4252}
+[Super Big Map][LoadingTiming] SUMMARY allocate temporary vanilla backing {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=3106, rank=16, session=1, slot=1, source_tiles=6144x6144, total_ms=3106}
+[Super Big Map][LoadingTiming] SUMMARY deferred underground passage bootstrap {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=2845, rank=17, session=1, slot=1, source_tiles=6144x6144, total_ms=2845}
+[Super Big Map][LoadingTiming] SUMMARY capture transferred decor relief from temporary terrain {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=2181, rank=18, session=1, slot=1, source_tiles=6144x6144, total_ms=2181}
+[Super Big Map][LoadingTiming] SUMMARY phase: Please wait. {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=1904, rank=19, session=1, slot=1, source_tiles=6144x6144, total_ms=1904}
+[Super Big Map][LoadingTiming] SUMMARY finalize temporary source pass edits {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=1683, rank=20, session=1, slot=1, source_tiles=6144x6144, total_ms=1683}
+							Lua 0:01:43:016
+[Super Big Map][LoadingTiming] SUMMARY surface outer resource dirty-region RebuildPassability (after outer resource terrain preparation) {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=1631, rank=21, session=1, slot=1, source_tiles=6144x6144, total_ms=1631}
+[Super Big Map][LoadingTiming] SUMMARY transfer generated non-enrichment objects {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=1405, rank=22, session=1, slot=1, source_tiles=6144x6144, total_ms=1405}
+[Super Big Map][LoadingTiming] SUMMARY RandomMap procedure: ResolveBuildable {calls=2, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=949, rank=23, session=1, slot=1, source_tiles=6144x6144, total_ms=1330}
+[Super Big Map][LoadingTiming] SUMMARY switch temporary generator current slot {calls=2, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=698, rank=24, session=1, slot=1, source_tiles=6144x6144, total_ms=1200}
+[Super Big Map][LoadingTiming] SUMMARY phase: Rebuilding the final surface build grid {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=1196, rank=25, session=1, slot=1, source_tiles=6144x6144, total_ms=1196}
+[Super Big Map][LoadingTiming] SUMMARY surface final RebuildBuildableGrid (after last object-grid transaction) {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=1012, rank=26, session=1, slot=1, source_tiles=6144x6144, total_ms=1012}
+[Super Big Map][LoadingTiming] SUMMARY phase: Rebuilding the surface build grid {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=952, rank=27, session=1, slot=1, source_tiles=6144x6144, total_ms=952}
+[Super Big Map][LoadingTiming] SUMMARY terrain map grid stretch: BiomeGrid {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=951, rank=28, session=1, slot=1, source_tiles=6144x6144, total_ms=951}
+[Super Big Map][LoadingTiming] SUMMARY surface final RebuildBuildableGrid {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=947, rank=29, session=1, slot=1, source_tiles=6144x6144, total_ms=947}
+							Lua 0:01:43:017
+[Super Big Map][LoadingTiming] SUMMARY surface outer resource RebuildBuildableGrid (after outer resource terrain preparation) {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=927, rank=30, session=1, slot=1, source_tiles=6144x6144, total_ms=927}
+[Super Big Map][LoadingTiming] SUMMARY terrain map grid stretch: colorize {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=793, rank=31, session=1, slot=1, source_tiles=6144x6144, total_ms=793}
+[Super Big Map][LoadingTiming] SUMMARY terrain grid stretch: type {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=681, rank=32, session=1, slot=1, source_tiles=6144x6144, total_ms=681}
+[Super Big Map][LoadingTiming] SUMMARY phase: Repositioning surface rocks and decorations {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=663, rank=33, session=1, slot=1, source_tiles=6144x6144, total_ms=663}
+[Super Big Map][LoadingTiming] SUMMARY surface top-up resources {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=610, rank=34, session=1, slot=1, source_tiles=6144x6144, total_ms=610}
+[Super Big Map][LoadingTiming] SUMMARY terrain map grid colorize: destination write {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=table: 000002C85FE5A300, mapdata_size=8192x8192, max_ms=600, rank=35, session=1, slot=1, source_tiles=6144x6144, total_ms=600}
+[Super Big Map][LoadingTiming] SUMMARY phase: Aligning the underground entrances {calls=1, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_02, map_ref=t

@@ -1,0 +1,16 @@
+{
+  "restored": true,
+  "calls": [
+    {
+      "duration_ms": 5814,
+      "stage": "after last object-grid transaction",
+      "environment": "Surface"
+    },
+    {
+      "duration_ms": 6106,
+      "stage": "post-pipeline scheduled revalidation",
+      "environment": "Surface"
+    }
+  ],
+  "status": "pass"
+}

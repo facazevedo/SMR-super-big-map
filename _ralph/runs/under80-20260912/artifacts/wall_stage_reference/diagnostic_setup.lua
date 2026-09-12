@@ -17,25 +17,9 @@ local unpack_values = table.unpack or unpack
 local wrapper
 wrapper = function(map, stage, ...)
     local started = GetPreciseTicks()
-    local components, saved, hooks = {}, {}, {}
-    for _, name in ipairs({'InvalidateHeight', 'InvalidateType', 'RebuildPassability'}) do
-        local fn = terrain[name]
-        if type(fn) ~= 'function' then result.status='fail'; result.error='native boundary missing'; return end
-        saved[name] = fn
-        hooks[name] = function(...)
-            local before = GetPreciseTicks()
-            local values = pack(fn(...))
-            components[#components + 1] = { name = name, duration_ms = GetPreciseTicks() - before }
-            return unpack_values(values, 1, values.n)
-        end
-    end
-    for name, fn in pairs(hooks) do terrain[name] = fn end
-    local returned = pack(pcall(original, map, stage, ...))
-    for name, fn in pairs(saved) do terrain[name] = fn end
-    if not returned[1] then result.status='fail'; result.error=tostring(returned[2]); error(returned[2]); return end
+    local values = pack(original(map, stage, ...))
     result.calls[#result.calls + 1] = { stage = stage,
         environment = map.mapdata and map.mapdata.Environment,
-        components = components,
         duration_ms = GetPreciseTicks() - started }
     if map.mapdata.Environment == 'Surface' and stage == 'post-pipeline scheduled revalidation' then
         sbm.Config.DEBUG_LOGGING_ENABLED = previous_debug
@@ -47,7 +31,7 @@ wrapper = function(map, stage, ...)
             result.restored = true; result.status = 'pass'
         end
     end
-    return unpack_values(returned, 2, returned.n)
+    return unpack_values(values, 1, values.n)
 end
 sbm.GenerationGrids.RebuildFinal = wrapper
 sbm.Config.DEBUG_LOGGING_ENABLED = true
