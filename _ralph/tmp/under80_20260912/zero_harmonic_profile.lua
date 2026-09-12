@@ -30,13 +30,16 @@ end
 -- Profile the separate relief-capture hotspot; this run is diagnostic, not a
 -- cold timing sample. Capture is dynamically reached through a named upvalue.
 local function upvalue(fn,wanted)
+    if type(fn)~='function' then return end
     for i=1,200 do
         local name,value=debug.getupvalue(fn,i)
         if not name then break end
         if name==wanted then return value,i end
     end
 end
-local generate=upvalue(sbm.State.generator_do_generate_wrapper,'GenerateOnTemporaryVanillaBacking')
+-- The installed generator wrapper is intentionally absent at the main menu.
+-- Its factory already captures the same helper without patching any lifecycle.
+local generate=upvalue(sbm.MapGeneration.PatchRandomMapGenerator,'GenerateOnTemporaryVanillaBacking')
 local annotate,index
 if generate then annotate,index=upvalue(generate,'AnnotateDecorRelief') end
 if not annotate or not index or type(FunctionProfilerStart)~='function' then

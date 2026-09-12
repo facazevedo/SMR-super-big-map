@@ -249,7 +249,11 @@ static_checks = {
         "config.OuterResourceTransitionMinimumWidthHexes = 14" in CONFIG
         and "config.OuterResourceTransitionIrregularityPercent = 12" in CONFIG
         and "patch.outer_cells - patch.core_cells" in outer_resource_terrain
-        and "local harmonic =" in outer_resource_terrain
+        # The per-patch zero-angle cache separates declaration from evaluation.
+        # Verify the actual original formula, not its declaration formatting.
+        and "harmonic = 0.52 * math.sin(3 * angle + patch.phase)" in outer_resource_terrain
+        and "+ 0.30 * math.sin(5 * angle - patch.phase * 1.37)" in outer_resource_terrain
+        and "+ 0.18 * math.sin(7 * angle + patch.phase * 0.73)" in outer_resource_terrain
     ),
     "resource_terrain_transition_expands_with_cut_fill_height": (
         "local adaptive_transition_cap = 36 * cells_per_hex" in outer_resource_terrain

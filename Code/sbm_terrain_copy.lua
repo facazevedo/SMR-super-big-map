@@ -3750,6 +3750,9 @@ local function PrepareOuterResourceTerrain(map)
 				local coarse_height = math.floor((local_height - 1) / sample_step) + 1
 				local coarse = own(native_new_grid(coarse_width, coarse_height, "f", 32))
 				assert(coarse, "native coarse-mask allocation failed")
+				-- Missing atan2 deliberately means angle0. Reuse its literal harmonic
+				-- within this patch; do not change that existing terrain fallback.
+				local cached_zero_sine, cached_zero_harmonic
 				for coarse_y = 0, coarse_height - 1 do
 					local y = y0 + coarse_y * sample_step
 					for coarse_x = 0, coarse_width - 1 do
@@ -3767,9 +3770,18 @@ local function PrepareOuterResourceTerrain(map)
 							local ux, uy = 1, 0
 							if distance > 0.0001 then ux, uy = dx / distance, dy / distance end
 							local along_relief = ux * patch.relief_x + uy * patch.relief_y
-							local harmonic = 0.52 * math.sin(3 * angle + patch.phase)
-								+ 0.30 * math.sin(5 * angle - patch.phase * 1.37)
-								+ 0.18 * math.sin(7 * angle + patch.phase * 0.73)
+							local sine = math.sin
+							local harmonic
+							if angle == 0 and sine == cached_zero_sine then
+								harmonic = cached_zero_harmonic
+							else
+								harmonic = 0.52 * math.sin(3 * angle + patch.phase)
+									+ 0.30 * math.sin(5 * angle - patch.phase * 1.37)
+									+ 0.18 * math.sin(7 * angle + patch.phase * 0.73)
+								if angle == 0 and sine == math.sin then
+									cached_zero_sine, cached_zero_harmonic = sine, harmonic
+								end
+							end
 							local width_scale = 1 + transition_irregularity * harmonic
 								+ 0.12 * (2 * along_relief * along_relief - 1)
 								- 0.06 * along_relief

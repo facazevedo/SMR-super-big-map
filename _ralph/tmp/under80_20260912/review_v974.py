@@ -9,13 +9,14 @@ ROOT = Path(__file__).resolve().parents[3]
 RUN = ROOT / '_ralph/runs/under80-20260912'
 ART = RUN / 'artifacts'
 parser = argparse.ArgumentParser()
-parser.add_argument('--version', choices=['974', '975', '977'], default='974')
+parser.add_argument('--version', choices=['974', '975', '977', '978'], default='974')
 args = parser.parse_args()
 version = args.version
 baseline, expected_tests, expected_files = {
     '974': ('fe39258', 71, ['Code/sbm_decor_topup.lua', 'metadata.lua']),
     '975': ('2c68ff3', 72, ['Code/sbm_terrain_copy.lua', 'Code/sbm_version.lua', 'metadata.lua']),
     '977': ('1f67811', 74, ['Code/sbm_terrain_copy.lua', 'Code/sbm_version.lua', 'metadata.lua']),
+    '978': ('b5fb059', 76, ['Code/sbm_engine.lua', 'Code/sbm_terrain_copy.lua', 'Code/sbm_version.lua', 'metadata.lua']),
 }[version]
 target = ART / f'v{version}_all_ten_rules_review.json'
 if target.exists():
@@ -23,9 +24,10 @@ if target.exists():
 read = lambda p: json.loads(p.read_text())
 reference = read(ART / f'v{version}_reference/reference_audit.json')
 assert reference['clean_exact_evidence'] and not reference['issues']
-if version in ('975', '977'):
+if version in ('975', '977', '978'):
     assert reference['median_s'] < reference['prior_median_s'], 'No measured reference improvement'
-offline = read(ART / f'v{version}_offline/all_results.json')
+offline_name = 'v978_final_offline' if version == '978' else f'v{version}_offline'
+offline = read(ART / offline_name / 'all_results.json')
 assert len(offline) == expected_tests and all(row['exit'] == 0 for row in offline)
 source_review = RUN / f'v{version}_source_review.md'
 assert source_review.exists()

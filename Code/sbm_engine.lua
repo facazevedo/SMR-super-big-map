@@ -18,6 +18,7 @@ if type(SuperBigMap) ~= "table" then
 end
 
 local Engine = {}
+local type, pcall = type, pcall
 
 -- Read a global by name without invoking metatables.
 function Engine.Global(name)

@@ -190,3 +190,33 @@ Missing-atan2 sine calls62892 ->648; present-atan2 path62892 ->61002. Candidate
 and fresh diagnostic setup parse. Next diagnostic installs only the candidate
 outer helper in its owned process and profiles the separate transferred-relief
 capture hotspot. Production remains v977; diagnostic timings are not cold samples.
+
+## v978 Lua helper/cache candidate
+
+Closed diagnostics: zero_harmonic_profile_reference_3 exact full predecessor and
+individual rocks PASS; outer stage3521ms. Relief function profile exposes5,486,204
+mod-environment lookups and1,195,943 IsKindOf helper calls. Prior setup1 used a
+nonexistent predecessor directory (no process); setup2 failed on a main-menu-only
+missing installed wrapper and normally closed PID48300. Corrected setup hooks the
+factory's captured helper; successful PID14476 normally closed.
+
+engine_primitives_profile_reference snapshots only type/pcall in an isolated
+engine-module diagnostic proxy. Full predecessor parity PASS, T1=87.978s,
+relief3629ms; PID18696 normally closed. Production uses the equivalent lexical
+binding, not that diagnostic proxy. No game functions are cached.
+
+v978/guard293 integrates the two measured changes.172114 primitive result/trace
+checks and86905 exact outer-mask checks pass. Full76-command v978_offline is live
+in session92568. After it closes: commit code/tests/review, deploy sync+audit38,
+measure v978_reference against v977_reference, then v978_matrix against v977_matrix,
+and review_v974.py --version978. Preserve one HEAD across all acceptance processes.
+Under80s is not established; the goal remains active.
+
+v978_offline session92568 closed exit1:75 commands passed; static outer_policy
+expected a combined `local harmonic =` declaration. It now checks the three
+unchanged sine terms rather than declaration formatting. The failed artifact is
+preserved. Full rerun will be v978_final_offline, used by the v978 review script.
+
+v978_final_offline session60159 closed exit0: all76 commands pass. Production and
+tests are ready for the committed cold checkpoint. Next reference output directory
+is v978_reference; use v977_reference as predecessor. No live game remains.

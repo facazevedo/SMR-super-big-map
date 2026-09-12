@@ -21,7 +21,9 @@ local function compile(source,label)
  m.sin=function(x) calls[label]=calls[label]+1;return math.sin(x) end
  local env=setmetatable({math=m,ProtectedTerrainBlendWeight=protection,
   native_weight_scale=4096,maximum_width_scale=1.35},{__index=_G})
- return assert(load(body(source),'outer mask '..label,'t',env)),env
+ -- This oracle isolates cell arithmetic; patch-lifetime cache behavior is
+ -- independently covered by outer_zero_harmonic_test.lua.
+ return assert(load('local cached_zero_sine,cached_zero_harmonic\n'..body(source),'outer mask '..label,'t',env)),env
 end
 local old,a=compile(previous,'old');local new,b=compile(current,'new')
 local function check(ok,msg) assert(ok,msg);checks=checks+1 end

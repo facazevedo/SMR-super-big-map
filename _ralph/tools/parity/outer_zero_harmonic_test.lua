@@ -1,7 +1,7 @@
 -- Actual predecessor/candidate cell expressions; one cache lifetime per patch.
+local p=assert(io.popen('git show b5fb059:Code/sbm_terrain_copy.lua','r'))
+local previous=p:read('*a');assert(p:close())
 local f=assert(io.open('Code/sbm_terrain_copy.lua','r'))
-local previous=f:read('*a');f:close()
-f=assert(io.open('_ralph/runs/under80-20260912/artifacts/zero_harmonic_research/terrain_candidate.lua','r'))
 local current=f:read('*a');f:close()
 local function body(source)
     local start=assert(source:find('local function apply_native_patch',1,true))
