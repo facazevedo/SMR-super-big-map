@@ -12,7 +12,16 @@ local uncached=body:sub(1,first-1)
   ..'local prefabs = SafeCall(marker.GetMatchingMarkers, marker, revision, version)\n\t\t\t'
   ..body:sub(last)
 
-local function fixture(cached)
+local linear_circles = [[local function circle_hits(list,x,y,radius)
+  for i=1,#list do
+    local c=list[i]
+    local dx,dy=x-c.x,y-c.y
+    local reach=radius+c.r
+    if dx*dx+dy*dy<reach*reach then return true end
+  end
+  return false
+end]]
+local function fixture(cached, linear)
   local a={weight=100,max_radius=1,rotation=360,orientation=0,decor_obstruct=true}
   local b={weight=70,max_radius=1,rotation=360,orientation=0}
   local list={a,b}
@@ -65,7 +74,7 @@ local function fixture(cached)
     end
     markers[name]=marker
   end
-  local chunk=helpers..'\n'..circles..'\n'..weight..'\n'..cache_decl..'\n'
+  local chunk=helpers..'\n'..(linear and linear_circles or circles)..'\n'..weight..'\n'..cache_decl..'\n'
     ..(cached and body or uncached)..'\nreturn try_stamp'
   local stamp=assert(load(chunk,'production matching cache stamp','t',env))()
   local function attempt(name,x,y)
@@ -106,6 +115,7 @@ end
 local old,old_calls=fixture(false)
 local current,current_calls=fixture(true)
 assert(old==current,'cache changed outcomes, ordered placements, weights, or RNG trace')
+assert(current==fixture(true,true),'spatial query changed outcomes, placements, weights, or RNG trace')
 assert(old_calls>3000 and current_calls==7)
 print('PASS production matching cache: identical outcomes/placements/RNG; matcher calls '
   ..old_calls..' -> '..current_calls..' (includes fresh-pass invalidation check)')

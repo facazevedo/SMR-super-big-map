@@ -65,7 +65,7 @@ local ObjectScalesWithTerrain = ObjectClone and ObjectClone.ObjectScalesWithTerr
 local DecorTopUp = {}
 SuperBigMap.DecorTopUp = DecorTopUp
 
-DecorTopUp.VERSION = 9
+DecorTopUp.VERSION = 10
 DecorTopUp.SEED_TAG = "SuperBigMapDecorEnginePass"
 DecorTopUp.LastStats = nil
 
@@ -147,11 +147,46 @@ local function map_stretch(map)
 end
 
 local function circle_hits(list, x, y, radius)
-	for i = 1, #list do
+	-- These circles are private to one Run and only appended after a stamp.
+	-- Index their full bounding boxes; the original strict circle predicate still
+	-- decides every possible hit. No candidate, rejection precedence or draw changes.
+	local index = list.spatial_index
+	if not index then
+		index = { rows = {}, count = 0, serial = 0, seen = {} }
+		list.spatial_index = index
+	end
+	local floor, cell = math.floor, 16384
+	for i = index.count + 1, #list do
 		local c = list[i]
-		local dx, dy = x - c.x, y - c.y
-		local reach = radius + c.r
-		if dx * dx + dy * dy < reach * reach then return true end
+		for bx = floor((c.x - c.r + 0.0) / cell), floor((c.x + c.r + 0.0) / cell) do
+			local row = index.rows[bx]
+			if not row then row = {}; index.rows[bx] = row end
+			for by = floor((c.y - c.r + 0.0) / cell), floor((c.y + c.r + 0.0) / cell) do
+				local bucket = row[by]
+				if not bucket then bucket = {}; row[by] = bucket end
+				bucket[#bucket + 1] = c
+			end
+		end
+	end
+	index.count, index.serial = #list, index.serial + 1
+	local serial, seen = index.serial, index.seen
+	local by0, by1 = floor((y - radius + 0.0) / cell), floor((y + radius + 0.0) / cell)
+	for bx = floor((x - radius + 0.0) / cell), floor((x + radius + 0.0) / cell) do
+		local row = index.rows[bx]
+		if row then
+			for by = by0, by1 do
+				local bucket = row[by]
+				for i = 1, bucket and #bucket or 0 do
+					local c = bucket[i]
+					if seen[c] ~= serial then
+						seen[c] = serial
+						local dx, dy = x - c.x, y - c.y
+						local reach = radius + c.r
+						if dx * dx + dy * dy < reach * reach then return true end
+					end
+				end
+			end
+		end
 	end
 	return false
 end
