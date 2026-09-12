@@ -1,0 +1,44 @@
+{
+  "status": "pass",
+  "restored": true,
+  "calls": [
+    {
+      "duration_ms": 6320,
+      "stage": "after last object-grid transaction",
+      "components": [
+        {
+          "name": "InvalidateHeight",
+          "duration_ms": 0
+        },
+        {
+          "name": "InvalidateType",
+          "duration_ms": 0
+        },
+        {
+          "name": "RebuildPassability",
+          "duration_ms": 5326
+        }
+      ],
+      "environment": "Surface"
+    },
+    {
+      "duration_ms": 6467,
+      "stage": "post-pipeline scheduled revalidation",
+      "components": [
+        {
+          "name": "InvalidateHeight",
+          "duration_ms": 0
+        },
+        {
+          "name": "InvalidateType",
+          "duration_ms": 0
+        },
+        {
+          "name": "RebuildPassability",
+          "duration_ms": 5478
+        }
+      ],
+      "environment": "Surface"
+    }
+  ]
+}

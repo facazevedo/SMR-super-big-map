@@ -529,3 +529,13 @@ from this startup breakdown. Full underground expansion is NOT a pre-T1 target;
 its native source/bootstrap during surface startup remains included.
 Next61N diagnostic adds three native component timers inside each final rebuild
 to distinguish invalidation cost from the rebuild itself. No operation skipped.
+
+wall_stage_61n89086/PID48848 CLOSED normally, exact predecessor/private/rock PASS.
+Both final InvalidateHeight and InvalidateType measured0ms; RebuildPassability
+5326/5478ms. Do not pursue invalidation batching: cost is the native rebuild.
+Largest remaining site-specific cost is decor9768ms vsreference427ms,727247
+synthetic attempts; candidate/RNG counts must stay exact. New nondeployed
+decor_radius_query and three-way fixture prepare one-point-bucket queries using
+conservative radius-expanded circle groups; see decor_radius_research.md.
+Also recorded an UNPROVED signed-coordinate precision hypothesis for apron masks;
+no new production candidate, lower bracket or cold claim exists.
