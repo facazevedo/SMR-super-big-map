@@ -26,3 +26,11 @@ Read-only engine source inspection also found GridTypeFmtItems/ToFmt expose only
 float32, uint16 and uint8 (CommonLua/Classes/PerlinNoise.lua:6-17). There is no
 established float64 compute-grid API here; GPU double support alone proves nothing
 about this CPU/native grid interface. No float64 probe or binary edit was made.
+
+After v979 acceptance, a NONDEPLOYED generator and exact-rational bound test ran.
+Artifacts/apron_bracket_research holds the fingerprinted candidate: same mask and
+scalar oracle, error divisor8192/4096 and exact U24 allowance2048/4096 selected
+consistently. The proof also checks the exact binary representation of0.55.
+apron_bracket_native.lua adds33 native three-way fixtures around both narrowed
+domain endpoints; apron_bracket_shadow.lua compares the complete fresh height
+grid. Both parse but have NOT executed. No timing saving or native parity yet.

@@ -1,0 +1,79 @@
+{
+  "code_commit": "c4d3e67de9103f1477aa3e23c94e2b6f51052751",
+  "version": "979",
+  "offline_commands_passed": 77,
+  "reference_samples_s": [
+    88.12,
+    89.969,
+    89.425
+  ],
+  "benchmark_median_s": 89.425,
+  "prior_median_s": 89.807,
+  "source_review": "v979_source_review.md",
+  "deployment": {
+    "source": "D:\\PROJS\\SMR\\super-big-map",
+    "destination": "C:\\Users\\fazevedo\\AppData\\Roaming\\Surviving Mars Relaunched\\Mods\\super-big-map",
+    "source_files": 38,
+    "destination_files": 38,
+    "missing_in_destination": [],
+    "stale_in_destination": [],
+    "content_mismatch": [],
+    "ok": true
+  },
+  "unique_acceptance_processes": 9,
+  "scenarios": [
+    {
+      "site": "15S67E",
+      "all_ten": "pass",
+      "automated_gates": "8/8 pass",
+      "seed_parity_review": "Exact predecessor/private streams plus primary source/RNG review.",
+      "process_review": "Immutable audited checkpoint, unique owned process, normal captured shutdown.",
+      "visual_review": "Inherited accepted visuals through exact full outputs; no new screenshot claim.",
+      "t0_to_t1_s": 92.1,
+      "prior_t0_to_t1_s": 93.037
+    },
+    {
+      "site": "24S74W",
+      "all_ten": "pass",
+      "automated_gates": "8/8 pass",
+      "seed_parity_review": "Exact predecessor/private streams plus primary source/RNG review.",
+      "process_review": "Immutable audited checkpoint, unique owned process, normal captured shutdown.",
+      "visual_review": "Inherited accepted visuals through exact full outputs; no new screenshot claim.",
+      "t0_to_t1_s": 90.183,
+      "prior_t0_to_t1_s": 91.477
+    },
+    {
+      "site": "45S120W",
+      "all_ten": "pass",
+      "automated_gates": "8/8 pass",
+      "seed_parity_review": "Exact predecessor/private streams plus primary source/RNG review.",
+      "process_review": "Immutable audited checkpoint, unique owned process, normal captured shutdown.",
+      "visual_review": "Inherited accepted visuals through exact full outputs; no new screenshot claim.",
+      "t0_to_t1_s": 84.445,
+      "prior_t0_to_t1_s": 85.461
+    },
+    {
+      "site": "61N136W",
+      "all_ten": "pass",
+      "automated_gates": "8/8 pass",
+      "seed_parity_review": "Exact predecessor/private streams plus primary source/RNG review.",
+      "process_review": "Immutable audited checkpoint, unique owned process, normal captured shutdown.",
+      "visual_review": "Inherited accepted visuals through exact full outputs; no new screenshot claim.",
+      "t0_to_t1_s": 94.349,
+      "prior_t0_to_t1_s": 100.428
+    },
+    {
+      "site": "17S11W",
+      "all_ten": "pass",
+      "automated_gates": "8/8 pass",
+      "seed_parity_review": "Exact predecessor/private streams plus primary source/RNG review.",
+      "process_review": "Immutable audited checkpoint, unique owned process, normal captured shutdown.",
+      "visual_review": "Inherited accepted visuals through exact full outputs; no new screenshot claim.",
+      "t0_to_t1_s": 89.199,
+      "prior_t0_to_t1_s": 91.172
+    }
+  ],
+  "raw_judgments_unchanged": true,
+  "under_80_s_reached": false,
+  "timing_qualification": "Reference and scenario results are separate: do not infer a reference speedup from the slow-map gain."
+}

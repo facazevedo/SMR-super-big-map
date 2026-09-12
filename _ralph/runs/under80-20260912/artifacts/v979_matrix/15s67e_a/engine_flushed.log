@@ -1,0 +1,360 @@
+					Render 0:00:00:057
+*** executable info
+Timestamp:     	69e75da5
+Date:          	Tue Apr 21 07:21:09 2026
+Command line:  	-nointro -no_interactive_asserts -stdout -crash_folder D:\PROJS\SMR\smr-harness\.state\game-crashes\20260912-194936-18d4aaa4b457c218 -hidden
+Compiler:      	194435214, 142 (VS 2019) or newer
+
+
+*** hardware info
+CPU name      	Intel(R) Core(TM) i9-10900X CPU @ 3.70GHz
+CPU MHz       	3696
+CPU cores     	10/20
+Phys. Memory   	130752 MBytes
+Memory In Use  	24%
+Disk Free      	95414 MBytes
+
+
+*** OS info
+OS:            	Windows 11
+Version:       	10.0.26100 
+
+
+*** Debug::Init()
+
+
+					Render 0:00:00:441
+Steam initialized (AppId 3215050, Beta branch ???)
+SteamFilterText is unavailable for user's language and will act as a passthrough.
+					Render 0:00:00:445
+Drive type for game installation: SSD, savegames: SSD
+					Render 0:00:00:446
+Language: English
+					Render 0:00:01:266
+Starting hidden
+					Render 0:00:03:253
+*** graphics info
+					Render 0:00:03:254
+GPU                            	NVIDIA GeForce RTX 5090 Feature Level: 12.1 {  DoublePrecisionFloatShaderOps: 1 OutputMergerLogicOp: 1 MinPrecisionSupport: 2 TiledResourcesTier: 3 ResourceBindingTier: 3 PSSpecifiedStencilRefSupported: 0 TypedUAVLoadAdditionalFormats: 1 ROVsSupported: 1 ConservativeRasterizationTier: 3 MaxGPUVirtualAddressBitsPerResource: 40 StandardSwizzle64KBSupported: 0 CrossNodeSharingTier: 0 CrossAdapterRowMajorTextureSupported: 0 VPAndRTArrayIndexFromAnyShaderFeedingRasterizerSupportedWithoutGSEmulation: 1 ResourceHeapTier: 2 NotZeroedPools: 1 UMA: 0 UnalignedBlockTextures: 1}
+API                            	d3d12
+GPU Driver Version             	32.0.15.7688
+GPU Driver Package Version     	576.88
+GPU Dedicated Video Memory     	32101 MB
+					Render 0:00:03:458
+
+Libs: Network, Sequences, MouseTrackWin, DumbAI, MapGen, Paradox, TriggersAndEvents, Notifications, Research, Resources, DevToolsPublic, DebugAdapter 
+
+					Render 0:00:03:822
+
+Platform: asserts, cheats, debug, desktop, editor, goldmaster, paradox, pc, steam
+
+						Game Task 0:00:03:828
+
+** Entity stats:
+  entities: 2920
+  unique state names: 335 / 1023
+  unique spot names: 370
+  unique spot transforms: 19621
+  max surface radius: 47680 cm
+
+					Render 0:00:05:039
+*** audio info
+Audio Endpoint                 	Speakers (Realtek(R) Audio)
+							Lua 0:00:05:105
+Lua revision: 392284
+Assets revision: 30889
+Steam AppID: 3215050
+Build version: 1.0.7.392284
+Build branch:  Release
+							Lua 0:00:05:108
+[DebugAdapter] Started at 127.0.0.1:8165
+							Lua 0:00:05:116
+Account storage loaded successfully in 7 ms
+DLC thomas loaded, lua revision 392284, assets revision 30889
+							Lua 0:00:05:126
+[mod] Loaded mod def Disable All Mods (id DisableAllMods, v0.00-012) unpacked from appdata
+[mod] Loaded mod def Copy Move (id CopyMove, v0.00-001) unpacked from appdata
+[mod] Loaded mod def Filter Landing Spots (id FilterLandingSpots, v0.00-018) packed from pops
+[mod] Loaded mod def insert-objects (id insert-objects, v0.00-005) unpacked from appdata
+[mod] Loaded mod def Whale - Aquatic Life for Mars Seas (id Whale, v0.00-10033) unpacked from appdata
+							Lua 0:00:05:127
+[mod] Loaded mod def Toggle Console Log Off (id TCLoff7, v1.00-005) unpacked from appdata
+[mod] Loaded mod def Bridges Blender (id bridges-blender, v0.00-008) unpacked from appdata
+[mod] Loaded mod def Bridges (id Bridges, v0.00-099) unpacked from appdata
+[mod] Loaded mod def Scenario Editor Terrains (id SRM-scenario-editor-terrains, v0.00-001) unpacked from appdata
+[mod] Loaded mod def Project Ark (id ProjectArk, v0.00-004) unpacked from appdata
+[mod] Loaded mod def Mute Notifications (id MuteNotifications, v0.00-060) unpacked from appdata
+[mod] Loaded mod def Real Mars Terrain (id RealMarsTerrain, v0.00-007) unpacked from appdata
+[mod] Loaded mod def Scenario Editor (id SRM-scenario-editor, v0.00-045) unpacked from appdata
+[mod] Loaded mod def Martian Waters Snow (id MartianWatersSnow, v0.00-407) unpacked from appdata
+[mod] Loaded mod def Planet Dawn (id PlanetDawn, v1.00-193) unpacked from appdata
+[mod] Loaded mod def No Wonders (id no-wonders, v0.00-001) unpacked from appdata
+[mod] Loaded mod def My Wild Pet (id MyWildPet, v0.00-005) unpacked from appdata
+[mod] Loaded mod def invisible-passage-ramp (id IPRAMP, v0.00-068) unpacked from appdata
+[mod] Loaded mod def Extra Maps (id ExtraMaps, v0.00-011) unpacked from appdata
+[mod] Loaded mod def Colony Control (id ColonyControl, v0.00-014) unpacked from appdata
+[mod] Loaded mod def Auto Clear Rubble (id AutoClearRubble, v1.00-023) unpacked from appdata
+[mod] Loaded mod def Super Big Map (id SuperBigMap, v0.00-979) unpacked from appdata
+[mod] Loaded mod def Attribute Inspector (id AttributeInspector, v0.00-014) unpacked from appdata
+[mod] Loaded mod def Humpback Whale - Aquatic Life for Mars Seas (id HumpbackWhale, v0.00-10009) unpacked from appdata
+[mod] Loaded mod def Buried Cables and Pipes (id bcp, v0.00-433) unpacked from appdata
+[mod] Loaded mod def Animalia - Restored Wildlife (id Animalia, v0.00-018) unpacked from appdata
+[mod] Loaded mod def Rover Drive Mode (id RoverDriveMode, v0.00-195) unpacked from appdata
+[mod] Loaded mod def DLSS 5 Neural Rendering - Experimental (id vzlLtM, v0.00-002) unpacked from appdata
+							Lua 0:00:06:940
+Reloading done in 1799 ms
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:65347
+							Lua 0:00:06:941
+Available DLCs: thomas(Interplanetary Codex) 
+							Lua 0:00:07:835
+[preset] Preset postprocess took 154 ms.
+							Lua 0:00:07:949
+479 / 479 particle streams loaded in 104 ms.
+							Lua 0:00:08:078
+[PdxSDK] Started up. Took 2937
+							Lua 0:00:08:911
+Received achievements from Steam.
+							Lua 0:00:09:241
+[mod] Loaded mod items for: TCLoff7, SuperBigMap
+							Lua 0:00:09:971
+[Braze] Initialized. SE: true, SB false
+							Lua 0:00:10:067
+[Braze] ContentCards 2/2. FullSync true. Headers nil. Retry 0
+							Lua 0:00:10:246
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:65362
+							Lua 0:00:10:331
+[PdxSDKMods] Mod 147865 v 6 is up to date. Nothing to download.
+							Lua 0:00:10:416
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:65364
+							Lua 0:00:10:455
+Game Seed:  v932_sweep_14134_15s67e 2029011127366940594 
+							Lua 0:00:10:567
+*** Reloading assets from folder 'BinAssets/'
+							Lua 0:00:13:644
+*** Assets reloaded in 3.1 s, read 205.8 MB, read speed 66.9 MB/s, average read 5029 bytes.
+							Lua 0:00:13:646
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:65366
+[DebugAdapter] Connection lost to 127.0.0.1:65364 
+[DebugAdapter] Connection lost to 127.0.0.1:65362 
+[DebugAdapter] Connection lost to 127.0.0.1:65347 
+							Lua 0:00:16:455
+Map::Init: 0.31000 ms
+							Lua 0:00:16:456
+Map::Load: 66.54000 ms
+CreateMap: 66.66000 ms
+							Lua 0:00:16:478
+MapLoadRandom:  -8507072321050982375 
+							Lua 0:00:19:733
+[DebugAdapter] Connection lost to 127.0.0.1:65366 
+							Lua 0:00:19:787
+Map (slot 1) changed to "PreGame" in 9323 ms.
+							Lua 0:00:20:964
+Map::Done: 0.38000 ms
+							Lua 0:00:21:251
+Map::Init: 0.49000 ms
+Map::Load: 276.50000 ms
+CreateMap: 276.64999 ms
+							Lua 0:00:21:296
+game_settings:
+    sponsor: IMM
+    profile: rocketscientist
+    founding_faction: MarsDemocraticParty
+    rival_colonies: Brazil, paradox, Japan
+    mystery_random: 
+    game_rules: RoughTerrain
+more_game_settings: save_game_id: vVbp4iwmbhpbiaR1, mystery: BlackCubeMystery, coordinates: 15S67E, landing_spot: , logo: IMM
+map_conditions: altitude: 2071, temperature: -15, cold_wave: 36, dust_devils: 89, dust_storm: 36, meteors: 109
+map_resources: concrete: 36, metals: 73, precious_metals: 73, water: 139
+							Lua 0:00:21:343
+MapLoadRandom:  -4123171867764199513 
+							Lua 0:00:27:243
+Map (slot 1) changed to "BlankBigTerraceCMix_19" in 7374 ms.
+							Lua 0:00:28:244
+Map::Init: 0.17000 ms
+							Lua 0:00:28:245
+Map::Load: 106.94000 ms
+CreateMap: 107.00000 ms
+							Lua 0:00:28:653
+Buildable grid ready: 17/1626 valid zones.
+							Lua 0:00:28:667
+MapLoadRandom:  3966498160871219263 
+							Lua 0:00:30:395
+Map (slot 15) changed to "BlankBigTerraceCMix_19" in 3152 ms.
+							Lua 0:00:30:850
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:57201
+							Lua 0:00:33:212
+[DebugAdapter] Connection lost to 127.0.0.1:57201 
+							Lua 0:00:36:863
+Buildable grid ready: 16/642 valid zones.
+							Lua 0:00:39:035
+[Super Big Map][UndergroundSeedReservation] RESERVATION {authority_tag=ralph_seed_parity, boundary=fresh_vanilla_twin_test_seam, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_19, map_ref=table: 000002214BB46580, mapdata_size=6144x6144, reserved_seed=8948058643542636291, slot=1, source_tiles=6144x6144}
+							Lua 0:00:40:113
+[Super Big Map][TerrainCreaseRepair] SOURCE_SKIPPED {bottom_tracks=102, candidates=372, destination_tiles=8192x8192, edge_margin=614, environment=Surface, hex_size=820x946, left_tracks=92, map=BlankBigTerraceCMix_19, map_ref=table: 000002214BB46580, mapdata_size=8192x8192, max=65049, min=1107, outer_guard=6, reason=no edge-facing outer-ring step, right_tracks=91, slot=1, source_tiles=6144x6144, threshold=128, top_tracks=87}
+							Lua 0:00:44:548
+[Super Big Map][TerrainCreaseRepair] DESTINATION_REPAIRED {axis=x,y,y,y,x,x,x,y,y,y, bottom_tracks=329, destination_tiles=8192x8192, detected=13271, edge=right,bottom,bottom,bottom,right,right,right,bottom,bottom,bottom, edge_margin=42, edge_perp=8170, environment=Surface, first_along=704, hex_size=820x946, last_along=5548, left_tracks=220, map=BlankBigTerraceCMix_19, map_ref=table: 000002214BB46580, mapdata_size=8192x8192, max=65048, max_offset=2406, min=1110, min_offset=320, modified=502813, outer_guard=8, qualified=10, reason=destination edge lower regions translated with slope-matched feathered joins, repairs=10, right_tracks=361, rows=4843, slot=1, source_tiles=6144x6144, threshold=320, top_tracks=157}
+							Lua 0:00:58:215
+[Super Big Map][UndergroundSeedReservation] CONSUMER {boundary=fresh_vanilla_twin_test_seam, consumer_seed=8948058643542636291, consumer_status=pending_injected, destination_tiles=8192x8192, environment=Surface, fill_ok=true, hex_size=820x946, map=BlankBigTerraceCMix_19, map_ref=table: 000002214BB46580, mapdata_size=8192x8192, reserved_seed=8948058643542636291, seeded_params_seed=8948058643542636291, slot=1, source_tiles=6144x6144}
+							Lua 0:00:58:248
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:57214
+							Lua 0:00:59:487
+Map::Init: 0.21000 ms
+Map::Load: 253.44000 ms
+CreateMap: 253.60001 ms
+							Lua 0:00:59:783
+Buildable grid ready: 1/5 valid zones.
+							Lua 0:01:00:090
+Buildable grid ready: 1/5 valid zones.
+							Lua 0:01:00:096
+MapLoadRandom:  -6355582389508725627 
+							Lua 0:01:04:637
+Map (slot 2) changed to "BlankUnderground_04" in 6421 ms.
+							Lua 0:01:05:553
+Buildable grid ready: 46/7499 valid zones.
+							Lua 0:01:11:012
+[DebugAdapter] Connection lost to 127.0.0.1:57214 
+							Lua 0:01:13:464
+Buildable grid ready: 1/7 valid zones.
+							Lua 0:01:15:005
+Map::Done: 0.46000 ms
+							Lua 0:01:15:404
+[Super Big Map][UndergroundSeedReservation] HOLDER {boundary=fresh_vanilla_twin_test_seam, consumer_seed=8948058643542636291, consumer_status=pending_injected, destination_tiles=8192x8192, environment=Underground, generation_ok=true, hex_size=615x710, holder_generation_hash=2777637941362017342, holder_seed=8948058643542636291, map=BlankUnderground_04, map_ref=table: 0000022159E37F68, mapdata_size=6144x6144, reserved_seed=8948058643542636291, seeded_params_seed=8948058643542636291, slot=2, source_tiles=6144x6144}
+							Lua 0:01:17:453
+no sectors found with enough average expected metals
+no resources expected at all on the map
+							Lua 0:01:20:556
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:57223
+							Lua 0:01:20:761
+[DebugAdapter] Connection lost to 127.0.0.1:57223 
+							Lua 0:01:28:365
+Buildable grid ready: 41/7370 valid zones.
+							Lua 0:01:34:465
+[Super Big Map][TerrainCreaseRepair] TERMINAL_STRIP_SKIPPED {destination_tiles=8192x8192, dirty_regions=table: 00000221567D7200, environment=Surface, hex_size=820x946, map=BlankBigTerraceCMix_19, map_ref=table: 000002214BB46580, mapdata_size=8192x8192, max_drop=0, modified=0, reason=no coherent raised terminal strip, slot=1, source_tiles=6144x6144, spans=, threshold=129, width=3}
+							Lua 0:01:34:494
+[Super Big Map][OuterResourceTerrain] resources=34 surface=20 extractor=14 resource_modified=34 rocket_pads=9 rocket_modified=9 rocket_shape_radius=6 patches=43 modified_cells=3223505 native_cells=10879167 native_samples=687618 error=
+							Lua 0:01:36:529
+Buildable grid ready: 53/7287 valid zones.
+							Lua 0:01:36:534
+[Super Big Map][OuterResourceTerrainAudit] resources=34 surface_passable=20 extractor_buildable=14 resource_failures=0 rocket_pads=9 rocket_failures=0 passability_clears=0 resource_clusters=9 cluster_shortfall=0 cluster_excess=0 cluster_resources=3-5 cluster_resource_excess=0 cluster_min_extractors=1 cluster_max_extractors=3 cluster_extractor_shortfall=0 cluster_extractor_excess=0 weighted_failures=0 anchor_failures=0 premium_excess=0 first_resource_failure= first_rocket_failure= verified_mountain_effect_candidates=7
+							Lua 0:01:37:046
+[Super Big Map][OuterResourceTopUpCensus] phase=pre-reveal marker census surface final ordinary_resource_topups=34 ordinary_resource_topups_placed=0 ordinary_resource_topups_visible=0 ordinary_resource_topups_outermost=19 guaranteed_resource_topups_outermost=19 guaranteed_resource_topups_inner_band=15 anomaly_topups=23 anomaly_topups_total=23 anomaly_topups_placed=0 anomaly_topups_outside_ring=0 maximum_anomalies_in_resource_cluster=1 anomaly_resource_cluster_overflow=0 maximum_total_members_in_resource_cluster=5 cluster_total_member_overflow=0 effect_topups=0 effect_topups_placed=0 verified_mountain_rocket_pad_effect_topups=0 unverified_outer_effect_topups=0 native_resources=0 resource_breakdown=Concrete:1|Metals:26|Polymers:5|PreciousMetals:1|Water:1 anomaly_breakdown=complete:5|false:5|unlock:13 effect_breakdown=BeautyEffectDeposit:5|ResearchEffectDeposit:4 require_placed=false minimum=0 outermost_minimum=0 inner_band_minimum=0 shortfall=0 outermost_shortfall=0 inner_band_shortfall=0
+							Lua 0:01:44:880
+Buildable grid ready: 53/7287 valid zones.
+Buildable grid computing too slow! Took 1040
+							Lua 0:01:51:900
+Buildable grid ready: 53/7287 valid zones.
+							Lua 0:01:52:237
+[RULES] surface half complete; starting first access
+							Lua 0:01:52:242
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:57226
+[DebugAdapter] Connection lost to 127.0.0.1:57226 
+							Lua 0:01:53:717
+[RULES] scan test: scanned sector=D11(7,12) status unexplored->scanned deposit vis false->true gate true->nil
+							Lua 0:01:54:129
+Missing spot 'Top' in 'MapSharedDepot' state 'idle'
+							Lua 0:01:54:255
+
+!!! Quick Build !!!
+							Lua 0:01:54:689
+[Super Big Map][OuterResourceTopUpCensus] phase=post-deferred-GameInit surface final density suite ordinary_resource_topups=34 ordinary_resource_topups_placed=0 ordinary_resource_topups_visible=0 ordinary_resource_topups_outermost=19 guaranteed_resource_topups_outermost=19 guaranteed_resource_topups_inner_band=15 anomaly_topups=23 anomaly_topups_total=23 anomaly_topups_placed=0 anomaly_topups_outside_ring=0 maximum_anomalies_in_resource_cluster=1 anomaly_resource_cluster_overflow=0 maximum_total_members_in_resource_cluster=5 cluster_total_member_overflow=0 effect_topups=0 effect_topups_placed=0 verified_mountain_rocket_pad_effect_topups=0 unverified_outer_effect_topups=0 native_resources=0 resource_breakdown=Concrete:1|Metals:26|Polymers:5|PreciousMetals:1|Water:1 anomaly_breakdown=complete:5|false:5|unlock:13 effect_breakdown=BeautyEffectDeposit:5|ResearchEffectDeposit:4 require_placed=false minimum=0 outermost_minimum=0 inner_band_minimum=0 shortfall=0 outermost_shortfall=0 inner_band_shortfall=0
+							Lua 0:02:10:323
+Buildable grid ready: 1/14 valid zones.
+							Lua 0:02:16:251
+Buildable grid ready: 1/14 valid zones.
+							Lua 0:02:39:420
+Buildable grid ready: 1/14 valid zones.
+							Lua 0:02:39:517
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:57234
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:57243
+[DebugAdapter] Connection lost to 127.0.0.1:57234 
+							Lua 0:02:40:660
+[DebugAdapter] Connection lost to 127.0.0.1:57243 
+							Lua 0:02:48:624
+[RULES] t0t1=92100 hex=820x946 enrich=997782429/592 decor=1524825447/3162 ring_decor=0 sectors=400 revealed=1 passages=2 signs=2 deps=1 vis_unexp=0 glued=0/2 max_ring=29
+[RULES] seeds: surface=-515742201377381600 pin_ug=8948058643542636291(pinned) pin_game=v932_sweep_14134_15s67e kept=v932_sweep_14134_15s67e game_seed=2029011127366940594 matches=true
+[RULES] mode: expand_map=true lifecycle=not_requested settle=0ms ratio=1.3333333333333 (surface tile metadata)
+[RULES] passages: surf UndergroundPassage hex=366,395 world=563500,342070 sector==8(14,9) ring_band=false ring_distance=21 stamped_distance=21 vanilla_surface_src=294,292 underground_src=290,281 stamped_image=387,374 committed=366,395 twin=[SurfacePassage hex=290,281 world=430500,243346 image_hex=387,374] | surf UndergroundPassage hex=69,507 world=322500,439062 sector=C10(8,11) ring_band=false ring_distance=29 stamped_distance=29 vanilla_surface_src=53,376 underground_src=39,402 stamped_image=52,536 committed=69,507 twin=[SurfacePassage hex=39,402 world=240000,348132 image_hex=52,536]
+[RULES] glue 1: ring=21 algorithm=nearest fitting surface hex by outward ring walk from the twin image anchor_reason=vanilla terrain-flat test failed rejected=surface impassable footprint hex x147; surface unbuildable footprint hex x28; surface vanilla terrain-flat test failed x1086
+[RULES] glue 2: ring=29 algorithm=nearest fitting surface hex by outward ring walk from the twin image anchor_reason=vanilla terrain-flat test failed rejected=surface impassable footprint hex x19; surface unbuildable footprint hex x58; surface vanilla terrain-flat test failed x2459
+[RULES] surface decor: target=99 placed=99 (auth=8 synth=91) sites=578 used=127 unused=451 templates=135 attempts=12468 ms=958 radius=5959/8437/13423 nn=3392/8569
+[RULES] surface decor detail: band_known=true,decorated_circles=180,failed=1,fallback_sites=53,markers_resolved=1714,markers_unresolved=115,obstruct_circles=313,sites_exhausted=true,sites_prestretched=578,sites_relocated=0,skipped_by_decorated=34,skipped_by_obstruct=408,skipped_no_match=0,skipped_obstructed=442,synthetic_allowed_types=14,synthetic_budget=18200,synthetic_escalations=365,synthetic_finite_attempts=0,synthetic_finite_templates_left=135,synthetic_max_reach_percent=2800,synthetic_random_attempts=12468,synthetic_reach_cap_percent=2800,synthetic_rejected_band=4,synthetic_rejected_bounds=156,synthetic_rejected_decorated=1495,synthetic_rejected_empty=2,synthetic_rejected_failed=0,synthetic_rejected_no_match=0,synthetic_rejected_obstruct=9660,synthetic_rejected_terrain=1060,synthetic_templates_exhausted=0,synthetic_templates_left=126,version=10
+[RULES] underground passages: SurfacePassage hex=290,281 world=430500,243346 image_hex=387,374 committed_src=290,281 true_image=387,374 linked=true | SurfacePassage hex=39,402 world=240000,348132 image_hex=52,536 committed_src=39,402 true_image=52,536 linked=true
+[RULES] signs: SurfaceUndergroundTunnelSign hex=366,399 vis=true scale=550 sector==8/unexplored | SurfaceUndergroundTunnelSign hex=69,511 vis=true scale=550 sector=C10/unexplored
+[RULES] revealed: D10(7,11):scanned start=D10(7,11):scanned
+[RULES] first access: ok=true error=none method=ConstructionController:Place snapped to the surface passage displays=3 hex 820x946 -> 820x946
+[RULES] first access route: route=state_wrapper mod_gate=true cascade_cities=1 cascade_disabled=true pre=prep=false done=nil running=nil pending=true desired=8192 gen=6144
+[RULES] gate env: vanilla_env=true probe_g=true mod_env=false ccms=function is_wrapper=false is_original=true caller_wrapper=false
+[RULES] first access displays: cover_boxes=1 begins=2 ends=2 refs_final=0 in_window=2 (idSaveProfile/SaveAccountStorage3 idSaveProfile/SaveAccountStorage4) outside=0 ()
+[RULES] first access cover events: BEGIN(underground) refs 0->1 @1130ms display=true vis false->true  <- stack traceback: <- ...R/super-big-map/_ralph/tmp/.tmp_rules_probe_instance.lua:1050: in upvalue 'short_stack' <- ...R/super-big-map/_ralph/tmp/.tmp_rules_probe_instance.lua:1117: in function <...R/super-big-map/_ralph/tmp/.tmp_rules_probe_instance.lua:1105> <- [C]: in function 'pcall' <- Mod/SuperBigMap/Code/sbm_map_generation.lua:13554: in function <Mod/SuperBigMap/Code/sbm_map_generation.lu || BEGIN(underground) refs 1->2 @1140ms display=false vis true->true  <- stack traceback: <- ...R/super-big-map/_ralph/tmp/.tmp_rules_probe_instance.lua:1050: in upvalue 'short_stack' <- ...R/super-big-map/_ralph/tmp/.tmp_rules_probe_instance.lua:1117: in function <...R/super-big-map/_ralph/tmp/.tmp_rules_probe_instance.lua:1105> <- [C]: in function 'pcall' <- Mod/SuperBigMap/Code/sbm_map_generation.lua:11890: in function <Mod/SuperBigMap/Code/sbm_map_generation.lu || END(force=nil) refs 2->1 @45788ms closed=false vis true->true  <- stack traceback: <- ...R/super-big-map/_ralph/tmp/.tmp_rules_probe_instance.lua:1050: in upvalue 'short_stack' <- ...R/super-big-map/_ralph/tmp/.tmp_rules_probe_instance.lua:1138: in function <...R/super-big-map/_ralph/tmp/.tmp_rules_probe_instance.lua:1123> <- [C]: in function 'pcall' <- Mod/SuperBigMap/Code/sbm_map_generation.lua:12597: in function <Mod/SuperBigMap/Code/sbm_map_generation.lu || END(force=nil) refs 1->0 @48472ms closed=true vis true->false  <- stack traceback: <- ...R/super-big-map/_ralph/tmp/.tmp_rules_probe_instance.lua:1050: in upvalue 'short_stack' <- ...R/super-big-map/_ralph/tmp/.tmp_rules_probe_instance.lua:1138: in function <...R/super-big-map/_ralph/tmp/.tmp_rules_probe_instance.lua:1123> <- [C]: in function 'pcall' <- Mod/SuperBigMap/Code/sbm_map_generation.lua:13570: in local 'release_first_access_cover' <- Mod/SuperBigMa
+[RULES] first access screens: idSaveProfile/SaveAccountStorage3 @1020ms window=in prep=false done=nil running=nil pending=true desired=8192 gen=6144  <- stack traceback: <- ...R/super-big-map/_ralph/tmp/.tmp_rules_probe_instance.lua:1050: in upvalue 'short_stack' <- ...R/super-big-map/_ralph/tmp/.tmp_rules_probe_instance.lua:1086: in function 'LoadingScreenOpen' <- CommonLua/AccountStorage.lua:140: in function <CommonLua/AccountStorage.lua:130> || idSaveProfile/SaveAccountStorage4 @47994ms window=in prep=true done=true running=false pending=false desired=8192 gen=6144  <- stack traceback: <- ...R/super-big-map/_ralph/tmp/.tmp_rules_probe_instance.lua:1050: in upvalue 'short_stack' <- ...R/super-big-map/_ralph/tmp/.tmp_rules_probe_instance.lua:1086: in function 'LoadingScreenOpen' <- CommonLua/AccountStorage.lua:140: in function <CommonLua/AccountStorage.lua:130>
+[RULES] underground after access: passages: SurfacePassage hex=387,374 world=574000,323884 authored_image_ring=0 twin=366,395 glue_ring=21 linked=true ring_band=false sector=<7(15,8) | SurfacePassage hex=52,536 world=320000,464176 authored_image_ring=0 twin=69,507 glue_ring=29 linked=true ring_band=false sector=C11(8,12)
+[RULES] underground wonder reachability (2 calls): call1{repair=true,markers=2,valid=2,invalid=0,moved=0,unresolved=0,disconnected=1,draws=0,method=pf.HasPosPath,entrances=392,374|57,536,conn_checks=2,conn_rejected=1,conn_failures=0}details=CaveOfWonders=valid:marker_world=374667,281739:spawner_world=374667,281739:marker_hex=212,325:spawner_hex=212,325:distance=0:terrain_ok=true:buildable=true:buildable_z=1000:unbuildable_z=65535:passable=true:flatness=4096:flat_min=4080:unobstructed=true:reserved=true:badge_overlap=false:entrance_connected=false:base_ok=true:local_ok=true:accepted_fallback=false:fresh_terrain_ok=true:fresh_base_ok=true:fresh_buildable=true:fresh_buildable_z=1000:fresh_passable=true:fresh_flatness=4096:fresh_unobstructed=true;JumboCave=valid:marker_world=458667,461867:spawner_world=458667,461867:marker_hex=192,533:spawner_hex=192,533:distance=0:terrain_ok=true:buildable=true:buildable_z=1000:unbuildable_z=65535:passable=true:flatness=4096:flat_min=4080:unobstructed=true:reserved=true:badge_overlap=false:entrance_connected=true:base_ok=true:local_ok=true:accepted_fallback=false:fresh_terrain_ok=true:fresh_base_ok=true:fresh_buildable=true:fresh_buildable_z=1000:fresh_passable=true:fresh_flatness=4096:fresh_unobstructed=true || call2{repair=false,markers=2,valid=2,invalid=0,moved=0,unresolved=0,disconnected=1,draws=0,method=pf.HasPosPath,entrances=392,374|57,536,conn_checks=1276,conn_rejected=889,conn_failures=0}details=CaveOfWonders=valid:marker_world=374667,281739:spawner_world=374667,281739:marker_hex=212,325:spawner_hex=212,325:distance=0:terrain_ok=true:buildable=true:buildable_z=1000:unbuildable_z=65535:passable=true:flatness=4096:flat_min=4080:unobstructed=true:reserved=true:badge_overlap=false:entrance_connected=false:base_ok=true:local_ok=true:accepted_fallback=false:fresh_terrain_ok=true:fresh_base_ok=true:fresh_buildable=true:fresh_buildable_z=1000:fresh_passable=true:fresh_flatness=4096:fresh_unobstructed=true;JumboCave=valid:marker_world=458667,461867:spawner_world=458667,461867:marker_hex=192,533:spawner_hex=192,533:distance=0:terrain_ok=true:buildable=true:buildable_z=1000:unbuildable_z=65535:passable=true:flatness=4096:flat_min=4080:unobstructed=true:reserved=true:badge_overlap=false:entrance_connected=true:base_ok=true:local_ok=true:accepted_fallback=false:fresh_terrain_ok=true:fresh_base_ok=true:fresh_buildable=true:fresh_buildable_z=1000:fresh_passable=true:fresh_flatness=4096:fresh_unobstructed=true
+[RULES] underground enrichment reachability audit (hook=installed, 1 calls): call1{candidates_built=128 candidates_refilled=256 candidates_remaining=380 candidates_reused=73 checked=76 connectivity_checks=1274 connectivity_failures=0 connectivity_reachable=386 connectivity_rejected=888 fallback_clearance_minimum_move=18 fallback_clearance_relaxed_moves=0 invalid=4 invalid_by_class=SubsurfaceAnomalyMarker=1 SurfaceDepositMarker=3 invalid_by_resource==1 Metals=3 invalid_details=SubsurfaceAnomalyMarker/:world=361500,272790,1000:hex=204,315:sector=B6:reason=entrance_unreachable:flags=wonder_conflict:buildable=true:passable=true:flatness=4096:unobstructed=true:reachable=false:reserved=false;SurfaceDepositMarker/Metals:world=488500,442526,17556:hex=233,511:sector=?10:reason=unbuildable:flags=wonder_conflict:buildable=false:passable=false:flatness=3876:unobstructed=true:reachable=false:reserved=false;SurfaceDepositMarker/Metals:world=488000,441660,17698:hex=233,510:sector=?10:reason=unbuildable:flags=wonder_conflict:buildable=false:passable=true:flatness=3982:unobstructed=true:reachable=false:reserved=false;SurfaceDepositMarker/Metals:world=491500,447722,12392:hex=233,517:sector=?10:reason=unbuildable:flags=wonder_conflict:buildable=false:passable=false:flatness=1204:unobstructed=true:reachable=false:reserved=false missing_repulsion_profile=0 moved=4 moved_by_class=SubsurfaceAnomalyMarker=1 SurfaceDepositMarker=3 ok=true pool_refills=1 postmove_rejected=0 relocation_attempts=646 relocation_details=SubsurfaceAnomalyMarker/:world=361500,272790,1000:hex=204,315:sector=B6:reason=entrance_unreachable:flags=wonder_conflict:buildable=true:passable=true:flatness=4096:unobstructed=true:reachable=false:reserved=false:result=moved:attempts=9:to_world=498382,391390:snapped_rejected=0:repulsion_rejected=8:setpos_failed=0:postmove_rejected=0:fallback_clearance_hex=43;SurfaceDepositMarker/Metals:world=488500,442526,17556:hex=233,511:sector=?10:reason=unbuildable:flags=wonder_conflict:buildable=false:passable=false:flatness=3876:unobstructed=true:reachable=false:reserved=false:result=moved:attempts=248:to_world=430660,371076:snapped_rejected=0:repulsion_rejected=247:setpos_failed=0:postmove_rejected=0:fallback_clearance_hex=20;SurfaceDepositMarker/Metals:world=488000,441660,17698:hex=233,510:sector=?10:reason=unbuildable:flags=wonder_conflict:buildable=false:passable=true:flatness=3982:unobstructed=true:reachable=false:reserved=false:result=moved:attempts=180:to_world=428598,371436:snapped_rejected=0:repulsion_rejected=179:setpos_failed=0:postmove_rejected=0:fallback_clearance_hex=20;SurfaceDepositMarker/Metals:world=491500,447722,12392:hex=233,517:sector=?10:reason=unbuildable:flags=wonder_conflict:buildable=false:passable=false:flatness=1204:unobstructed=true:reachable=false:reserved=false:result=moved:attempts=209:to_world=435918,369220:snapped_rejected=0:repulsion_rejected=208:setpos_failed=0:postmove_rejected=0:fallback_clearance_hex=18 relocation_retries=642 repulsion_rejected=642 seeds=2 setpos_failed=0 snapped_rejected=0 strict_first_rejection= strict_last_rejection= topup_only_first_rejection=repulsion:candidate=subs/Anomaly@4301685191:blocker=SubsurfaceDepositMarker/PreciousMetals/topup@4301554115:required=8000:actual=4303 topup_only_last_rejection=repulsion:candidate=surf/Metals@4326457779:blocker=SurfaceDepositMarker/Metals/topup@4330521018:required=51200:actual=34385 unresolved=0 unresolved_by_class= unresolved_by_resource= unresolved_details= unrevealed_placed=0}
+[RULES] underground decor: enabled=true src=map_record reason=vanilla placed no decor groups target=0 placed=0 (auth=nil synth=nil) objects=0 ring=nil/0 dropped=nil/nil sites=0 used=0 gen=true passes=0 ratio=25 seed=8948058643542636291(generator) area=1.778 cosmetic=236 ring_cosmetic=1
+[RULES] underground decor classes: 
+[RULES] underground band cosmetics: Rocks_04@311,945:native_scale=118:scale=157
+[RULES] underground after access: enrich=2130261274/241 imprints=2 (hex=387,374 vis=true scale=100 | hex=52,536 vis=true scale=100) revealed=0/400
+[RULES] underground passage carriers: 2 (hex=387,374 entity=ElevatorBuildIndicator_UndergroundImprint vis=false opacity=0 elevator=true decals=1{vis=true scale=100 opacity=100} | hex=52,536 entity=ElevatorBuildIndicator_Underground vis=true opacity=100 elevator=false decals=1{vis=true scale=100 opacity=100})
+							Lua 0:02:49:695
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:57272
+							Lua 0:02:49:734
+[DebugAdapter] Connection lost to 127.0.0.1:57272 
+							Lua 0:02:49:863
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:57274
+							Lua 0:02:50:055
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:57276
+							Lua 0:02:50:397
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:57279
+							Lua 0:02:50:590
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:57281
+							Lua 0:03:01:472
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:57283
+[DebugAdapter] Connection lost to 127.0.0.1:57281 
+[DebugAdapter] Connection lost to 127.0.0.1:57279 
+[DebugAdapter] Connection lost to 127.0.0.1:57276 
+[DebugAdapter] Connection lost to 127.0.0.1:57274 
+							Lua 0:03:01:633
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:57286
+							Lua 0:03:01:752
+[DebugAdapter] Connection lost to 127.0.0.1:57286 
+							Lua 0:03:01:753
+[DebugAdapter] Connection lost to 127.0.0.1:57283 
+							Lua 0:03:01:802
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:57288
+							Lua 0:03:02:019
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:57291
+							Lua 0:03:02:520
+
+
+Stopping the game threads from the Lua side with exit code 0.
+
+					Render 0:03:02:532
+
+
+Stopping the game threads after receiving WM_QUIT.
+
+[QUIT] Waiting the game state to finish...
+							Lua 0:03:02:783
+[QUIT] Game state finished.
+[QUIT] Stopping game state thread...
+					Render 0:03:02:795
+Map::Done: 6.51000 ms
+					Render 0:03:02:819
+Map::Done: 3.05000 ms
+					Render 0:03:02:831
+[Sound] Stopping...
+					Render 0:03:02:838
+[Sound] Done.
+					Render 0:03:02:839
+Hook 'Shader :: CompileEffect' not found!
+					Render 0:03:02:916
+DestroyVideos: 1 videos not cleaned up
+					Render 0:03:03:057
+[DebugAdapter] Connection lost to 127.0.0.1:57291 
+[DebugAdapter] Stopped
+					Render 0:03:03:234
+
+
+*** Debug::Done()
+Time (ms)	183234
+
+

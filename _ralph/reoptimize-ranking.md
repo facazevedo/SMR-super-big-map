@@ -1582,3 +1582,23 @@ normally at one fixed checkpoint; deployment audited38/38. Inherited visuals fol
 exact accepted outputs, not a new screenshot claim. Evidence: `v978_reference`,
 `v978_matrix`, `v978_final_offline`, `v978_all_ten_rules_review.json` and source review
 under `under80-20260912`. **80s not reached.**
+
+## 2026-09-12: v979 immediate rock classification reuse
+
+Code `c4d3e67`, runtime979/guard294. Avoid only exclusions just checked false for
+the same unchanged object, requiring matching predicate identities at the receiver.
+Default/rebound paths retain full checks. No class/map cache; all native support,
+geometry, terrain, RNG, rebuilds, readiness and temporary buttons unchanged.
+
+Reference88.120 /89.969 /89.425s, median89.425 versus89.807s: small observed
+gain0.382s (0.425%). Control27.890s. Five validation samples92.100 /90.183 /
+84.445 /94.349 /89.199s, all lower than their v978 samples; do not attribute the
+entire6.079s61N difference to this narrow change without further evidence.
+No selective repeats or omitted timing samples. Retain this simple change.
+
+All77 offline commands, full exact predecessor/repeat outputs, individual rocks,
+private streams and ten-rule/source/process review pass. Nine owned processes
+normally exited at one immutable checkpoint; deployed payload38/38. Prior visuals
+are inherited via exact outputs, not new screenshots. Evidence: v979_reference,
+v979_matrix, v979_offline, v979_all_ten_rules_review.json and v979_source_review.md
+under under80-20260912. **80s not reached; worst validation94.349s.**

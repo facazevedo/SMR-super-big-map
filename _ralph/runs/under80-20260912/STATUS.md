@@ -298,3 +298,30 @@ Offline22431 closed exit0: all77 commands PASS. Freeze this candidate checkpoint
 for reference3/control and, only with positive reference gain and exact parity,
 five-site acceptance. The new prefinal_yield_probe.lua is parsed but unrun and
 must not execute until that immutable suite closes. It removes no rebuilds.
+
+## v979 accepted; immutable nine-process suite closed
+
+Code c4d3e67 / runtime979 / guard294. Reference13823 closed exit0:
+88.120 /89.969 /89.425s, median89.425s versus89.807s; observed gain0.382s
+(0.425%). Native control27.890s. No sample excluded or rescue repeat added.
+Keep the simple per-call reuse for this small measured gain and exact outputs;
+unlike rejected v976, it adds no raster buffers or packed decoder infrastructure.
+
+Matrix2425 closed exit0. Exact predecessor/full individual-rock/private streams
+and eight automated gates pass for all five:15S67E92.100s (prior93.037),
+24S74W90.183 (91.477),45S120W84.445 (85.461),61N136W94.349 (100.428),
+17S11W89.199 (91.172). These are observed single-site samples, not evidence that
+the small classification change alone explains the6.079s61N difference.
+v979_all_ten_rules_review.json passes77 offline commands, all ten rules, nine
+unique owned normal shutdowns, one fixed code checkpoint and deployment38/38.
+Current accepted reference89.425s; worst validation94.349s. Under80 NOT reached.
+
+Research-only prefinal_yield_probe now passes its control-flow fixture after a
+recorded return-preservation red failure. It retains both production rebuilds.
+Run it next through profile.py, predecessor v979_reference/14n134w_a and query
+SBM_PREFINAL_YIELD_DIAGNOSTIC; fresh output name and owned process only.
+The narrower apron-bracket generator/proof ran; exact rational subdomain bounds
+PASS, including binary0.55's exact value. Generated artifact is non-deployed;
+native33-case and full shadow probes are parsed, NOT executed. See research notes.
+An additional native class-list batching note documents an API and unresolved
+custom-hook compatibility; no batching implementation or timing evidence exists.

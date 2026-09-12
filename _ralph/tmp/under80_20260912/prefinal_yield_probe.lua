@@ -52,21 +52,21 @@ sbm.GenerationGrids.RebuildFinal=function(map,stage,...)
         capture(map,'before_yield')
         Sleep(1)
         capture(map,'after_yield')
-        original(map,stage,...)
+        local returned=original(map,stage,...)
         capture(map,'after_immediate')
         compare('before_yield','after_yield')
         compare('after_yield','after_immediate')
-        return
+        return returned
     elseif stage=='post-pipeline scheduled revalidation' then
         capture(map,'scheduled_entry')
-        original(map,stage,...)
+        local returned=original(map,stage,...)
         capture(map,'scheduled_after')
         compare('after_immediate','scheduled_entry')
         compare('scheduled_entry','scheduled_after')
         compare('after_immediate','scheduled_after')
         sbm.GenerationGrids.RebuildFinal=original
         if result.status~='fail' and did_immediate then result.status='pass' end
-        return
+        return returned
     end
     return original(map,stage,...)
 end
