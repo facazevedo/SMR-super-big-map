@@ -1,0 +1,7 @@
+{
+  "ok": true,
+  "exit": 0,
+  "data": {
+    "result": "NATIVE_OUTER_CLEANUP_PASS {\n\tmetatable = table: 000001F4DE3A4780 [1]\n}"
+  }
+}

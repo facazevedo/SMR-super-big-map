@@ -1,9 +1,8 @@
 -- PRIVATE RESEARCH ONLY. The epsilon below is NOT a proved certificate.
 -- Caller must independently compare EVERY returned U12 cell with the scalar oracle.
 -- Never deploy this function on the strength of a successful captured-data test.
--- KNOWN UNSAFE FAILURE PATH: native_outer_mask_residual_faults demonstrated that
--- the engine's error() logs and returns here; require_value does not abort work.
--- Offline Lua failure tests do NOT establish engine failure containment.
+-- Failure propagation is explicit: the engine's global error() may only log.
+-- Native failure tests remain required; ordinary Lua tests are not sufficient.
 return function(api, row, scalar, epsilon_numerator)
     local math, type, ipairs = math, type, ipairs
     local w, h, step = row.width, row.height, row.sample_step
@@ -12,7 +11,11 @@ return function(api, row, scalar, epsilon_numerator)
         experimental_epsilon_numerator = epsilon_numerator, certificate_proved = false }
     local function integer(v) return type(v)=='number' and v==math.floor(v) end
     local function finite(v) return type(v)=='number' and v==v and math.abs(v)<=1048576 end
-    local function require_value(ok, why) if not ok then error(why, 0) end end
+    local failure
+    local function require_value(ok, why)
+        if not ok then failure=failure or why;return false end
+        return true
+    end
     if row.atan2_present or not integer(w) or not integer(h) or w<2 or h<2
         or w>4096 or h>4096 or (step~=1 and step~=4) or not integer(row.x0)
         or not integer(row.y0) or not finite(p.core_cells) or p.core_cells<1
@@ -47,43 +50,50 @@ return function(api, row, scalar, epsilon_numerator)
     stats.derived_numerator=derived_numerator
     local owned, lookup = {}, {}
     local function own(grid)
-        require_value(grid~=nil and grid~=false,'native outer allocation failed')
+        if not require_value(grid~=nil and grid~=false,'native outer allocation failed') then return nil end
         if grid and not lookup[grid] then lookup[grid]=true;owned[#owned+1]=grid end
         return grid
     end
-    local function clone(grid) return own(grid:clone()) end
+    local function clone(grid) if not grid then return nil end;return own(grid:clone()) end
     local function new() return own(api.NewComputeGrid(w,h,'f',32)) end
     local function ratio(value)
-        require_value(finite(value),'nonfinite native coefficient')
+        if not require_value(finite(value),'nonfinite native coefficient') then return nil end
         local q=1073741824
         while math.abs(value)*q>16777215 do q=q/2 end
         return math.floor(value*q+0.5),q
     end
     local function mul(grid,value)
         local n,q=ratio(value)
+        if not n then return false end
         api.GridMulDivAdd(grid,n,q,0)
+        return true
     end
     local function add(grid,value)
         local n,q=ratio(value)
+        if not n then return false end
         -- Powers-of-two scaling is exact; API arguments remain integral.
         api.GridMulDivAdd(grid,q,1,n)
         api.GridMulDivAdd(grid,1,q,0)
+        return true
     end
     local function finite_positive(grid)
-        require_value(api.GridCount(grid,0,2147483647)==w*h,'nonfinite/out-of-range native arithmetic')
+        return require_value(api.GridCount(grid,0,2147483647)==w*h,'nonfinite/out-of-range native arithmetic')
     end
     local function reciprocal(grid)
         local original=clone(grid)
+        if not original then return false end
         api.GridPow(grid,-1,1)
-        finite_positive(grid)
+        if not finite_positive(grid) then return false end
         api.GridMulDivAdd(original,grid,1,-1);api.GridAbs(original)
         api.GridMulDivAdd(original,16777216,1,0)
         api.GridClamp(original,0,16)
-        require_value(api.GridCount(original,4,32)==0,'native outer reciprocal residual')
+        if not require_value(api.GridCount(original,4,32)==0,'native outer reciprocal residual') then return false end
         stats.reciprocal_checks=(stats.reciprocal_checks or 0)+1
+        return true
     end
     local function field(axis,center)
         local grid=new()
+        if not grid then return nil end
         local extent=axis=='x' and w or h
         for i=0,extent-1 do
             if axis=='x' then grid:set(i,0,i*step) else grid:set(0,i,i*step) end
@@ -101,31 +111,38 @@ return function(api, row, scalar, epsilon_numerator)
     end
     local function distance(cx,cy,need_root)
         local x,y=field('x',cx),field('y',cy)
+        if not x or not y then return nil end
         local square,y2=clone(x),clone(y)
+        if not square or not y2 then return nil end
         api.GridMulDivAdd(square,x,1,0);api.GridMulDivAdd(y2,y,1,0)
         api.GridAdd(square,y2)
         -- Squares/sum are exact within the qualified integer domain.
         if need_root==false then return nil,x,y,square end
         local squared=clone(square)
+        if not squared then return nil end
         api.GridClamp(squared,1,2147483647)
         local radius=clone(squared)
+        if not radius then return nil end
         api.GridPow(radius,1,2)
-        finite_positive(radius)
+        if not finite_positive(radius) then return nil end
         local residual=clone(radius)
+        if not residual then return nil end
         api.GridMulDivAdd(residual,radius,1,0)
         api.GridAddMulDiv(residual,squared,-1);api.GridAbs(residual)
         api.GridAddMulDiv(residual,squared,-2,16777216)
         api.GridMulDivAdd(residual,1073741824,1,0)
         api.GridClamp(residual,0,16)
-        require_value(api.GridCount(residual,1,32)==0,'native outer root residual')
+        if not require_value(api.GridCount(residual,1,32)==0,'native outer root residual') then return nil end
         stats.root_checks=(stats.root_checks or 0)+1
         return radius,x,y,square
     end
     local function smooth(t)
         local polynomial=clone(t)
+        if not polynomial then return nil end
         api.GridMulDivAdd(polynomial,6,1,-15)
         api.GridMulDivAdd(polynomial,t,1,10)
         local cube=clone(t)
+        if not cube then return nil end
         api.GridMulDivAdd(cube,t,1,0);api.GridMulDivAdd(cube,t,1,0)
         api.GridMulDivAdd(polynomial,cube,1,0)
         return polynomial
@@ -133,31 +150,41 @@ return function(api, row, scalar, epsilon_numerator)
     local result
     local ok,why=pcall(function()
         local radius,x,y=distance(p.cx,p.cy)
+        if not radius then return end
         local inverse=clone(radius)
-        api.GridClamp(inverse,1,2147483647);reciprocal(inverse)
+        if not inverse then return end
+        api.GridClamp(inverse,1,2147483647)
+        if not reciprocal(inverse) then return end
         api.GridMulDivAdd(x,inverse,1,0);api.GridMulDivAdd(y,inverse,1,0)
-        mul(x,p.relief_x);mul(y,p.relief_y);api.GridAdd(x,y)
+        if not mul(x,p.relief_x) or not mul(y,p.relief_y) then return end
+        api.GridAdd(x,y)
         local along=x
         local width=clone(along)
+        if not width then return end
         api.GridMulDivAdd(width,along,1,0);api.GridMulDivAdd(width,24,100,0)
         local harmonic=row.cached_zero_harmonic
         if harmonic==nil then
             harmonic=.52*math.sin(p.phase)+.30*math.sin(-p.phase*1.37)+.18*math.sin(p.phase*.73)
         end
-        require_value(finite(harmonic) and math.abs(harmonic)<=1,'native outer harmonic domain')
-        add(width,1+row.irregularity*harmonic-.12)
-        local linear=clone(along);api.GridMulDivAdd(linear,-6,100,0);api.GridAdd(width,linear)
+        if not require_value(finite(harmonic) and math.abs(harmonic)<=1,'native outer harmonic domain') then return end
+        if not add(width,1+row.irregularity*harmonic-.12) then return end
+        local linear=clone(along)
+        if not linear then return end
+        api.GridMulDivAdd(linear,-6,100,0);api.GridAdd(width,linear)
         -- Clamp endpoints are integer-only: use the exactly scaled U24 interval.
         api.GridMulDivAdd(width,16777216,1,0)
         api.GridClamp(width,8388608,22649242)
         api.GridMulDivAdd(width,1,16777216,0)
-        mul(width,row.base_transition);reciprocal(width)
-        add(radius,-p.core_cells);api.GridMulDivAdd(radius,width,1,0)
+        if not mul(width,row.base_transition) or not reciprocal(width) then return end
+        if not add(radius,-p.core_cells) then return end
+        api.GridMulDivAdd(radius,width,1,0)
         api.GridClamp(radius,0,1)
         local weight=smooth(radius)
+        if not weight then return end
         api.GridMulDivAdd(weight,-1,1,1);api.GridClamp(weight,0,1)
         for _,g in ipairs(row.guards) do
             local d,_,_,square=distance(g.cx,g.cy,g.transition>0)
+            if not square or (g.transition>0 and not d) then return end
             local protection
             if g.transition==0 then
                 -- Integer squared distances permit a separated threshold. Resolve
@@ -169,49 +196,57 @@ return function(api, row, scalar, epsilon_numerator)
                     elseif math.sqrt(cutoff+1)<=g.radius then cutoff=cutoff+1
                     else resolved=true;break end
                 end
-                require_value(resolved and cutoff>=0 and cutoff<8388608,'hard guard threshold domain')
+                if not require_value(resolved and cutoff>=0 and cutoff<8388608,'hard guard threshold domain') then return end
                 protection=new()
+                if not protection then return end
                 api.GridMulDivAdd(square,2,1,0)
                 -- Inputs are even exact integers; threshold is odd and <2^24.
                 api.GridMask(square,protection,2*cutoff+1,2147483647)
                 stats.hard_guards=(stats.hard_guards or 0)+1
             else
-                add(d,-g.radius)
+                if not add(d,-g.radius) then return end
                 -- Reciprocal coefficient is rounded on the CPU for this prototype;
                 -- its exact production error treatment remains an open proof obligation.
-                mul(d,1.0/g.transition)
+                if not mul(d,1.0/g.transition) then return end
                 api.GridClamp(d,0,1)
-                protection=smooth(d);api.GridClamp(protection,0,1)
+                protection=smooth(d)
+                if not protection then return end
+                api.GridClamp(protection,0,1)
             end
             api.GridMulDivAdd(weight,protection,1,0)
         end
         api.GridClamp(weight,0,1)
         local lower,upper=clone(weight),clone(weight)
-        add(lower,-epsilon_numerator/65536.0);api.GridClamp(lower,0,1)
-        add(upper,epsilon_numerator/65536.0);api.GridClamp(upper,0,1)
+        if not lower or not upper then return end
+        if not add(lower,-epsilon_numerator/65536.0) or not add(upper,epsilon_numerator/65536.0) then return end
+        api.GridClamp(lower,0,1);api.GridClamp(upper,0,1)
         api.GridMulDivAdd(lower,4096,1,0);api.GridRound(lower)
         api.GridMulDivAdd(upper,4096,1,0);api.GridRound(upper)
         local uncertain=clone(upper)
+        if not uncertain then return end
         api.GridAddMulDiv(uncertain,lower,-1)
         api.GridMulDivAdd(uncertain,2,1,0) -- positive >=2; enumeration bound1 has no equality ambiguity
         local expected=api.GridCount(uncertain,1,2147483647)
         api.GridMulDivAdd(weight,4096,1,0);api.GridRound(weight)
         local seen={}
         api.GridForeach(uncertain,function(value,cx,cy)
-            require_value(integer(cx) and integer(cy) and cx>=0 and cy>=0 and cx<w and cy<h,
-                'native outer correction coordinate escaped patch')
+            if failure then return end
+            if not require_value(integer(cx) and integer(cy) and cx>=0 and cy>=0 and cx<w and cy<h,
+                'native outer correction coordinate escaped patch') then return end
             local key=cy*w+cx
-            require_value(not seen[key],'duplicate native outer correction')
+            if not require_value(not seen[key],'duplicate native outer correction') then return end
             seen[key]=true
             local exact=scalar(cx,cy)
-            require_value(integer(exact) and exact>=0 and exact<=4096,'invalid scalar outer correction')
+            if not require_value(integer(exact) and exact>=0 and exact<=4096,'invalid scalar outer correction') then return end
             if weight:get(cx,cy)~=exact then stats.changed_by_correction=stats.changed_by_correction+1 end
             weight:set(cx,cy,exact);stats.corrected=stats.corrected+1
         end,1,2147483647)
-        require_value(type(expected)=='number' and expected==stats.corrected,'native outer correction census')
+        if failure then return end
+        if not require_value(type(expected)=='number' and expected==stats.corrected,'native outer correction census') then return end
         result=weight
         stats.allocations=#owned
     end)
+    if failure then ok=false;why=failure end
     local cleanup_error
     for i=#owned,1,-1 do
         if not ok or owned[i]~=result then

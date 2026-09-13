@@ -1,0 +1,7 @@
+{
+  "ok": true,
+  "exit": 0,
+  "data": {
+    "result": "NATIVE_OUTER_RESIDUAL_FAULTS_REJECTED {\n\tmetatable = table: 000001BE5D0B4780 [1]\n}"
+  }
+}

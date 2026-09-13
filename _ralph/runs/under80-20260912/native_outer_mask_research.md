@@ -158,3 +158,24 @@ not depend on global error()/assert() throwing, including callback failures.
 Then repeat every native fault case, audit arithmetic premises/domain boundaries,
 and run both-order complete-map shadows before considering production/cold timing.
 996 ms is an isolated kernel measurement, not demonstrated end-to-end savings.
+
+### Explicit rejection correction
+
+Replaced logging-dependent require_value with a first-failure latch and explicit
+returns through allocation, coefficient, distance, reciprocal, polynomial and
+correction paths. Callback failures stop subsequent correction writes; failure
+discards the result and runs owned-grid cleanup. No native globals are replaced.
+
+Session27562/PID37824 CLOSED: all four original native root/reciprocal perturbations
+rejected, with no LUA ERROR. Session70042/PID47028 CLOSED: native proxy-tracked
+ownership tests pass normal return (only result survives), every one of 26
+allocation-failure positions, missing/duplicate/invalid-coordinate callbacks and
+invalid scalar results; all owned grids released once. Offline suite now passes
+6370 checks. Earlier failing evidence remains unchanged.
+
+Prepared private full-map shadow in both execution orders. It recompiles only
+PrepareOuterResourceTerrain and joins original private cells, compares every
+candidate/scalar U12 coarse cell before resampling, then feeds matching candidate
+masks through the unchanged terrain pipeline. The normal rules runner will check
+complete predecessor parity. This still does not establish arithmetic premises
+or a cold performance improvement. Production remains unchanged.

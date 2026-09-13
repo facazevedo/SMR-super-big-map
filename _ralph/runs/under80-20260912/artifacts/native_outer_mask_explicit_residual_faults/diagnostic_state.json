@@ -1,0 +1,25 @@
+{
+  "calls": [
+    {
+      "name": "large root",
+      "rejected": true,
+      "reason": "native outer root residual"
+    },
+    {
+      "name": "small root perturbation",
+      "rejected": true,
+      "reason": "native outer root residual"
+    },
+    {
+      "name": "large reciprocal",
+      "rejected": true,
+      "reason": "native outer reciprocal residual"
+    },
+    {
+      "name": "small reciprocal perturbation",
+      "rejected": true,
+      "reason": "native outer reciprocal residual"
+    }
+  ],
+  "status": "pass"
+}
