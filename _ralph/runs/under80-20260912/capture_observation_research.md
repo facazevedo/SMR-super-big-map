@@ -56,3 +56,47 @@ the lead down rather than claiming its entire2-3second parent is an optimization
 budget. A qualified future reuse candidate must preserve every output and receive
 independent actual-source/native/whole-pass/cold gates. No new implementation or
 performance estimate is established by this note. Full goal remains ACTIVE.
+
+## Astra review follow-through: bounded rock-value census implemented
+
+The latest explicit Astra/xhigh review supplied two new native-selection leads
+(mutation-maintained Filler eligibility; exact-composed Playable distances) and
+confirmed rock-local scalarization as the cheapest narrow experiment. It also
+identified a critical annotation hook issue: map_generation captures the public
+AnnotateDecorRelief export in a local at2084. Rebinding that export alone does
+not intercept its generation calls. The initial experiment therefore instruments
+only the dynamically called RockGrounding.Capture, not all annotation getters.
+
+rock_geometry_census.lua clones the actual Capture body, replacing exactly15
+source occurrences of nine bounds/visual coordinate roles. All original private
+upvalue cells are joined, including the capture registry and Eligible function.
+No original method, object/class/global getter, native function, config flag or
+production file is rebound. The public Capture and final-restoration seams are
+temporarily owned; original getters execute once with unchanged receiver/tuple.
+
+Keep only the first returned tuple/method/receiver per role within a Capture,
+plus aggregate counters. At most9 roles/context,16 simultaneous contexts,
+4 environment rows and32 retained failure messages. Contexts are coroutine-local
+and discarded after each Capture, including errors. No additional getter calls,
+per-read clocks, cached answers, stored object histories or skipped sample work.
+Count repeated reads, differing values/numeric subtypes, methods and receivers;
+unchanged observations do NOT establish immutability or absence of yields.
+Normal scheduled surface completion and thrown/false Capture/final paths restore
+owned seams, never overwriting unrelated replacements; failures stay latched.
+
+170 actual-source fixture checks PASS: complete ordered original method/point/
+terrain/ray calls, exact private contact records and capture counters across14
+modes, including early exits, invalidZ, no hits, changed values/subtypes/methods,
+nil-bearing return tuples, getter/final errors, false final, and rebound owners.
+Two missing-source/anchor preflights leave seams untouched. An initial fixture
+incorrectly gave sizey a multi-return nil tail: the unchanged source forwarded it
+into math.max and correctly failed. Moved that tuple case to miny, an arithmetic
+single-value context; this was a fixture correction, not a production change.
+rock_geometry_census_offline retains all6 prerequisite commands PASS, including
+exact accepted56fbf44 Code/metadata/items and38-file deployment audit.
+
+Next finite native experiment: one reference and one61N through profile.py,
+querySBM_ROCK_GEOMETRY_CENSUS, declared v987 predecessors and normal owned
+shutdown. rock_geometry_census_audit.py requires full exact predecessor/grid/
+individual-rock/four-private-field/process parity and bounded valid census.
+Native runs are still pending here. No speed claim or production optimization.
