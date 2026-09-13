@@ -875,3 +875,32 @@ against artifacts/v983_matrix. Freeze the next checkpoint and deployment through
 the entire existing verify_port.py run. No algorithm candidate and no rescue rerun
 of v986. Research files may be drafted outside production while games run; do not
 commit or change deployed files until all five have closed. Under85 remains unmet.
+
+## Fresh unchanged-v983 five-site confirmation closed
+
+Session31194 CLOSED exit0 with HEAD008461b and byte-identical accepted f4d1da6
+production frozen throughout. All five strict predecessor/full-grid/snapshot/
+individual-rock/private-stream gates passed with no issues. Owned PIDs10160,
+34800,37424,34500,23636 each have captured creation identity and normal flushed
+shutdown. No sample was discarded or rerun. artifacts/v983_matrix_confirmation:
+
+| Site | Fresh v983 | Historical v983 | Difference |
+| --- | ---: | ---: | ---: |
+| 15S67E | 94.076 | 90.468 | +3.608 |
+| 24S74W | 96.625 | 89.697 | +6.928 |
+| 45S120W | 86.192 | 84.938 | +1.254 |
+| 61N136W | 95.773 | 94.342 | +1.431 |
+| 17S11W | 90.805 | 87.583 | +3.222 |
+
+Unchanged-code drift is established for these samples, not its external cause.
+This does not retroactively promote v986 or relabel its comparison. Use the fresh
+matrix as the declared predecessor for genuinely new candidates. The reference
+predecessor remains v983_confirmation_reference (median90.244). Under85 across
+all six scenarios is unmet; the largest new five-site gap is11.625 seconds.
+
+Prepared nondeployed outer geometry capture and empirical f32 error study while
+the matrix ran; no heavy numerical work or other game ran concurrently. New
+native_outer_mask_research.md records why protected patches must be included:
+43/56 patches,841067/948237 samples and2459/2675 instrumented scalar-loop ms.
+Next run the geometry capture separately with full reference parity, then the
+empirical study. No native kernel or mathematical error certificate exists yet.
