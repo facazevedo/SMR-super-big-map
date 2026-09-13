@@ -60,3 +60,41 @@ If key diversity/copied bytes erase gains, reject promptly. Other measured costs
 are exact distance transforms and seeded grid selection, but neither may be
 replaced by a different algorithm/RNG merely because it is expensive. The full
 <80 objective and user's relaxed<85 target remain unmet, not redefined here.
+
+## Native shadow implemented; prerequisites PASS
+
+filler_mask_observer.lua uses the existing native_proc observer interface and
+temporarily wraps only the actual shipped GridMask owner during UG Filler. Real
+GridMask executes once and its nil-preserving full tuple is always returned.
+Private failures latch diagnostics without replacing the original output. Initial
+source is cloned BEFORE the first real mask; every call verifies source equality
+to that initial guard. Private cache results and a second, differently sentinel-
+prefilled uncached mask each match the actual live destination. Private input is
+checked unchanged too. Request sequence cap8192; one source and arity5/scale1 only.
+
+Comparator accepts only unsigned grids whose min/max are integers within0..2^24,
+so conversion to f32 and signed subtraction preserve every integer difference.
+Independent repacks, subtraction/abs and GridCount detect every unequal cell.
+Before use, a private clone has one cell changed; both directions must count1 and
+self-comparison0. Full comparisons are not hash-only. No actual game grid is
+repacked/filled/modified/freed by the observer; only original GridMask writes it.
+
+Cache at most8 masks and floor(16MiB/(width*height*4)) entries. This conservatively
+bounds cached unsigned payload; separate private comparison grids also exist.
+Both timing orders include fresh destinations, masks/copies/clones/evictions and
+cache close. Full comparison work is outside timed kernels. All scratch handles
+are tracked, hook resolved/raw identities restored, native errors and observer
+failures latched; active-scope restoration also releases the hook and scratch.
+
+filler_mask_shadow_offline all7 commands PASS:203 inherited probe checks,
+34939 private kernel model checks and1676 observer exact-grid/source/tuple/
+ownership/error/driver checks, two syntax checks, exact56fbf44 Code/metadata/items
+comparison and38file deployment audit. Fixtures include deliberate source mutation,
+broken copy/comparator, partial writes, bad clones/repack errors, changed source,
+unsupported arity, unfinished scopes, inherited owner slots and other coroutines.
+These do not substitute for actual native-engine proof. Python audit adds full
+native process/private/rock parity and every-request/benchmark/ownership censuses.
+
+Next frozen reference then61N, querySBM_NATIVE_PROC_DIAGNOSTIC through profile.py
+with filler_mask_profile.lua; audit with filler_mask_audit.py. No production cache,
+mod version or benchmark acceptance change. Current production remainsv987.

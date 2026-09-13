@@ -1638,3 +1638,19 @@ anchors, conditional proof and failure gates. Cache copies may erase all benefit
 This turn PROGRESS: completed native primitive evidence, rejected allocation lead,
 and implemented/tested a new private cache. Accepted production remainsv987,
 reference86.606/worst92.125s; full<80 and<85 unmet. Goal ACTIVE, not blocked.
+
+## Filler mask native shadow prepared
+
+Previous turn PROGRESS: completed primitive audits and34939-check private cache.
+Now filler_mask_observer/profile/audit implemented. Original live GridMask always
+writes/returns unchanged; one pre-call source guard and private working clone,
+four exact full-grid comparisons per request (source, cached/live, second-sentinel
+oracle/live, private source) plus comparator self-tests and both-order replay.
+No hash-only equality, no random draw, no modified real grid or generation method.
+Cache payload<=16MiB/8entries, actual request cap8192, all scratch/hook/rawslot
+ownership checked and restored. Benchmark includes copies/clones/eviction/close.
+
+filler_mask_shadow_offline7commandsPASS:203 inherited+34939kernel+1676observer
+fixture checks, syntax, exactaccepted Code/metadata/items and38fileaudit. Native
+reference/61N still required before any speed/equality claim. See
+filler_mask_research.md. Production remainsv987; goal ACTIVE and unmet.
