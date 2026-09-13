@@ -236,3 +236,37 @@ before/after grids/return tuples, fullpredecessor/private/rock/process audits,
 matching complete replay work counters andboth-order costs. Integration remains
 conditional on these results andsupported owner bridging; no production debug,
 engine edits, altered RNG or omitted native readiness/rebuild work is permitted.
+
+## Paired native qualification: both maps pass
+
+Frozen checkpoint 21481b030624301253a81667c526fdc902618013. The retained
+v987_filler_paired_61n and v987_filler_paired_reference artifacts both pass the
+full filler_paired_audit with no issues: complete predecessor grids, individual
+rocks, four private fields, both native API output boundaries and return tuples,
+owned-grid cleanup, hook restoration and normally flushed shutdown logs.
+
+61N: PID 49988, creation 134337846762873092; 94 spans, two generations.
+All 1,798 raw masks and 1,798 eligibility outputs match. Five misses, 1,793 hits,
+1,782 live clears and 8,891 maintained-grid updates. Complete operation replays
+old/new: 1,726/365 ms; reverse order old/new: 1,741/360 ms. Savings 1,361/1,381 ms.
+
+Reference: PID 56272, creation 134337849155614670; 95 spans, two generations.
+All 1,524 raw masks and 1,524 eligibility outputs match. Five misses, 1,519 hits,
+1,506 live clears and 7,482 maintained-grid updates. Complete operation replays
+old/new: 1,492/290 ms; reverse order old/new: 1,495/284 ms. Savings 1,202/1,211 ms.
+The inherited execution session was no longer available when resumed; terminal
+evidence is the retained normal shutdown logs and full audit, not a newly observed
+driver exit code. Authoritative PID lookup and fresh-game guard confirmed no live
+game. No rerun or forced close was performed.
+
+Both maps use five keys, ten owned cache grids, all ten freed, zero evictions,
+capacity seven and a 33,030,144-byte pair-payload bound. These measurements include
+both copies per hit, every maintained clear, initialization and cleanup. Original
+game calls still execute in the shadow run: this proves private operation savings,
+not integrated Filler or START-to-T1 speed. Production remains accepted v987.
+
+The next performance gate is a supported-owner paired implementation, followed by
+native parity and a prospectively declared contemporaneous accepted/candidate cold
+comparison across all six sites. The older raw-mask-only v992 cold rejection is
+retained and is not overturned by this distinct private algorithm. Neither the
+under-80 nor under-85 startup target is demonstrated by these results.

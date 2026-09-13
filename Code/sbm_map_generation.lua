@@ -85,6 +85,353 @@ local function cfg_bool(key, default)
 	return default
 end
 
+-- BEGIN NATIVE FILLER MASK CACHE (actual-source fixture extraction boundary).
+-- Stock Filler creates one fixed distance field. Cache raw radius masks AND
+-- separate live eligibility grids, maintaining every admitted placement clear.
+-- Each API boundary still writes its complete original output. Similarity and
+-- random selection always operate on the caller's independent trial grid.
+-- A GridDest -> GridDistanceMars lineage admits that one field. Known mutations
+-- invalidate before executing; a full end-of-scope guard additionally detects
+-- unexpected writes through userdata methods. Never publish a failed certificate.
+function SuperBigMap.InstallNativeFillerMaskCache(generator, class, read, write)
+	local stats = { scopes = 0, calls = 0, hits = 0, misses = 0, clones = 0,
+		freed = 0, live = 0, peak = 0, unsupported = 0, invalidations = 0,
+		guards = 0, place_guards = 0, and_calls = 0, and_hits = 0, and_misses = 0,
+		clears = 0, updates = 0, evictions = 0, installed = false, restored = false }
+	local originals, wrappers, owned = {}, {}, {}
+	local scope, saved_start, saved_end, start_wrapper, end_wrapper
+	local unpack_values = table.unpack or unpack
+	local function pack(...) return { n = select("#", ...), ... } end
+	local function fail(why)
+		stats.failure = stats.failure or tostring(why)
+		return false
+	end
+	local thread = type(coroutine) == "table" and coroutine.running
+	local function here() return scope and thread() == scope.thread end
+	local function release(grid)
+		if not owned[grid] then return fail("unowned filler scratch release") end
+		local ok, why = pcall(grid.free, grid)
+		if not ok then return fail("filler scratch free: " .. tostring(why)) end
+		owned[grid] = nil
+		stats.live, stats.freed = stats.live - 1, stats.freed + 1
+		return true
+	end
+	local function own(grid, caller)
+		if (type(grid) ~= "userdata" and type(grid) ~= "table") or owned[grid]
+			or grid == caller or (scope and (grid == scope.source or grid == scope.place)) then
+			fail("invalid or aliased filler scratch")
+			return nil
+		end
+		owned[grid] = true
+		stats.live = stats.live + 1
+		stats.peak = math.max(stats.peak, stats.live)
+		return grid
+	end
+	local function dimensions(grid)
+		if originals.IsComputeGrid(grid) ~= "U" then return nil end
+		local w, h = grid:size()
+		if math.type(w) ~= "integer" or math.type(h) ~= "integer"
+			or w <= 0 or h <= 0 or w > 2048 or h > 2048 then return nil end
+		return w, h
+	end
+	local function compare_guard(source, guard, label)
+		local lo, hi = originals.GridMinMax(source)
+		if type(lo) ~= "number" or type(hi) ~= "number" or lo < 0 or hi > 16777216 then
+			fail("filler " .. label .. " left exact comparison range")
+			return
+		end
+		-- Unsigned subtraction can hide negative differences. Independent f32
+		-- repacks are exact over the admitted integer range; take absolute difference.
+		local delta = own(originals.GridRepack(source, "f", 32, true), source)
+		local expected = own(originals.GridRepack(guard, "f", 32, true), guard)
+		if not delta or not expected then return end
+		originals.GridAddMulDiv(delta, expected, -1)
+		originals.GridAbs(delta)
+		if originals.GridCount(delta, 1, 2147483647) ~= 0 then
+			fail("filler " .. label .. " changed")
+		end
+		release(expected)
+		release(delta)
+	end
+	local function check_guard()
+		if not scope then return end
+		if scope.guard then
+			compare_guard(scope.source, scope.guard, "immutable source")
+			stats.guards = stats.guards + 1
+		end
+		if scope.place_guard then
+			compare_guard(scope.place, scope.place_guard, "maintained place")
+			stats.place_guards = stats.place_guards + 1
+		end
+	end
+	local function clear()
+		local ok, why = pcall(check_guard)
+		if not ok then fail("filler source guard: " .. tostring(why)) end
+		for grid in pairs(owned) do release(grid) end
+		if scope then
+			scope.source, scope.guard, scope.entries = nil, nil, {}
+			scope.place, scope.place_guard, scope.pending = nil, nil, nil
+			scope.disabled = true
+		end
+	end
+	local function close()
+		clear()
+		scope = nil
+		for name, wrapper in pairs(wrappers) do
+			local ok, current = pcall(read, name)
+			if ok and current == wrapper then
+				local wrote, good = pcall(write, name, originals[name])
+				if not wrote or not good then fail("filler global restore: " .. name) end
+			elseif not ok or current ~= originals[name] then
+				fail("filler global rebound: " .. name)
+			end
+		end
+		if start_wrapper then
+			if class.ProcStart == start_wrapper then class.ProcStart = saved_start
+			elseif class.ProcStart ~= saved_start then fail("filler ProcStart rebound") end
+			if class.ProcEnd == end_wrapper then class.ProcEnd = saved_end
+			elseif class.ProcEnd ~= saved_end then fail("filler ProcEnd rebound") end
+		end
+		stats.restored = stats.failure == nil and stats.live == 0
+		return stats.failure == nil, stats.failure
+	end
+	local function install()
+		if type(class) ~= "table" or type(read) ~= "function" or type(write) ~= "function"
+			or type(thread) ~= "function" or type(math.type) ~= "function" then return end
+		saved_start, saved_end = class.ProcStart, class.ProcEnd
+		if type(saved_start) ~= "function" or type(saved_end) ~= "function" then return end
+		local mutations = { "GridAnd", "GridOr", "GridNot", "GridCircleSet", "GridFill",
+			"GridMulDivAdd", "GridMulAddScaled", "GridOpFree" }
+		local names = { "GridMask", "GridDest", "GridDistanceMars", "IsComputeGrid",
+			"GridMinMax", "GridRepack", "GridAddMulDiv", "GridAbs", "GridCount" }
+		for _, name in ipairs(mutations) do names[#names + 1] = name end
+		for _, name in ipairs(names) do
+			originals[name] = read(name)
+			if type(originals[name]) ~= "function" then return end
+		end
+		local function invalidate(...)
+			if scope and scope.source then
+				for i = 1, select("#", ...) do
+					local grid = select(i, ...)
+					if grid == scope.source or (scope.place_guard and grid == scope.place)
+						or (scope.pending and grid == scope.pending.destination) then
+						stats.invalidations = stats.invalidations + 1
+						clear()
+						break
+					end
+				end
+			end
+		end
+		for _, name in ipairs(mutations) do
+			local original = originals[name]
+			wrappers[name] = function(...)
+				invalidate(...)
+				return original(...)
+			end
+		end
+		-- These may write to an explicit destination, so conservatively invalidate
+		-- on any source mention. Own guard operations call originals directly.
+		for _, name in ipairs({ "GridRepack", "GridAddMulDiv", "GridAbs" }) do
+			local original = originals[name]
+			wrappers[name] = function(...)
+				invalidate(...)
+				return original(...)
+			end
+		end
+		wrappers.GridDest = function(...)
+			-- A second allocation before the paired And abandons the optimization,
+			-- not the caller's already completed raw-mask output.
+			if here() and scope.pending then invalidate(scope.pending.destination) end
+			local result = pack(originals.GridDest(...))
+			if here() then
+				scope.dest_input = select(1, ...)
+				scope.dest_output = result.n == 1 and result[1] or nil
+			end
+			return unpack_values(result, 1, result.n)
+		end
+		wrappers.GridDistanceMars = function(...)
+			invalidate(...)
+			local result = pack(originals.GridDistanceMars(...))
+			if here() and not scope.disabled then
+				local src, dst, a, b = ...
+				scope.distances = scope.distances + 1
+				if scope.distances == 1 and select("#", ...) == 4 and a == 1 and b == 1
+					and src == scope.dest_input and dst == scope.dest_output and src ~= dst then
+					scope.source = dst
+					scope.place = src
+				else scope.disabled = true end
+			end
+			return unpack_values(result, 1, result.n)
+		end
+		local function mask(src, dst, from, to, scale)
+			local w, h = dimensions(src)
+			local dw, dh = dimensions(dst)
+			local pw, ph = dimensions(scope.place)
+			if not w or dw ~= w or dh ~= h or pw ~= w or ph ~= h then return false end
+			if not scope.guard then
+				local lo, hi = originals.GridMinMax(src)
+				if type(lo) ~= "number" or type(hi) ~= "number" or lo < 0 or hi > 16777216 then return false end
+				local pl, pu = originals.GridMinMax(scope.place)
+				if type(pl) ~= "number" or type(pu) ~= "number" or pl < 0 or pu > 16777216 then return false end
+				scope.capacity = math.min(8, math.floor(33554432 / (w * h * 8)))
+				if scope.capacity < 1 then return false end
+				stats.capacity, stats.pair_byte_bound = scope.capacity, scope.capacity * w * h * 8
+				-- Source + live-place guards and two temporary f32 comparison grids.
+				stats.scratch_byte_bound = (2 * scope.capacity + 4) * w * h * 4
+				scope.guard = own(src:clone(), src)
+				if not scope.guard then return false end
+				scope.place_guard = own(scope.place:clone(), scope.place)
+				if not scope.place_guard then return false end
+			end
+			stats.calls = stats.calls + 1
+			scope.clock = scope.clock + 1
+			for _, entry in ipairs(scope.entries) do
+				if entry.from == from and entry.to == to and entry.scale == scale then
+					dst:copy(entry.grid)
+					entry.last = scope.clock
+					stats.hits = stats.hits + 1
+					scope.pending = { destination = dst, entry = entry }
+					return true, dst
+				end
+			end
+			local result = pack(originals.GridMask(src, dst, from, to, scale))
+			stats.misses = stats.misses + 1
+			if result.n ~= 1 or result[1] ~= dst then
+				fail("filler native mask return contract changed")
+				return true, unpack_values(result, 1, result.n)
+			end
+			if #scope.entries == scope.capacity then
+				local oldest = 1
+				for i = 2, #scope.entries do
+					if scope.entries[i].last < scope.entries[oldest].last then oldest = i end
+				end
+				local victim = scope.entries[oldest]
+				if victim.eligible and not release(victim.eligible) then return true, dst end
+				if not release(victim.grid) then return true, dst end
+				table.remove(scope.entries, oldest)
+				stats.evictions = stats.evictions + 1
+			end
+			local copy = own(dst:clone(), dst)
+			if copy then
+				scope.entries[#scope.entries + 1] = { grid = copy, from = from, to = to,
+					scale = scale, last = scope.clock }
+				stats.clones = stats.clones + 1
+				scope.pending = { destination = dst, entry = scope.entries[#scope.entries] }
+			end
+			return true, dst
+		end
+		wrappers.GridMask = function(...)
+			local src, dst, from, to, scale = ...
+			if scope and scope.pending then invalidate(scope.pending.destination) end
+			if scope and (dst == scope.source or dst == scope.place) then invalidate(dst) end
+			if select("#", ...) ~= 5 then invalidate(src) end
+			if here() and not scope.disabled and not stats.failure and select("#", ...) == 5
+				and src == scope.source and dst ~= src and dst == scope.dest_output
+				and scope.dest_input == src and math.type(from) == "integer" and from >= 0
+				and math.type(to) == "integer" and to == 2147483647
+				and math.type(scale) == "integer" and scale == 1 then
+				scope.dest_output = nil
+				local result = pack(pcall(mask, src, dst, from, to, scale))
+				if not result[1] then fail("filler cache operation: " .. tostring(result[2])) end
+				if stats.failure then clear() end
+				if result[1] and result[2] then return unpack_values(result, 3, result.n) end
+			end
+			stats.unsupported = stats.unsupported + 1
+			return originals.GridMask(...)
+		end
+		local function intersect(dst, other)
+			local entry = scope.pending.entry
+			scope.pending = nil
+			stats.and_calls = stats.and_calls + 1
+			if entry.eligible then
+				dst:copy(entry.eligible)
+				stats.and_hits = stats.and_hits + 1
+				return dst
+			end
+			local result = pack(originals.GridAnd(dst, other))
+			stats.and_misses = stats.and_misses + 1
+			if result.n ~= 1 or result[1] ~= dst then
+				fail("filler native And return contract changed")
+			else
+				entry.eligible = own(dst:clone(), dst)
+				if entry.eligible then stats.clones = stats.clones + 1 end
+			end
+			return unpack_values(result, 1, result.n)
+		end
+		wrappers.GridAnd = function(...)
+			local dst, other = ...
+			if here() and not scope.disabled and not stats.failure and scope.pending
+				and select("#", ...) == 2 and dst == scope.pending.destination and other == scope.place then
+				local result = pack(pcall(intersect, dst, other))
+				if not result[1] then fail("filler paired And: " .. tostring(result[2])) end
+				if stats.failure then clear() end
+				if result[1] then return unpack_values(result, 2, result.n) end
+			else
+				if scope and scope.pending then invalidate(scope.pending.destination) end
+				invalidate(...)
+			end
+			return originals.GridAnd(...)
+		end
+		wrappers.GridCircleSet = function(...)
+			local grid, value, center, radius = ...
+			if here() and not scope.disabled and not stats.failure and scope.place_guard
+				and select("#", ...) == 4 and grid == scope.place and math.type(value) == "integer"
+				and value == 0 and center ~= nil and type(radius) == "number"
+				and radius == radius and radius >= 0 and radius < math.huge then
+				-- Preserve original call and its full tuple before maintaining owned grids.
+				local result = pack(originals.GridCircleSet(...))
+				local ok, why = pcall(function()
+					originals.GridCircleSet(scope.place_guard, value, center, radius)
+					for _, entry in ipairs(scope.entries) do
+						if entry.eligible then
+							originals.GridCircleSet(entry.eligible, value, center, radius)
+							stats.updates = stats.updates + 1
+						end
+					end
+					stats.clears = stats.clears + 1
+				end)
+				if not ok then fail("filler maintained clear: " .. tostring(why)); clear() end
+				return unpack_values(result, 1, result.n)
+			end
+			invalidate(...)
+			return originals.GridCircleSet(...)
+		end
+		wrappers.GridOpFree = function(...)
+			-- Stock Filler frees place_grid here, BEFORE ProcEnd. Compare while live.
+			if scope and scope.place_guard then
+				for i = 1, select("#", ...) do
+					if select(i, ...) == scope.place then clear(); break end
+				end
+			end
+			invalidate(...)
+			return originals.GridOpFree(...)
+		end
+		start_wrapper = function(self, tag, ...)
+			local result = pack(saved_start(self, tag, ...))
+			if self == generator and tag == "FindPrefabPos_Filler" then
+				if scope then fail("nested filler scope"); clear() end
+				scope = { thread = thread(), entries = {}, clock = 0, distances = 0 }
+				stats.scopes = stats.scopes + 1
+			end
+			return unpack_values(result, 1, result.n)
+		end
+		end_wrapper = function(self, tag, ...)
+			if self == generator and tag == "FindPrefabPos_Filler" then clear(); scope = nil end
+			return saved_end(self, tag, ...)
+		end
+		class.ProcStart, class.ProcEnd = start_wrapper, end_wrapper
+		for name, wrapper in pairs(wrappers) do
+			if not write(name, wrapper) then fail("filler global install: " .. name); return end
+		end
+		stats.installed = true
+	end
+	local ok, why = pcall(install)
+	if not ok then fail("filler install: " .. tostring(why)) end
+	if stats.failure then close() end
+	return close, stats
+end
+-- END NATIVE FILLER MASK CACHE.
+
 -- Test-only determinism capture seam. Normal gameplay never installs this hook, so the fast path
 -- is one table lookup and an immediate return. A deliberately armed capture is fail-closed: losing
 -- an early stock/object boundary would make a later identical final hash uninterpretable.
@@ -10349,8 +10696,23 @@ local function PatchRandomMapGenerator()
 				end
 			end
 
+			local filler_close, filler_stats, filler_failure
+			if cfg_bool("OPTIMIZE_NATIVE_FILLER_MASKS", true) then
+				filler_close, filler_stats = SuperBigMap.InstallNativeFillerMaskCache(
+					self, mark_grid_class, mark_grid_bridge_read, mark_grid_bridge_write)
+				map.SuperBigMapNativeFillerMaskStats = filler_stats
+			end
 			local results = { pcall(CallWithClutterCapture, map,
 				call_original_do_generate, self, map, ...) }
+			if filler_close then
+				local close_ok, good, why = pcall(filler_close)
+				if not close_ok or not good then
+					filler_failure = true
+					results = { false, "[OptimizationFailure] native filler mask cache: "
+						.. tostring(close_ok and why or good) }
+				end
+				LoadingStep("native filler mask cache closed", filler_stats, map)
+			end
 
 			-- Restore the grid allocator and both procedure boundaries on every path, exactly as
 			-- they were, before any other expanded-map work can allocate a generator grid.
@@ -10442,6 +10804,9 @@ local function PatchRandomMapGenerator()
 
 			if not results[1] then
 				error(results[2])
+				-- Native error() can log without throwing. Do not publish a failed cache
+				-- certificate or continue expanded work after its transactions restore.
+				if filler_failure then return nil end
 			end
 			-- POST-GENERATION PAD SMOOTHING (config PASSAGE_PAD_SMOOTHING). The generator's
 			-- entrance flatten is PER-HEX -- one height per hex -- so even with clean values it

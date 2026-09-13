@@ -1,0 +1,1 @@
+PASS production matching cache: identical outcomes/placements/RNG; matcher calls 3009 -> 7 (includes fresh-pass invalidation check)

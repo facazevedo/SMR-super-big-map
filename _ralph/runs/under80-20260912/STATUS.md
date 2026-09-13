@@ -1923,3 +1923,19 @@ exit1 onlyatfinalfresh-gameguardafterPASSaudit/normalquitPID55272; authoritative
 PIDrecheck confirmedgone,no rerun. Fullidentities/censuses/costs/prospectivepaired
 design in filler_eligibility_research.md. Acceptedproductionv987unchanged; full
 <80/<85unmet,goalACTIVE. ThisturnPROGRESS,newnativeevidenceandcandidatework.
+
+## Paired Filler native proof and v993 supported integration
+
+Private paired prototype at 21481b0 passed full native reference and 61N audits,
+including separate raw and eligible grids, native tuples and all live clears.
+Complete private replay savings: 1.202/1.211s reference, 1.361/1.381s 61N. These
+are not startup measurements; see filler_eligibility_research.md for identities.
+
+Implemented v993/gen305 through the supported owner bridge, maintaining both raw
+masks and live eligibility. Full source/place guards run before native place free;
+unsupported mutations/pairs fall back, ownership and API boundaries are preserved.
+Only map-generation code and version metadata changed in production. All 85 offline
+commands PASS, including unchanged 83 accepted regressions and 4,418 actual-helper
+checks. Native integration qualification is next, not yet claimed. Details and
+memory accounting: v993_paired_filler_integration.md. Accepted baseline remains
+v987, reference 86.606s / worst 92.125s; full under-80/85 remains unmet. Goal active.

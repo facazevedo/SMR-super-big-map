@@ -1,0 +1,4 @@
+PASS actual v993 source scope, native transactions, integer/ownership guard and accepted terrain preservation
+warning: in the working copy of 'Code/sbm_map_generation.lua', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'Code/sbm_version.lua', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'metadata.lua', LF will be replaced by CRLF the next time Git touches it
