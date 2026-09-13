@@ -1,0 +1,159 @@
+--- a/Code/sbm_terrain_copy.lua
++++ b/Code/sbm_terrain_copy.lua
+@@ -835,7 +835,7 @@
+ 		return nil, "invalid native crease discovery bounds"
+ 	end
+ 	local stats = { cells = 0, enumerated = 0, candidates = 0, sampled_rows = 0, copies = 0 }
+-	if perp1 < perp0 then return {}, stats end
++	if perp1 < perp0 then return {}, stats, {} end
+ 	local owned, owned_set = {}, {}
+ 	local function own(value)
+ 		if not value or value == grid then return nil end
+@@ -843,7 +843,7 @@
+ 		return value
+ 	end
+ 	local function work()
+-		local rows, row_seen = {}, {}
++		local rows, row_seen, offers = {}, {}, {}
+ 		local sampled_rows = math.floor((along_n - 1) / sample_step) + 1
+ 		local span = math.min(perp_n - 1, perp1 + max_width + 1) - (perp0 - 1) + 1
+ 		local sw, sh = axis == "x" and span or sampled_rows, axis == "x" and sampled_rows or span
+@@ -885,7 +885,12 @@
+ 				if not flank0 or not flank1 or not magnitude then return nil, "native crease clone failed" end
+ 				api.GridMulDivAdd(v0, -1, 1, 0); api.GridAdd(flank0, v0); api.GridAbs(flank0)
+ 				api.GridMulDivAdd(b, -1, 1, 0); api.GridAdd(flank1, b); api.GridAbs(flank1)
+-				api.GridMulDivAdd(a, -1, 1, 0); api.GridAdd(magnitude, a); api.GridAbs(magnitude)
++				api.GridMulDivAdd(a, -1, 1, 0); api.GridAdd(magnitude, a)
++				-- a is no longer needed as an operand. Preserve signed differences
++				-- in that existing f32 scratch grid, with no extra allocation.
++				local signed = a
++				signed:copyrect(magnitude, api.box(0, 0, local_w, local_h), api.point(0, 0))
++				api.GridAbs(magnitude)
+ 				local accepted, mask = own(api.NewComputeGrid(local_w, local_h, "f", 32)),
+ 					own(api.NewComputeGrid(local_w, local_h, "f", 32))
+ 				local doubled = own(magnitude:clone())
+@@ -905,8 +910,19 @@
+ 				api.GridMulDivAdd(magnitude, accepted, 1, 0)
+ 				local expected = api.GridCount(magnitude, 1, 2147483647)
+ 				local count, callback_error, emitted = 0, nil, {}
+-				api.GridForeach(magnitude, function(jump, x, y)
++				-- Accepted even packets range2..262142; rejected packets are0.
++				-- Threshold1 is unambiguous for either native boundary convention.
++				api.GridMulDivAdd(signed, 2, 1, 131072)
++				api.GridMulDivAdd(signed, accepted, 1, 0)
++				local width_rows = {}; offers[width] = width_rows
++				api.GridForeach(signed, function(encoded, x, y)
+ 					if callback_error then return end
++					if type(encoded) ~= "number" or encoded ~= math.floor(encoded)
++						or encoded % 2 ~= 0 or encoded < 2 or encoded > 262142 then
++						callback_error = "native crease signed offer invalid"; return
++					end
++					local delta = (encoded - 131072) / 2
++					local jump = math.abs(delta)
+ 					if type(x) ~= "number" or type(y) ~= "number" or type(jump) ~= "number"
+ 						or x ~= math.floor(x) or y ~= math.floor(y) or jump ~= math.floor(jump)
+ 						or x < 0 or y < 0 or x >= local_w or y >= local_h
+@@ -918,6 +934,9 @@
+ 					emitted[key] = true; count = count + 1
+ 					local along = (axis == "x" and y or x) * sample_step
+ 					local perp = perp0 + (axis == "x" and x or y)
++					local offer_row = width_rows[along]
++					if not offer_row then offer_row = {}; width_rows[along] = offer_row end
++					offer_row[perp] = delta
+ 					local seen = row_seen[along]
+ 					if not seen then seen = {}; row_seen[along] = seen; rows[along] = {} end
+ 					if not seen[perp] then
+@@ -934,9 +953,9 @@
+ 			end
+ 		end
+ 		for _, row in pairs(rows) do table.sort(row) end
+-		return rows, stats
+-	end
+-	local ok, rows, detail = pcall(work)
++		return rows, stats, offers
++	end
++	local ok, rows, detail, offers = pcall(work)
+ 	local cleanup_error
+ 	for i = #owned, 1, -1 do
+ 		local freed, err = pcall(owned[i].free, owned[i])
+@@ -944,7 +963,7 @@
+ 	end
+ 	if not ok then return nil, tostring(rows) end
+ 	if cleanup_error then return nil, "native crease cleanup failed: " .. cleanup_error end
+-	return rows, detail
++	return rows, detail, offers
+ end
+ 
+ -- Batched translation of independent rows within ONE already-selected track.
+@@ -1315,23 +1334,51 @@
+ 		end
+ 	end
+ 
++	-- Consume only immutable collection offers. Refinement retains its original
++	-- live scalar path and unchanged exclusion guide after any height write.
++	local function offer_discovered_row(row, axis, along, positions, edge, offers, perp_n)
++		local max_width = wide_ring_only and 1 or 3
++		local width1 = offers and offers[1] and offers[1][along]
++		local width2 = offers and offers[2] and offers[2][along]
++		local width3 = offers and offers[3] and offers[3][along]
++		local before_edge = edge == "left" or edge == "top"
++		for _, perp in ipairs(positions or {}) do
++			-- A hit at a narrow width can lie outside a wider native operand's
++			-- domain. Keep every original scalar read/predicate at that boundary.
++			if not offers or perp > perp_n - max_width - 2 then
++				scan_line_range(row, axis, along, perp, perp, edge)
++			else
++				for width = 1, max_width do
++					local values = width == 1 and width1 or width == 2 and width2 or width3
++					local delta = values and values[perp]
++					if delta then
++						local low_before = delta > 0
++						if wide_ring_only or (before_edge and low_before) or (not before_edge and not low_before) then
++							offer_candidate(row, axis, perp, width, edge, low_before, math.abs(delta))
++						end
++					end
++				end
++			end
++		end
++	end
++
+ 	local function collect_axis(axis, perp_n, along_n, before_edge, after_edge,
+ 			before_perp0, before_perp1, after_perp0, after_perp1, sample_step)
+ 		if discovery_error then return end
+ 		local active = {}
+ 		sample_step = math.max(1, sample_step or 1)
+ 		local function index(lo, hi)
+-			local rows, detail = BuildHeightStepDiscoveryIndex(discovery_api, grid, axis,
++			local rows, detail, offers = BuildHeightStepDiscoveryIndex(discovery_api, grid, axis,
+ 				lo, hi, along_n, sample_step, wide_ring_only and 1 or 3, threshold)
+ 			if not rows then discovery_error = tostring(detail); return nil end
+ 			for key in pairs(discovery_stats) do
+ 				discovery_stats[key] = discovery_stats[key] + (detail[key] or 0)
+ 			end
+-			return rows
+-		end
+-		local before = index(before_perp0, before_perp1)
++			return rows, offers
++		end
++		local before, before_offers = index(before_perp0, before_perp1)
+ 		if not before then return end
+-		local after = index(after_perp0, after_perp1)
++		local after, after_offers = index(after_perp0, after_perp1)
+ 		if not after then return end
+ 		if refinement_guide then
+ 			refinement_guide.RegisterDomain(axis, before_edge, before_perp0, before_perp1, sample_step, before)
+@@ -1341,12 +1388,8 @@
+ 			local row = {}
+ 			-- Exact scalar acceptance, width order and edge order are unchanged. Only
+ 			-- positions proven unable to offer any width are omitted by the native index.
+-			for _, perp in ipairs(before[along] or {}) do
+-				scan_line_range(row, axis, along, perp, perp, before_edge)
+-			end
+-			for _, perp in ipairs(after[along] or {}) do
+-				scan_line_range(row, axis, along, perp, perp, after_edge)
+-			end
++			offer_discovered_row(row, axis, along, before[along], before_edge, before_offers, perp_n)
++			offer_discovered_row(row, axis, along, after[along], after_edge, after_offers, perp_n)
+ 
+ 			local used = {}
+ 			for _, candidate in ipairs(row) do

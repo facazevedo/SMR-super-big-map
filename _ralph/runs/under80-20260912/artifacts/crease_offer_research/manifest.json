@@ -1,0 +1,7 @@
+{
+  "status": "private_not_deployed",
+  "baseline_sha256": "a5e3e36c3b31580afccef9d391cbaa587ce98cdbe35b54afbcb4ca663cc05f16",
+  "candidate_sha256": "06fcbb182589db444b833bac2cf2f875276884397654182741f8bd86a41bc5c5",
+  "production_changed": false,
+  "refinement_unchanged": true
+}
