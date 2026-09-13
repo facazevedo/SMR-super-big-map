@@ -14,6 +14,11 @@ not yet met (more than 2.069667s reduction required). The native control is sepa
 and excluded from this average. All existing correctness rules and terrain fixes
 remain required. Later sections record rejected candidates and ongoing research.
 
+CURRENT WORKTREE/DEPLOYMENT: experimentalv994/generator306, not accepted yet.
+Actual production outputs pass reference and61N native full-field/full-map audits;
+all85 offline commands pass. Whole-helper overhead and cold reference-average
+acceptance remain pending. Acceptedv987 average above remains the baseline.
+
 User requested implementation after the feasibility assessment. Target: reference
 14N134W and five existing validation scenarios below 80 seconds, measured from START
 through required surface post-pipeline revalidation. All current rules, geometry
@@ -2038,3 +2043,18 @@ production-helper experiment, preserving every native/RNG/output boundary.
 Accepted56fbf44/v987 unchanged; reference average87.069667s; below85 unmet.
 This turn PROGRESS: diagnosed/corrected comparator and completed two exact native
 field proofs with modest positive replay evidence. No live game remains.
+
+## v994 supported distance helper integrated and native-qualified
+
+Implemented scoped supported-owner helper, no engine/private API/RNG/lifecycle
+changes. Actual-helper4130 model checks and independent-oracle composition750
+PASS. First offline70797 preserved:83 accepted regressions pass,newfixture loader
+fails; loader-only correction then full58455 CLOSEDexit0 all85PASS,unchangedprodhashes.
+Frozen065ab3f/generator306 deployed38/38, native reference96347 and61N20742
+CLOSEDexit0, both full auditsPASS with exact every-field/predecessor/private4/rock
+outputs and normal shutdown. Cached primary/secondary304/323 and143/162, all
+expected guards/allocations/frees, no invalidations, restored hooks. No live game.
+Candidatev994 remains deployed/unaccepted. Next measure complete actual-helper
+replay overhead before cold acceptance. Baselinev987average87.069667s unchanged;
+goal reference mean<85 active/unmet. This turn PROGRESS: production implementation,
+all regressions and two actual substitution proofs, not a startup speed claim.

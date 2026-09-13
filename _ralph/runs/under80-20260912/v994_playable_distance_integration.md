@@ -80,3 +80,28 @@ Full v994_offline_2 completed58455 CLOSEDexit0: all85 commands PASS with product
 hashes unchanged. New composition test750 PASS and actual-helper4130 PASS.
 First failed-loader batch70797 CLOSEDexit1 remains preserved. Candidate ready for
 frozen native reference/61N diagnostics; still no cold evidence or acceptance.
+
+## Actual production outputs qualified on both native maps
+
+Frozen065ab3f5df24d9b902e56ac3e50f8746f3e19fa9, deployment38/38 audited:
+reference96347 CLOSEDexit0 PID50436/creation134337917831110436;
+61N20742 CLOSEDexit0 PID58584/creation134337919855753839.
+Both normally flushed shutdowns and full private_process_audit PASS issues[].
+No live game remains. Artifacts v994_native_reference and v994_native_61n.
+
+Every production counter matched the prospectively declared values above:
+cached304/323 reference,143/162 61N; one native calibration per signature,
+all unions/writes, guards2,allocated/freed8,peak6,live0,invalidations0. Production
+hooks restored. The independent native oracle compared every actual raw/primary/
+secondary boundary, including substituted outputs:3117/1507 complete comparisons.
+Full predecessor/private4/individual-rock outputs unchanged,95/94 native spans
+and two generations. Observer private calls did not invalidate production.
+
+Production remains candidatev994, not newly accepted. Native diagnostics include
+full-grid oracle overhead and cannot establish startup speed. Their replay also
+still times the primitive sequence rather than the integrated helper. Next extend
+the private complete-work replay to execute the actual helper, charging bridge
+installation/restoration, dispatch, both calibration calls, input guards and all
+allocations/frees in both orders. Keep original event journal and final outputs
+exact. Only then decide whether to spend the finite reference3/control batch;
+below85 mean plus five-site correctness is still required for goal completion.

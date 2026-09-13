@@ -1,0 +1,26 @@
+{
+  "status": "pass",
+  "issues": [],
+  "site": "61N136W",
+  "checkpoint": {
+    "commit": "065ab3f5df24d9b902e56ac3e50f8746f3e19fa9",
+    "diagnostic_only": true
+  },
+  "identity": [
+    58584,
+    134337919855753839
+  ],
+  "predecessor": "_ralph\\runs\\under80-20260912\\artifacts\\v987_matrix\\61n136w_a",
+  "pair": {
+    "verdict": "pass",
+    "differences": [],
+    "note": "Runtime parity only; engine-RNG source audit is separate.",
+    "full_snapshot_differences": [],
+    "rock_grounding_differences": []
+  },
+  "private_fields_checked": 4,
+  "spans": 94,
+  "generations": 2,
+  "normal_shutdown": true,
+  "qualification": "Native procedure wall spans, including pre-logic stages. Not CPU time or cold acceptance; nested spans are not additive."
+}
