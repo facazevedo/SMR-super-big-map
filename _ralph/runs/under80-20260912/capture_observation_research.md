@@ -100,3 +100,64 @@ querySBM_ROCK_GEOMETRY_CENSUS, declared v987 predecessors and normal owned
 shutdown. rock_geometry_census_audit.py requires full exact predecessor/grid/
 individual-rock/four-private-field/process parity and bounded valid census.
 Native runs are still pending here. No speed claim or production optimization.
+
+## Native rock-value census CLOSED PASS
+
+Frozen e0ab40cc6edae2fa24e32821f0d212ccfd5b91f8:
+
+| Scope | Capture invocations | Actual geometry reads | Repeated within Capture |
+| --- | ---: | ---: | ---: |
+| Reference surface | 16579 | 278817 | 228939 |
+| 61N136W surface | 16249 | 643240 | 599615 |
+
+Reference v987_rock_geometry_reference: exec16739/PID53784,
+creation134337795488268409 CLOSED exit0. Slow61N v987_rock_geometry_61n:
+exec30712/PID46212,creation134337797436179045 CLOSED exit0. Both normally
+flushed/quit, full rock_geometry_census_audit PASS issues[]. All predecessor
+grids/individual-rock results/four private-stream fields exact; no native errors.
+All5 original private cells joined,15 source occurrences instrumented, peak9
+roles and1 simultaneous Capture, both owned seams restored, config unchanged.
+
+Every observed repeated value (including numeric subtype), method and receiver
+remained unchanged; zero nonscalar returns. Combined828554 repeats out of922057
+reads. Dominant repeated roles reference/61N: bounds.sizey69640/138844,
+bounds.miny64873/135397, bounds.minz20252/95326, bounds.maxz21791/99073.
+The reference capture executes21414 segment rays; its final stats29309 also
+include later Apply rays (rock_grounding.lua159..161). Do not use the combined
+counter as if every ray were inside Capture.61N capture has97361 rays.
+
+Decision: proceed to a PRIVATE Capture-local scalar-reuse candidate, not broader
+object-getter caching or production integration. Native docs describe point
+coordinates and box extents as integer reads, but census equality alone does not
+prove custom-method purity, immutability, or no yields. Qualify actual native
+value/method identities through supported mod APIs, retain unchanged fallback
+for custom/rebound values, and retain first-use laziness and numeric subtypes.
+No source stamp substitution, removed ray/probe/contact, changed Apply, or eager
+new reads. Validate original/candidate actual source with complete ordered native
+terrain/ray/sample arguments and exact private records, then measure the whole
+Capture/annotation work with preparation included before any cold gate.
+
+The observed stable repeats justify testing this lead; they do not estimate its
+speed benefit. Prior enclosing capture537/1212ms still caps its plausible scale,
+not the whole2203/2859ms annotation parent. No instrumented timing is a cold
+sample. This cannot by itself establish the remaining7.125s slow-site sub85 gap.
+
+Retain the higher-upside distinct Astra alternative if geometry reuse yields
+too little: maintain Filler radius eligibility masks through EVERY monotone
+place_grid circle clearing, avoiding repeated GridAnd as well as GridMask.
+Unlike rejectedv992, update all admitted owned masks; keep similar_apply on a
+separate copied trial destination and preserve every original seeded selection.
+The diagnostic mask+And parent1481/1731ms is not a saving: initial construction,
+all maintained-grid updates, copies, guards and cleanup must be charged. First
+shadow every trial grid before unchanged similarity/selection; reject if update
+cost consumes the gain. Playable distance min-composition is a separate cheap
+falsification lead, but native discrete/saturation/empty-source exactness is not
+proven. Do not revive unchanged rejected candidates or weaken any rebuild rule.
+
+For a genuinely new candidate, prospectively declare finite interleaved accepted/
+candidate samples and all six sites before timing. Historical unchanged-v983
+confirmation varied90.244vs86.718s (v984_source_review.md68..78); that supports
+contemporaneous controls, not retroactive rescue of rejectedv984/v992 results.
+Current accepted production remains56fbf44/v987. Neither all-site<80 nor<85 is
+achieved. This turn PROGRESS: implemented/tested a new diagnostic and obtained
+two complete native censuses that qualify the next candidate's actual workload.

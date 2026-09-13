@@ -1828,3 +1828,28 @@ accepted86.606/worst92.125s,all<80/<85unmet. Next independent callback-local
 objectobservationcensus per capture_observation_research.md. Actualsurface rock
 capture537/1212ms isonlypartof2203/2859ms parent; preserveallprobes/rays/contacts,
 don'tcountpost-first-accessUGcaptureaspreT1saving. ThisturnPROGRESS,goalACTIVE.
+
+## Actual rock-value census: two full native audits PASS
+
+Latest Astra/xhigh alternatives review supplied distinct mutation-maintained
+Filler eligibility and Playable distance composition leads; neither has a native
+speed proof. This turn implemented the lower-risk rock-value census first.
+170 actual-source fixture checks and6 offline prerequisites PASS; actual getter,
+terrain/ray/point call order, private contact records and counters remain exact.
+
+Frozene0ab40c reference16739/PID53784 and61N30712/PID46212 CLOSED exit0,
+normallyflushed logs and full rock_geometry_census_audit PASS issues[]. Exact
+predecessor/grids/individualrocks/fourprivatefields;5 original cellsjoined,
+15 source reads wrapped, bounded9roles/1active observed, hooks/config restored.
+Reference278817reads/228939repeats,61N643240/599615. Zero value/subtype/method/
+receiver changes andzero nonscalar returns. OnlySurface Capture instrumented;
+no claim about fullannotation or UGpost-first-access savings.
+
+Next actual private candidate: qualify native box/point reads and scalarize
+repeats locally, preserving first-use laziness, custom/rebound fallback and all
+probes/rays/contacts/arithmetic/Apply. Census stability is not proof of immutable
+methods or absent yields; verify candidate actual-source/native semantics and
+whole-work cost before production/cold gates. Full findings, exact process
+identities, corrected capture-only ray counts and higher-upside alternatives
+are in capture_observation_research.md. Production stillaccepted56fbf44/v987;
+reference86.606/worst92.125,full<80/<85unmet. ThisturnPROGRESS,goalACTIVE.
