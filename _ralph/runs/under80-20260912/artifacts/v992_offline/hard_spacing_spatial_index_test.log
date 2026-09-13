@@ -1,0 +1,3 @@
+PASS reference fast path preserves all v934 fields and reduces pair predicates 125891 -> 3541
+PASS current production preserves all fields and reduces pair predicates 125891 -> 3541
+PASS invalid surface certificate records OptimizationFailure and raises without fallback

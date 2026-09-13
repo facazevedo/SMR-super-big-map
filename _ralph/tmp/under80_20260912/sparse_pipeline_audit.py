@@ -7,7 +7,7 @@ import sys
 root=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(root/'_ralph/tmp/historical_ports_20260909'))
 import measure_port
-p=argparse.ArgumentParser();p.add_argument('--name',required=True);args=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('--name',required=True);p.add_argument('--version',type=int,default=987);args=p.parse_args()
 art=root/'_ralph/runs/under80-20260912/artifacts'
 directory=art/args.name;target=directory/'private_process_audit.json'
 if target.exists():raise RuntimeError('Preserve prior audit')
@@ -28,7 +28,7 @@ if identity['incident_id'] not in current['log'][:4096]:issues.append('incident 
 for label in ('engine','daemon'):
     log=(directory/(label+'_flushed.log')).read_text(errors='replace')
     if '*** Debug::Done()' not in log[-2000:]:issues.append(label+' shutdown')
-    if 'Loaded mod def Super Big Map (id SuperBigMap, v0.00-987) unpacked from appdata' not in log:issues.append(label+' payload')
+    if f'Loaded mod def Super Big Map (id SuperBigMap, v0.00-{args.version}) unpacked from appdata' not in log:issues.append(label+' payload')
     if re.search(r'\[LUA ERROR\]|\[ASSERT\]|assertion failed|assert failed|\[OptimizationFailure\]|exception code|c0000409|c0000005',log,re.I):issues.append(label+' errors')
 if probe.get('status')!='pass' or not probe.get('restored') or probe.get('error') or probe.get('issues') or not probe.get('config_unchanged'):
     issues.append('probe status/restoration/config')

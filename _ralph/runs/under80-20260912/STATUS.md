@@ -1699,3 +1699,21 @@ gates. Private735..857ms improvement is not an accepted startup gain. This turn
 PROGRESS: real-engine exact source/output proofs, both-order private gains and
 native ABI discovery completed. All handles terminal; productionv987 unchanged,
 full<80 and<85 remain unmet, goal ACTIVE and not blocked.
+
+## v992 production filler cache ready for integrated native verification
+
+Previous explicit Astra xhigh review completed a ranked alternatives report;
+no startup improvement was established. This turn implements the strongest
+measured private lead in actual production: scoped immutable Filler masks,
+generator304/version992, supported owner bridge, native tuple/integer fallback,
+source lineage and pre-mutation invalidation, full end guard, bounded owned LRU,
+and cleanup before existing projection/raster/source-view restoration.
+
+All85 actual regression commands PASS (unchanged83 accepted +new helper/source
+checks);2414 helper fixture checks. Initial caller-owned GridRepack fixture leak
+fixed in the test, not suppressed. Normal deployment copied exactly three files;
+38/38 auditPASS, fresh-game check clear. No integrated native/cold gain yet.
+See v992_filler_integration.md and artifacts/v992_offline. Next frozen reference
+and61N production observer with full predecessor/private/rock/process audits.
+Accepted baseline remainsv98786.606/worst92.125s; candidate not promoted and goal
+ACTIVE. This turn PROGRESS: actual integration and tested lifecycle/error paths.
