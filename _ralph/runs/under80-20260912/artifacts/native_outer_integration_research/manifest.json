@@ -1,0 +1,13 @@
+{
+  "status": "research_only_not_deployed",
+  "source_sha256": "2e23ea2e98b04aa89167cf143fa17e9f69cbbac4db5c24aff07a3cab02e78ae8",
+  "kernel_sha256": "4a9ce8e32fbb23c1e3670e453d0d78409404a60ff5e8e664415271c88197db9f",
+  "candidate_sha256": "d5f0d90bcf236a54f3154e03fbb0886332e64de62f15033bbfba1717d0e4aa86",
+  "required_next": [
+    "source and transaction review",
+    "offline full regression",
+    "actual integrated failure injection",
+    "native full parity",
+    "cold acceptance"
+  ]
+}

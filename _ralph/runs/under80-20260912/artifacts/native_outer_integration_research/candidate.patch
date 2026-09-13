@@ -1,0 +1,403 @@
+--- a/Code/sbm_terrain_copy.lua
++++ b/Code/sbm_terrain_copy.lua
+@@ -3613,6 +3613,12 @@
+ 	local native_count = Global("GridCount")
+ 	local native_repack = Global("GridRepack")
+ 	local native_is_compute = Global("IsComputeGrid")
++	local mask_api = {}
++	for _, name in ipairs({ "NewComputeGrid", "GridMulDivAdd",
++		"GridAdd", "GridAddMulDiv", "GridPow", "GridAbs", "GridMask", "GridClamp",
++		"GridRound", "GridCount", "GridForeach", "point", "box" }) do
++		mask_api[name] = Global(name)
++	end
+ 	local box_fn = Global("box")
+ 	local native_missing = {}
+ 	local function require_native(name, value)
+@@ -3629,6 +3635,10 @@
+ 	require_native("GridCount", native_count)
+ 	require_native("GridRepack", native_repack)
+ 	require_native("IsComputeGrid", native_is_compute)
++	for name, value in pairs(mask_api) do require_native(name, value) end
++	for _, name in ipairs({ "GridPow", "GridMask", "GridRound", "GridForeach" }) do
++		require_native(name, mask_api[name])
++	end
+ 	require_native("box", box_fn)
+ 	require_native("grid.copyrect", grid.copyrect)
+ 	require_native("grid.new_instance", grid.new_instance)
+@@ -3680,6 +3690,275 @@
+ 		return x0, y0, x1, y1, sample_step
+ 	end
+ 
++	-- PRIVATE INTEGRATION RESEARCH: numeric certificate/source review still gates promotion.
++	local NativeOuterMask = function(api, row, scalar, epsilon_numerator)
++	    local math, type, ipairs = math, type, ipairs
++	    local w, h, step = row.width, row.height, row.sample_step
++	    local p = row.patch
++	    local stats = { corrected = 0, changed_by_correction = 0, samples = w*h,
++	        experimental_epsilon_numerator = epsilon_numerator, certificate_proved = false, domain_qualified = false }
++	    local function integer(v) return type(v)=='number' and v==math.floor(v) end
++	    local function finite(v) return type(v)=='number' and v==v and math.abs(v)<=1048576 end
++	    local failure
++	    local function require_value(ok, why)
++	        if not ok then failure=failure or why;return false end
++	        return true
++	    end
++	    if row.atan2_present or not integer(w) or not integer(h) or w<2 or h<2
++	        or w>4096 or h>4096 or (step~=1 and step~=4) or not integer(row.x0)
++	        or not finite(row.x0) or not integer(row.y0) or not finite(row.y0)
++	        or not finite(p.core_cells) or p.core_cells<1 or not finite(p.phase)
++	        or not finite(row.base_transition) or row.base_transition<1 or p.core_cells>row.base_transition
++	        or not finite(p.relief_x) or not finite(p.relief_y)
++	        or math.abs(p.relief_x)>1 or math.abs(p.relief_y)>1
++	        or not finite(row.irregularity) or row.irregularity<0 or row.irregularity>0.45
++	        or (epsilon_numerator~=nil and (not integer(epsilon_numerator)
++	            or epsilon_numerator<1 or epsilon_numerator>16)) then
++	        return nil, stats, 'unsupported research domain'
++	    end
++	    if not finite(row.radius) or row.radius~=p.core_cells+row.base_transition*1.35 then
++	        return nil,stats,'outer radius does not match scalar bound'
++	    end
++	    local harmonic=.52*math.sin(p.phase)+.30*math.sin(-p.phase*1.37)+.18*math.sin(p.phase*.73)
++	    if not finite(harmonic) or math.abs(harmonic)>1
++	        or (row.cached_zero_harmonic~=nil and row.cached_zero_harmonic~=harmonic) then
++	        return nil,stats,'native outer harmonic domain/cache'
++	    end
++	    local function domain(cx, cy)
++	        if not integer(cx) or not finite(cx) or not integer(cy) or not finite(cy) then return false end
++	        local dx=math.max(math.abs(row.x0-cx),math.abs(row.x0+(w-1)*step-cx))
++	        local dy=math.max(math.abs(row.y0-cy),math.abs(row.y0+(h-1)*step-cy))
++	        return dx*dx+dy*dy<=16777216
++	    end
++	    if not domain(p.cx,p.cy) then return nil,stats,'coordinate square domain' end
++	    local allowance_units=324
++	    for _,g in ipairs(row.guards) do
++	        if not domain(g.cx,g.cy) or not finite(g.radius) or g.radius<1
++	            or not finite(g.transition) or g.transition<0
++	            or (g.transition>0 and (g.transition<0.25 or g.transition>128)) then
++	            return nil,stats,'unsupported protection domain'
++	        end
++	        if g.transition>0 then allowance_units=allowance_units+82+6.0*g.radius/g.transition end
++	    end
++	    local derived_numerator=math.ceil(allowance_units/256.0)
++	    if derived_numerator>16 then return nil,stats,'research error budget exceeds supported range' end
++	    if epsilon_numerator and epsilon_numerator<derived_numerator then
++	        return nil,stats,'manual error budget below derived allowance'
++	    end
++	    epsilon_numerator=epsilon_numerator or derived_numerator
++	    stats.experimental_epsilon_numerator=epsilon_numerator
++	    stats.derived_numerator=derived_numerator
++	    stats.domain_qualified = true
++	    local owned, lookup = {}, {}
++	    local function own(grid)
++	        if not require_value(grid~=nil and grid~=false,'native outer allocation failed') then return nil end
++	        if grid and not lookup[grid] then lookup[grid]=true;owned[#owned+1]=grid end
++	        return grid
++	    end
++	    local function clone(grid) if not grid then return nil end;return own(grid:clone()) end
++	    local function new() return own(api.NewComputeGrid(w,h,'f',32)) end
++	    local function ratio(value)
++	        if not require_value(finite(value),'nonfinite native coefficient') then return nil end
++	        local q=1073741824
++	        while math.abs(value)*q>16777215 do q=q/2 end
++	        return math.floor(value*q+0.5),q
++	    end
++	    local function mul(grid,value)
++	        local n,q=ratio(value)
++	        if not n then return false end
++	        api.GridMulDivAdd(grid,n,q,0)
++	        return true
++	    end
++	    local function add(grid,value)
++	        local n,q=ratio(value)
++	        if not n then return false end
++	        -- Powers-of-two scaling is exact; API arguments remain integral.
++	        api.GridMulDivAdd(grid,q,1,n)
++	        api.GridMulDivAdd(grid,1,q,0)
++	        return true
++	    end
++	    local function finite_positive(grid)
++	        return require_value(api.GridCount(grid,0,2147483647)==w*h,'nonfinite/out-of-range native arithmetic')
++	    end
++	    local function reciprocal(grid)
++	        local original=clone(grid)
++	        if not original then return false end
++	        api.GridPow(grid,-1,1)
++	        if not finite_positive(grid) then return false end
++	        api.GridMulDivAdd(original,grid,1,-1);api.GridAbs(original)
++	        api.GridMulDivAdd(original,16777216,1,0)
++	        api.GridClamp(original,0,16)
++	        if not require_value(api.GridCount(original,4,32)==0,'native outer reciprocal residual') then return false end
++	        stats.reciprocal_checks=(stats.reciprocal_checks or 0)+1
++	        return true
++	    end
++	    local function field(axis,center)
++	        local grid=new()
++	        if not grid then return nil end
++	        local extent=axis=='x' and w or h
++	        for i=0,extent-1 do
++	            if axis=='x' then grid:set(i,0,i*step) else grid:set(0,i,i*step) end
++	        end
++	        local filled,across=1,axis=='x' and h or w
++	        while filled<across do
++	            local count=math.min(filled,across-filled)
++	            local box=axis=='x' and api.box(0,0,w,count) or api.box(0,0,count,h)
++	            local point=axis=='x' and api.point(0,filled) or api.point(filled,0)
++	            grid:copyrect(grid,box,point)
++	            filled=filled+count
++	        end
++	        api.GridMulDivAdd(grid,1,1,(axis=='x' and row.x0 or row.y0)-center)
++	        return grid
++	    end
++	    local function distance(cx,cy,need_root)
++	        local x,y=field('x',cx),field('y',cy)
++	        if not x or not y then return nil end
++	        local square,y2=clone(x),clone(y)
++	        if not square or not y2 then return nil end
++	        api.GridMulDivAdd(square,x,1,0);api.GridMulDivAdd(y2,y,1,0)
++	        api.GridAdd(square,y2)
++	        -- Squares/sum are exact within the qualified integer domain.
++	        if need_root==false then return nil,x,y,square end
++	        local squared=clone(square)
++	        if not squared then return nil end
++	        api.GridClamp(squared,1,2147483647)
++	        local radius=clone(squared)
++	        if not radius then return nil end
++	        api.GridPow(radius,1,2)
++	        if not finite_positive(radius) then return nil end
++	        local residual=clone(radius)
++	        if not residual then return nil end
++	        api.GridMulDivAdd(residual,radius,1,0)
++	        api.GridAddMulDiv(residual,squared,-1);api.GridAbs(residual)
++	        api.GridAddMulDiv(residual,squared,-2,16777216)
++	        api.GridMulDivAdd(residual,1073741824,1,0)
++	        api.GridClamp(residual,0,16)
++	        if not require_value(api.GridCount(residual,1,32)==0,'native outer root residual') then return nil end
++	        stats.root_checks=(stats.root_checks or 0)+1
++	        return radius,x,y,square
++	    end
++	    local function smooth(t)
++	        local polynomial=clone(t)
++	        if not polynomial then return nil end
++	        api.GridMulDivAdd(polynomial,6,1,-15)
++	        api.GridMulDivAdd(polynomial,t,1,10)
++	        local cube=clone(t)
++	        if not cube then return nil end
++	        api.GridMulDivAdd(cube,t,1,0);api.GridMulDivAdd(cube,t,1,0)
++	        api.GridMulDivAdd(polynomial,cube,1,0)
++	        return polynomial
++	    end
++	    local result
++	    local ok,why=pcall(function()
++	        local radius,x,y=distance(p.cx,p.cy)
++	        if not radius then return end
++	        local inverse=clone(radius)
++	        if not inverse then return end
++	        api.GridClamp(inverse,1,2147483647)
++	        if not reciprocal(inverse) then return end
++	        api.GridMulDivAdd(x,inverse,1,0);api.GridMulDivAdd(y,inverse,1,0)
++	        if not mul(x,p.relief_x) or not mul(y,p.relief_y) then return end
++	        api.GridAdd(x,y)
++	        local along=x
++	        local width=clone(along)
++	        if not width then return end
++	        api.GridMulDivAdd(width,along,1,0);api.GridMulDivAdd(width,24,100,0)
++	        if not add(width,1+row.irregularity*harmonic-.12) then return end
++	        local linear=clone(along)
++	        if not linear then return end
++	        api.GridMulDivAdd(linear,-6,100,0);api.GridAdd(width,linear)
++	        -- Clamp endpoints are integer-only: use the exactly scaled U24 interval.
++	        api.GridMulDivAdd(width,16777216,1,0)
++	        api.GridClamp(width,8388608,22649242)
++	        api.GridMulDivAdd(width,1,16777216,0)
++	        if not mul(width,row.base_transition) or not reciprocal(width) then return end
++	        if not add(radius,-p.core_cells) then return end
++	        api.GridMulDivAdd(radius,width,1,0)
++	        api.GridClamp(radius,0,1)
++	        local weight=smooth(radius)
++	        if not weight then return end
++	        api.GridMulDivAdd(weight,-1,1,1);api.GridClamp(weight,0,1)
++	        for _,g in ipairs(row.guards) do
++	            local d,_,_,square=distance(g.cx,g.cy,g.transition>0)
++	            if not square or (g.transition>0 and not d) then return end
++	            local protection
++	            if g.transition==0 then
++	                -- Integer squared distances permit a separated threshold. Resolve
++	                -- it with the literal scalar sqrt predicate, including exact tangency.
++	                local cutoff=math.floor(g.radius*g.radius)
++	                local resolved=false
++	                for attempt=1,4 do
++	                    if cutoff>0 and math.sqrt(cutoff)>g.radius then cutoff=cutoff-1
++	                    elseif math.sqrt(cutoff+1)<=g.radius then cutoff=cutoff+1
++	                    else resolved=true;break end
++	                end
++	                if not require_value(resolved and cutoff>=0 and cutoff<8388608,'hard guard threshold domain') then return end
++	                protection=new()
++	                if not protection then return end
++	                api.GridMulDivAdd(square,2,1,0)
++	                -- Inputs are even exact integers; threshold is odd and <2^24.
++	                api.GridMask(square,protection,2*cutoff+1,2147483647)
++	                stats.hard_guards=(stats.hard_guards or 0)+1
++	            else
++	                if not add(d,-g.radius) then return end
++	                -- Reciprocal coefficient is rounded on the CPU for this prototype;
++	                -- its exact production error treatment remains an open proof obligation.
++	                if not mul(d,1.0/g.transition) then return end
++	                api.GridClamp(d,0,1)
++	                protection=smooth(d)
++	                if not protection then return end
++	                api.GridClamp(protection,0,1)
++	            end
++	            api.GridMulDivAdd(weight,protection,1,0)
++	        end
++	        api.GridClamp(weight,0,1)
++	        local lower,upper=clone(weight),clone(weight)
++	        if not lower or not upper then return end
++	        if not add(lower,-epsilon_numerator/65536.0) or not add(upper,epsilon_numerator/65536.0) then return end
++	        api.GridClamp(lower,0,1);api.GridClamp(upper,0,1)
++	        api.GridMulDivAdd(lower,4096,1,0);api.GridRound(lower)
++	        api.GridMulDivAdd(upper,4096,1,0);api.GridRound(upper)
++	        local uncertain=clone(upper)
++	        if not uncertain then return end
++	        api.GridAddMulDiv(uncertain,lower,-1)
++	        api.GridMulDivAdd(uncertain,2,1,0) -- positive >=2; enumeration bound1 has no equality ambiguity
++	        local expected=api.GridCount(uncertain,1,2147483647)
++	        api.GridMulDivAdd(weight,4096,1,0);api.GridRound(weight)
++	        local seen={}
++	        api.GridForeach(uncertain,function(value,cx,cy)
++	            if failure then return end
++	            if not require_value(integer(cx) and integer(cy) and cx>=0 and cy>=0 and cx<w and cy<h,
++	                'native outer correction coordinate escaped patch') then return end
++	            local key=cy*w+cx
++	            if not require_value(not seen[key],'duplicate native outer correction') then return end
++	            seen[key]=true
++	            local exact=scalar(cx,cy)
++	            if not require_value(integer(exact) and exact>=0 and exact<=4096,'invalid scalar outer correction') then return end
++	            if weight:get(cx,cy)~=exact then stats.changed_by_correction=stats.changed_by_correction+1 end
++	            weight:set(cx,cy,exact);stats.corrected=stats.corrected+1
++	        end,1,2147483647)
++	        if failure then return end
++	        if not require_value(type(expected)=='number' and expected==stats.corrected,'native outer correction census') then return end
++	        result=weight
++	        stats.allocations=#owned
++	    end)
++	    if failure then ok=false;why=failure end
++	    local cleanup_error
++	    for i=#owned,1,-1 do
++	        if not ok or owned[i]~=result then
++	            local freed,err=pcall(owned[i].free,owned[i])
++	            if not freed then cleanup_error=tostring(err) end
++	        end
++	    end
++	    if cleanup_error then
++	        if result then pcall(result.free,result) end
++	        return nil,stats,'native outer cleanup: '..cleanup_error
++	    end
++	    if not ok then return nil,stats,tostring(why) end
++	    return result,stats
++	end
++
++	local native_mask_failure
+ 	local function apply_native_patch(patch)
+ 		local owned, owned_lookup = {}, {}
+ 		local function own(value)
+@@ -3766,6 +4045,7 @@
+ 				assert(coarse, "native coarse-mask allocation failed")
+ 				-- Missing atan2 deliberately means angle0. Reuse its literal harmonic
+ 				-- within this patch; do not change that existing terrain fallback.
++				local function fill_scalar_coarse()
+ 				local cached_zero_sine, cached_zero_harmonic
+ 				for coarse_y = 0, coarse_height - 1 do
+ 					local y = y0 + coarse_y * sample_step
+@@ -3822,6 +4102,76 @@
+ 							math.floor(weight * native_weight_scale + 0.5))
+ 					end
+ 				end
++				end
++                local cached_zero_sine, cached_zero_harmonic
++                local function scalar_native_weight(cx, cy)
++                    local x, y = x0 + cx * sample_step, y0 + cy * sample_step
++local dx, dy = x - patch.cx, y - patch.cy
++						local distance = math.sqrt(dx * dx + dy * dy)
++						local weight = 0
++						if distance <= patch.core_cells then
++							weight = 1
++						elseif distance < radius then
++							-- width_scale is capped at maximum_width_scale, so radius bounds
++							-- every angular lobe. Neither the exact core nor the guaranteed-zero
++							-- exterior needs trigonometry. Keep transition arithmetic unchanged.
++							local angle = math.atan2 and math.atan2(dy, dx) or 0
++							local ux, uy = 1, 0
++							if distance > 0.0001 then ux, uy = dx / distance, dy / distance end
++							local along_relief = ux * patch.relief_x + uy * patch.relief_y
++							local sine = math.sin
++							local harmonic
++							if angle == 0 and sine == cached_zero_sine then
++								harmonic = cached_zero_harmonic
++							else
++								harmonic = 0.52 * math.sin(3 * angle + patch.phase)
++									+ 0.30 * math.sin(5 * angle - patch.phase * 1.37)
++									+ 0.18 * math.sin(7 * angle + patch.phase * 0.73)
++								if angle == 0 and sine == math.sin then
++									cached_zero_sine, cached_zero_harmonic = sine, harmonic
++								end
++							end
++							local width_scale = 1 + transition_irregularity * harmonic
++								+ 0.12 * (2 * along_relief * along_relief - 1)
++								- 0.06 * along_relief
++							width_scale = math.max(0.50,
++								math.min(maximum_width_scale, width_scale))
++							local outer_radius = patch.core_cells + base_transition * width_scale
++							if distance < outer_radius then
++								local t = (distance - patch.core_cells)
++									/ math.max(0.0001, outer_radius - patch.core_cells)
++								t = math.max(0, math.min(1, t))
++								local smooth = t * t * t * (t * (t * 6 - 15) + 10)
++								weight = 1 - smooth
++							end
++						end
++						for _, protected in ipairs(protection_blends) do
++							-- Zero times any finite protection weight remains zero. Stop only
++							-- at exact zero; do not quantize or prune a small nonzero feather.
++							if weight == 0 then break end
++							local px, py = x - protected.cx, y - protected.cy
++							weight = weight * ProtectedTerrainBlendWeight(math.sqrt(px * px + py * py),
++								protected.radius, protected.transition)
++						end
++						return math.floor(weight * native_weight_scale + 0.5)
++                end
++                local native_coarse, mask_stats, mask_error = NativeOuterMask(mask_api, {
++                    patch = patch, guards = protection_blends, radius = radius,
++                    base_transition = base_transition, irregularity = transition_irregularity,
++                    x0 = x0, y0 = y0, width = coarse_width, height = coarse_height,
++                    sample_step = sample_step, atan2_present = math.atan2 ~= nil,
++                }, scalar_native_weight)
++                if native_coarse then
++                    coarse = own(native_coarse)
++                elseif mask_stats.domain_qualified then
++                    -- Never install a partial working grid after a native failure.
++                    native_mask_failure = tostring(mask_error or "native outer mask returned no result")
++                    return nil, nil, nil
++                else
++                    -- Numeric nonqualification selects the original scalar mask,
++                    -- matching the accepted apron mask's domain dispatch contract.
++                    fill_scalar_coarse()
++                end
+ 				samples = coarse_width * coarse_height
+ 				mask = own(native_resample(coarse, local_width, local_height, true))
+ 				assert(mask, "native mask resample failed")
+@@ -3893,6 +4243,7 @@
+ 		for _, patch in ipairs(patches) do
+ 			shaped_patches = shaped_patches + 1
+ 			local changed, raster_cells, mask_samples = apply_native_patch(patch)
++			if native_mask_failure then return end
+ 			modified_cells = modified_cells + changed
+ 			native_raster_cells = native_raster_cells + raster_cells
+ 			native_mask_samples = native_mask_samples + mask_samples
+@@ -3936,6 +4287,7 @@
+ 		end
+ 	end
+ 	if type(resume) == "function" then pcall(resume, "SBMOuterResourceTerrain") end
++	if native_mask_failure then ok_apply, apply_error = false, native_mask_failure end
+ 	if not ok_apply then
+ 		OptimizationFailure("outer resource terrain native raster", tostring(apply_error), map)
+ 	end

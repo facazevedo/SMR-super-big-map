@@ -1003,3 +1003,23 @@ Its authoritative live/completed state will be artifacts/native_outer_mask_quali
 plus the running process handle, not this preparation note. Do not change HEAD,
 production, kernel or setup source while it runs. Production/deployment remains
 accepted v983,38/38 auditPASS. The startup target remains unmet; goal active.
+
+## Six-site shadow batch stopped at a confirmed shutdown transition
+
+Session30139 is TERMINAL(exit1), not still running. At86605b2 the reference
+PID49756 completed normally and passed all948237 cells/56 patches and full final
+parity (kernel979ms/scalar2395ms). The next site's preflight saw that same PID
+briefly listed after its flushed Debug::Done, so15S67E was NOT launched and no
+15s67e artifact directory exists. Subsequent OS query and fresh_game_check confirm
+the old process is gone. The stopped batch and its error are preserved intact.
+
+Prepared a separate continuation for the five unlaunched sites, requiring exact
+source hashes matching the stopped batch and retaining its completed reference.
+The research runner now verifies each owned PID+creation identity has disappeared
+after normal shutdown before proceeding, refusing any unexpected game. No harness,
+OS setting, production code or deployment change. No successful sample is rerun.
+
+Also generated a PRIVATE integration draft in native_outer_integration_research.
+It parses, but is not deployed or fully tested. It keeps the original scalar
+domain branch and stages native failures before terrain installation. Integration
+review, regression/failure tests, and cold acceptance remain separate gates.
