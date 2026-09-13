@@ -701,3 +701,14 @@ cells exact, zero mismatches. Diagnostic mask block2904ms->2432ms, observed472ms
 reduction, NOT a cold startup gain. Accepted production/deployment remainsv983;
 current baseline90.244 and target under85 unchanged. Next check the same candidate
 on61N136W before deciding its role in a production optimization candidate.
+
+61N shadow session87418/PID40372 subsequently CLOSED normally at ec4ca93;
+full predecessor/private-stream/individual-rock parity PASS.50 patches/740771
+complete U12 cells exact, zero mismatches. Mask block2402ms->1973ms, observed
+429ms reduction. Both shadows total106 masks/1689008 exact cells; no startup
+acceptance claim. No live game remains. Production remains byte-identicalv983.
+Next: promote the enclosure alone to a new v985 candidate, adapt the two research
+oracles to actual predecessor/production sources, run all82 offline commands,
+then freeze and measure reference3/control against v983_confirmation_reference.
+Do not fold rejectedv984 decor into this declared experiment. Five-site validation
+and all ten rules still required after a positive reference gate. Under85 unmet.

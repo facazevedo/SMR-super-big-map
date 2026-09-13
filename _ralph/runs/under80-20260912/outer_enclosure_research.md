@@ -58,3 +58,22 @@ grids and publish no terrain/dirty region. Actual required-API list explicitly
 rejects missing GridFill. The unchanged subsequent native pipeline is compared
 through complete U16 outputs; double circle semantics are only an offline
 differential fixture, not a substitute for native full-mask/full-map evidence.
+
+61N136W native shadow CLOSED normally at ec4ca93, session87418/PID40372.
+All50 patches/740771 complete U12 cells match exactly. Mask block2402ms->1973ms,
+observed429ms reduction. Full predecessor/private-stream/individual-rock parity
+passes, flushed logs and normal shutdown captured in artifacts/outer_enclosure_61n_shadow.
+Across both native shadows106 masks/1689008 cells are exact. Production has not
+changed; no cold performance claim follows from these diagnostic reductions.
+
+Next declared implementation: v985 with this enclosure change alone, generation
+guard299/runtime985 and unchanged sector76. Do not silently fold rejectedv984
+decor changes into this experiment. Adapt both new actual-source oracles to
+compare f4d1da6 with production, retain all80 inherited tests (82 total), preserve
+the existing sine-rebinding and source-binding tests, then freeze code/version/
+HEAD/deployment before reference3/control. Use v983_confirmation_reference
+(90.244s median) as declared comparator. A positive reference result permits
+the five-site matrix against v983_matrix; every timing must remain visible.
+The experiment is an incremental step toward the full under85 scope, not a
+replacement target. Source review and review_v974.py need a v985 entry before
+freeze; no v985 production candidate exists yet.
