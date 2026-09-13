@@ -1,0 +1,37 @@
+{
+  "calls": [
+    {
+      "checked": 4290,
+      "kernel_ms": 2,
+      "stats": {
+        "allocations": 13,
+        "changed_by_correction": 1,
+        "corrected": 232,
+        "samples": 4290,
+        "certificate_proved": false,
+        "experimental_epsilon_numerator": 1
+      },
+      "patch": 1,
+      "guards": 0
+    },
+    {
+      "checked": 4225,
+      "kernel_ms": 1,
+      "stats": {
+        "allocations": 13,
+        "changed_by_correction": 0,
+        "corrected": 239,
+        "samples": 4225,
+        "certificate_proved": false,
+        "experimental_epsilon_numerator": 1
+      },
+      "patch": 2,
+      "guards": 0
+    }
+  ],
+  "error": "patch 3: unsupported protection domain (including zero-width guards)",
+  "corrected": 471,
+  "status": "fail",
+  "kernel_ms": 3,
+  "samples": 8515
+}
