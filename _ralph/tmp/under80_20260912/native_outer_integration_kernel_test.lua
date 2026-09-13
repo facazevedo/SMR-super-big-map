@@ -1,6 +1,6 @@
 -- Run the existing literal/failure suite against the helper embedded in the
 -- generated integration draft, not against the standalone research helper.
-local draft='_ralph/runs/under80-20260912/artifacts/native_outer_integration_research/sbm_terrain_copy.lua'
+local draft=arg[1] or '_ralph/runs/under80-20260912/artifacts/native_outer_integration_research/sbm_terrain_copy.lua'
 local f=assert(io.open(draft,'r'));local source=f:read('*a'):gsub('\r\n','\n');f:close()
 local first=assert(source:find('local NativeOuterMask = function(',1,true))
 local last=assert(source:find('\n\tlocal native_mask_failure',first,true))

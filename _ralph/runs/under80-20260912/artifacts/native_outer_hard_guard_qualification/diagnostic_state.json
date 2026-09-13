@@ -1,0 +1,89 @@
+{
+  "status": "pass",
+  "calls": [
+    {
+      "allocations": 4,
+      "mode": "allowance",
+      "derived": 3,
+      "pass": true,
+      "accepted": true
+    },
+    {
+      "allocations": 5,
+      "mode": "hard_endpoint",
+      "derived": 2,
+      "pass": true,
+      "accepted": true
+    },
+    {
+      "allocations": 0,
+      "mode": "hard_limit",
+      "reason": "hard guard threshold domain",
+      "pass": true,
+      "accepted": false
+    },
+    {
+      "allocations": 0,
+      "mode": "huge_coordinates",
+      "reason": "unsupported research domain",
+      "pass": true,
+      "accepted": false
+    },
+    {
+      "allocations": 0,
+      "mode": "wrong_radius",
+      "reason": "outer radius does not match scalar bound",
+      "pass": true,
+      "accepted": false
+    },
+    {
+      "allocations": 0,
+      "mode": "small_budget",
+      "reason": "manual error budget below derived allowance",
+      "pass": true,
+      "accepted": false
+    },
+    {
+      "allocations": 0,
+      "mode": "wrong_harmonic",
+      "reason": "native outer harmonic domain/cache",
+      "pass": true,
+      "accepted": false
+    },
+    {
+      "allocations": 0,
+      "mode": "fractional_center",
+      "reason": "coordinate square domain",
+      "pass": true,
+      "accepted": false
+    },
+    {
+      "allocations": 0,
+      "mode": "atan2",
+      "reason": "unsupported research domain",
+      "pass": true,
+      "accepted": false
+    },
+    {
+      "allocations": 0,
+      "mode": "square_overflow",
+      "reason": "coordinate square domain",
+      "pass": true,
+      "accepted": false
+    },
+    {
+      "allocations": 0,
+      "mode": "small_transition",
+      "reason": "unsupported protection domain",
+      "pass": true,
+      "accepted": false
+    },
+    {
+      "allocations": 0,
+      "mode": "large_transition",
+      "reason": "unsupported protection domain",
+      "pass": true,
+      "accepted": false
+    }
+  ]
+}

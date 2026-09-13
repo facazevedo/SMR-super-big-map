@@ -1088,3 +1088,21 @@ driver/verifier verdict. No scalar rescue was introduced.
 Next inspect successful integrated fast-path parity independently. Production and
 deployment still accepted v983. Early-abort behavior is not claimed or repaired by
 this optimization; no acceptance tests have been weakened.
+
+## v987 candidate ready for immutable cold gate
+
+This turn is PROGRESS. Integrated successful reference7050/PID27180 CLOSED PASS:
+56 native patches/948237 samples and full predecessor/private/final/rock parity.
+Hard-domain qualification11133/PID46236 CLOSED PASS including hard cutoff8388607
+accepted and8388608 refused before allocation. Both are research, not cold timing.
+
+Applied generated draft2 to Code; v987/generator299/sector76. Offline77083 CLOSED
+PASS all83 commands (accepted80 plus embedded helper6383 checks, both scalar source
+copies versusv983, rational bounds). Only a comment heading changed after the
+hashed offline run; targeted parse/source/helper checks cover that final file.
+
+Prepare a committed immutable candidate and deploy with the standard sync/audit.
+Cold reference comparator is fresh v983_confirmation_reference median90.244s and
+control28.532s; if strictly faster and correctness passes, five-site comparator is
+fresh v983_matrix_confirmation. Preserve every sample, no rescue reruns. The
+candidate is not accepted and the startup target remains unmet; goal active.

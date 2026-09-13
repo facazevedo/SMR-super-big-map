@@ -115,13 +115,14 @@ _G.error=original_error
 check(output==nil and why~=nil and logged==0,'rejection depends on throwing error()')
 for _,g in ipairs(owned)do check(g.freed,'logging-only error cleanup leak')end
 -- Proof-domain regressions: every refusal must precede allocation.
-for _,case in ipairs({'huge_coordinates','wrong_radius','small_budget','wrong_harmonic'}) do
+for _,case in ipairs({'huge_coordinates','wrong_radius','small_budget','wrong_harmonic','hard_limit'}) do
     local row=fixture()
     local epsilon
     if case=='huge_coordinates' then row.x0=1e20;row.y0=1e20;row.patch.cx=1e20;row.patch.cy=1e20
     elseif case=='wrong_radius' then row.radius=1
     elseif case=='small_budget' then epsilon=1
-    elseif case=='wrong_harmonic' then row.cached_zero_harmonic=.5 end
+    elseif case=='wrong_harmonic' then row.cached_zero_harmonic=.5
+    elseif case=='hard_limit' then row.guards={{cx=27,cy=19,radius=4096,transition=0}} end
     local api,owned=api_for()
     local output,_,why=native(api,row,scalar(row),epsilon)
     if output then output:free() end

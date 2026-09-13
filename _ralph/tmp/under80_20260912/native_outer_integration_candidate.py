@@ -1,11 +1,15 @@
 """Generate an undeployed integration candidate; never modifies production files."""
 import difflib
+import argparse
 import hashlib
 import json
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[3]
-out = root / '_ralph/runs/under80-20260912/artifacts/native_outer_integration_research'
+parser = argparse.ArgumentParser()
+parser.add_argument('--name', default='native_outer_integration_research')
+args = parser.parse_args()
+out = root / '_ralph/runs/under80-20260912/artifacts' / args.name
 source = (root / 'Code/sbm_terrain_copy.lua').read_text()
 kernel = (root / '_ralph/tmp/under80_20260912/native_outer_mask.lua').read_text()
 candidate = source

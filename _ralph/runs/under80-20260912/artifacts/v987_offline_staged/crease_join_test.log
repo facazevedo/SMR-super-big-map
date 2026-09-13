@@ -1,0 +1,9 @@
+PASS positive control: old extrapolation creates a false peak
+PASS uphill and downhill joins stay bounded under opposing steep slopes
+PASS equal endpoints cannot create a ridge or trench
+PASS compatible straight slopes are preserved exactly
+PASS axis, side direction and along coordinate do not change the result
+PASS short joins do not read or write outside their bounds
+PASS tiny height differences and U16 limits remain finite and monotone
+PASS safe endpoint slopes meet the original field within sample quantization
+8 bounded crease-join checks passed

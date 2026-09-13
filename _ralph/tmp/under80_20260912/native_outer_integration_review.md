@@ -1,7 +1,8 @@
 # Private integration draft review
 
-Generated at1040749 while the standalone shadow source stays frozen. No production
-file has been edited or deployed. The draft is not an accepted optimization.
+Originally generated at1040749 while the standalone shadow source stayed frozen.
+The completed checks and staged v987 candidate are recorded below. The candidate
+is not an accepted optimization; cold performance gates remain outstanding.
 
 ## Deliberate preservation
 
@@ -61,3 +62,47 @@ transaction_evidence_audit.json characterizes only transaction containment,
 cleanup and visible rejection. It does not convert the original failure test to a
 pass or prove early startup abort. Successful-path correctness and all cold gates
 remain required; no runtime verifier or engine behavior was changed to fit this test.
+
+## Newly identified domain-dispatch edge (before production)
+
+The hard-guard threshold limit is currently checked after scratch allocation.
+For a large zero-transition guard, cutoff>=8388608 is numeric nonqualification,
+not an arithmetic/API execution failure. The draft's domain_qualified flag would
+misclassify this as a native failure. Before production, move the literal
+sqrt-adjusted cutoff qualification ahead of allocation and retain its exact cutoff
+for later use. Add a regression requiring no allocation and the original scalar
+domain path for this case. Do not alter the running integrated-reference source.
+All captured six-site hard guards qualified; their passed results remain valid
+for the tested revision, but do not cover this custom-domain edge.
+
+## Completed integration gates and staged candidate
+
+The six-site shadow audit passed 4,024,386 cells across 255 patches, with full
+predecessor/final-snapshot/private-state/rock parity. The successful integrated
+reference at a6bcc79 passed all 56 native patches (948237 samples) and the full
+ordinary verifier, with no duplicate shadow loop. This was not a cold timing run.
+
+The hard-guard dispatch issue above is fixed before allocation. Native boundary
+qualification passed cutoff8388607 and rejected8388608 without allocation; the
+6383-check helper suite includes that refusal. Draft2 embeds the corrected helper.
+Both actual production scalar expressions mechanically match f4d1da6/v983.
+
+v987 staged production passed all83 commands (accepted80 plus embedded helper,
+literal-source comparison and rational bound checks), with frozen source hashes.
+The only subsequent production change is the three-line explanatory comment
+replacing the private-draft heading; arithmetic and source expressions are intact.
+The retained certificate_proved=false diagnostic field deliberately makes no
+unconditional proof claim about arbitrary native implementations. The documented
+f32/binary64 assumptions and runtime residual guards remain necessary.
+
+Qualified-failure transaction containment is demonstrated, but the original
+early-abort expectation FAILED and stays failed. No startup lifecycle workaround
+or verifier relaxation is included. Cold runs must contain no OptimizationFailure.
+
+Cold acceptance compares reference3/control with fresh v983_confirmation_reference
+(median90.244s, control28.532s), and, only after strict reference improvement,
+all five with v983_matrix_confirmation. No diagnostic gains count as cold gains.
+Only Code/sbm_terrain_copy.lua, Code/sbm_version.lua and metadata.lua change in
+production (v987/generator299/sector76). All terrain operations after mask creation,
+placement/RNG, rock support, native underground bootstrap and required immediate
+and scheduled pre-T1 rebuilds are retained. The startup target is not yet achieved.

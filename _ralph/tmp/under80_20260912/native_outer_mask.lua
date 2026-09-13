@@ -44,13 +44,29 @@ return function(api, row, scalar, epsilon_numerator)
     end
     if not domain(p.cx,p.cy) then return nil,stats,'coordinate square domain' end
     local allowance_units=324
-    for _,g in ipairs(row.guards) do
+    local hard_cutoffs={}
+    for index,g in ipairs(row.guards) do
         if not domain(g.cx,g.cy) or not finite(g.radius) or g.radius<1
             or not finite(g.transition) or g.transition<0
             or (g.transition>0 and (g.transition<0.25 or g.transition>128)) then
             return nil,stats,'unsupported protection domain'
         end
         if g.transition>0 then allowance_units=allowance_units+82+6.0*g.radius/g.transition end
+        if g.transition==0 then
+            -- Numeric qualification precedes allocation. Retain the literal
+            -- scalar sqrt/tangency predicate, including its cutoff adjustment.
+            local cutoff=math.floor(g.radius*g.radius)
+            local resolved=false
+            for attempt=1,4 do
+                if cutoff>0 and math.sqrt(cutoff)>g.radius then cutoff=cutoff-1
+                elseif math.sqrt(cutoff+1)<=g.radius then cutoff=cutoff+1
+                else resolved=true;break end
+            end
+            if not resolved or cutoff<0 or cutoff>=8388608 then
+                return nil,stats,'hard guard threshold domain'
+            end
+            hard_cutoffs[index]=cutoff
+        end
     end
     local derived_numerator=math.ceil(allowance_units/256.0)
     if derived_numerator>16 then return nil,stats,'research error budget exceeds supported range' end
@@ -189,21 +205,12 @@ return function(api, row, scalar, epsilon_numerator)
         local weight=smooth(radius)
         if not weight then return end
         api.GridMulDivAdd(weight,-1,1,1);api.GridClamp(weight,0,1)
-        for _,g in ipairs(row.guards) do
+        for index,g in ipairs(row.guards) do
             local d,_,_,square=distance(g.cx,g.cy,g.transition>0)
             if not square or (g.transition>0 and not d) then return end
             local protection
             if g.transition==0 then
-                -- Integer squared distances permit a separated threshold. Resolve
-                -- it with the literal scalar sqrt predicate, including exact tangency.
-                local cutoff=math.floor(g.radius*g.radius)
-                local resolved=false
-                for attempt=1,4 do
-                    if cutoff>0 and math.sqrt(cutoff)>g.radius then cutoff=cutoff-1
-                    elseif math.sqrt(cutoff+1)<=g.radius then cutoff=cutoff+1
-                    else resolved=true;break end
-                end
-                if not require_value(resolved and cutoff>=0 and cutoff<8388608,'hard guard threshold domain') then return end
+                local cutoff=hard_cutoffs[index]
                 protection=new()
                 if not protection then return end
                 api.GridMulDivAdd(square,2,1,0)

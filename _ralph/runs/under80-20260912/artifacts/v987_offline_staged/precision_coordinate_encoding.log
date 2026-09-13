@@ -1,0 +1,2 @@
+native mask failure/domain/ownership: 221 checks passed; 0 final allocations
+PASS Q22 exact-span and rounded-corner guards; inherited native failure/ownership regression

@@ -1,0 +1,7 @@
+{
+  "ok": true,
+  "exit": 0,
+  "data": {
+    "result": "NATIVE_OUTER_DOMAIN_PASS {\n\tmetatable = table: 0000018561344780 [1]\n}"
+  }
+}

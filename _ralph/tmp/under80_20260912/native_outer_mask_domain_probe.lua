@@ -19,11 +19,13 @@ local function row()
         irregularity=0,atan2_present=false,cached_zero_harmonic=0,
         patch={cx=18,cy=19,core_cells=2,relief_x=1,relief_y=0,phase=0},guards={}}
 end
-for _,mode in ipairs({'allowance','huge_coordinates','wrong_radius','small_budget','wrong_harmonic',
+for _,mode in ipairs({'allowance','hard_endpoint','hard_limit','huge_coordinates','wrong_radius','small_budget','wrong_harmonic',
     'fractional_center','atan2','square_overflow','small_transition','large_transition'})do
     local input=row()
     local epsilon
     if mode=='allowance' then input.guards={{cx=27,cy=19,radius=213,transition=12}}
+    elseif mode=='hard_endpoint' then input.guards={{cx=27,cy=19,radius=math.sqrt(8388607),transition=0}}
+    elseif mode=='hard_limit' then input.guards={{cx=27,cy=19,radius=math.sqrt(8388608),transition=0}}
     elseif mode=='huge_coordinates' then input.x0=1e20;input.y0=1e20;input.patch.cx=1e20;input.patch.cy=1e20
     elseif mode=='wrong_radius' then input.radius=1
     elseif mode=='small_budget' then epsilon=1
@@ -38,7 +40,8 @@ for _,mode in ipairs({'allowance','huge_coordinates','wrong_radius','small_budge
     local accepted=grid~=nil
     if grid then grid:free() end
     local pass=mode=='allowance' and accepted and stats.derived_numerator==3
-        or mode~='allowance' and not accepted and type(problem)=='string' and allocations==0
+        or mode=='hard_endpoint' and accepted and stats.derived_numerator==2
+        or mode~='allowance' and mode~='hard_endpoint' and not accepted and type(problem)=='string' and allocations==0
     result.calls[#result.calls+1]={mode=mode,pass=pass,accepted=accepted,
         allocations=allocations,derived=stats.derived_numerator,reason=problem}
     if not pass then result.status='fail';result.error=mode;return end
