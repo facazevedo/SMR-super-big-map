@@ -1717,3 +1717,22 @@ See v992_filler_integration.md and artifacts/v992_offline. Next frozen reference
 and61N production observer with full predecessor/private/rock/process audits.
 Accepted baseline remainsv98786.606/worst92.125s; candidate not promoted and goal
 ACTIVE. This turn PROGRESS: actual integration and tested lifecycle/error paths.
+
+## v992 integrated native reference and61N CLOSED PASS; cold gate next
+
+Frozen343bee6. Reference9429/PID50416 and61N66661/PID43328 CLOSED exit0, full
+filler_production_audit --version992 PASS issues[]: complete predecessor/grid/
+individualrocks/privatefourfields,95/94native spans/two generations, normal
+flushed logs/no errors. Production itself handles1524/1798requests with1519/1793
+hits,five misses/clones. One source guard,noinvalidations,peak8owned/all8freed,
+live0,allglobal/classhooksrestored. Maskpayload<=16MiB,total scratchbound23592960B.
+
+Actual source/owner/coroutine reachability now verified, not merely private shadow.
+Full85commandregression PASS. Standard38fileauditPASS and freshgamecheck clear.
+No live process, no coldv992 samples, no claimed START-to-T1 gain or promotion.
+Next finite frozen v992_reference (3/control) versusv987_reference; onlystrict
+reference medianimprovement+fullparity permitsfive versusv987_matrix. Correct
+commands, identities and evidence are in v992_filler_integration.md. Do not repeat
+another review/plan instead of this now-qualified cold experiment next turn.
+Current production is candidatev992/generator304; accepted baseline remainsv987
+86.606/worst92.125s,full<80 and<85 unmet. GoalACTIVE; this turn PROGRESS.

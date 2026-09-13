@@ -75,3 +75,36 @@ the accepted default remains987. No relaxed error or correctness gate.
 Only after integrated native PASS: frozen cold reference3/control and five-site
 matrix, complete source/RNG review and rejection/promotion decision. Prior private
 735..857ms mask replay gain is NOT a startup saving. No unmeasured speed claim.
+
+## Integrated native reference and61N CLOSED PASS
+
+Frozen343bee6ae2049c98163367a3b5e2b5a15118e7fd. Reference exec9429/PID50416,
+creation134337733936470583;61N exec66661/PID43328,creation134337735872472676.
+Both handles CLOSED exit0, normally flushed engine/daemon logs, no engine errors.
+filler_production_audit.py --version992 PASS issues[] on both complete artifacts:
+v992_filler_production_reference and v992_filler_production_61n.
+
+Full predecessor/grid/individual-rock outputs exact; four private-stream fields
+exact. Native scope census95/94, two generation calls each, generation methods
+unchanged within calls, native observer boundaries restored. The supported mod
+owner bridge and production coroutine API actually reached native Filler calls.
+
+Real production requests1524/1798, hits1519/1793, five misses and owned mask clones
+each. One scope/one source guard, zero source invalidations; capacity7 and mask
+payload bound16515072bytes, total conservative scratch bound23592960bytes. Peak8
+owned grids (five masks, source guard, two comparator repacks), all8freed/live0,
+production globals and class boundaries restored. Unsupported other native masks
+693/381 passed through. No diagnostic shadow supplied real game outputs in these
+runs: this verifies the actual integrated production substitution.
+
+Fresh-game check clear and standard38-file deployment auditPASS after both runs.
+No cold samples have been collected yet; no startup gain or promotion. Next finite
+phase (freeze HEAD/deployment for the complete reference and any following matrix):
+
+    python -u _ralph/tmp/historical_ports_20260909/measure_port.py --out _ralph/runs/under80-20260912/artifacts/v992_reference --phase reference
+    python _ralph/tmp/historical_ports_20260909/audit_reference.py --out _ralph/runs/under80-20260912/artifacts/v992_reference --prior _ralph/runs/under80-20260912/artifacts/v987_reference
+
+Only strict reference median improvement and full clean evidence permit the five
+site matrix againstv987_matrix; no rescue repeats. Extend review_v974.py for992
+with85tests and the three actual production files, and complete v992_source_review
+with actual cold results before claiming any all-ten-rule acceptance.
