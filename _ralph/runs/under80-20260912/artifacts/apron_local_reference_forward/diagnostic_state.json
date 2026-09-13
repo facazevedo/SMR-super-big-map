@@ -1,0 +1,55 @@
+{
+  "calls": [
+    {
+      "core_fraction": 0.2,
+      "old_ms": 1879,
+      "maximum": 0,
+      "old_ok": true,
+      "cells": 67108864,
+      "minimum": 0,
+      "old_stats": {
+        "scalar_mask_patches": 0,
+        "mask_cells_skipped": 0,
+        "mask_samples": 0,
+        "modified": 1910302,
+        "shaped": 50,
+        "exact_samples": 396398,
+        "raster_cells": 5039674,
+        "native_mask_cells": 5039674,
+        "mask_fast_one": 11663,
+        "mask_fast_zero": 0,
+        "native_mask_patches": 50
+      },
+      "different": 0,
+      "cleanup": true,
+      "new_ms": 1238,
+      "new_ok": true,
+      "new_stats": {
+        "scalar_mask_patches": 0,
+        "mask_cells_skipped": 0,
+        "mask_samples": 0,
+        "modified": 1910302,
+        "shaped": 50,
+        "exact_samples": 256451,
+        "raster_cells": 5039674,
+        "native_mask_cells": 5039674,
+        "mask_fast_one": 7620,
+        "mask_fast_zero": 0,
+        "native_mask_patches": 50
+      }
+    }
+  ],
+  "reverse": false,
+  "restored": true,
+  "status": "pass",
+  "primitive": {
+    "weight_cells": 74016,
+    "max_error_units": 1008.5078490115702,
+    "issues": [],
+    "checks": 148032,
+    "status": "pass",
+    "expected_checks": 148032,
+    "max_allowance_units": 1100.0,
+    "min_slack_units": 66.77943749229114
+  }
+}

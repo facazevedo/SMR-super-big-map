@@ -1375,3 +1375,43 @@ per-cell quintic derivative bound, potentially reusing consumed cube scratch. It
 is NOT proved or implemented: derive every rounding/ownership bound and measure
 additional native sweeps before any production action. Do not repeat unchanged
 v990 or advertise scalar-work reduction as the full all-site startup result.
+
+## Local sensitivity private candidate: proof/offline/native PROGRESS
+
+Previous goal turn was PROGRESS: completed v990 results preserved and accepted
+production restored/committedddafd9a. This turn is also PROGRESS: a genuinely new
+local-error field was derived, mechanically generated, tested and natively timed.
+No unchangedv990 repeat or rejected-candidate combination. Goal remains ACTIVE.
+
+Private86fff28 candidate reuses consumed cube scratch with seven extra grid passes,
+uses q=t*(1-t) and |P'|=30*q^2 to form a per-cell three-times weight-error field.
+Exact rational checks cover inherited normalized-radius propagation, core/affine
+variation, CPU rounding, q padding2, <64 U24 polynomial/scalar remainder,80-unit
+field reserve, downstream rounding and separate NEW +1 H final margin. All earlier
+native/domain/residual/census guards, mask generation, scalar fallback, correction,
+patch order and scratch ownership stay intact. Proof is conditional on the same
+regular-f32/scalar-f64 and checked native residual contracts as acceptedv987.
+
+apron_local_checks_2 final9 commands PASS (older5/8 replay artifacts retained).
+58905 exact three-way cells,39 reduced/no increased cases, corrections7884->6979.
+221 inherited failure/domain/ownership checks plus encoding boundary tests PASS;
+126 additional checks inject all seven new copy/arithmetic failures. ACTUAL local
+block oracle148032 interval endpoints/74016 weights PASS; six declared replacements
+reverse to entire literalv987 TerrainCopy. Production Code/metadata/items unchanged.
+
+Forward60912/PID39000 and reverse48075/PID49524 CLOSED at86fff28. Both process
+audits PASS private four fields/full predecessor/rock parity/version987/incident/
+flushed normal logs/no errors/cleanup/wrapper+scheduled-hook restoration. Each
+67108864 native U16 cells exact, difference min/max/count0. Native oracle148032
+checks each, min observed slack66.779437492 U24 (not used as proof). Actualcore=.2.
+Corrections396398->256451 (139947 fewer); raster5039674/modified1910302/shaped50
+unchanged. Old/new1879/1238ms forward,1893/1228ms reverse:641..665ms DIAGNOSTIC
+helper savings, not cold START-to-T1 evidence. Extra grid passes and +1 H included.
+
+All handles terminal, fresh-game check clear. Production/deployment exactv987,
+38/38 auditPASS. No candidate version staged or promoted. Next stage only this
+native-shadowed local candidate, preserve/adapt all legacy coefficient assertions,
+replay COMPLETE actual production suite + new proof/oracle/failure/source gates,
+then frozen reference3/control and five declared cold gates againstv987. See
+apron_local_research.md for full details. Accepted median86.606s/worst92.125s;
+neither all-site <85 nor stored full<80 objective is achieved or claimed.

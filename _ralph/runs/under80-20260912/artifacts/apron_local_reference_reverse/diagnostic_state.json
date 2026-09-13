@@ -1,0 +1,55 @@
+{
+  "status": "pass",
+  "primitive": {
+    "max_error_units": 1008.5078490115702,
+    "status": "pass",
+    "expected_checks": 148032,
+    "weight_cells": 74016,
+    "max_allowance_units": 1100.0,
+    "checks": 148032,
+    "min_slack_units": 66.77943749229114,
+    "issues": []
+  },
+  "restored": true,
+  "reverse": true,
+  "calls": [
+    {
+      "new_ok": true,
+      "cleanup": true,
+      "core_fraction": 0.2,
+      "cells": 67108864,
+      "new_stats": {
+        "shaped": 50,
+        "modified": 1910302,
+        "mask_samples": 0,
+        "mask_fast_zero": 0,
+        "mask_cells_skipped": 0,
+        "exact_samples": 256451,
+        "native_mask_cells": 5039674,
+        "scalar_mask_patches": 0,
+        "native_mask_patches": 50,
+        "mask_fast_one": 7620,
+        "raster_cells": 5039674
+      },
+      "minimum": 0,
+      "maximum": 0,
+      "old_ok": true,
+      "old_ms": 1893,
+      "new_ms": 1228,
+      "old_stats": {
+        "shaped": 50,
+        "modified": 1910302,
+        "mask_samples": 0,
+        "mask_fast_zero": 0,
+        "mask_cells_skipped": 0,
+        "exact_samples": 396398,
+        "native_mask_cells": 5039674,
+        "scalar_mask_patches": 0,
+        "native_mask_patches": 50,
+        "mask_fast_one": 11663,
+        "raster_cells": 5039674
+      },
+      "different": 0
+    }
+  ]
+}

@@ -1,5 +1,12 @@
 # Unproven next hypothesis: local quintic sensitivity, not another constant shrink
 
+UPDATE: The hypothesis below has now been implemented ONLY as a private scratch
+candidate at86fff28. See apron_local_research.md for the conditional derivation,
+nine offline checks and both-order real-engine exact comparisons. Both native
+runs saved641..665 diagnostic ms with139947 fewer corrections. Production is
+unchangedv987; complete production replay and cold acceptance are still outstanding.
+The original brainstorm below is retained as history, not the final certificate.
+
 Current accepted baseline is56fbf44/v987. v990's global tighter bound is exact on
 tested inputs and reduces corrections on all sites, but its mixed cold result is
 NOT promoted. Do not cold-repeat unchangedv990 or combine rejected variants merely

@@ -123,3 +123,13 @@ unproven derivation and required rounding, ownership, native parity and cold gat
 Extra native grid passes may erase the savings; neither this hypothesis nor the
 isolated diagnostic improvements establish the all-site <85s target. Current
 accepted reference remains 86.606s and worst validation site 92.125s.
+
+## Local sensitivity private follow-through
+
+The new per-cell derivative field now passes nine private checks and both-order
+native shadows at86fff28: each67108864 terrain cells exact,148032 primitive
+interval endpoints checked, corrections396398->256451. Helper old/new timings
+1879/1238ms forward and1893/1228ms reverse. See apron_local_research.md for the
+conditional proof, new +1 H reserve, failure coverage and complete process audits.
+This641..665ms helper saving warrants actual-production replay and cold testing;
+it is NOT a startup result, production promotion or all-site target achievement.

@@ -75,3 +75,40 @@ The additional injected-failure fixture passes126 ownership/abort checks over
 all seven new copy/arithmetic operations. apron_local_checks_2 is the final
 nine-command replay including this fixture; older five/eight-command artifacts
 are preserved, not overwritten or relabeled.
+
+## Real-engine forward/reverse CLOSED PASS
+
+Frozen86fff28, production still56fbf44/v987,38-file deployment auditPASS before
+both launches. Forward exec60912/PID39000 and reverse exec48075/PID49524 CLOSED
+normally; full logs flushed and fresh-game check clear. Both private_process_audit
+files PASS: four private-stream fields, predecessor/full-grid/rock parity, loaded
+v987/incident identity, normal engine+daemon shutdown, no error signatures, scratch
+cleanup and original wrapper/scheduled-rebuild hook restored. No live process.
+
+Each ACTUAL native local block passes148032 scalar interval endpoint checks over
+74016 weight cells. Minimum observed slack66.779437492 U24 units; max difference
+1008.507849012, max allowance1100. This confirms sampled native behavior under the
+conditional proof; it does not replace the proof or establish a universal domain
+claim from samples.
+
+Each complete raster comparison covers67108864 U16 cells, with difference
+minimum/maximum/count all0. Actual reference core=.2. Coverage5039674, modified
+1910302, shaped50, native patches50 and scalar patches0 are unchanged. Scalar
+corrections396398->256451,139947 fewer, in BOTH execution orders. The extra seven
+native passes and separate +1 H reserve are included in the measured candidate.
+
+Forward old1879/new1238ms (641ms saving); reverse old1893/new1228ms (665ms saving).
+These are isolated instrumented helper timings, NOT cold START-to-T1 results and
+not evidence that the full all-site target is reached. No production promotion.
+
+Next: stage only this exact native-shadowed candidate plus version identifiers,
+adapt legacy coefficient-specific fixtures without dropping any original cases,
+and replay the complete actual-production suite plus all new local proof/oracle/
+source/failure checks. Source review must cover the six declared replacements,
+conditional premises, unchanged scalar fallback and every preserved terrain/RNG/
+rock/bootstrap/rebuild/T1 requirement. Then commit/freeze/deploy and run the
+reference3/control gate againstv987_reference, followed only on full correctness
+and a strictly improved reference median by five declaredv987_matrix comparisons.
+Preserve all samples and failures. Do not treat helper gains as cold acceptance,
+repeat unchanged rejected variants, combine them to conceal regressions, or relabel
+the accepted baseline. Accepted reference86.606s/worst61N92.125s remain authoritative.
