@@ -1,0 +1,52 @@
+{
+  "primitive": {
+    "expected_checks": 74016,
+    "max_error_units": 13.029877662658691,
+    "issues": [],
+    "checks": 74016,
+    "status": "pass"
+  },
+  "restored": true,
+  "reverse": false,
+  "calls": [
+    {
+      "old_stats": {
+        "mask_fast_one": 11663,
+        "mask_samples": 0,
+        "exact_samples": 396398,
+        "native_mask_patches": 50,
+        "mask_cells_skipped": 0,
+        "scalar_mask_patches": 0,
+        "modified": 1910302,
+        "shaped": 50,
+        "native_mask_cells": 5039674,
+        "mask_fast_zero": 0,
+        "raster_cells": 5039674
+      },
+      "new_stats": {
+        "mask_fast_one": 9631,
+        "mask_samples": 0,
+        "exact_samples": 298392,
+        "native_mask_patches": 50,
+        "mask_cells_skipped": 0,
+        "scalar_mask_patches": 0,
+        "modified": 1910302,
+        "shaped": 50,
+        "native_mask_cells": 5039674,
+        "mask_fast_zero": 0,
+        "raster_cells": 5039674
+      },
+      "cleanup": true,
+      "cells": 67108864,
+      "new_ms": 1377,
+      "old_ok": true,
+      "maximum": 0,
+      "minimum": 0,
+      "different": 0,
+      "old_ms": 1903,
+      "core_fraction": 0.2,
+      "new_ok": true
+    }
+  ],
+  "status": "pass"
+}

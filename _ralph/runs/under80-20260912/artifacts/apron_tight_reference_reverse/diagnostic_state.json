@@ -1,0 +1,52 @@
+{
+  "reverse": true,
+  "restored": true,
+  "status": "pass",
+  "calls": [
+    {
+      "maximum": 0,
+      "cleanup": true,
+      "core_fraction": 0.2,
+      "new_ms": 1330,
+      "old_stats": {
+        "mask_fast_zero": 0,
+        "shaped": 50,
+        "scalar_mask_patches": 0,
+        "modified": 1910302,
+        "mask_cells_skipped": 0,
+        "mask_fast_one": 11663,
+        "native_mask_cells": 5039674,
+        "native_mask_patches": 50,
+        "raster_cells": 5039674,
+        "exact_samples": 396398,
+        "mask_samples": 0
+      },
+      "cells": 67108864,
+      "new_stats": {
+        "mask_fast_zero": 0,
+        "shaped": 50,
+        "scalar_mask_patches": 0,
+        "modified": 1910302,
+        "mask_cells_skipped": 0,
+        "mask_fast_one": 9631,
+        "native_mask_cells": 5039674,
+        "native_mask_patches": 50,
+        "raster_cells": 5039674,
+        "exact_samples": 298392,
+        "mask_samples": 0
+      },
+      "different": 0,
+      "minimum": 0,
+      "old_ms": 1895,
+      "old_ok": true,
+      "new_ok": true
+    }
+  ],
+  "primitive": {
+    "checks": 74016,
+    "issues": [],
+    "max_error_units": 13.029877662658691,
+    "status": "pass",
+    "expected_checks": 74016
+  }
+}

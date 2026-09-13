@@ -51,3 +51,17 @@ algorithms receive identical input, but the original raster ALWAYS supplies game
 output. Compare all full U16 grid cells with independent difference extrema/census,
 full reports and reduced corrections; restore both wrapper and scheduled rebuild
 hook after the existing scheduled surface revalidation. No debug flags are changed.
+
+Native forward73986/PID23024 and reverse72052/PID9080 atfc8b748 CLOSED PASS. Native
+polynomial74016 checks each, max13.029877663 U24units<76. Full67108864 U16 cells
+exact each; modified1910302/shaped50/raster5039674 unchanged. Actual core=.2, not
+an assumed1/3. Corrections396398->298392 (98006 fewer). Timingold1903/new1377ms
+forward and1895/1330ms reverse.526..565ms diagnostic savings are not cold gains.
+Both private_process_audit.json PASS, complete predecessor/private/rock parity,
+scratch cleanup and wrapper restoration, unique normally closed owned processes.
+
+v990 stages ONLY this exact bound/comment change plus metadata990/generator302.
+Source reconstruction verifies every other byte of TerrainCopy equalsv987. Full87
+actual-production regression is required; deployed mod remains acceptedv987. The
+proof additionally checks the generous512u64 scalar reserve explicitly. See
+v990_source_review.md for acceptance gates and full scope qualifications.

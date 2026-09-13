@@ -53,6 +53,17 @@ cube_error=(1+u)**2-1
 pre_last_error=p2_error*(1+cube_error)+10*cube_error
 polynomial_error=pre_last_error+u*(1+pre_last_error)
 complement_error=polynomial_error+u*(1+polynomial_error)
+# Also check, rather than merely assign, the generous scalar-f64 reserve.
+# The two positive subtractions are monotone, so the scalar ratio remains[0,1].
+scalar_argument=(1+u64)**2/(1-u64)-1
+sp1=6*u64+u64*(15+6*u64)
+sp2_product=sp1+u64*(9+sp1)
+sp2=sp2_product+u64*(10+sp2_product)
+scube=(1+u64)**2-1
+spre=sp2*(1+scube)+10*scube
+spoly=spre+u64*(1+spre)
+scomplement=spoly+u64*(1+spoly)
+assert F(15,8)*scalar_argument+scomplement<512*u64
 # U24 integer rounding adds at most.5u.512u64 encloses the literal scalar
 # quintic arithmetic; tiny underflow/FTZ terms are dominated by another u64.
 remainder=F(15,8)*argument_error+complement_error+u/2+513*u64

@@ -1,0 +1,10 @@
+PASS edited basin square (exact final grid, selection and report)
+PASS edited basin rectangle (exact final grid, selection and report)
+PASS already flat (exact final grid, selection and report)
+PASS steep slope rejected (exact final grid, selection and report)
+PASS bounded opportunity count (exact final grid, selection and report)
+PASS empty ring policy (exact final grid, selection and report)
+PASS disabled (exact final grid, selection and report)
+PASS underground excluded (exact final grid, selection and report)
+PASS small grid excluded (exact final grid, selection and report)
+9 apron equivalence checks passed

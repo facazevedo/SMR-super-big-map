@@ -1,0 +1,24 @@
+{
+  "status": "pass",
+  "issues": [],
+  "checkpoint": {
+    "commit": "fc8b748f69d7027e1da917a3254f2d8141291828",
+    "diagnostic_only": true
+  },
+  "identity": [
+    23024,
+    134337589949383946
+  ],
+  "predecessor": "_ralph\\runs\\under80-20260912\\artifacts\\v987_reference\\14n134w_a",
+  "pair": {
+    "verdict": "pass",
+    "differences": [],
+    "note": "Runtime parity only; engine-RNG source audit is separate.",
+    "full_snapshot_differences": [],
+    "rock_grounding_differences": []
+  },
+  "private_fields_checked": 4,
+  "polynomial_checks": 74016,
+  "full_native_cells": 67108864,
+  "qualification": "Conditional proof and diagnostic timing remain separate from production/cold acceptance."
+}

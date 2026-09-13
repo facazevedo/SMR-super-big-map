@@ -1296,3 +1296,53 @@ scalar correction for every inconclusive value. Review current accepted correcti
 counts and source before devising a genuinely new bound; do not merely rerun
 rejected crease/decor variants or infer helper causation from full-startup noise.
 Preserve mandatory terrain/rock/RNG/underground-bootstrap/rebuild/T1 constraints.
+
+## v990 staged; tighter apron bound, full87 replay PASS; no cold test yet
+
+This turn is PROGRESS: new exact-rational propagation, private/actual raster tests,
+two full native comparisons and production integration. No new agent/delegation.
+Native operations/guards are unchanged; lower error allowance removes conservative
+scalar corrections. Accepted prior remains56fbf44/v987; v988/v989 stay rejected.
+
+Proof: same Q22/residual/lobe/regular-f32/scalar-f64 premises. Radial<1.6e-6,
+direction<1.1e-6+2.5e-6/c, normalized<5.6e-6+1.8e-6/c; explicit polynomial/core/
+U24 remainder<76u, including independently checked512u64 scalar reserve. Convex
+endpoint proof gives3/65536 through core.60 and5/65536 through.75. This is a
+conditional arithmetic certificate, not an unconditional hardware accuracy claim.
+Only existing numerator5/7->3/5 and its comment change in TerrainCopy. Four-H
+rounding reserve, scalar correction, every native/domain/residual/failure/cleanup
+operation, patch order, terrain fixes/RNG/rock/bootstrap/rebuild/T1 remain literal.
+
+Private58905 old/candidate/scalar cells PASS,39 reduced cases;221 inherited native
+failure/domain/ownership checks PASS. Actual polynomial block74016 scalar checks
+offline max13.000000015U24units; native max13.029877663<76. Observed max is NOT
+used to prove the bound. All private7 checks pass in apron_tight_offline_2.
+
+Forward73986/PID23024 and reverse72052/PID9080 atfc8b748 CLOSED PASS: each67108864
+U16cells exact, diff min/max/count0, modified1910302/shaped50/raster5039674 unchanged.
+Actual reference core=.2. Corrections396398->298392 (98006 fewer); old1903/new1377ms
+forward andold1895/new1330ms reverse.526..565ms diagnostic saving, NOT cold timing.
+Both private_process_audit.json PASS: full predecessor/private/rock outputs, all
+scratch freed, wrapper/scheduled hook restored, unique normal captured shutdowns.
+The accepted raster always supplied actual game terrain; no debug flags changed.
+
+Production now stagedv990/generator302/sector76, only Code/sbm_terrain_copy.lua,
+Code/sbm_version.lua and metadata.lua differ from56fbf44. Entire TerrainCopy equals
+native-shadowed apron_tight_research/terrain_candidate.lua exactly. No decor/crease
+candidate combined. First full86533 CLOSED86/87PASS: legacy precision fixture's
+hard-coded5/7 branch census failed intentionally changed3/5. Preserve v990_offline
+as FAILED. New wrapper changes only three expected coefficient literals, preserving
+every original38115-cell case/assertion/c4d3e67 comparator; original fixture untouched.
+
+Fresh full39093 CLOSED87/87PASS in v990_offline_2:82 inherited unchanged commands,
+adapted strict precision contract and4 actual new proof/source/polynomial/raster
+checks. Final source hashes match. review_v974.py supports990/87tests/three files
+and selects v990_offline_2, not the failed first run. v990_source_review.md records
+scope, conditional premises, failures and required cold gates.
+
+NO active test/game, no coldv990 sample. Deployed mod intentionally stillv987,
+38files with only three expected source mismatches/no stale files. Next keep new
+committed candidate frozen, standard deploy sync/audit, reference3/control against
+v987_reference median86.606/control29.156. Only strict reference improvement/exact
+correctness permits five againstv987_matrix. Preserve all samples/regressions; no
+rescue repeats, baseline relabels or target claims. Goal ACTIVE and target unmet.

@@ -1,4 +1,4 @@
-local f=assert(io.open('_ralph/runs/under80-20260912/artifacts/apron_tight_research/terrain_candidate.lua','rb'))
+local f=assert(io.open(arg[1] or '_ralph/runs/under80-20260912/artifacts/apron_tight_research/terrain_candidate.lua','rb'))
 local source=f:read('*a'):gsub('\r\n','\n');f:close()
 local a=assert(source:find('local core=math.floor(policy.core_fraction*W+0.5)',1,true))
 local b=assert(source:find('return polynomial',a,true))+#'return polynomial'

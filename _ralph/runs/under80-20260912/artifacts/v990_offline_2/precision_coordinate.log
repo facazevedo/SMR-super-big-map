@@ -1,0 +1,2 @@
+PASS adaptive-Q22 apron: 38115 exact three-way cells; reduced cases 21
+PASS legacy cases/assertions/baseline unchanged; actual3/5 coefficient contract verified

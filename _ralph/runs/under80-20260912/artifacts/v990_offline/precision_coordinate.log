@@ -1,0 +1,5 @@
+lua: _ralph/tools/parity/precision_coordinate_test.lua:45: both error terms must use the same branch
+stack traceback:
+	[C]: in function 'assert'
+	_ralph/tools/parity/precision_coordinate_test.lua:45: in main chunk
+	[C]: in ?

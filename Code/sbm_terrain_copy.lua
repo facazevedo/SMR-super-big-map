@@ -2249,9 +2249,9 @@ local function RasterNaturalMountainBaseAprons(api, grid, selected, policy)
 				api.GridMulDivAdd(result,1,1,-candidate.center)
 				local relative_min,relative_max=api.GridMinMax(result)
 				api.GridMulDivAdd(result,H,1,0)
-				-- Adaptively biased Q22 coordinates and the unchanged residual certificate bound error
-				-- by5/65536 through core0.60, and7/65536 for the remaining qualified cores.
-				local error_numerator = policy.core_fraction <= 0.60 and 5 or 7
+				-- The same Q22/residual domain with tighter propagation and an explicit
+				-- polynomial/core rounding bound gives3/65536 through core0.60, else5/65536.
+				local error_numerator = policy.core_fraction <= 0.60 and 3 or 5
 				-- Cubic Lipschitz bound uses the upper possible local weight, not global 1.
 				local uncertainty=own(result:clone())
 				if not uncertainty then return "native apron uncertainty allocation failed" end

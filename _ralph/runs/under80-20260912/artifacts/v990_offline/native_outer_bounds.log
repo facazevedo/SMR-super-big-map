@@ -1,0 +1,4 @@
+PASS conditional rational bounds: root<2u, inverse product<6u, along<25u, width<38u
+base/u= 245.87584109985744 ; soft guard/u < 80+6*(radius/transition)
+PASS conditional source/interval reserves: width<100u64, base<1000u64; soft guard+product<u/32, endpoint<=u
+PASS strict rounding enclosure: 12288 half-way straddles require scalar correction
