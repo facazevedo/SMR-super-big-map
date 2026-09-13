@@ -1,0 +1,26 @@
+{
+  "status": "pass",
+  "issues": [],
+  "site": "14N134W",
+  "checkpoint": {
+    "commit": "3adfe6879d566e9e8513278904f82b3bd7806fc4",
+    "diagnostic_only": true
+  },
+  "identity": [
+    55668,
+    134337904448270827
+  ],
+  "predecessor": "_ralph\\runs\\under80-20260912\\artifacts\\v987_reference\\14n134w_a",
+  "pair": {
+    "verdict": "pass",
+    "differences": [],
+    "note": "Runtime parity only; engine-RNG source audit is separate.",
+    "full_snapshot_differences": [],
+    "rock_grounding_differences": []
+  },
+  "private_fields_checked": 4,
+  "spans": 95,
+  "generations": 2,
+  "normal_shutdown": true,
+  "qualification": "Native procedure wall spans, including pre-logic stages. Not CPU time or cold acceptance; nested spans are not additive."
+}

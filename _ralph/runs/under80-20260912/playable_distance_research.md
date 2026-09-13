@@ -129,3 +129,38 @@ Model GridCount now uses native open bounds, still PASS120402 checks including
 unit-difference faults. Restore reporting distinguishes actual hook restoration
 from earlier comparison failures. Generated/profile syntax PASS. Next a materially
 corrected frozen reference shadow; no production change or speed claim.
+
+## Corrected actual-map native shadows PASS; modest private work savings
+
+Both used frozen3adfe6879d566e9e8513278904f82b3bd7806fc4, acceptedv987 unchanged.
+
+- Reference session88046 CLOSEDexit0, PID55668/creation134337904448270827:
+  305 primary,324 secondary,304 writes,305 original unions and primary frees.
+  3117 complete comparisons /1838481408 cells, including934 output comparisons;
+  1238 journal events. Replay old/new1309/1038ms and new/old1032/1299ms,
+  savings271/267ms. Transforms629 ->306, with305 minimums and324 copies charged.
+-61N session64725 CLOSEDexit0, PID52528/creation134337906482397891:
+  144 primary,163 secondary,143 writes,144 original unions and primary frees.
+  1507 complete comparisons /888864768 cells, including451 output comparisons;
+  594 journal events. Replay old/new655/501ms and new/old501/646ms,
+  savings154/145ms. Transforms307 ->145, with144 minimums and163 copies charged.
+
+Both native return forms are exactly one destination value. All raw union,
+primary/secondary output, mutable-place/fixed-bounds and final replay guards match
+in full. Both inherited private_process_audit.json files PASS issues[]: exact
+predecessor grids/placements/individual rocks, four private fields,95/94 spans,
+two generations, unchanged config, restored hooks, released scratch and normal
+flushed owned shutdowns. Fresh-game guard confirms no live game after both runs.
+Artifacts: playable_distance_reference_v2 and playable_distance_61n_v2.
+
+This qualifies a supported production-helper experiment, not acceptance. The
+primitive replay excludes the unchanged later native weighting and production
+bridge dispatch/validation overhead; the roughly0.27s reference gain cannot by
+itself account for the current2.069667s gap. Keep original raw union, weighting,
+random draws, placements, eager bootstrap and both required rebuilds intact.
+Next implement a bounded, procedure/thread-scoped helper through the existing
+supported native owner bridge, with destination-only returns, exact input shapes,
+source/placement lifetime guards, cleanup and fallback on unsupported state.
+Measure its complete production path before cold acceptance; do not spend a new
+three-run batch solely on the private timing result. Current accepted production
+remains56fbf44/v987, reference average87.069667s; below85 goal active/unmet.

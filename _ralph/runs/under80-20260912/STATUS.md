@@ -2027,3 +2027,14 @@ above0; native-shaped model PASS120402. Historical rejected Filler private-field
 claims using the old comparator need this caveat; independent whole-map audits
 and acceptedv987 are separate. See playable_distance_research.md. No speed evidence
 yet; corrected frozen reference shadow is next. Goal reference average<85 active.
+
+Corrected Playable shadows at3adfe68 now complete: reference88046 and61N64725
+CLOSEDexit0 with full native audits PASS, exact raw unions and all305/324 and
+144/163 primary/secondary fields, every write/guard, private4/rocks and normal
+shutdowns. Full primitive-sequence replay savings271/267ms reference,154/145ms61N,
+including initialization, unions, minimums/copies, allocation/free. Not cold
+startup evidence; supported-helper overhead remains unmeasured. Next scoped
+production-helper experiment, preserving every native/RNG/output boundary.
+Accepted56fbf44/v987 unchanged; reference average87.069667s; below85 unmet.
+This turn PROGRESS: diagnosed/corrected comparator and completed two exact native
+field proofs with modest positive replay evidence. No live game remains.
