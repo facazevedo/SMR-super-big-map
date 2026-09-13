@@ -1761,3 +1761,21 @@ do NOTrediscover them as an untested new hotpath. Need actualcandidate/outcome
 trace equality andwholepass timing includingprep beforeproduction. Current
 acceptedreference86.606/worst92.125s; fullgoalACTIVE,notblocked. ThisturnPROGRESS:
 completedcoldexperiment, discoveredmixedperformance andrestoredacceptedstate.
+
+## New private fused decor rejection candidate and native oracle ready
+
+Previous turn PROGRESS completed/rejectedv992cold/restoredv987. This turn created
+two-edit private candidate: unchanged successfulstamp tail extracted, finite
+terrain/matcher/circle rejectionprefix inlined. Circleindex/cursor/RNGunchanged;
+no rejectedhints/cachealgorithms or already-testedstdlibhoists. Manifest reverses
+exactly toacceptedsource. Actual119syntheticloops/1,399,190completeorderedevents
+match (1,399,431checks). Modeltiminggain tiny, not a native/startupclaim.
+
+Nativeoracle/probe/shadow/audit prepared. Realnativecalls executeonce; accepted
+prefix consumes bounded eventreplay withseparatecaches, sameinteger-subtypes/
+nil-tuples/point/listidentities andmatched-list decision beforetail/RNG.857checks
+includeactualsetup/privatejoins/config/normal/error/reboundrestoration. Final
+decor_rejection_offline_2all9commandsPASS, initialbatchretained. Productionexact
+56fbf44/v987 and38fileauditPASS. Next frozen61Nthenreference withfullnative
+predecessor/private/rock/process audit; intrusiveproof cannotmeasureperformance.
+See decor_rejection_research.md. GoalACTIVE,full<80/<85unmet;thisturnPROGRESS.

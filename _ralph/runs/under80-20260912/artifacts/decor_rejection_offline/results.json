@@ -1,0 +1,86 @@
+[
+  {
+    "command": [
+      "luac",
+      "-p",
+      "_ralph/runs/under80-20260912/artifacts/decor_rejection_fusion_2/candidate.lua"
+    ],
+    "exit": 0,
+    "seconds": 0.013
+  },
+  {
+    "command": [
+      "luac",
+      "-p",
+      "_ralph/runs/under80-20260912/artifacts/decor_rejection_fusion_2/oracle_factory.lua"
+    ],
+    "exit": 0,
+    "seconds": 0.012
+  },
+  {
+    "command": [
+      "luac",
+      "-p",
+      "_ralph/tmp/under80_20260912/decor_rejection_probe.lua"
+    ],
+    "exit": 0,
+    "seconds": 0.011
+  },
+  {
+    "command": [
+      "luac",
+      "-p",
+      "_ralph/tmp/under80_20260912/decor_rejection_shadow.lua"
+    ],
+    "exit": 0,
+    "seconds": 0.011
+  },
+  {
+    "command": [
+      "lua",
+      "_ralph/tmp/under80_20260912/decor_rejection_test.lua",
+      "_ralph/runs/under80-20260912/artifacts/decor_rejection_fusion_2/"
+    ],
+    "exit": 0,
+    "seconds": 21.228
+  },
+  {
+    "command": [
+      "lua",
+      "_ralph/tmp/under80_20260912/decor_rejection_probe_test.lua"
+    ],
+    "exit": 0,
+    "seconds": 0.04
+  },
+  {
+    "command": [
+      "python",
+      "_ralph/tmp/under80_20260912/decor_rejection_source_test.py"
+    ],
+    "exit": 0,
+    "seconds": 0.115
+  },
+  {
+    "command": [
+      "git",
+      "diff",
+      "--exit-code",
+      "56fbf44",
+      "--",
+      "Code",
+      "metadata.lua",
+      "items.lua"
+    ],
+    "exit": 0,
+    "seconds": 0.044
+  },
+  {
+    "command": [
+      "python",
+      "_ralph/tools/deploy.py",
+      "audit"
+    ],
+    "exit": 0,
+    "seconds": 0.152
+  }
+]
