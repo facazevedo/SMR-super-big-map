@@ -1654,3 +1654,26 @@ filler_mask_shadow_offline7commandsPASS:203 inherited+34939kernel+1676observer
 fixture checks, syntax, exactaccepted Code/metadata/items and38fileaudit. Native
 reference/61N still required before any speed/equality claim. See
 filler_mask_research.md. Production remainsv987; goal ACTIVE and unmet.
+
+## Filler mask native shadows CLOSED PASS with private735..857ms improvement
+
+Frozen1e2e07a: reference93848/PID12792 and61N99222/PID25168 CLOSED exit0,
+full filler_mask_audit PASS issues[], predecessor/privatefourfields/individualrocks
+exact, normal flushed logs/no errors, all hooks/rawslots/scratch restored.
+All1524/1798 actual mask requests matched cache and independent sentinel-prefilled
+oracle; real/private sources immutable against pre-first-call guard.6100/7196
+full comparisons (repeated cell comparisons3.598b/4.244b), comparator +/-1selftests.
+
+Both traces only5keys. Capacity7<=16515072byte conservative payload bound, peak5,
+5misses/clones and1519/1793hits,noeviction,allfreed. Reference bothorders old867/
+new132ms;61N old1010/new155 andold1005/new148ms. Full cache cleanup/copies/clones
+included, comparisons excluded equally. These are private kernel gains NOT cold
+startup acceptance. Production stillv987, reference86.606/worst92.125 unchanged.
+
+Next integration prerequisite: native GridMask return tuple (private helper's
+success flag is NOT that contract). New mapless scratch native contract driver
+uses freshhiddenowned identity +normalflushedquit. After contract proof, actual
+production cache must preserve native return values, supported global owner/raw
+shadows, per-procedure source stability and lifecycle identities, with native
+fallback. No diagnostic-only debug APIs in production. Full real-source/cold
+reference+five-site verification required. See filler_mask_research.md.

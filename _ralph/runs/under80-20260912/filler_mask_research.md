@@ -98,3 +98,58 @@ native process/private/rock parity and every-request/benchmark/ownership censuse
 Next frozen reference then61N, querySBM_NATIVE_PROC_DIAGNOSTIC through profile.py
 with filler_mask_profile.lua; audit with filler_mask_audit.py. No production cache,
 mod version or benchmark acceptance change. Current production remainsv987.
+
+## Actual native reference and61N shadows CLOSED PASS
+
+Frozen1e2e07a. Reference exec93848/PID12792 creation134337710801632883 and61N
+exec99222/PID25168 creation134337713251016846 CLOSED exit0 with normal flushed
+shutdown. Both filler_mask_audit PASS issues[], exact full predecessor/individual
+rocks and four private-stream fields, no engine errors, native-proc and GridMask
+resolved/raw identities restored, all private scratch released. Real original
+mask wrote every game destination; no production substitution occurred.
+
+Both sources768x768 unsigned; reference range0..478,61N0..673. Native comparator
+one-cell positive/negative and self-equality checks PASS before use. Reference
+1524 requests/6100 full comparisons/3597926400 cell comparisons;61N1798 requests/
+7196 comparisons/4244373504 cell comparisons. These counts include repeated
+comparisons, NOT unique terrain cells. Each actual output matched both the cache
+and differently sentinel-prefilled native oracle; real/private sources remained
+equal to the initial guard on every request. Only5 distinct keys in either trace.
+
+| Site/order | Original masks ms | Cached masks ms | Difference ms |
+| --- | ---: | ---: | ---: |
+| Reference old/new | 867 | 132 | -735 |
+| Reference new/old | 867 | 132 | -735 |
+| 61N old/new | 1010 | 155 | -855 |
+| 61N new/old | 1005 | 148 | -857 |
+
+Every replay started empty and included destination allocation/free, native
+misses, clone/copy/lookup and final cache cleanup. Equality checks were outside
+timed kernels. Capacity7 under16515072-byte conservative payload bound; peak5,
+no evictions,5clones/misses on both maps,1519/1793hits. Every clone freed,live0.
+Shadow/cache request counts and stats matched both replays exactly. This shows
+private mask workload improvement, NOT a735..857ms startup improvement or cold
+acceptance. Integration overhead and all other work remain to be measured.
+
+## Integration prerequisites, still no production candidate
+
+The helper reports write success, not GridMask's actual return tuple. Before
+wrapping that API in production, measure its native return contract rather than
+guessing it. Added filler_mask_contract.lua/.py: fresh hidden mapless scratch-only
+test of six mask parameter cases, preserved source and classified return roles,
+normal owned shutdown/incident/log audit. No RNG/game-map access. The normal
+capture helper's failed=True flag only skips its inapplicable full-map snapshot;
+this does NOT designate a failed test. Current Lua syntax/production/deployment
+checks PASS; freeze and run this native API check next.
+
+Then build an actual production candidate with a bounded per-Filler/per-generator
+cache, original native fallback for unsupported inputs, exact native tuple and
+owner restoration, and a source-stability argument tied to the supported native
+procedure (not source identity alone). Production cannot depend on debug APIs
+available only to these diagnostic scripts. Existing mark-grid global-owner
+bridge is the relevant supported mechanism; inspect its ordinary-write/raw-shadow
+restoration semantics before reuse. Do not change class generation method identity
+or stack wrappers across lifecycle reinstallation. All actual-source tests and
+full native/cold reference+five-site gates remain required before promotion.
+
+Acceptedv98786.606s reference/worst92.125s unchanged. Both<80 and<85 still unmet.
