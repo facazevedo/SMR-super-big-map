@@ -87,41 +87,6 @@ end
 
 local Diagnostics = {}
 
--- TEMPORARY boundary-only probes: buffer checkpoints, print after the measured work.
--- No per-cell hooks, gameplay state, RNG reads, threads, or loading-session changes.
--- A disabled probe performs no clock reads or record allocations.
-function Diagnostics.OptimizationBegin(name)
-	if Config().TRACE_OPTIMIZATION_TIMINGS ~= true then return false end
-	local started = Now()
-	local token = { name = name, started = started, previous = started, rows = {} }
-	function token:Mark(stage)
-		if self.finished then return end
-		local now = Now()
-		self.rows[#self.rows + 1] = { stage = stage, duration_ms = now - self.previous }
-		self.previous = now
-	end
-	function token:Finish(data, ok)
-		if self.finished then return false end
-		self:Mark("finish")
-		self.finished = true
-		-- Logging failures must never replace a terrain error or invalidate a good map.
-		return pcall(function()
-			for index, row in ipairs(self.rows) do
-				Print("OptimizationTiming", self.name, {
-					checkpoint = index, stage = row.stage, duration_ms = row.duration_ms,
-					instrumented = true,
-				})
-			end
-			local out = CopyData(data)
-			out.duration_ms = self.previous - self.started
-			out.ok = ok ~= false
-			out.instrumented = true
-			Print("OptimizationTiming", "TOTAL " .. self.name, out)
-		end)
-	end
-	return token
-end
-
 function Diagnostics.LoadingEnabled()
 	return Enabled() and Config().DEBUG_LOADING_TIMINGS == true
 end

@@ -233,9 +233,6 @@ end
 -- ScaleMarkersToFull have moved every marker to its stretched position. Failures are recorded
 -- explicitly; a partially completed pass is never advertised as complete or rolled back.
 function DecorTopUp.Run(map, pass_edits_already_suspended)
-	local diagnostics = SuperBigMap.Diagnostics
-	local probe = diagnostics and type(diagnostics.OptimizationBegin) == "function"
-		and diagnostics.OptimizationBegin("decor top-up")
 	local stats = { version = DecorTopUp.VERSION, enabled = false, placed = 0, objects = 0 }
 	DecorTopUp.LastStats = stats
 	local ok, err = pcall(function()
@@ -646,7 +643,6 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 		end
 
 		-- 5. Vanilla's loop over the sites it left unused, until the deficit is met.
-		if probe then probe:Mark("census + matcher preparation") end
 		local placed_authored, skipped_bounds, skipped_band = 0, 0, 0
 		local guard = #unused * 2 + 8
 		while placed < target and #unused > 0 and guard > 0 do
@@ -672,7 +668,6 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 		end
 		stats.placed_authored = placed_authored
 		stats.sites_exhausted = #unused == 0 and placed < target
-		if probe then probe:Mark("authored sites") end
 
 		-- 6. Synthetic sites.  The map authors too few free decor sites for 1.778x density: at
 		--    14N134W, 137 of the 152 sites vanilla left unused sit inside Border/Slope prefab radii
@@ -785,7 +780,6 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 				end
 			end
 			local random_attempts = attempts
-			if probe then probe:Mark("synthetic setup + random search") end
 			local finite_cursors, finite_attempts = {}, 0
 			-- A miss streak is not proof that legal ground is exhausted. Continue through
 			-- a finite seeded cell cover of the interior, retaining each template's matcher,
@@ -824,7 +818,6 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 					end
 				end
 			end
-			if probe then probe:Mark("finite candidate search") end
 			stats.synthetic_templates_exhausted = exhausted
 			stats.synthetic_random_attempts = random_attempts
 			stats.synthetic_finite_attempts = finite_attempts
@@ -864,7 +857,6 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 		stats.error = string.format("decor candidate search incomplete: placed=%s target=%s",
 			tostring(stats.placed), tostring(stats.target))
 	end
-	if probe then probe:Finish(stats, not stats.error) end
 	if stats.error then
 		local State = SuperBigMap.State or {}
 		SuperBigMap.State = State

@@ -1,5 +1,11 @@
 # Temporary optimization investigation
 
+Current status: probes are archived in commit `d5a1e3e` and removed from the active
+payload for the exact unchanged-v983 five-site confirmation. The instructions below
+describe that diagnostic commit, not the current cold-benchmark payload. Its focused
+test is also retained at `_ralph/tmp/under80_20260912/optimization_timing_test.lua`;
+run it against the instrumented commit, not the restored release diagnostics module.
+
 The current working tree adds diagnostic probes to accepted v983. It is not a
 new optimized release, and instrumented timings are not acceptance benchmarks.
 Restart the game after deploying the changes; do not hot-reload an existing map.

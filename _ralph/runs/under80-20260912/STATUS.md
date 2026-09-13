@@ -860,3 +860,18 @@ are a complete native outer mask with exact correction, simpler collection-only
 native crease offers, and exact positive decor obstruction certificates for slow
 sites. Relation-first passage classification is a smaller new lead. Under85 remains
 unmet; the previously declared unchanged five-site confirmation is still NOT run.
+
+## Exact unchanged baseline preparation after diagnostic review
+
+Previous goal turn classified PROGRESS: implemented and natively verified sparse
+logs plus completed the requested Astra/xhigh review. Preserved all probe source,
+tests, raw runtime evidence and recommendations in d5a1e3e. Removed only those
+temporary additions from the active Code payload using their preserved patch;
+production again matches f4d1da6/v983 exactly. The new timing test is archived under
+_ralph/tmp/under80_20260912 (recoverable in d5a1e3e), not an active release test.
+
+Declare ONE fresh five-site confirmation at artifacts/v983_matrix_confirmation
+against artifacts/v983_matrix. Freeze the next checkpoint and deployment throughout
+the entire existing verify_port.py run. No algorithm candidate and no rescue rerun
+of v986. Research files may be drafted outside production while games run; do not
+commit or change deployed files until all five have closed. Under85 remains unmet.
