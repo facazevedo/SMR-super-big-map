@@ -1,0 +1,110 @@
+{
+  "site": "24S74W",
+  "commit": "1182750f36e39653b27382535ee01c5ca8d4533b",
+  "version": "994",
+  "pair": {
+    "verdict": "pass",
+    "differences": [],
+    "note": "Runtime parity only; engine-RNG source audit is separate.",
+    "full_snapshot_differences": [],
+    "rock_grounding_differences": []
+  },
+  "gates": {
+    "seed-parity": {
+      "verdict": "pending",
+      "details": [
+        "requires paired-run comparison and RNG source audit"
+      ]
+    },
+    "entrances-glued": {
+      "verdict": "pass",
+      "details": []
+    },
+    "entrances-not-in-ring": {
+      "verdict": "pass",
+      "details": []
+    },
+    "ring-content": {
+      "verdict": "pass",
+      "details": []
+    },
+    "single-start-reveal": {
+      "verdict": "pass",
+      "details": []
+    },
+    "badges-pre-reveal": {
+      "verdict": "pass",
+      "details": []
+    },
+    "decor-rules": {
+      "verdict": "pass",
+      "details": []
+    },
+    "no-errors": {
+      "verdict": "pass",
+      "details": []
+    },
+    "process": {
+      "verdict": "pending",
+      "details": [
+        "requires checkpoint/deployment provenance review"
+      ]
+    },
+    "underground-first-access": {
+      "verdict": "pass",
+      "details": []
+    }
+  },
+  "issues": [],
+  "identity": {
+    "pid": 49056,
+    "exe": "C:\\Games\\Surviving Mars Relaunched\\MarsDebug.exe",
+    "port": 8165,
+    "log": "D:\\PROJS\\SMR\\smr-harness\\logs\\daemon-20260913-171843.log",
+    "crash_dir": "D:\\PROJS\\SMR\\smr-harness\\.state\\game-crashes\\20260913-171843-18d4f0fd661905e0",
+    "incident_id": "20260913-171843-18d4f0fd661905e0",
+    "artifact_root": "D:\\PROJS\\SMR\\smr-harness\\logs",
+    "ralph_workspace": null,
+    "cmdline": [
+      "C:\\Games\\Surviving Mars Relaunched\\MarsDebug.exe",
+      "-nointro",
+      "-no_interactive_asserts",
+      "-stdout",
+      "-crash_folder",
+      "D:\\PROJS\\SMR\\smr-harness\\.state\\game-crashes\\20260913-171843-18d4f0fd661905e0",
+      "-hidden"
+    ],
+    "window": "hidden",
+    "breakaway_from_job": true,
+    "started_utc": "2026-09-13T17:18:43Z",
+    "process_started_utc": "2026-09-13T17:18:43.105Z",
+    "process_creation_filetime": 134337935231050337
+  },
+  "prior_identity": {
+    "pid": 11852,
+    "exe": "C:\\Games\\Surviving Mars Relaunched\\MarsDebug.exe",
+    "port": 8165,
+    "log": "D:\\PROJS\\SMR\\smr-harness\\logs\\daemon-20260913-044531.log",
+    "crash_dir": "D:\\PROJS\\SMR\\smr-harness\\.state\\game-crashes\\20260913-044531-18d4c7e3863f2b1c",
+    "incident_id": "20260913-044531-18d4c7e3863f2b1c",
+    "artifact_root": "D:\\PROJS\\SMR\\smr-harness\\logs",
+    "ralph_workspace": null,
+    "cmdline": [
+      "C:\\Games\\Surviving Mars Relaunched\\MarsDebug.exe",
+      "-nointro",
+      "-no_interactive_asserts",
+      "-stdout",
+      "-crash_folder",
+      "D:\\PROJS\\SMR\\smr-harness\\.state\\game-crashes\\20260913-044531-18d4c7e3863f2b1c",
+      "-hidden"
+    ],
+    "window": "hidden",
+    "breakaway_from_job": true,
+    "started_utc": "2026-09-13T04:45:32Z",
+    "process_started_utc": "2026-09-13T04:45:31.998Z",
+    "process_creation_filetime": 134337483319984073
+  },
+  "t0_to_t1_s": 87.921,
+  "prior_t0_to_t1_s": 88.711,
+  "qualification": "Automated exact-twin and native-control gates. Source and inherited visual review remain separate."
+}

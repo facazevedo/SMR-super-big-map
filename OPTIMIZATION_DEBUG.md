@@ -1,6 +1,16 @@
 # Temporary optimization investigation
 
-Current status: probes are archived in commit `d5a1e3e` and removed from the active
+Current accepted result (2026-09-13): **v994**, reference START-to-T1 arithmetic
+average **84.666s** from 84.212 /85.294 /84.492s. The revised below85s-average
+goal is met; all five correctness scenarios and85 offline tests pass. Measured
+checkpoint `1182750`, production implementation `065ab3f`, deployed38/38.
+Full acceptance record: [_ralph/runs/under80-20260912/v994_acceptance.md](_ralph/runs/under80-20260912/v994_acceptance.md).
+No diagnostic profiler/oracle is active in the deployed payload.
+
+## Historical v983 diagnostics (not current configuration)
+
+The text below describes the earlier investigation, not the accepted v994 payload.
+Those probes are archived in commit `d5a1e3e` and removed from the active
 payload for the exact unchanged-v983 five-site confirmation. The instructions below
 describe that diagnostic commit, not the current cold-benchmark payload. Its focused
 test is also retained at `_ralph/tmp/under80_20260912/optimization_timing_test.lua`;

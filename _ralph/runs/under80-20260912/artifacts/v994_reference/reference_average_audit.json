@@ -1,0 +1,26 @@
+{
+  "reference_samples_s": [
+    84.212,
+    85.294,
+    84.492
+  ],
+  "prior_reference_samples_s": [
+    88.557,
+    86.046,
+    86.606
+  ],
+  "average_s": 84.666,
+  "prior_average_s": 87.06966666666666,
+  "saving_s": 2.403666666666666,
+  "target_seconds": 85,
+  "target_scope": "reference_arithmetic_mean",
+  "under_target_reached": true,
+  "reference_improved": true,
+  "clean_exact_evidence": true,
+  "full_preservation_audit": "reference_audit.json",
+  "control_s": 28.701,
+  "prior_control_s": 29.156,
+  "median_s": 84.492,
+  "prior_median_s": 86.606,
+  "qualification": "All three scheduled runs retained. Mean requested explicitly by user; no replacement samples or claim of causal/statistical significance."
+}

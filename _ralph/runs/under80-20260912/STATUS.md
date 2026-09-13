@@ -1,23 +1,25 @@
-# Under-80-second optimization, 2026-09-12
+# Optimization accepted: reference average below85s, 2026-09-13
 
 CURRENT USER TARGET: reference START-to-T1 arithmetic average strictly BELOW
 85 seconds across exactly three scheduled reference runs, retaining every sample.
 The other five sites require full correctness/regression verification, without a
 timing threshold. Median is historical/informational only, not an acceptance gate.
-Historical headings and evidence below remain unchanged. The active goal-tool
-record cannot edit its objective while unfinished; the latest user instruction is
-authoritative. Do not mark the old80 objective complete to rename it.
+Historical headings and evidence below remain unchanged. The goal-tool objective
+retained older under80/all-site wording; the user's explicit revised criterion
+above is authoritative. This result is not an under80 or all-site speedup claim.
 
-Current accepted production is 56fbf44/v987/generator299, deployed38/38. Accepted
-reference samples 88.557 / 86.046 / 86.606s average 87.069667s, so the target is
-not yet met (more than 2.069667s reduction required). The native control is separate
-and excluded from this average. All existing correctness rules and terrain fixes
-remain required. Later sections record rejected candidates and ongoing research.
+CURRENT ACCEPTED WORKTREE/DEPLOYMENT: v994/generator306, production065ab3f,
+measured cold checkpoint1182750. Reference84.212 /85.294 /84.492s gives arithmetic
+average84.666s, strictly below85. Prior acceptedv987 average87.069667s; observed
+difference2.403667s, without a causal/statistical significance claim. Native
+control28.701s is separate and excluded from the average.
 
-CURRENT WORKTREE/DEPLOYMENT: experimentalv994/generator306, not accepted yet.
-Actual production outputs pass reference and61N native full-field/full-map audits;
-all85 offline commands pass. Whole-helper overhead and cold reference-average
-acceptance remain pending. Acceptedv987 average above remains the baseline.
+All85 offline commands, actual native cached-output proofs, full reference/repeat
+audit and allfive fresh correctness scenarios PASS. Source/RNG and process gates
+closed in artifacts/v994_review.json; nine unique normally closed acceptance
+processes, no live game, deployed38/38. Current production matches every frozen
+offline hash and measured checkpoint. Revised user goal achieved. See
+v994_acceptance.md for requirements, evidence and timing limitations.
 
 User requested implementation after the feasibility assessment. Target: reference
 14N134W and five existing validation scenarios below 80 seconds, measured from START
@@ -2058,3 +2060,16 @@ Candidatev994 remains deployed/unaccepted. Next measure complete actual-helper
 replay overhead before cold acceptance. Baselinev987average87.069667s unchanged;
 goal reference mean<85 active/unmet. This turn PROGRESS: production implementation,
 all regressions and two actual substitution proofs, not a startup speed claim.
+
+## Revised user goal achieved: v994 accepted
+
+Actual-helper target-operation replay235/231ms faster in both orders, with full
+native/output/ownership auditPASS, qualified the declared finite cold batch.
+Reference63426 CLOSEDexit0 at1182750:84.212/85.294/84.492s,average84.666s;
+control28.701s. Full predecessor/repeat/private4/rock/process auditPASS. No extra
+samples or timing retry. Five-site68206 CLOSEDexit0 samecheckpoint, all exact
+correctness gatesPASS:15S67E89.197,24S74W87.921,45S120W80.965,61N136W92.001,
+17S11W87.049s (informational, not thresholds). Review_v994 PASS closes all ten
+rules with source/RNG and nine-process evidence; deployment and frozen hashes
+match. Accepted production nowv994, no remaining goal work or live game. Historical
+rejections and diagnostic failures remain preserved; no allsite<85/<80 claim.

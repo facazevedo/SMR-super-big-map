@@ -1,0 +1,77 @@
+{
+  "version": 994,
+  "code_commit": "1182750f36e39653b27382535ee01c5ca8d4533b",
+  "exact_original_payload": "065ab3f",
+  "target_seconds": 85,
+  "target_scope": "reference_arithmetic_mean",
+  "reference_samples_s": [
+    84.212,
+    85.294,
+    84.492
+  ],
+  "average_s": 84.666,
+  "prior_average_s": 87.06966666666666,
+  "saving_s": 2.403666666666666,
+  "control_s": 28.701,
+  "target_reached": true,
+  "correctness_preserved": true,
+  "offline_commands_passed": 85,
+  "unique_fresh_acceptance_processes": 9,
+  "scenarios": [
+    {
+      "site": "15S67E",
+      "correctness": "pass",
+      "t0_to_t1_s": 89.197,
+      "prior_t0_to_t1_s": 88.653,
+      "timing_is_acceptance_gate": false
+    },
+    {
+      "site": "24S74W",
+      "correctness": "pass",
+      "t0_to_t1_s": 87.921,
+      "prior_t0_to_t1_s": 88.711,
+      "timing_is_acceptance_gate": false
+    },
+    {
+      "site": "45S120W",
+      "correctness": "pass",
+      "t0_to_t1_s": 80.965,
+      "prior_t0_to_t1_s": 82.053,
+      "timing_is_acceptance_gate": false
+    },
+    {
+      "site": "61N136W",
+      "correctness": "pass",
+      "t0_to_t1_s": 92.001,
+      "prior_t0_to_t1_s": 92.125,
+      "timing_is_acceptance_gate": false
+    },
+    {
+      "site": "17S11W",
+      "correctness": "pass",
+      "t0_to_t1_s": 87.049,
+      "prior_t0_to_t1_s": 86.546,
+      "timing_is_acceptance_gate": false
+    }
+  ],
+  "native_proofs": [
+    "_ralph\\runs\\under80-20260912\\artifacts\\v994_native_reference\\private_process_audit.json",
+    "_ralph\\runs\\under80-20260912\\artifacts\\v994_native_61n\\private_process_audit.json"
+  ],
+  "source_review": "_ralph\\runs\\under80-20260912\\v994_playable_distance_integration.md",
+  "source_rng_review": "Exact qualified native source and unchanged seeded consumers; see source review.",
+  "process_review": "Nine unique fresh hidden owned identities, frozen checkpoint and complete flushed-log audits.",
+  "visual_review": "Inherited accepted geometry through full exact grids and individual rocks; no new screenshot claim.",
+  "deployment": {
+    "source": "D:\\PROJS\\SMR\\super-big-map",
+    "destination": "C:\\Users\\fazevedo\\AppData\\Roaming\\Surviving Mars Relaunched\\Mods\\super-big-map",
+    "source_files": 38,
+    "destination_files": 38,
+    "missing_in_destination": [],
+    "stale_in_destination": [],
+    "content_mismatch": [],
+    "ok": true
+  },
+  "historical_rejection_unchanged": true,
+  "qualification": "Fresh fixed confirmation under explicit user revised scope/metric; not an under80 or all-site speedup claim."
+}

@@ -128,3 +128,13 @@ raw results retained, no unchanged retry. review_v994.py retains full five-site
 and reference/source/native/offline/deployment gates and requires mean<85.
 No cold sample collected before this record. Source/RNG review is the inspected
 supported implementation and exact native proofs above, not profiler timings.
+
+## Accepted after complete fixed cold verification
+
+Reference63426 CLOSEDexit0 at1182750:84.212/85.294/84.492s,mean84.666s; native
+control28.701s. Full reference auditPASS. Five-site68206 CLOSEDexit0 samecheckpoint,
+all exact output/private-stream/individual-rock and normal-process gatesPASS.
+review_v994.py completed successfully; all85 offline hashes match current payload,
+deployment38/38 audited, no live game. v994 is now accepted for the user's revised
+reference-average<85 goal. See v994_acceptance.md. This closes the goal, not the
+historical under80/all-site objective text; no all-site timing improvement claim.

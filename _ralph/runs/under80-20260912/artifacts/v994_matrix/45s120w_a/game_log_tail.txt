@@ -1,0 +1,287 @@
+					Render 0:00:00:063
+*** executable info
+
+Timestamp:     	69e75da5
+
+Date:          	Tue Apr 21 07:21:09 2026
+
+Command line:  	-nointro -no_interactive_asserts -stdout -crash_folder D:\PROJS\SMR\smr-harness\.state\game-crashes\20260913-172136-18d4f125c5dc2084 -hidden
+Compiler:      	194435214, 142 (VS 2019) or newer
+
+
+
+
+
+*** hardware info
+
+CPU name      	Intel(R) Core(TM) i9-10900X CPU @ 3.70GHz
+
+CPU MHz       	3696
+
+CPU cores     	10/20
+
+Phys. Memory   	130752 MBytes
+
+Memory In Use  	26%
+
+Disk Free      	89072 MBytes
+
+
+
+
+
+*** OS info
+
+OS:            	Windows 11
+
+Version:       	10.0.26100 
+
+
+
+
+
+*** Debug::Init()
+
+
+
+
+
+					Render 0:00:00:470
+Steam initialized (AppId 3215050, Beta branch ???)
+SteamFilterText is unavailable for user's language and will act as a passthrough.
+					Render 0:00:00:473
+Drive type for game installation: SSD, savegames: SSD
+					Render 0:00:00:474
+Language: English
+					Render 0:00:01:308
+Starting hidden
+					Render 0:00:03:309
+*** graphics info
+GPU                            	NVIDIA GeForce RTX 5090 Feature Level: 12.1 {  DoublePrecisionFloatShaderOps: 1 OutputMergerLogicOp: 1 MinPrecisionSupport: 2 TiledResourcesTier: 3 ResourceBindingTier: 3 PSSpecifiedStencilRefSupported: 0 TypedUAVLoadAdditionalFormats: 1 ROVsSupported: 1 ConservativeRasterizationTier: 3 MaxGPUVirtualAddressBitsPerResource: 40 StandardSwizzle64KBSupported: 0 CrossNodeSharingTier: 0 CrossAdapterRowMajorTextureSupported: 0 VPAndRTArrayIndexFromAnyShaderFeedingRasterizerSupportedWithoutGSEmulation: 1 ResourceHeapTier: 2 NotZeroedPools: 1 UMA: 0 UnalignedBlockTextures: 1}
+
+API                            	d3d12
+
+GPU Driver Version             	32.0.15.7688
+
+GPU Driver Package Version     	576.88
+
+GPU Dedicated Video Memory     	32101 MB
+
+					Render 0:00:03:522
+
+Libs: Network, Sequences, MouseTrackWin, DumbAI, MapGen, Paradox, TriggersAndEvents, Notifications, Research, Resources, DevToolsPublic, DebugAdapter 
+
+					Render 0:00:03:901
+
+Platform: asserts, cheats, debug, desktop, editor, goldmaster, paradox, pc, steam
+
+						Game Task 0:00:03:908
+
+** Entity stats:
+  entities: 2920
+  unique state names: 335 / 1023
+  unique spot names: 370
+  unique spot transforms: 19621
+  max surface radius: 47680 cm
+
+					Render 0:00:05:125
+*** audio info
+Audio Endpoint                 	Speakers (Realtek(R) Audio)
+
+							Lua 0:00:05:194
+Lua revision: 392284
+							Lua 0:00:05:195
+Assets revision: 30889
+Steam AppID: 3215050
+Build version: 1.0.7.392284
+Build branch:  Release
+							Lua 0:00:05:198
+[DebugAdapter] Started at 127.0.0.1:8165
+							Lua 0:00:05:206
+Account storage loaded successfully in 8 ms
+DLC thomas loaded, lua revision 392284, assets revision 30889
+							Lua 0:00:05:217
+[mod] Loaded mod def Buried Cables and Pipes (id bcp, v0.00-433) unpacked from appdata
+
+[mod] Loaded mod def Extra Maps (id ExtraMaps, v0.00-011) unpacked from appdata
+
+[mod] Loaded mod def Whale - Aquatic Life for Mars Seas (id Whale, v0.00-10033) unpacked from appdata
+
+[mod] Loaded mod def Filter Landing Spots (id FilterLandingSpots, v0.00-018) packed from pops
+
+[mod] Loaded mod def Toggle Console Log Off (id TCLoff7, v1.00-005) unpacked from appdata
+
+[mod] Loaded mod def Super Big Map (id SuperBigMap, v0.00-994) unpacked from appdata
+
+[mod] Loaded mod def Animalia - Restored Wildlife (id Animalia, v0.00-018) unpacked from appdata
+
+[mod] Loaded mod def Planet Dawn (id PlanetDawn, v1.00-193) unpacked from appdata
+
+[mod] Loaded mod def My Wild Pet (id MyWildPet, v0.00-005) unpacked from appdata
+
+[mod] Loaded mod def Scenario Editor (id SRM-scenario-editor, v0.00-045) unpacked from appdata
+
+[mod] Loaded mod def Real Mars Terrain (id RealMarsTerrain, v0.00-007) unpacked from appdata
+
+[mod] Loaded mod def Mute Notifications (id MuteNotifications, v0.00-060) unpacked from appdata
+
+[mod] Loaded mod def Attribute Inspector (id AttributeInspector, v0.00-014) unpacked from appdata
+
+[mod] Loaded mod def Project Ark (id ProjectArk, v0.00-004) unpacked from appdata
+
+[mod] Loaded mod def Bridges (id Bridges, v0.00-099) unpacked from appdata
+
+[mod] Loaded mod def Disable All Mods (id DisableAllMods, v0.00-012) unpacked from appdata
+
+[mod] Loaded mod def Colony Control (id ColonyControl, v0.00-014) unpacked from appdata
+
+[mod] Loaded mod def Humpback Whale - Aquatic Life for Mars Seas (id HumpbackWhale, v0.00-10009) unpacked from appdata
+
+[mod] Loaded mod def Scenario Editor Terrains (id SRM-scenario-editor-terrains, v0.00-001) unpacked from appdata
+
+[mod] Loaded mod def DLSS 5 Neural Rendering - Experimental (id vzlLtM, v0.00-002) unpacked from appdata
+
+[mod] Loaded mod def invisible-passage-ramp (id IPRAMP, v0.00-068) unpacked from appdata
+
+[mod] Loaded mod def Copy Move (id CopyMove, v0.00-001) unpacked from appdata
+
+[mod] Loaded mod def Rover Drive Mode (id RoverDriveMode, v0.00-195) unpacked from appdata
+
+[mod] Loaded mod def Martian Waters Snow (id MartianWatersSnow, v0.00-407) unpacked from appdata
+
+[mod] Loaded mod def Auto Clear Rubble (id AutoClearRubble, v1.00-023) unpacked from appdata
+
+[mod] Loaded mod def Bridges Blender (id bridges-blender, v0.00-008) unpacked from appdata
+
+[mod] Loaded mod def No Wonders (id no-wonders, v0.00-001) unpacked from appdata
+
+[mod] Loaded mod def insert-objects (id insert-objects, v0.00-005) unpacked from appdata
+
+							Lua 0:00:07:144
+Reloading done in 1912 ms
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:63562
+							Lua 0:00:07:145
+Available DLCs: thomas(Interplanetary Codex) 
+							Lua 0:00:08:044
+[preset] Preset postprocess took 163 ms.
+
+							Lua 0:00:08:160
+479 / 479 particle streams loaded in 105 ms.
+							Lua 0:00:08:294
+[PdxSDK] Started up. Took 3063
+
+							Lua 0:00:09:145
+Received achievements from Steam.
+							Lua 0:00:09:476
+[mod] Loaded mod items for: TCLoff7, SuperBigMap							Lua 0:00:09:477
+
+
+							Lua 0:00:10:241
+[Braze] Initialized. SE: true, SB false
+
+							Lua 0:00:10:339
+[Braze] ContentCards 2/2. FullSync true. Headers nil. Retry 0
+
+							Lua 0:00:10:482
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:58920
+							Lua 0:00:10:643
+[PdxSDKMods] Mod 147865 v 6 is up to date. Nothing to download.
+
+							Lua 0:00:10:660
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:58922
+							Lua 0:00:10:704
+Game Seed:  v932_sweep_14134_45s120w -1957318341023341469 
+							Lua 0:00:10:845
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:58924
+							Lua 0:00:10:877
+*** Reloading assets from folder 'BinAssets/'
+							Lua 0:00:13:845
+*** Assets reloaded in 3.0 s, read 205.5 MB, read speed 69.2 MB/s, average read 5023 bytes.
+							Lua 0:00:13:846
+[DebugAdapter] Connection lost to 127.0.0.1:58924 
+							Lua 0:00:13:847
+[DebugAdapter] Connection lost to 127.0.0.1:58922 
+[DebugAdapter] Connection lost to 127.0.0.1:58920 
+[DebugAdapter] Connection lost to 127.0.0.1:63562 
+							Lua 0:00:16:730
+Map::Init: 0.34000 ms
+Map::Load: 69.24000 ms
+CreateMap: 69.35000 ms
+							Lua 0:00:16:750
+MapLoadRandom:  2444997815119208300 
+							Lua 0:00:20:176
+Map (slot 1) changed to "PreGame" in 9463 ms.
+							Lua 0:00:21:352
+Map::Done: 0.37000 ms
+							Lua 0:00:21:570
+Map::Init: 0.54000 ms
+Map::Load: 204.06000 ms
+							Lua 0:00:21:571
+CreateMap: 204.21001 ms
+							Lua 0:00:21:606
+game_settings:
+    sponsor: IMM
+    profile: rocketscientist
+    founding_faction: MarsDemocraticParty
+    rival_colonies: Japan, ESA, ISRO
+    mystery_random: 
+    game_rules: RoughTerrain
+more_game_settings: save_game_id: dzGmJ7PgaIwdK59A, mystery: BlackCubeMystery, coordinates: 45S120W, landing_spot: , logo: IMM
+map_conditions: altitude: 3225, temperature: -15, cold_wave: 36, dust_devils: 99, dust_storm: 48, meteors: 36
+map_resources: concrete: 36, metals: 73, precious_metals: 73, water: 255
+							Lua 0:00:21:649
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:50348
+							Lua 0:00:21:653
+MapLoadRandom:  -694228876275598992 
+							Lua 0:00:26:415
+[DebugAdapter] Connection lost to 127.0.0.1:50348 
+							Lua 0:00:27:463
+Map (slot 1) changed to "BlankBig_02" in 7204 ms.
+							Lua 0:00:28:367
+Map::Init: 0.34000 ms
+							Lua 0:00:28:368
+Map::Load: 35.61000 ms
+CreateMap: 35.69000 ms
+							Lua 0:00:28:811
+Buildable grid ready: 1/1 valid zones.
+							Lua 0:00:28:821
+MapLoadRandom:  -7813950343792534559 
+							Lua 0:00:30:379
+Map (slot 15) changed to "BlankBig_02" in 2915 ms.
+							Lua 0:00:35:603
+Buildable grid ready: 16/824 valid zones.
+							Lua 0:00:37:503
+[Super Big Map][UndergroundSeedReservation] RESERVATION {authority_tag=ralph_seed_parity, boundary=fresh_vanilla_twin_test_seam, destination_tiles=8192x8192, environment=Surface, hex_size=820x946, map=BlankBig_02, map_ref=table: 000001F06A2F2B20, mapdata_size=6144x6144, reserved_seed=6126103855836633687, slot=1, source_tiles=6144x6144}
+							Lua 0:00:37:576
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:50355
+							Lua 0:00:38:458
+[Super Big Map][TerrainCreaseRepair] SOURCE_SKIPPED {bottom_tracks=72, candidates=262, destination_tiles=8192x8192, edge_margin=614, environment=Surface, hex_size=820x946, left_tracks=57, map=BlankBig_02, map_ref=table: 000001F06A2F2B20, mapdata_size=8192x8192, max=51906, min=4007, outer_guard=6, reason=no edge-facing outer-ring step, right_tracks=62, slot=1, source_tiles=6144x6144, threshold=128, top_tracks=71}
+							Lua 0:00:41:563
+[Super Big Map][TerrainCreaseRepair] DESTINATION_SKIPPED {bottom_tracks=229, candidates=1084, destination_tiles=8192x8192, edge_margin=42, environment=Surface, hex_size=820x946, left_tracks=263, map=BlankBig_02, map_ref=table: 000001F06A2F2B20, mapdata_size=8192x8192, max=51904, min=4023, outer_guard=8, reason=no edge-facing outer-ring step, right_tracks=277, slot=1, source_tiles=6144x6144, threshold=256, top_tracks=315}
+							Lua 0:00:54:403
+[Super Big Map][UndergroundSeedReservation] CONSUMER {boundary=fresh_vanilla_twin_test_seam, consumer_seed=6126103855836633687, consumer_status=pending_injected, destination_tiles=8192x8192, environment=Surface, fill_ok=true, hex_size=820x946, map=BlankBig_02, map_ref=table: 000001F06A2F2B20, mapdata_size=8192x8192, reserved_seed=6126103855836633687, seeded_params_seed=6126103855836633687, slot=1, source_tiles=6144x6144}
+							Lua 0:00:54:437
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:50358
+[DebugAdapter] Connection lost to 127.0.0.1:50355 
+							Lua 0:00:55:658
+Map::Init: 0.22000 ms
+Map::Load: 255.00999 ms
+CreateMap: 255.14999 ms
+							Lua 0:00:55:910
+Buildable grid ready: 1/2 valid zones.
+							Lua 0:00:56:169
+Buildable grid ready: 1/2 valid zones.
+							Lua 0:00:56:174
+MapLoadRandom:  4934431443303977735 
+							Lua 0:01:00:794
+Map (slot 2) changed to "BlankUnderground_01" in 6391 ms.
+							Lua 0:01:01:700
+Buildable grid ready: 53/6166 valid zones.
+							Lua 0:01:05:446
+[DebugAdapter] Connection lost to 127.0.0.1:50358 
+							Lua 0:01:07:063
+Buildable grid ready: 1/2 valid zones.
+							Lua 0:01:10:671
+Map::Done: 0.43000 ms
+							Lua 0:01:11:104
+[Super Big Map][UndergroundSeedReservation] HOLDER {boundary=fresh_vanilla_twin_test_seam, consumer_seed=6126103855836633687, consumer_status=pending_injected, destination_tiles=8192x8192, environment=Underground, generation_ok=true, hex_size=615x710, holder_generation_hash=1857930367393616007, holder_seed=6126103855836633687, map=BlankUnderground_01, map_ref=table: 000001F077106668, mapdata_size=6144x6144, reserved_seed=6126103855836633687, seeded_params_seed=6126103855836633687, slot=2, source_tiles=6144x6144}
