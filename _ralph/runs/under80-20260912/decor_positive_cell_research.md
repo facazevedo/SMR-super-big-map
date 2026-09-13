@@ -74,3 +74,30 @@ same584396 certified answers, full predecessor/private/final/rock parity PASS.
 Old2706ms/new1699ms, saving1007 diagnostic ms. This is not a cold startup result.
 Next reverse the old/new order with unchanged helper, then inspect the reference
 map before any production candidate. First v1 remains rejected, never relabeled.
+
+## Reverse and reference screening complete; no production promotion
+
+At a163f6a, reverse61N session21088/PID40040 CLOSED normally: all775867 queries
+exact,584396 certified; old2584ms/new1865ms (719ms diagnostic saving). The unchanged
+v2 helper therefore improved the slow-map query timing in both execution orders.
+
+Reference session47268/PID19148 CLOSED normally:1806 queries exact, only85 certified
+answers; old6ms/new21ms (15ms diagnostic regression).1213 cells learned1233
+certificates, so most training had no subsequent use on this small workload.
+This is explicit counterevidence to a uniform speedup, not an excluded sample.
+
+All four research runs (v1, v2 forward/reverse61N, v2 reference) pass the additional
+private_process_audit.json checks: four private-stream fields, complete predecessor
+and rock snapshots, exact query census, correct v987 payload/incident, clean fully
+flushed engine/daemon logs, wrapper restoration and unique normal process exits.
+No cold run or production integration has been performed for this idea.
+
+Keep v987 deployed. Do not stage v2 unchanged as a generally faster release.
+The slow-map opportunity is real enough for further research, but it cannot close
+the reference gap: that map spends only6 instrumented ms in these queries. A
+generic workload/reuse-based cache admission scheme could avoid mostly-unused
+certificates; any such scheme must still execute EVERY original query on a miss,
+not use map IDs, alter candidates, skip RNG or cache negative answers. Its extra
+bookkeeping must be measured, not assumed free. Separately pursue the larger
+collection-only crease-offer opportunity for reference startup time. An eventual
+combination requires independent exact oracles and immutable cold acceptance.

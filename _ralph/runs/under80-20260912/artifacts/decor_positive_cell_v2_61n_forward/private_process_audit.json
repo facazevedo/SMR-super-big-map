@@ -1,0 +1,25 @@
+{
+  "status": "pass",
+  "issues": [],
+  "site": "61N136W",
+  "checkpoint": {
+    "commit": "a1ebf5589f9a418e5b279e5168cd7df697d07cbb",
+    "diagnostic_only": true
+  },
+  "predecessor": "_ralph\\runs\\under80-20260912\\artifacts\\v987_matrix\\61n136w_a",
+  "identity": [
+    5840,
+    134337499934053990
+  ],
+  "pair": {
+    "verdict": "pass",
+    "differences": [],
+    "note": "Runtime parity only; engine-RNG source audit is separate.",
+    "full_snapshot_differences": [],
+    "rock_grounding_differences": []
+  },
+  "private_fields_checked": 4,
+  "query_census_checked": true,
+  "normal_shutdown": true,
+  "qualification": "Correctness/process audit only; instrumented query timings are not cold startup acceptance."
+}

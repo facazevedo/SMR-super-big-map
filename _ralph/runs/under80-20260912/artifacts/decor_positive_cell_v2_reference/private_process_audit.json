@@ -1,0 +1,25 @@
+{
+  "status": "pass",
+  "issues": [],
+  "site": "14N134W",
+  "checkpoint": {
+    "commit": "a163f6a735061997c735a653584ccdc39a485016",
+    "diagnostic_only": true
+  },
+  "predecessor": "_ralph\\runs\\under80-20260912\\artifacts\\v987_reference\\14n134w_a",
+  "identity": [
+    19148,
+    134337504461143946
+  ],
+  "pair": {
+    "verdict": "pass",
+    "differences": [],
+    "note": "Runtime parity only; engine-RNG source audit is separate.",
+    "full_snapshot_differences": [],
+    "rock_grounding_differences": []
+  },
+  "private_fields_checked": 4,
+  "query_census_checked": true,
+  "normal_shutdown": true,
+  "qualification": "Correctness/process audit only; instrumented query timings are not cold startup acceptance."
+}

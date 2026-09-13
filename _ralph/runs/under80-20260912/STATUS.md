@@ -1132,3 +1132,32 @@ with whole-cell positive certificates, followed by collection-only crease offers
 or tighter apron certificates. Preserve all rejection/RNG ordering, use private
 exact-oracle shadows first, and compare future cold candidates against this newly
 accepted v987 reference and matrix. Do not revive rejected changes by relabeling.
+
+## New positive-cell obstruction research; v987 remains deployed
+
+This turn is PROGRESS: two genuinely new private prototypes, conditional numeric
+bounds,55681 independent old/new/exhaustive comparisons and four closed native
+shadows yield evidence changing the next action. No production files changed.
+
+v1 at4cf9613:61N session37594/PID50100 CLOSED exact775867 queries/full parity, but
+old2666ms/new2947ms. Rejected before production; all evidence retained.
+
+v2 caches immutable circle descriptors/radius floors, removes redundant numeric
+type calls justified by all local caller paths, and simplifies farthest-corner
+arithmetic. Same55681 oracle checks pass. Forward74170/PID5840 at a1ebf55:
+old2706ms/new1699ms. Reverse21088/PID40040 at a163f6a:old2584ms/new1865ms.
+Both775867 queries exact,584396 certified, full predecessor/final/rock parityPASS.
+These719..1007ms savings are diagnostic query timings, NOT cold startup gains.
+
+Reference47268/PID19148 at a163f6a CLOSED exact1806 queries,85 certified; old6ms/
+new21ms. This15ms regression is retained. v2 is not promoted as a uniform speedup.
+Additional private_process_audit.json PASS in all four artifacts verifies four
+private-stream fields, query census, payload/incident, wrapper restoration and
+fully flushed normal shutdown. No game remains; deployment38/38 auditPASS.
+
+Current production is still56fbf44/v987, accepted cold reference86.606s, slowest
+61N92.125s. Target remains unmet, goal active. Next larger reference lead is
+collection-only native crease offers; the slow-map certificate lead needs generic
+workload/reuse admission to reduce unused learning before any production test.
+Do not discard the reference counterevidence or cold-benchmark unchanged v2 hoping
+that noise hides it. See decor_positive_cell_research.md for proof/domain limits.
