@@ -1,0 +1,63 @@
+[
+  {
+    "command": [
+      "luac",
+      "-p",
+      "_ralph/tmp/under80_20260912/decor_rejection_coarse.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "luac",
+      "-p",
+      "_ralph/tmp/under80_20260912/decor_rejection_coarse_old.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "luac",
+      "-p",
+      "_ralph/tmp/under80_20260912/decor_rejection_coarse_new.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "lua",
+      "_ralph/tmp/under80_20260912/decor_rejection_coarse_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "python",
+      "-m",
+      "py_compile",
+      "_ralph/tmp/under80_20260912/decor_rejection_coarse_audit.py"
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "git",
+      "diff",
+      "--exit-code",
+      "56fbf44",
+      "--",
+      "Code",
+      "metadata.lua",
+      "items.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "python",
+      "_ralph/tools/deploy.py",
+      "audit"
+    ],
+    "exit": 0
+  }
+]

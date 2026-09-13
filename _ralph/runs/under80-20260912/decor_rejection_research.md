@@ -99,3 +99,53 @@ failure. Complete setup fixture now deliberately has non-value-returning assert.
 decor_rejection_offline_3 all9commandsPASS,857probechecks/1,399,431loopchecks;
 previous batches retained. Model bothorders .200/.203 and .202/.213s confirm
 only small/noisy effects, not a proven practical speedup. Next fresh _61n_2.
+
+## Both native correctness runs CLOSED PASS
+
+Frozenea3edb4519062f645a05c7c6e3aa49773a5d1c63. Corrected61N session61211,
+PID52388/creation134337767838459854; reference90226,PID32268/creation
+134337770023633361. Both CLOSED exit0 with normal flushed engine/daemon logs.
+decor_rejection_audit PASS issues[] for v987_decor_rejection_61n_2 and
+v987_decor_rejection_reference: full predecessor/grids/individualrocks/four
+private fields exact, no engine errors,16original privatecells joined, hooks/
+config restored, all oracle/scratch references released.
+
+61N:701139finite prefixes,2135239 exact ordered native-call records consumed,
+727247 complete synthetic outcomes,2184314 actual stream calls,zero prefix RNG
+calls. Peak4events per prefix; initial independent terrain/matcher caches26095/
+1461entries. Outcomes652582obstruct,60756decorated,13198terrain,502bounds,
+24band,4empty,181placed. No doubled native point/terrain/matcher/circle call or
+placement. Reference never enters finite search:0prefixes/records,1597synthetic
+outcomes and5192streamcalls. The reference thus provides full behavior preservation
+but NO evidence of a finite-loop benefit there.
+
+Fresh-game check clear and entireCode/metadata/items still exact56fbf44/v987;
+standard38-filedeployment auditPASS. These intrusive traces prove conditional
+source/control-flow equivalence and full outputs, not any performance gain.
+
+## Next decisive whole-pass timing experiment prepared
+
+decor_rejection_coarse.lua uses only two clocks around the WHOLE original/private
+Run, including its preparation and successful stamps. No replay, per-call timers,
+point/terrain/circle/stream wrappers or counters. Candidate joins ALL original
+upvalue cells; accepted variant calls original directly. Both use identical public
+Run/final measurement/restoration seams. All source/predecessor/private/rock/
+process gates remain mandatory; no cold-start acceptance is inferred.
+
+Coarse old/new entrypoints and complete actual-module fixture50checksPASS;
+decor_rejection_coarse_offline7commandsPASS plus matrix Python syntax. Normal,
+false-return and rebound cleanup, configuration/private cells, nil tuples and
+exactlytwo whole-Run clocks checked. Production/deployment unchanged.
+
+Next run, after fresh-game check and frozen committed checkpoint:
+
+    python -u _ralph/tmp/under80_20260912/decor_rejection_coarse_matrix.py
+
+Declared finite61N order:old_a,new_a,new_b,old_b. Four separate fresh hidden owned
+processes, each with complete output/private/rock/process audit and normal exit.
+No rescue/replacement samples. Driver freezes production AND private candidate/
+coarse setup source hashes, preserves each result, and compares both order pairs.
+No code edits/heavy work during measurements. If no material whole-pass benefit
+appears, do not promote a helper-only/model win or proceed on an unmeasured promise.
+Reference lacks this finite workload, so this alone cannot solve either all-site
+threshold. Acceptedreference86.606/worst92.125s remain unchanged; goalACTIVE.

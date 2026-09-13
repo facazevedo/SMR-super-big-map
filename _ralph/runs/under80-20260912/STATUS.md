@@ -1786,3 +1786,24 @@ v987_decor_rejection_61n; noRun/finalhooksinstalled, nofullmapclaim. Fixedonly
 diagnosticexplicitfindcheck; fixture now models non-value-returningassert.
 decor_rejection_offline_3all9PASS,857probechecks and1,399,431loopchecks. Native
 _61n_2 stillrequired; productionv987unchanged andfreshgamecheckclear.
+
+## Decor finite-rejection native proofs CLOSED PASS; whole-pass timing next
+
+Frozenea3edb4:61N61211/PID52388 andreference90226/PID32268 CLOSED exit0,
+full decor_rejection_auditPASS issues[] exactpredecessor/grids/individualrocks/
+fourprivatefields,normalflushedlogs,noerrors,16privatecellsjoined,allhooks/config/
+scratchrestored.61N701139prefixes/2135239exactorderedcallrecords/727247outcomes,
+2184314streamcalls andzero RNGinsideprefix. Reference0finiteprefixes,1597outcomes
+so no demonstratedreferencebenefit. Failedfirstsetupartefactretainedunchanged.
+
+CoarsewholeRun old/new observerandfiniteold/new/new/old61Ndriverprepared;
+50actualmodulefixturechecks+7prerequisitecommandsPASS. Two clocks only around
+wholeRun, nointrusiveper-candidate work. Next freezeHEAD/privatecandidate/
+production andrun decor_rejection_coarse_matrix.py; audits aftereachfreshowned
+normalexit. Norescue/replacement samples or productionpromotion frommodeltiming.
+See decor_rejection_research.md for exactcommands/census/identities/limitations.
+
+Production remains exact56fbf44/v987,38filedeploymentauditPASS,no livegame.
+Acceptedreference86.606/worst92.125s; all-site<80 and<85unmet. GoalACTIVE,
+notblocked. ThisturnPROGRESS: genuinelynewprivatecandidate,complete model/native
+decisionproofs, repairednative-specificdiagnosticissue andtestedcoarseexperiment.
