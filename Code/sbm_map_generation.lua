@@ -18726,8 +18726,12 @@ function SuperBigMap.GenerationReadiness.RevokeDeferredUndergroundFalseCompletio
 			or surface_anchor.SuperBigMapCommittedPassageLocked ~= true then
 			return false, "passage pair " .. tostring(index) .. " is not reciprocal and locked"
 		end
-		local ux, uy = PointXY(ObjectPosition(underground_anchor))
-		local sx, sy = PointXY(ObjectPosition(surface_anchor))
+		-- ObjectPosition is a file-local alias in sbm_terrain_copy.lua / sbm_object_clone.lua
+		-- and was never defined here, so these two calls raised "attempt to call a nil value
+		-- (global 'ObjectPosition')" on every underground first access and this entire
+		-- verification silently did nothing. The rest of this file uses Engine.ObjectPos.
+		local ux, uy = PointXY(Engine.ObjectPos(underground_anchor))
+		local sx, sy = PointXY(Engine.ObjectPos(surface_anchor))
 		local source_x = tonumber(underground_anchor.SuperBigMapCommittedPassageSourceX)
 		local source_y = tonumber(underground_anchor.SuperBigMapCommittedPassageSourceY)
 		local final_x = tonumber(underground_anchor.SuperBigMapCommittedPassageX)
