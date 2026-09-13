@@ -133,3 +133,11 @@ interval endpoints checked, corrections396398->256451. Helper old/new timings
 conditional proof, new +1 H reserve, failure coverage and complete process audits.
 This641..665ms helper saving warrants actual-production replay and cold testing;
 it is NOT a startup result, production promotion or all-site target achievement.
+
+That local candidate was subsequently cold-tested asv991 after88 actual checks.
+Nine-process preservation passed; reference median85.319s, but24S/45S/17S recorded
+slower times by.128/.007/.457s.15S and61N improved.527/.714s. All maps reduce
+corrections with exact outputs. v991 NOT promoted; acceptedv987 restored/audited.
+See v991_source_review.md; tiny deltas are not claims of statistical significance.
+The next useful investigation is a fresh sparse acceptedv987 pipeline/substage
+census (reference and worst61N) before selecting another small helper change.

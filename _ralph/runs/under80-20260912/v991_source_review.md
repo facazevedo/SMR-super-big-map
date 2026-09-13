@@ -93,3 +93,43 @@ match every actual Code/metadata/items file; no production source changed during
 replay. Legacy38115-cell/shared-field contract passes, as do every inherited
 command and all five new actual-source checks. This qualifies the candidate for
 committed cold testing, NOT acceptance. No coldv991 sample exists at this point.
+
+## Complete cold result: preservation passes, mixed timing NOT promoted
+
+Frozen9a496fd completed reference70914 and five-site77853, all nine unique owned
+processes CLOSED normally with fully flushed logs. Reference84.571/85.319/86.565s,
+median85.319s versus86.606s (1.287s/1.486% improvement); control29.063s versus29.156s.
+Reference full predecessor/repeat/private/rock/control audit has no issues.
+Combined v991_all_ten_rules_review.json passes88 actual regression commands and
+all source/process/preservation gates, but all_scenarios_faster=false and both
+under80/under85false. No exact causal attribution of the whole reference gain
+to the narrower641..665ms diagnostic helper saving is justified.
+
+| Site | v987 seconds | v991 seconds | Saving seconds | Old corrections | New corrections |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Reference median | 86.606 | 85.319 | 1.287 | 396398 | 256451 |
+| 15S67E | 88.653 | 88.126 | 0.527 | 422462 | 269334 |
+| 24S74W | 88.711 | 88.839 | -0.128 | 412083 | 258840 |
+| 45S120W | 82.053 | 82.060 | -0.007 | 370594 | 236283 |
+| 61N136W | 92.125 | 91.411 | 0.714 | 332731 | 218797 |
+| 17S11W | 86.546 | 87.003 | -0.457 | 521966 | 331508 |
+
+Three observed site times are slower. Small differences (especially7ms at45S)
+do NOT establish statistically significant causation, but neither can they be
+discarded or called a measured uniform improvement. Every site reduces scalar
+corrections; modified/shaped/raster/native/scalar patch censuses and all outputs
+are unchanged. This verifies work reduction, not the full startup objective.
+
+Candidate v991 NOT promoted. All source, proof, private/native/offline/cold
+artifacts and immutable candidate9a496fd remain preserved. Only the three owned
+production files were restored via patch to exact accepted56fbf44/v987, including
+generator299/sector76. Entire Code/metadata/items comparison passes. Standard
+deploy sync restored those three files,38/38 auditPASS, no stale deletion. No
+game/test process remains live; no rescue repeat or predecessor relabel occurred.
+
+Accepted timing remains reference86.606s/worst61N92.125s. Goal ACTIVE. Before
+another small-kernel experiment, refresh sparse stage/substage evidence on the
+actual acceptedv987 reference and slow61N workload, keeping diagnostic overhead
+separate from cold timings. Existing old-profile figures are not a fresh whole-
+pipeline ceiling. Preserve all rebuild/bootstrap/T1 rules; a larger remaining
+cost must be demonstrated before a new implementation direction is chosen.

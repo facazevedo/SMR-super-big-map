@@ -1438,3 +1438,37 @@ standard sync/audit38files, then reference3/control against86.606s/29.156s. Only
 strict reference improvement AND exact preservation permits five againstv987:
 88.653/88.711/82.053/92.125/86.546. Preserve every result; no rescue repeats or
 baseline relabels. Goal ACTIVE and full<80/<85 targets still unmet.
+
+## v991 full cold batch CLOSED; mixed timing rejected; v987 restored
+
+This turn is PROGRESS:88 actual-source regression commands and all nine finite
+cold processes completed, giving new authoritative timing/correctness evidence.
+Frozen9a496fd reference70914 CLOSED84.571/85.319/86.565s, median85.319 versus86.606,
+control29.063. Five77853 CLOSED15S88.126 (-.527),24S88.839 (+.128),45S82.060
+(+.007),61N91.411 (-.714),17S87.003 (+.457); parentheses are candidate-minus-prior.
+v991_all_ten_rules_review.json PASS preservation/source/process/88tests/nine
+unique owned normal shutdowns, but all_scenarios_faster=false, under80/85false.
+Small observed regressions are not statistical-significance claims. None omitted.
+
+Every map reduces corrections:ref396398->256451,15S422462->269334,24S412083->
+258840,45S370594->236283,61N332731->218797,17S521966->331508. Modified/shaped/
+raster/native/scalar patch censuses and exact full outputs are unchanged. Work
+reduction is real; it does not prove consistent cold startup improvement or that
+the helper caused the full1.287s reference median difference.
+
+v991 NOT promoted. Only owned Code/sbm_terrain_copy.lua, Code/sbm_version.lua and
+metadata.lua restored by patch to exact accepted56fbf44/v987/generator299/sector76.
+Entire Code/metadata/items comparison PASS. Standard deploy sync/audit38/38PASS,
+no stale removal. All handles terminal, fresh-game check clear. Preserve all
+v991 source/proof/private/native/offline/cold evidence and9a496fd; no rescue runs,
+baseline relabels or combination of unchanged rejected candidates.
+
+Next: fresh SPARSE whole-pipeline/substage census of actual acceptedv987 reference
+and slow61N, with explicit probe failure latches/cleanup and normal private/full
+output/process audits. The older generic profile_setup.lua uses logging-only
+asserts and persistent process-local wrappers; inspect/adapt safeguards before
+reuse, don't blindly launch it. Diagnostics are not cold samples. Identify a
+larger remaining cost before selecting another micro-optimization; retain all
+required immediate/scheduled rebuilds, bootstrap and T1 readiness. Existing yield
+or skip hypotheses are not revived by this note. Accepted reference86.606s and
+worst92.125s remain authoritative; full goal ACTIVE, not achieved or blocked.

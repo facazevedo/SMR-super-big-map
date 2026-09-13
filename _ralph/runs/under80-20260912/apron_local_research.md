@@ -112,3 +112,15 @@ and a strictly improved reference median by five declaredv987_matrix comparisons
 Preserve all samples and failures. Do not treat helper gains as cold acceptance,
 repeat unchanged rejected variants, combine them to conceal regressions, or relabel
 the accepted baseline. Accepted reference86.606s/worst61N92.125s remain authoritative.
+
+## v991 cold follow-through: NOT promoted
+
+Actual candidate9a496fd passed88 production checks and all nine cold preservation
+processes. Reference median85.319s improved1.287s, but three site times were slower:
+24S88.839 (+.128),45S82.060 (+.007),17S87.003 (+.457).15S88.126 improved.527s;
+61N91.411 improved.714s. These are observed samples, not significance claims.
+Full outputs/censuses stay exact and every map reduces callbacks; this does not
+demonstrate uniform startup improvement. See v991_source_review.md for all samples.
+No rescue repeats or rejected-candidate combinations. Acceptedv987 restored via
+patch and standard38-file deploy/audit, no live test/game. Keep the conditional
+proof and helper result as evidence, not an accepted startup optimization.
