@@ -5,10 +5,12 @@ same reference/five-site scope and correctness requirements. Historical80-second
 headings and evidence below remain unchanged. The active goal-tool record cannot
 edit its objective while unfinished; the latest user instruction is authoritative.
 Do not mark the old80 objective complete to rename it. Current accepted production
-is f4d1da6/v983/sector76/generator298, deployed38/38. Reference median86.718s and
-worst site94.342s still exceed85 by1.718s and9.342s respectively. All80 offline
-commands and all ten correctness rules pass. No owned game or benchmark remains.
-See the v983 acceptance section at the end for complete, unfiltered timings.
+is f4d1da6/v983/sector76/generator298, deployed38/38. Historical acceptance reference
+median86.718s was NOT reproduced by fresh unchanged-code confirmation: current
+reference median90.244s (gap5.244s to85). Latest five-site worst remains94.342s;
+those sites were not remeasured in confirmation. All80 accepted offline commands
+and ten correctness rules pass. No owned game or benchmark remains. See v983
+acceptance, v984 rejection and baseline confirmation sections for unfiltered data.
 
 User requested implementation after the feasibility assessment. Target: reference
 14N134W and five existing validation scenarios below 80 seconds, measured from START
@@ -646,3 +648,35 @@ the whole timing difference to decor helper execution. Next run one declared
 fresh reference3/control batch on restored, unchanged acceptedv983 to revalidate
 CURRENT baseline timings. This is separate confirmation evidence, not a rescue
 or a replacement for any rejectedv984 sample. Keep the candidate rejected.
+
+## Unchanged-v983 confirmation closed: current reference90.244s
+
+Session78463 CLOSED exit0, immutable d1adba4 with production byte-identical to
+f4d1da6. Owned PIDs33376/34156/38144/control10308 all normally quit with flushed
+logs. Reference90.449/90.244/90.104, median90.244; control28.532. Complete
+predecessor/repeat/private-stream/individual-rock parity and reference gates PASS,
+audit issues empty. Deployment38/38, clean worktree and no live game.
+
+| Batch | Production | Reference median | Native control |
+| --- | --- | ---: | ---: |
+| Historical accepted | v983/f4d1da6 | 86.718 | 28.844 |
+| Rejected candidate | v984/67feaec | 90.014 | 31.753 |
+| Separate confirmation | v983/d1adba4 (same production) | 90.244 | 28.532 |
+
+The original86.718s remains historical measured evidence, not a reproducible
+current performance claim. Use v983_confirmation_reference as the fresh reference
+comparator for a genuinely NEW candidate. Do not substitute it into v984's rejected
+comparison or rerun unchanged v984 as a rescue. The native control recovered while
+expanded timing did not; neither a uniform slowdown nor a specific cause is proved.
+Do not claim the decor changes intrinsically caused the entire earlier3.296s gap.
+FunctionProfiler.txt last changed15:13:41, not during these recent batches; no new
+profiler output was observed. No OS/game/harness settings were changed. Optional
+user question about concurrent heavy work was sent; its answer is not required
+to continue safe in-scope optimization.
+
+Current under85 reference gap is5.244s, not1.718s. Goal remains active and unmet.
+No v984 production changes remain. All candidate source/tests are recoverable in
+67feaec and research artifacts; do not call diagnostic work reduction a cold gain.
+Next independent bottleneck lead is documented in outer_coarse_next.md. No v985
+candidate exists. Future scope still includes the reference and all five sites,
+all ten rules, exact outputs/RNG/rock support and scheduled revalidation beforeT1.

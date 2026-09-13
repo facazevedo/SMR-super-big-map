@@ -69,3 +69,10 @@ The similarly slower native control suggests a common timing shift, but does
 not establish its cause or justify normalizing/overriding acceptance. Declare a
 new unchanged-v983 baseline confirmation batch AFTER restoration; keep its data
 separate and never substitute it into the rejectedv984 comparison.
+
+Confirmation subsequently CLOSED at d1adba4, unchanged acceptedv983:
+90.449/90.244/90.104, median90.244, control28.532, all exact reference checks PASS.
+Thus the previous comparison does not prove the decor code intrinsically caused
+the entire timing gap. The earlier86.718s is historical, not reproduced current
+timing. Keepv984 rejected under its declared gate; future genuinely new candidates
+can use the fresh confirmation batch without rewriting any old result.
