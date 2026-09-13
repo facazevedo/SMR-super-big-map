@@ -1,0 +1,3 @@
+ready in 10.7s (pid 60272, mem 140678 KB, harness loaded)
+launched MarsDebug.exe pid=60272 (breakaway=True) log=D:\PROJS\SMR\smr-harness\logs\daemon-20260913-160525.log
+port open after 6.0s

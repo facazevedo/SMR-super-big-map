@@ -1,0 +1,113 @@
+{
+  "status": "pass",
+  "issues": [],
+  "checkpoint": "e7b2ad3a7d4ed671016d2d928ea5225a58b17c14",
+  "identity": [
+    60272,
+    134337891252903299
+  ],
+  "qualification": "Mapless scratch API contract, not a generation parity or timing sample.",
+  "contracts": [
+    {
+      "seeds_b": 1,
+      "seeds_a": 1,
+      "mismatches": 0,
+      "name": "opposite_corners",
+      "height": 32,
+      "width": 32
+    },
+    {
+      "seeds_b": 1,
+      "seeds_a": 1,
+      "mismatches": 0,
+      "name": "overlap",
+      "height": 32,
+      "width": 32
+    },
+    {
+      "seeds_b": 49,
+      "seeds_a": 29,
+      "mismatches": 0,
+      "name": "disjoint_circles",
+      "height": 32,
+      "width": 32
+    },
+    {
+      "seeds_b": 113,
+      "seeds_a": 113,
+      "mismatches": 0,
+      "name": "overlap_circles",
+      "height": 32,
+      "width": 32
+    },
+    {
+      "seeds_b": 124,
+      "seeds_a": 1,
+      "mismatches": 0,
+      "name": "edge_frame",
+      "height": 32,
+      "width": 32
+    },
+    {
+      "seeds_b": 512,
+      "seeds_a": 512,
+      "mismatches": 0,
+      "name": "checkerboard",
+      "height": 32,
+      "width": 32
+    },
+    {
+      "seeds_b": 49,
+      "seeds_a": 54,
+      "mismatches": 0,
+      "name": "sparse",
+      "height": 128,
+      "width": 128
+    },
+    {
+      "seeds_b": 1024,
+      "seeds_a": 1024,
+      "mismatches": 0,
+      "name": "full_full",
+      "height": 32,
+      "width": 32
+    },
+    {
+      "seeds_b": 0,
+      "seeds_a": 0,
+      "mismatches": 0,
+      "name": "empty_empty",
+      "height": 32,
+      "width": 32
+    },
+    {
+      "seeds_b": 1,
+      "seeds_a": 0,
+      "mismatches": 0,
+      "name": "empty_corner",
+      "height": 32,
+      "width": 32
+    },
+    {
+      "seeds_b": 0,
+      "seeds_a": 1,
+      "mismatches": 0,
+      "name": "corner_empty",
+      "height": 32,
+      "width": 32
+    },
+    {
+      "seeds_b": 15260,
+      "seeds_a": 441,
+      "mismatches": 0,
+      "name": "actual_size_frame",
+      "height": 768,
+      "width": 768
+    }
+  ],
+  "all_cases_hold": true,
+  "all_nonempty_hold": true,
+  "math_type_available": null,
+  "integer_subtype": null,
+  "float_subtype": null
+}

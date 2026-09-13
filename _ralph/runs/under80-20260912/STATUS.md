@@ -2008,3 +2008,11 @@ including nonempty/empty/edge/circle/sparse and actual768x768,616448 comparedcel
 boundaries and unchanged sources. Completed experiment status is distinct from
 whether the identity holds; no native result or speedup yet. No maps/RNG/hooks
 or production changes in the probe. Freeze then run its fresh hidden mapless driver.
+
+Native distance composition scratch probe at e7b2ad3 completed12396 CLOSEDexit0,
+PID60272/creation134337891252903299. All12 cases,616448 cells match exactly,
+OR/min boundaries and sources preserved,96owned/all96freed, normal flushed logs,
+contractauditPASS issues[]. Empty and actual768x768 cases included. This is not
+generation parity or a speedup; next actual Playable primary/secondary-field
+shadow and complete old/new work replay. See playable_distance_research.md.
+Production/deployment remains exactacceptedv987; goalaverage<85 still unmet.
