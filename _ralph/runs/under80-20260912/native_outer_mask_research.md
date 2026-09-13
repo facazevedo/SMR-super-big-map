@@ -233,3 +233,18 @@ Both passing and failing model evidence are retained in native_outer_primitives.
 Next freeze the new revision for a sequential reference-plus-five shadow batch.
 Full final parity and exhaustive coarse-mask comparisons remain required on each
 site before a production/cold decision. No end-to-end improvement is claimed.
+
+### Full qualified six-site set complete
+
+The initial sequential runner stopped after its passing reference because Windows
+briefly retained the exiting PID. Its continuation stopped after passing15S because
+the empty Get-Process -Name inventory produced exit1. Neither stop was a map
+failure; neither next site launched. Both stopped manifests remain unchanged.
+After a tested identity-aware exit gate, the untouched four sites completed.
+The combined audit verifies exact source hashes across all retained artifacts,
+six unique hidden process identities, normal flushed shutdown, no engine errors,
+all4024386 coarse cells/255 patches, and complete predecessor/snapshot/rock parity.
+
+Native/scalar kernel ms: reference979/2395,15S687/1730,24S528/1389,45S517/1324,
+61N792/1980,17S613/1484. No cold performance inference or sample substitution.
+Authoritative aggregate: native_outer_mask_qualified_remaining_four/six_site_audit.json.

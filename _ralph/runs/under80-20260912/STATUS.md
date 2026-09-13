@@ -1040,3 +1040,31 @@ Private integration embedded-helper suitePASS6382 checks/45 calls(40 qualified,
 5 domain refusals). It remains undeployed. Preparing the untouched four-site
 continuation under the same production/kernel/setup hashes and a new runner
 checkpoint. No harness changes and no cold performance claim.
+
+## Qualified six-site shadow set complete
+
+Remaining-four session36169 CLOSED normally at2180e49. Combined audit retains the
+reference and15S successes from the two stopped runner batches; no site was rerun.
+All six unique owned processes completed normally; all frozen production/kernel/
+setup hashes match. Full predecessor, final-snapshot and rock-grounding parity
+PASS, no Lua/OptimizationFailure errors, all4024386 coarse cells/255 patches exact.
+
+| Site | Cells | Native kernel ms | Scalar loop ms |
+| --- | ---: | ---: | ---: |
+| 14N134W | 948237 | 979 | 2395 |
+| 15S67E | 687618 | 687 | 1730 |
+| 24S74W | 568678 | 528 | 1389 |
+| 45S120W | 514192 | 517 | 1324 |
+| 61N136W | 740771 | 792 | 1980 |
+| 17S11W | 564890 | 613 | 1484 |
+
+Audit: native_outer_mask_qualified_remaining_four/six_site_audit.json. Differences
+807..1416ms are paired diagnostic kernel observations, NOT cold START-to-T1 gains.
+Production/deployment unchanged v983,38/38 auditPASS; no engine remains.
+
+Prepared integrated fast-path setup and deliberate qualified-root-failure setup.
+Both compile/source-injection checks pass. Expected-failure test must prove zero
+SetHeightGrid calls, unchanged full installed-height hashes, all tracked mask/
+patch/working grids freed, and reported OptimizationFailure. It uses only a private
+recompiled function and private API wrappers, never module/global replacement.
+Next run that expected failure, then integrated full parity and offline/cold gates.
