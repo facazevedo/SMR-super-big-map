@@ -60,5 +60,21 @@ The inspected `FunctionProfiler.txt` was a 0.353-second snapshot reporting 96.5%
 slowdown, dominated by asset/hex initialization. Its absolute times cannot estimate
 current full-map expansion savings.
 
+## Follow-through: first alternative accepted as v987
+
+The native outer-mask alternative passed all83 offline checks, six-site exact
+mask shadows, integrated native tests and the complete cold correctness matrix.
+Accepted production56fbf44/v987: reference median86.606s versus freshv98390.244s;
+all five declared fresh comparisons improved. Worst remaining site61N136W92.125s.
+The full <85s goal is not reached. Detailed times and limits are in
+v987_source_review.md; full cold evidence is retained under artifacts/v987_reference
+and artifacts/v987_matrix. Isolated kernel timings were smaller than some total
+gains, so do not claim exact causal attribution of the full observed difference.
+
+The historical five-site limitation above was resolved before this candidate by
+an unchanged-v983 confirmation, without overwriting earlier results. Future work
+uses the new accepted v987 evidence. Whole-cell obstruction certificates are a
+relevant next private investigation for61N; they are not implemented or proven.
+
 See `native_crease_offers_next.md`, `v976_source_review.md`, `v984_source_review.md`,
 `v985_source_review.md`, `v986_source_review.md`, and the retained diagnostic artifacts.

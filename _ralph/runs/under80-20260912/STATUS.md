@@ -1106,3 +1106,29 @@ Cold reference comparator is fresh v983_confirmation_reference median90.244s and
 control28.532s; if strictly faster and correctness passes, five-site comparator is
 fresh v983_matrix_confirmation. Preserve every sample, no rescue reruns. The
 candidate is not accepted and the startup target remains unmet; goal active.
+
+## v987 accepted as an incremental baseline; target still unmet
+
+This turn is PROGRESS, not blocked or complete. Production56fbf44/v987 is retained.
+Reference99821 and five-site95286 CLOSED normally. All83 offline commands, complete
+predecessor/repeat/private-stream/full-grid/individual-rock parity, all ten rules
+and nine unique normal process shutdowns PASS. No test failure was waived; the
+earlier deliberate-fault early-abort failure remains archived as counterevidence.
+
+Reference88.557/86.046/86.606s, median86.606 vsfreshv98390.244, gain3.638s/4.031%.
+Native control29.156 vs28.532. Five-site fresh baseline comparisons:
+15S88.653 vs94.076;24S88.711 vs96.625;45S82.053 vs86.192;
+61N92.125 vs95.773;17S86.546 vs90.805. All faster, but full under85 goal FALSE.
+Finite observed gains are not an attribution of every saved millisecond to the
+kernel; isolated diagnostic gains were smaller. All runs and source hashes kept.
+
+Final deployment38/38 auditPASS; no live game. No cold run is ongoing. Production
+is unchanged from56fbf44. Acceptance review: v987_source_review.md and
+artifacts/v987_all_ten_rules_review.json. Cosmetic private-research labels remaining
+inside the helper do not waive any documented arithmetic obligation.
+
+Next genuinely new bounded investigation can address61N's obstruction-query cost
+with whole-cell positive certificates, followed by collection-only crease offers
+or tighter apron certificates. Preserve all rejection/RNG ordering, use private
+exact-oracle shadows first, and compare future cold candidates against this newly
+accepted v987 reference and matrix. Do not revive rejected changes by relabeling.
