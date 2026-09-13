@@ -1964,3 +1964,24 @@ five-site exact preservation workflow. The new paired_cold.py and fixture file
 are unlaunched experimental tools; they are not required by the revised workflow.
 Never mark the prior under80 objective achieved to change its tracker text: use
 the user's explicit revised acceptance criterion for subsequent work.
+
+## Current target is reference average <85s; paired v993 cold result rejected
+
+User replaced median with arithmetic mean during the same fixed reference batch;
+no extra/replacement samples. Frozen101091d session23055 CLOSEDexit0, four owned
+normally closed processes and complete reference/control audit PASS. Samples
+88.385/85.902/87.308s average87.198333s, vs acceptedv987 average87.069667s
+(old median86.606s retained only as history). Control29.251s. Separate average
+audit preserves the full original reference audit. Current timing target NOTmet.
+
+No five-site cold promotion after reference performance failure. Restored exact
+accepted56fbf44 production/deployment, syntax and38-file audit PASS. All candidate
+code, raw results and proofs retained. This turn PROGRESS: completed experiment,
+negative whole-startup evidence and exact accepted restoration; goal remains active.
+
+The user's changed scope gives a distinct reason to reassess old raw-mask v992:
+its original three-run average84.664s and all correctness gates passed, but its
+original rejection depended on other-site slowdowns, which are no longer timing
+criteria. Do not relabel those historical results or declare success from them.
+Require fresh fixed reference3/control confirmation before further acceptance,
+then full five-site correctness verification. See v992_revised_target_protocol.md.

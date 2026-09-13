@@ -1,4 +1,4 @@
-# v993 source and correctness review (cold performance pending)
+# v993 source and correctness review (reference performance failed)
 
 Candidate payload e6976fc4d92a10f2ed54f6bae86ff04b0fc49bd7, based on accepted
 56fbf44/v987. Production diff is exactly three files: map-generation helper and
@@ -65,3 +65,29 @@ review_v974.py --version 993 keeps the full 85-command/source/deployment/nine-un
 process/correctness review and records the revised timing predicate separately.
 All historical versions retain their original decisions and timing predicates.
 No under-80 or all-site speedup will be claimed from reference-only success.
+
+## User selected average; completed fixed reference batch fails performance
+
+During this same batch, the user explicitly replaced median with the arithmetic
+mean of the same three reference runs. No samples were added, omitted or replaced.
+The current goal is reference average <85s plus full correctness preservation.
+
+Frozen 101091d reference execution 23055 CLOSED exit0. All four owned processes
+closed normally, no errors, complete repeated/predecessor/private/rock/control
+audit PASS. Exact PID/creation identities are in v993_reference/reference_audit.
+Samples 88.385/85.902/87.308s average 87.198333s; accepted v987 samples
+88.557/86.046/86.606s average 87.069667s. Observed difference 0.128667s slower;
+no causal/statistical-significance claim. Median 87.308s is retained as history,
+not the acceptance metric. Native control29.251s vs accepted29.156s.
+
+The complete original reference_audit.json remains intact. A separate
+reference_average_audit.json validates its raw clocks and records the user's
+current metric: reference_improved=false, under_target_reached=false.
+Candidate NOT promoted. Five-site cold follow-through is not justified after
+this reference performance failure; prior integrated two-site native proofs
+remain valid but do not establish all-site cold acceptance.
+
+Restored the three candidate-owned production files exactly to56fbf44/v987 using
+apply_patch. Full Code/metadata/items diff against accepted is empty; syntax and
+normal38-file deployment sync/audit PASS. No files deleted or evidence discarded.
+The accepted reference average remains87.069667s, above the user's85s goal.

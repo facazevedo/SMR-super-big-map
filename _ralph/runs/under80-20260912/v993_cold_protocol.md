@@ -2,6 +2,11 @@
 
 ## Superseded before execution by explicit user target change
 
+Latest metric update: while the unchanged three-run reference batch was running,
+the user explicitly chose **arithmetic mean**, not median. All three original
+samples were retained. Their final average is87.198333s, so v993 failed the85s
+target and reference improvement. Full audit is in v993_source_review.md.
+
 The user changed the goal to **reference START-to-T1 median below 85 seconds**.
 This supersedes the all-six-site under-80 goal and the 38-process performance
 protocol below. No manifest was initialized and no cold sample had started.
