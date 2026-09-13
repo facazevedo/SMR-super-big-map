@@ -6,6 +6,23 @@ local function fail(why)
  result.status='fail';result.issues[#result.issues+1]=tostring(why)
  result.error=result.error or tostring(why)
 end
+-- Optional diagnostic-only observer. No observer means the original coarse probe.
+local observer=rawget(_G,'SBM_NATIVE_PROC_OBSERVER')
+if observer~=nil then
+ if type(observer)~='table' or type(observer.result)~='table'then fail('invalid native observer');return end
+ for _,name in ipairs({'generation_enter','generation_exit','procedure_start','procedure_end','restore'})do
+  if type(observer[name])~='function'then fail('missing observer callback '..name);return end
+ end
+ result.primitive=observer.result
+end
+local function observe(name,...)
+ if not observer then return true end
+ local ok,passed,why=pcall(observer[name],...)
+ if not ok or passed~=true then
+  fail('observer '..name..': '..tostring(ok and why or passed));return false
+ end
+ return true
+end
 local sbm
 for _,mod in ipairs(ModsLoaded or {})do
  local value=mod.env and rawget(mod.env,'SuperBigMap')
@@ -68,6 +85,7 @@ restore=function(reason)
  local active=0;for _,stack in pairs(contexts)do active=active+#stack end
  result.active_generations=active
  if active~=0 then fail('active native generation at restoration')end
+ observe('restore',reason)
  if sbm.CallDoGenerateWithRockParityTrace~=call_wrapper then fail('generation hook rebound')
  else sbm.CallDoGenerateWithRockParityTrace=original_call end
  if sbm.GenerationGrids.RebuildFinal~=final_wrapper then fail('final hook rebound')
@@ -106,6 +124,7 @@ call_wrapper=function(original,generator,map,...)
  row.generation_methods_registered=registered
  local ctx={row=row,stack={},counts={}}
  context_stack[#context_stack+1]=ctx
+ observe('generation_enter',original,generator,map,row)
  local saved_start,saved_end=class.ProcStart,class.ProcEnd
  local start_wrapper=function(self,tag,...)
   local values=pack(pcall(saved_start,self,tag,...))
@@ -118,18 +137,24 @@ call_wrapper=function(original,generator,map,...)
     ctx.counts[tag]=(ctx.counts[tag] or 0)+1
     ctx.stack[#ctx.stack+1]={id=sequence,name=tag,ordinal=row.procedure_count,
      occurrence=ctx.counts[tag],at=GetPreciseTicks(),child_ms=0}
+    observe('procedure_start',row,tag,sequence)
    end
   end
   return unpack_values(values,2,values.n)
  end
  local end_wrapper=function(self,tag,...)
-  if self==generator and thread_key()==key and current(key)==ctx then close(ctx,tostring(tag),true)end
+  if self==generator and thread_key()==key and current(key)==ctx then
+   local token=ctx.stack[#ctx.stack]
+   observe('procedure_end',row,tostring(tag),token and token.id)
+   close(ctx,tostring(tag),true)
+  end
   local values=pack(pcall(saved_end,self,tag,...))
   if not values[1]then fail('ProcEnd error: '..tostring(values[2]));error(values[2]);return nil end
   return unpack_values(values,2,values.n)
  end
  class.ProcStart=start_wrapper;class.ProcEnd=end_wrapper
  local values=pack(pcall(original_call,original,generator,map,...))
+ observe('generation_exit',row,values[1])
  row.duration_ms=GetPreciseTicks()-result.started_at-row.start_ms
  row.remainder_ms=row.duration_ms-row.procedure_ms
  row.open_procedures=#ctx.stack;row.ok=values[1]

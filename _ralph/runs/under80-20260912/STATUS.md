@@ -1585,3 +1585,21 @@ All handles terminal, fresh-game check clear. Production remains exact56fbf44/v9
 and38-file deployment audited. Accepted reference86.606/worst92.125s unchanged.
 Full<80 and<85 unmet; goal ACTIVE, not blocked. This turn PROGRESS, not a repeat
 of the previous unexecuted plan. Preserve failed first-run guard evidence too.
+
+## Prefab-selection primitive observer ready for native verification
+
+Previous turn PROGRESS: full audited native timings identified common5348/4647ms
+UG prefab selection cost. New observer scopes16 native grid/weighted-selection
+functions to Playable/Filler/Base, resolving the actual original DoGenerate _ENV.
+No production/engine reload, generation method replacement or random draws.
+Aggregate per-primitive counts/inclusive/exclusive times, exact tuples/callorder,
+per-coroutine pass-through, partial-install/error/rebound cleanup, resolved AND
+raw-slot identity restoration. Base nativeproc observer callbacks preserve203
+fixture checks. New observer366 checks incl integrated driver; six prerequisites
+PASS in prefab_primitive_offline_2 (initial329-check batch retained too).
+
+Next fresh reference and61N via prefab_primitive_profile.lua, frozen checkpoint,
+querySBM_NATIVE_PROC_DIAGNOSTIC and inherited full prefab_primitive_audit.py.
+Production still exact56fbf44/v987,38fileauditPASS. Need actual shipped-owner
+reachability, full outputs/private RNG/individual rocks and normally closed owned
+processes before using primitive timings. See prefab_primitive_research.md.
