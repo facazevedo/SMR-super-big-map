@@ -108,3 +108,32 @@ Only strict reference median improvement and full clean evidence permit the five
 site matrix againstv987_matrix; no rescue repeats. Extend review_v974.py for992
 with85tests and the three actual production files, and complete v992_source_review
 with actual cold results before claiming any all-ten-rule acceptance.
+
+## Cold follow-through: mixed performance, acceptedv987 restored
+
+Frozenb38f4c0 completed both finite batches:53616 reference and23298five-site,
+all nine owned processes CLOSED normally. Reference84.147/83.445/86.400s,
+median84.147vs86.606,control29.835vs29.156s. Five-site90.859/90.800/85.341/
+90.707/85.667s:15S,24S,45S slower by2.206/2.089/3.288s;61N,17S faster by
+1.418/.879s. Full predecessor/private/rock/control/process preservation PASS.
+v992_all_ten_rules_review.json records85commands andnineuniqueprocesses, but
+all_scenarios_faster=false andbothunder80/under85false. See v992_source_review.md.
+
+For context only, prior/new integrated diagnostic UG Filler spans2116/1418ms
+reference and2479/1680ms61N are consistent with the private mask experiment;
+these separate instrumented runs are NOT controlled startup savings or evidence
+explaining the cold regressions. No causal claim about unrelated stages is made.
+
+Candidate NOT promoted. Restored only the three candidate-owned production files
+using apply_patch; gitdiffagainst56fbf44 for entireCode/metadata/items is empty,
+Lua syntaxPASS andstandard38filedeployment sync/auditPASS. No files deleted or
+candidate history discarded. The first generated restoration patch was refused
+without edits because its converter mistook removed Lua comment lines for diff
+headers; corrected hunk parsing applied the full exact restoration successfully.
+
+Next investigate a genuinely distinct fused decor rejection path. The old
+decor_hotpath_candidate.py already combined last-hit hints/cursor-width changes
+with per-Run stdlib bindings and has_get_type hoisting; do NOT present those as
+new untested alternatives. Keep existing circle/index/cursor algorithms and RNG
+unchanged, and first build a bounded complete-prefix/candidate outcome shadow
+and whole-pass measurement. No unchangedv992 retry or mixed rejected candidate.

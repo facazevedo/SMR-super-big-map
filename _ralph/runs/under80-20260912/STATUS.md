@@ -1736,3 +1736,28 @@ commands, identities and evidence are in v992_filler_integration.md. Do not repe
 another review/plan instead of this now-qualified cold experiment next turn.
 Current production is candidatev992/generator304; accepted baseline remainsv987
 86.606/worst92.125s,full<80 and<85 unmet. GoalACTIVE; this turn PROGRESS.
+
+## v992 cold verification CLOSED: three slowdowns, NOT promoted; v987 restored
+
+Previous turn PROGRESS implemented actualcache+85checks+two nativeaudits. This
+turn executed finite frozenb38f4c0 reference53616 andfive-site23298; allnineunique
+ownedprocesses CLOSED exit0 with normallyflushedlogs. Reference84.147/83.445/
+86.400s,median84.147vs86.606 (observed2.459s/2.839% gain),control29.835s.
+Five-site15S90.859/24S90.800/45S85.341/61N90.707/17S85.667s:three slower,
+two faster. No rescue samples or inferred causal whole-startup cache gain.
+
+Allcorrectness/source/privatefourfields/individualrocks/processgates PASS;
+v992_all_ten_rules_review.json retains85commands/nineidentities andrawjudgments.
+all_scenarios_faster=false,bothunder80/under85false. NOTpromoted. Restoredexact
+56fbf44/v987 Code/metadata/items throughapply_patch; syntaxPASS,normal38file
+deployment sync/auditPASS,freshgamecheckclear. Candidateandallrawresultsretained.
+See v992_source_review.md/v992_filler_integration.md for complete evidence.
+
+Next distinct lead: private fuseddecor rejectionprefix, retaining originalcircle
+index/cursor/matcher/RNG andsuccessfulstampingtail. Inspect/reuse oldshadow/test
+scaffolding, not rejectedcachealgorithms. decor_hotpath_candidate.py already
+testedstdlibbinding/has_get_type hoists together withv984hints/cursorchanges;
+do NOTrediscover them as an untested new hotpath. Need actualcandidate/outcome
+trace equality andwholepass timing includingprep beforeproduction. Current
+acceptedreference86.606/worst92.125s; fullgoalACTIVE,notblocked. ThisturnPROGRESS:
+completedcoldexperiment, discoveredmixedperformance andrestoredacceptedstate.

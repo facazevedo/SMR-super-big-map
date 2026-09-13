@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[3]
 RUN = ROOT / '_ralph/runs/under80-20260912'
 ART = RUN / 'artifacts'
 parser = argparse.ArgumentParser()
-parser.add_argument('--version', choices=['974', '975', '977', '978', '979', '980', '981', '982', '983', '984', '985', '986', '987', '988', '989', '990', '991'], default='974')
+parser.add_argument('--version', choices=['974', '975', '977', '978', '979', '980', '981', '982', '983', '984', '985', '986', '987', '988', '989', '990', '991', '992'], default='974')
 args = parser.parse_args()
 version = args.version
 baseline, expected_tests, expected_files = {
@@ -29,6 +29,7 @@ baseline, expected_tests, expected_files = {
     '989': ('56fbf44', 87, ['Code/sbm_decor_topup.lua', 'Code/sbm_version.lua', 'metadata.lua']),
     '990': ('56fbf44', 87, ['Code/sbm_terrain_copy.lua', 'Code/sbm_version.lua', 'metadata.lua']),
     '991': ('56fbf44', 88, ['Code/sbm_terrain_copy.lua', 'Code/sbm_version.lua', 'metadata.lua']),
+    '992': ('56fbf44', 85, ['Code/sbm_map_generation.lua', 'Code/sbm_version.lua', 'metadata.lua']),
     '982': ('c4d3e67', 78, ['Code/sbm_deposits.lua', 'Code/sbm_map_generation.lua', 'Code/sbm_object_clone.lua', 'Code/sbm_rock_grounding.lua', 'Code/sbm_sector_exploration.lua', 'Code/sbm_terrain_copy.lua', 'Code/sbm_version.lua', 'metadata.lua']),
 }[version]
 target = ART / f'v{version}_all_ten_rules_review.json'
@@ -37,7 +38,7 @@ if target.exists():
 read = lambda p: json.loads(p.read_text())
 reference = read(ART / f'v{version}_reference/reference_audit.json')
 assert reference['clean_exact_evidence'] and not reference['issues']
-if version in ('975', '977', '978', '979', '980', '981', '982', '983', '984', '985', '986', '987', '988', '989', '990', '991'):
+if version in ('975', '977', '978', '979', '980', '981', '982', '983', '984', '985', '986', '987', '988', '989', '990', '991', '992'):
     assert reference['median_s'] < reference['prior_median_s'], 'No measured reference improvement'
 offline_name = 'v978_final_offline' if version == '978' else f'v{version}_offline'
 if version == '987': offline_name = 'v987_offline_staged'
@@ -76,7 +77,7 @@ review = dict(code_commit=code_commit, version=version, offline_commands_passed=
     unique_acceptance_processes=9, scenarios=scenarios, raw_judgments_unchanged=True,
     under_80_s_reached=reference['median_s'] < 80 and all(row['t0_to_t1_s'] < 80 for row in scenarios),
     timing_qualification='Reference and scenario results are separate: do not infer a reference speedup from the slow-map gain.')
-if version in ('983', '984', '985', '986', '987', '988', '989', '990', '991'):
+if version in ('983', '984', '985', '986', '987', '988', '989', '990', '991', '992'):
     review.update(target_seconds=85, under_target_reached=reference['median_s'] < 85
         and all(row['t0_to_t1_s'] < 85 for row in scenarios))
 if version == '984':
@@ -87,7 +88,7 @@ if version == '987':
         scenario_comparator='v983_matrix_confirmation',
         all_scenarios_faster=all(row['t0_to_t1_s'] < row['prior_t0_to_t1_s'] for row in scenarios),
         correctness_does_not_imply_performance_promotion=True)
-if version in ('988', '989', '990', '991'):
+if version in ('988', '989', '990', '991', '992'):
     review.update(reference_comparator='v987_reference',scenario_comparator='v987_matrix',
         all_scenarios_faster=all(row['t0_to_t1_s'] < row['prior_t0_to_t1_s'] for row in scenarios),
         correctness_does_not_imply_performance_promotion=True)

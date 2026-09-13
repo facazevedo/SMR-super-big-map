@@ -1,0 +1,9 @@
+{
+  "payload": {
+    "value": {
+      "surface_found": true
+    }
+  },
+  "stdout": "{\n  \"ok\": true,\n  \"exit\": 0,\n  \"data\": {\n    \"value\": {\n      \"surface_found\": true\n    }\n  }\n}\n",
+  "stderr": ""
+}

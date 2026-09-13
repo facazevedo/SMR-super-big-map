@@ -203,3 +203,19 @@ native API, failed first check retained; clean supported checkPASS atf8706a9.
 Next actual production integration and full real-source/native/cold gates, not
 another allocation-pool or unchanged rejected-candidate retry. See
 filler_mask_research.md for source-lifetime, owner bridge and fallback obligations.
+
+Actual production cachev992 followed through:85actualcommands+bothintegrated
+nativeauditsPASS, full source/output/RNG/rock/ownershiprestoration. Coldreference
+median84.147vs86.606s, but15S/24S/45S slower by2.206/2.089/3.288s,61N/17S faster
+by1.418/.879s. Complete nine-process preservationPASS; v992NOTpromoted andexact
+v987restored/deployedaudit38PASS. Seev992_source_review.md. Privatekernelwinand
+referencegain didnotestablish an all-site improvement or targetachievement.
+
+Nextunexecuted recommendation remains fuseddecor rejectiondispatch. Important
+sourcecheck: decor_hotpath_candidate.py alreadyincluded per-Run stdlibbindings
+and hoistedhas_get_type alongside rejectedv984hints/cursorchanges. Thosebindings
+alone are not a newlydiscovered untested optimization. A new candidate must be
+distinct, preservingcirclepredicate/index, candidate/cursor/RNGorder, no_match
+precedence, retryablefailedmatching, and everyappend/stampingoperation. Qualify
+withbounded exactcompleteoutcome shadows andwholepass timings, not helper-only
+or intrusiveper-call totals. Acceptedv98786.606/worst92.125s remainsunchanged.
