@@ -42,3 +42,19 @@ candidate's required fill, but exclude the per-cell comparison. Running old
 then new is diagnostic only, not randomized or a cold acceptance benchmark.
 Production promotion still requires native failure/ownership coverage, all
 inherited regressions, and frozen reference/control/five-site timing gates.
+
+Reference native shadow CLOSED normally at 824d5a1, session84712/PID7844.
+All56 complete coarse grids (948237 U12 cells) match exactly, zero mismatches.
+Diagnostic scalar-block totals old2904ms/new2432ms, observed reduction472ms.
+Full predecessor snapshots, private streams and individual rock grounding pass;
+flushed logs and normal quit captured in artifacts/outer_enclosure_reference_shadow.
+This stage timing is not an established end-to-end gain, and by itself is too
+small to close the current5.244s reference gap to85.
+
+Full actual apply_native_patch double:51551 checks pass over20 complete patch
+outputs, accounting, clipping/alignment, ownership and failure cases. Injected
+coarse allocation failure and GridFill errors before/after fill free all owned
+grids and publish no terrain/dirty region. Actual required-API list explicitly
+rejects missing GridFill. The unchanged subsequent native pipeline is compared
+through complete U16 outputs; double circle semantics are only an offline
+differential fixture, not a substitute for native full-mask/full-map evidence.

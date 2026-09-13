@@ -680,3 +680,24 @@ No v984 production changes remain. All candidate source/tests are recoverable in
 Next independent bottleneck lead is documented in outer_coarse_next.md. No v985
 candidate exists. Future scope still includes the reference and all five sites,
 all ten rules, exact outputs/RNG/rock support and scheduled revalidation beforeT1.
+
+## Exact outer coarse enclosure research (not deployed)
+
+824d5a1 adds a nondeployed candidate: required native zero-fill, generously
+padded row enclosure of the unchanged maximum-radius disk, and same-order
+numeric traversal of private protection arrays. Literal inner cell math and
+all downstream native operations remain unchanged. Unsupported geometry still
+evaluates the whole original rectangle. See outer_enclosure_research.md.
+
+Offline whole-mask oracle:800 masks/1963334 U12 cells exact;264193 scalar
+evaluations omitted in those synthetic fixtures. Actual full-patch double adds
+51551 checks including final U16 outputs and injected allocation/fill failure
+ownership/no-publication tests. These are research tests, not yet added to the
+accepted80-command production inventory.
+
+Reference native shadow session84712/PID7844 CLOSED normally, full predecessor/
+private-stream/individual-rock parity PASS.56 real patches/948237 complete U12
+cells exact, zero mismatches. Diagnostic mask block2904ms->2432ms, observed472ms
+reduction, NOT a cold startup gain. Accepted production/deployment remainsv983;
+current baseline90.244 and target under85 unchanged. Next check the same candidate
+on61N136W before deciding its role in a production optimization candidate.

@@ -1,0 +1,515 @@
+{
+  "status": "pass",
+  "calls": [
+    {
+      "mismatches": 0,
+      "patches": [
+        {
+          "width": 66,
+          "old_ms": 10,
+          "samples": 4290,
+          "kind": "surface",
+          "new_ms": 7,
+          "mismatches": 0,
+          "height": 65
+        },
+        {
+          "width": 65,
+          "old_ms": 9,
+          "samples": 4225,
+          "kind": "surface",
+          "new_ms": 8,
+          "mismatches": 0,
+          "height": 65
+        },
+        {
+          "width": 65,
+          "old_ms": 11,
+          "samples": 4290,
+          "kind": "surface",
+          "new_ms": 9,
+          "mismatches": 0,
+          "height": 66
+        },
+        {
+          "width": 72,
+          "old_ms": 11,
+          "samples": 5184,
+          "kind": "surface",
+          "new_ms": 9,
+          "mismatches": 0,
+          "height": 72
+        },
+        {
+          "width": 75,
+          "old_ms": 15,
+          "samples": 5625,
+          "kind": "surface",
+          "new_ms": 11,
+          "mismatches": 0,
+          "height": 75
+        },
+        {
+          "width": 66,
+          "old_ms": 9,
+          "samples": 4290,
+          "kind": "surface",
+          "new_ms": 8,
+          "mismatches": 0,
+          "height": 65
+        },
+        {
+          "width": 66,
+          "old_ms": 11,
+          "samples": 4356,
+          "kind": "surface",
+          "new_ms": 9,
+          "mismatches": 0,
+          "height": 66
+        },
+        {
+          "width": 151,
+          "old_ms": 54,
+          "samples": 22801,
+          "kind": "surface",
+          "new_ms": 40,
+          "mismatches": 0,
+          "height": 151
+        },
+        {
+          "width": 76,
+          "old_ms": 14,
+          "samples": 5776,
+          "kind": "surface",
+          "new_ms": 12,
+          "mismatches": 0,
+          "height": 76
+        },
+        {
+          "width": 82,
+          "old_ms": 18,
+          "samples": 6806,
+          "kind": "surface",
+          "new_ms": 16,
+          "mismatches": 0,
+          "height": 83
+        },
+        {
+          "width": 99,
+          "old_ms": 22,
+          "samples": 9702,
+          "kind": "surface",
+          "new_ms": 17,
+          "mismatches": 0,
+          "height": 98
+        },
+        {
+          "width": 130,
+          "old_ms": 43,
+          "samples": 16900,
+          "kind": "surface",
+          "new_ms": 35,
+          "mismatches": 0,
+          "height": 130
+        },
+        {
+          "width": 86,
+          "old_ms": 16,
+          "samples": 7310,
+          "kind": "surface",
+          "new_ms": 18,
+          "mismatches": 0,
+          "height": 85
+        },
+        {
+          "width": 65,
+          "old_ms": 11,
+          "samples": 4290,
+          "kind": "surface",
+          "new_ms": 8,
+          "mismatches": 0,
+          "height": 66
+        },
+        {
+          "width": 133,
+          "old_ms": 50,
+          "samples": 17689,
+          "kind": "surface",
+          "new_ms": 40,
+          "mismatches": 0,
+          "height": 133
+        },
+        {
+          "width": 65,
+          "old_ms": 9,
+          "samples": 4290,
+          "kind": "surface",
+          "new_ms": 8,
+          "mismatches": 0,
+          "height": 66
+        },
+        {
+          "width": 149,
+          "old_ms": 58,
+          "samples": 22201,
+          "kind": "surface",
+          "new_ms": 46,
+          "mismatches": 0,
+          "height": 149
+        },
+        {
+          "width": 66,
+          "old_ms": 10,
+          "samples": 4290,
+          "kind": "surface",
+          "new_ms": 7,
+          "mismatches": 0,
+          "height": 65
+        },
+        {
+          "width": 151,
+          "old_ms": 59,
+          "samples": 22801,
+          "kind": "surface",
+          "new_ms": 47,
+          "mismatches": 0,
+          "height": 151
+        },
+        {
+          "width": 65,
+          "old_ms": 10,
+          "samples": 4225,
+          "kind": "surface",
+          "new_ms": 8,
+          "mismatches": 0,
+          "height": 65
+        },
+        {
+          "width": 74,
+          "old_ms": 13,
+          "samples": 5476,
+          "kind": "surface",
+          "new_ms": 12,
+          "mismatches": 0,
+          "height": 74
+        },
+        {
+          "width": 151,
+          "old_ms": 65,
+          "samples": 22801,
+          "kind": "surface",
+          "new_ms": 53,
+          "mismatches": 0,
+          "height": 151
+        },
+        {
+          "width": 111,
+          "old_ms": 27,
+          "samples": 12321,
+          "kind": "surface",
+          "new_ms": 22,
+          "mismatches": 0,
+          "height": 111
+        },
+        {
+          "width": 66,
+          "old_ms": 11,
+          "samples": 4290,
+          "kind": "surface",
+          "new_ms": 9,
+          "mismatches": 0,
+          "height": 65
+        },
+        {
+          "width": 74,
+          "old_ms": 12,
+          "samples": 5402,
+          "kind": "surface",
+          "new_ms": 9,
+          "mismatches": 0,
+          "height": 73
+        },
+        {
+          "width": 67,
+          "old_ms": 12,
+          "samples": 4556,
+          "kind": "surface",
+          "new_ms": 12,
+          "mismatches": 0,
+          "height": 68
+        },
+        {
+          "width": 132,
+          "old_ms": 43,
+          "samples": 14388,
+          "kind": "extractor",
+          "new_ms": 32,
+          "mismatches": 0,
+          "height": 109
+        },
+        {
+          "width": 91,
+          "old_ms": 23,
+          "samples": 8281,
+          "kind": "extractor",
+          "new_ms": 20,
+          "mismatches": 0,
+          "height": 91
+        },
+        {
+          "width": 71,
+          "old_ms": 15,
+          "samples": 5041,
+          "kind": "extractor",
+          "new_ms": 13,
+          "mismatches": 0,
+          "height": 71
+        },
+        {
+          "width": 154,
+          "old_ms": 68,
+          "samples": 23716,
+          "kind": "extractor",
+          "new_ms": 54,
+          "mismatches": 0,
+          "height": 154
+        },
+        {
+          "width": 157,
+          "old_ms": 78,
+          "samples": 24649,
+          "kind": "extractor",
+          "new_ms": 63,
+          "mismatches": 0,
+          "height": 157
+        },
+        {
+          "width": 154,
+          "old_ms": 66,
+          "samples": 23716,
+          "kind": "extractor",
+          "new_ms": 54,
+          "mismatches": 0,
+          "height": 154
+        },
+        {
+          "width": 100,
+          "old_ms": 31,
+          "samples": 10000,
+          "kind": "extractor",
+          "new_ms": 28,
+          "mismatches": 0,
+          "height": 100
+        },
+        {
+          "width": 157,
+          "old_ms": 77,
+          "samples": 24649,
+          "kind": "extractor",
+          "new_ms": 63,
+          "mismatches": 0,
+          "height": 157
+        },
+        {
+          "width": 144,
+          "old_ms": 64,
+          "samples": 20736,
+          "kind": "extractor",
+          "new_ms": 53,
+          "mismatches": 0,
+          "height": 144
+        },
+        {
+          "width": 157,
+          "old_ms": 45,
+          "samples": 18840,
+          "kind": "extractor",
+          "new_ms": 36,
+          "mismatches": 0,
+          "height": 120
+        },
+        {
+          "width": 157,
+          "old_ms": 69,
+          "samples": 24649,
+          "kind": "extractor",
+          "new_ms": 57,
+          "mismatches": 0,
+          "height": 157
+        },
+        {
+          "width": 157,
+          "old_ms": 75,
+          "samples": 24649,
+          "kind": "extractor",
+          "new_ms": 63,
+          "mismatches": 0,
+          "height": 157
+        },
+        {
+          "width": 112,
+          "old_ms": 35,
+          "samples": 12544,
+          "kind": "extractor",
+          "new_ms": 28,
+          "mismatches": 0,
+          "height": 112
+        },
+        {
+          "width": 157,
+          "old_ms": 74,
+          "samples": 23550,
+          "kind": "extractor",
+          "new_ms": 62,
+          "mismatches": 0,
+          "height": 150
+        },
+        {
+          "width": 132,
+          "old_ms": 50,
+          "samples": 17424,
+          "kind": "extractor",
+          "new_ms": 40,
+          "mismatches": 0,
+          "height": 132
+        },
+        {
+          "width": 157,
+          "old_ms": 76,
+          "samples": 24649,
+          "kind": "extractor",
+          "new_ms": 64,
+          "mismatches": 0,
+          "height": 157
+        },
+        {
+          "width": 145,
+          "old_ms": 66,
+          "samples": 22765,
+          "kind": "extractor",
+          "new_ms": 56,
+          "mismatches": 0,
+          "height": 157
+        },
+        {
+          "width": 156,
+          "old_ms": 69,
+          "samples": 24492,
+          "kind": "extractor",
+          "new_ms": 56,
+          "mismatches": 0,
+          "height": 157
+        },
+        {
+          "width": 174,
+          "old_ms": 103,
+          "samples": 30276,
+          "kind": "rocket",
+          "new_ms": 87,
+          "mismatches": 0,
+          "height": 174
+        },
+        {
+          "width": 174,
+          "old_ms": 103,
+          "samples": 30276,
+          "kind": "rocket",
+          "new_ms": 88,
+          "mismatches": 0,
+          "height": 174
+        },
+        {
+          "width": 174,
+          "old_ms": 99,
+          "samples": 30276,
+          "kind": "rocket",
+          "new_ms": 84,
+          "mismatches": 0,
+          "height": 174
+        },
+        {
+          "width": 174,
+          "old_ms": 103,
+          "samples": 30276,
+          "kind": "rocket",
+          "new_ms": 88,
+          "mismatches": 0,
+          "height": 174
+        },
+        {
+          "width": 174,
+          "old_ms": 102,
+          "samples": 30276,
+          "kind": "rocket",
+          "new_ms": 87,
+          "mismatches": 0,
+          "height": 174
+        },
+        {
+          "width": 174,
+          "old_ms": 94,
+          "samples": 30276,
+          "kind": "rocket",
+          "new_ms": 79,
+          "mismatches": 0,
+          "height": 174
+        },
+        {
+          "width": 174,
+          "old_ms": 128,
+          "samples": 30276,
+          "kind": "rocket",
+          "new_ms": 114,
+          "mismatches": 0,
+          "height": 174
+        },
+        {
+          "width": 174,
+          "old_ms": 102,
+          "samples": 30276,
+          "kind": "rocket",
+          "new_ms": 88,
+          "mismatches": 0,
+          "height": 174
+        },
+        {
+          "width": 174,
+          "old_ms": 95,
+          "samples": 30276,
+          "kind": "rocket",
+          "new_ms": 79,
+          "mismatches": 0,
+          "height": 174
+        },
+        {
+          "width": 174,
+          "old_ms": 129,
+          "samples": 30276,
+          "kind": "rocket",
+          "new_ms": 113,
+          "mismatches": 0,
+          "height": 174
+        },
+        {
+          "width": 174,
+          "old_ms": 137,
+          "samples": 30276,
+          "kind": "rocket",
+          "new_ms": 122,
+          "mismatches": 0,
+          "height": 174
+        },
+        {
+          "width": 174,
+          "old_ms": 95,
+          "samples": 30276,
+          "kind": "rocket",
+          "new_ms": 81,
+          "mismatches": 0,
+          "height": 174
+        }
+      ],
+      "samples": 948237
+    }
+  ]
+}
