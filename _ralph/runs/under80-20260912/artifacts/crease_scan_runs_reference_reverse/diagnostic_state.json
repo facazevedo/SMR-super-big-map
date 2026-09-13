@@ -1,0 +1,34 @@
+{
+  "calls": [
+    {
+      "returns_equal": true,
+      "width": 6144,
+      "new_ms": 240,
+      "height": 6144,
+      "old_ms": 215,
+      "wide_ring_only": true,
+      "cells": 37748736,
+      "cleanup_ok": true,
+      "order": "candidate_first",
+      "difference_min": 0,
+      "difference_max": 0,
+      "grids_equal": true
+    },
+    {
+      "returns_equal": true,
+      "width": 8192,
+      "new_ms": 3181,
+      "height": 8192,
+      "old_ms": 4050,
+      "wide_ring_only": false,
+      "cells": 67108864,
+      "cleanup_ok": true,
+      "order": "candidate_first",
+      "difference_min": 0,
+      "difference_max": 0,
+      "grids_equal": true
+    }
+  ],
+  "status": "pass",
+  "restored": true
+}

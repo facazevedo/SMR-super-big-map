@@ -51,3 +51,26 @@ execution, native-grid ownership/cache layout or timing variability may contribu
 Do not present the794ms destination difference as a clean isolated optimization
 gain. Next fresh diagnostic reverses order: candidate first on clone, original
 second on actual grid, with the same complete outputs and full-map validation.
+
+Reverse native shadow CLOSED normally at093cfb6, session33497/PID40916. Candidate
+first/source240ms vs original second215ms; candidate destination3181ms vs original
+4050ms. Complete104857600 U16 cells again equal, all returned tracks/reports/stats
+equal, scratch cleanup and restoration PASS, full predecessor/private/rock parity
+PASS. Destination saving appears in BOTH orders (794ms and869ms); source timing
+is order-sensitive and not a claimed grouping gain. No cold startup claim yet.
+
+The collect_axis oracle now additionally injects nil/error discovery failures on
+the first/second index call, requiring equal state and no scalar reads/tracks or
+domain publication;1301 checks total. No new native allocation or primitive is
+introduced by the candidate. The existing native producer ownership/failure
+tests remain applicable and must stay in the full regression suite.
+
+Next declared experiment: v986 with ONLY contiguous discovery scan grouping,
+generator guard299/runtime986 and sector76 unchanged. Adapt the one new oracle
+to compare f4d1da6 with actual production, retain all80 inherited tests (81 total),
+and verify production matches this exact research source. No rejectedv984 decor,
+v985 enclosure, v981 guide indexing or v976 packed buffers are included. Add the
+v986 source review and review_v974.py entry, freeze code/HEAD/deployment, then
+reference3/control against v983_confirmation_reference (90.244s). A positive
+reference gate permits all five sites against v983_matrix and all ten rules.
+The under85 target across the full scope remains unmet.

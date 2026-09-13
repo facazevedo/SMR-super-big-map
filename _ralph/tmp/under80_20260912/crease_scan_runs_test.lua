@@ -73,4 +73,26 @@ for case=1,640 do
  check(equal(aa,bb),'height read coordinate union changed in case '..case)
 end
 check(new_reads<old_reads*0.6,'contiguous discovery did not remove expected reads')
+-- Both native-index calls must finish before any scalar scan/domain/track work.
+-- Retain missing/error behavior for first and second discovery failures.
+for _,failure in ipairs({1,2}) do for _,throws in ipairs({false,true}) do
+ local outputs={}
+ for variant,factory in ipairs({old,new}) do
+  local calls,reads=0,0
+  local function native()
+   calls=calls+1
+   if calls==failure then
+    if throws then error('injected discovery error') end
+    return nil,'injected discovery failure'
+   end
+   return {[0]={2,3,4}},{candidates=3,cells=12,copies=1,sampled_rows=1,enumerated=3}
+  end
+  local fn,tracks,counts,stats,domains=factory(function()reads=reads+1;return 1234 end,false,128,native)
+  local ok=pcall(fn,'x',64,48,'left','right',1,27,35,59,1)
+  check(ok==not throws,'native discovery error propagation changed')
+  check(reads==0 and #tracks==0 and #domains==0,'failed discovery entered scalar scan')
+  outputs[variant]={tracks,counts,stats,domains}
+ end
+ check(equal(outputs[1],outputs[2]),'failure left different discovery/track state')
+end end
 print(('PASS: %d full-track checks; native height reads %d -> %d'):format(checks,old_reads,new_reads))

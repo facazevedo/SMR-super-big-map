@@ -750,3 +750,34 @@ refinement already has a sliding window. First measure actual indexed-refinement
 guide, native translation and feather-join costs using cloned original functions
 with every private cell joined and lexical operand layout preserved. Hoisting
 immutable cached operands is only a lead, not yet an implementation or gain.
+
+## Current new lead: consecutive discovery scans (research only)
+
+Fresh detail profile4639b5f/session4457/PID47136 CLOSED normally, full parity PASS.
+Destination scan_line_range1374ms/171387 calls under instrumentation; native
+discovery663ms, indexed refinement560ms, feather341ms, guide135ms, translation101ms.
+Nested times are not additive. The171387 native-index positions form35342 exact
+contiguous runs (longest35); source287 positions are all singletons.
+
+Candidate groups only adjacent sorted native-index entries through the existing
+sliding-window scanner. Every position/width/edge/candidate/track/order remains;
+only redundant immutable grid reads and empty-row temporary tables are removed.
+No new native API, writes, RNG, protection or failure-path changes. This is not
+the rejectedv981 guide index orv985 outer mask. Actual collect_axis oracle1301
+checks PASS (640 full-track cases plus discovery failures), reads5839888->1797110.
+Inherited crease_sampling3097 checks PASS against candidate. Research source and
+scripts: crease_scan_runs_research.md and artifacts/crease_scan_runs_research.
+
+Forward native shadowcce1d69/session11122/PID39668 CLOSED: source old264/new201ms,
+destination4042/3248ms. Reverse093cfb6/session33497/PID40916 CLOSED: source old215/
+new240ms, destination4050/3181ms. Each compares ALL104857600 source+destination
+U16 cells and every returned report/track/counter: exact, zero difference extrema.
+Both full predecessor/private-stream/individual-rock captures PASS; comparison
+grids freed and original closure restored beforeT1. Source timing is order-sensitive;
+destination gain appears both ways (794/869ms), still not a cold startup gain.
+
+Production/deployment remains byte-identical f4d1da6/v983, no live game, under85
+unmet. Next: promote ONLY scan grouping as v986/gen299/sector76; adapt the new
+actual-source oracle and run all81 inherited+new commands; freeze then measure
+reference3/control against v983_confirmation_reference90.244. Positive reference
+gate required before five-site matrix against v983_matrix/all ten-rule review.
