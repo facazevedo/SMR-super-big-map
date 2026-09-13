@@ -74,3 +74,12 @@ v986 source review and review_v974.py entry, freeze code/HEAD/deployment, then
 reference3/control against v983_confirmation_reference (90.244s). A positive
 reference gate permits all five sites against v983_matrix and all ten rules.
 The under85 target across the full scope remains unmet.
+
+Subsequent v986/a5086ea passed all81 offline checks and full nine-process/all-ten
+correctness review. Reference median89.489 improves confirmedv98390.244 by0.755s,
+but all five sites are slower than their unrefreshed historicalv983 timings:
+93.340/92.602/86.035/96.245/90.062 vs90.468/89.697/84.938/94.342/87.583.
+No full-scope performance promotion; restorev983 and preserve this research.
+No discarded/rescue samples. The data do not isolate algorithmic cause from the
+previously confirmed timing shift. Next refresh unchanged-v983 five-site baseline
+for genuinely new work; do not rewrite or rescue this v986 experiment.

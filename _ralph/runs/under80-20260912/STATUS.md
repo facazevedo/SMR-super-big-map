@@ -791,3 +791,38 @@ Session73911 CLOSED exit0: all81 offline commands PASS, all80 inherited checks
 plus actual f4d1da6/production collect_axis full-track/failure oracle. Evidence in
 artifacts/v986_offline and v986_source_review.md. Freeze this code/HEAD/deployment
 for reference3/control against confirmedv98390.244s. No cold result yet.
+
+## v986 full validation closed: correct, no full-scope promotion
+
+Frozen a5086ea throughout reference23212 and matrix78785, both CLOSED exit0.
+Nine unique normal process shutdowns: reference47136/43368/33928/control33260;
+sites46244/14900/19904/14784/32284 (creation identities captured, PID alone not identity).
+Reference89.034/89.489/90.484 median89.489 vs currentv98390.244, saving0.755s;
+control29.017 vs28.532. All81 offline checks, exact full/private/individual-rock
+reference repeats/predecessors and five pairs, all ten correctness rules PASS.
+artifacts/v986_all_ten_rules_review.json is correctness evidence, not promotion.
+
+| Site | v986 | Recorded v983 | Change |
+| --- | ---: | ---: | ---: |
+| 15S67E | 93.340 | 90.468 | +2.872 |
+| 24S74W | 92.602 | 89.697 | +2.905 |
+| 45S120W | 86.035 | 84.938 | +1.097 |
+| 61N136W | 96.245 | 94.342 | +1.903 |
+| 17S11W | 90.062 | 87.583 | +2.479 |
+
+All five historical comparisons are slower; no full-scope speedup or under85 claim.
+Restore accepted f4d1da6/v983/sector76/generator298 and active80-test inventory.
+The candidate-only crease_scan_runs test is removed from production parity folder,
+recoverable in a5086ea; research and all raw evidence retained. No live game remains.
+
+The source of the five-site timing increase is not established. Unchangedv983
+reference already shifted from86.718 historically to90.244 in its separate fresh
+confirmation; its five-site timings were never refreshed. Do not assume all
+five-site regressions were caused by grouping or normalize them away. Next run
+ONE declared unchanged-v983 five-site confirmation at artifacts/v983_matrix_confirmation
+against artifacts/v983_matrix with the existing verify_port.py. Preserve every
+sample, freeze HEAD/deployment, and do not rerun unchangedv986 as a rescue. This
+new baseline guides genuinely new candidates; old result labels remain untouched.
+After baseline confirmation, a larger native discovery offer-certificate lead is
+outlined in native_crease_offers_next.md. No v987 exists. Goal stays under85 across
+reference/five with all rules, terrain fixes, RNG and scheduled revalidation intact.

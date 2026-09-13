@@ -1,0 +1,57 @@
+{
+  "optimization_failures": [],
+  "maps": {
+    "Underground": {
+      "pads": [],
+      "pass_grids": [
+        {
+          "hash": "2465397276427836568",
+          "h": 8192,
+          "w": 8192,
+          "bytes": 482288
+        },
+        {
+          "hash": "2465397276427836568",
+          "h": 8192,
+          "w": 8192,
+          "bytes": 482288
+        }
+      ],
+      "sites": [],
+      "name": "BlankUnderground_04",
+      "height": {
+        "hash": "444717399611140119",
+        "h": 6144,
+        "w": 6144,
+        "bytes": 21159296
+      },
+      "rocks_lowered": []
+    },
+    "Surface": {
+      "pads": [],
+      "pass_grids": [
+        {
+          "hash": "5770312920395588714",
+          "h": 8192,
+          "w": 8192,
+          "bytes": 916333
+        },
+        {
+          "hash": "5770312920395588714",
+          "h": 8192,
+          "w": 8192,
+          "bytes": 916333
+        }
+      ],
+      "sites": [],
+      "name": "BlankBigTerraceCMix_02",
+      "height": {
+        "hash": "-2360865647941689699",
+        "h": 6144,
+        "w": 6144,
+        "bytes": 66678445
+      },
+      "rocks_lowered": []
+    }
+  }
+}

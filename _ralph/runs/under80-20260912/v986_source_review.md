@@ -42,3 +42,20 @@ A strictly improved reference median permits all five sites against v983_matrix,
 with every site regression visible. Full ten-rule/source/process review follows.
 The full target is strictly under85 across reference and all five scenarios;
 an incremental improvement does not establish completion.
+
+Full immutable a5086ea batch CLOSED: reference session23212, five-site session78785.
+All81 offline checks, exact reference predecessor/repeats/private/rock evidence,
+all five site pairs, all ten correctness rules and nine unique normal shutdowns
+PASS. Reference89.034/89.489/90.484, median89.489 vs90.244 (gain0.755s); native
+control29.017 vs28.532. However all five recorded historical comparisons are slower:
+15S93.340 vs90.468;24S92.602 vs89.697;45S86.035 vs84.938;61N96.245 vs94.342;
+17S90.062 vs87.583. Under85 false. Correctness review is not performance promotion.
+
+Do not promote this as a full-scope speedup. Restore acceptedv983 byte-for-byte;
+the new production test is recoverable in a5086ea and research copy retained.
+No samples discarded and no unchanged-v986 rescue rerun. These data do not prove
+that scan grouping intrinsically caused every five-site increase: the historical
+v983 reference86.718 had already shifted to90.244 in unchanged-code confirmation,
+while its five sites had not been remeasured. Next declare an independent current
+unchanged-v983 five-site confirmation, preserving old and candidate batches. Use
+the new baseline for genuinely new optimization work, not to rewrite this outcome.
