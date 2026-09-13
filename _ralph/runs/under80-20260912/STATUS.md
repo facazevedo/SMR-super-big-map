@@ -1939,3 +1939,14 @@ commands PASS, including unchanged 83 accepted regressions and 4,418 actual-help
 checks. Native integration qualification is next, not yet claimed. Details and
 memory accounting: v993_paired_filler_integration.md. Accepted baseline remains
 v987, reference 86.606s / worst 92.125s; full under-80/85 remains unmet. Goal active.
+
+Integrated v993 native reference 23846/PID37312 and 61N57346/PID52524 CLOSED
+exit0 at e6976fc, both full audits PASS. Actual mask/And pairs 1524/1798, hits
+1519/1793 of each kind, five misses each; all1506/1782 clears and7482/8891 updates
+accounted for. One source and place guard, peak14 owned, all16 allocations freed,
+no invalidation/eviction, restored hooks and no live game. These use production
+outputs, not private shadows. Native Filler spans956/1152ms are NOT cold timings.
+Source review completed in v993_source_review.md. Prospectively declared full
+38-process alternating accepted/candidate comparison in v993_cold_protocol.md;
+next implement/verify its two-frozen-payload driver and auditor, then execute it.
+No cold sample yet; candidate not promoted and full goal remains active/unmet.

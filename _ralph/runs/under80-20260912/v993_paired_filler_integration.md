@@ -71,3 +71,24 @@ All 85 offline commands completed PASS in artifacts/v993_offline, with productio
 hash-frozen throughout. Execution 98717 closed normally (exit 0). This includes the
 unchanged 83 accepted commands and both new actual-production tests. Syntax and
 diff hygiene pass. Next freeze/deploy and run the two declared native diagnostics.
+
+## Integrated native qualification completed
+
+Frozen e6976fc4d92a10f2ed54f6bae86ff04b0fc49bd7. Reference execution 23846,
+PID 37312, creation 134337860880244119; 61N execution 57346, PID 52524, creation
+134337862756175731. Both execution handles CLOSED exit 0 with normally flushed
+logs, full predecessor/private-four-field/individual-rock parity and new integrated
+audit PASS, issues empty. Native span censuses 95/94 and two generations each.
+
+Reference: 1,524 mask/And pairs, 1,519 hits of each kind, five native misses of each,
+1,506 live clears, 7,482 eligibility updates. 61N: 1,798 pairs, 1,793 hits of each,
+five misses, 1,782 clears and 8,891 updates. Both: one source and one place guard,
+zero invalidations/evictions, ten cache clones, peak fourteen owned grids, sixteen
+total releases and zero live scratch. All owner hooks restored; unsupported native
+mask calls 693/381 remain live. Full counter expectations were fixed before launch.
+
+The measured integrated underground Filler spans were 956/1,152 ms. They are
+instrumented spans from separate runs, not controlled startup savings. Unlike the
+private proof, these runs used actual production cached outputs for generation.
+No cold sample has been collected at this point. Fresh-game guard is clear.
+Next is the prospectively fixed protocol in v993_cold_protocol.md.

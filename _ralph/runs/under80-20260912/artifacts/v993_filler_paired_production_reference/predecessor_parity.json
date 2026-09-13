@@ -1,0 +1,7 @@
+{
+  "verdict": "pass",
+  "differences": [],
+  "note": "Runtime parity only; engine-RNG source audit is separate.",
+  "full_snapshot_differences": [],
+  "rock_grounding_differences": []
+}
