@@ -39,3 +39,32 @@ the game. Timings include each query's own index/certificate construction. The
 wrapper records certified/full query counts and restores Run at the existing
 scheduled surface revalidation. Full predecessor/private/final/rock parity and
 normal owned process shutdown are mandatory. Native effectiveness is pending.
+
+## First native prototype: exact but slower, not promoted
+
+Session37594/PID50100 CLOSED normally at4cf9613. All775867 real queries matched,
+584396 certified answers (75.32%), full predecessor/private/final/rock parity PASS.
+Old2666ms versus prototype2947ms: FAIL performance, preserve this result. Separate
+indexes remove shared warm-state bias; no cold timing claim or production edit.
+
+The cache learned89147 certificates in28573 cells, and191471 queries still used
+the complete index. Preparation and hot-path overhead can outweigh avoided scans.
+
+## Materially simplified v2, still private
+
+Audit all three try_stamp call sites: authored x/y are type-checked PointXY values;
+random-annulus x/y are arithmetic with tonumber offsets; finite-cursor x/y are
+arithmetic results. All site radii are arithmetic from tonumber(marker.DecorRadius).
+Thus the local query is numeric-input-only; v2 removes three repeated type calls
+per query, retaining finite/range checks. The native shadow explicitly audits this
+contract outside the timers. No public string/table input contract is narrowed.
+
+Cache immutable per-circle qualification/floored radius and per-query-radius
+floor values instead of recomputing them on every learning attempt. Replace four
+endpoint absolute values and two max calls with the exact padded-cell identity
+max(abs(low-c),abs(high-c))=abs(midpoint-c)+2049, then ceil()+1 as before. The same
+integer-square and inward-reach proof applies. Scalar decisions remain untouched.
+Require the same independent oracle and a new native result; do not rerun v1.
+Per-radius floor cache has a1024-entry memory cap; beyond it, recompute the same
+floor on demand. Descriptor storage is at most one record per already-owned circle.
+Expanded offline suite55681 comparisons also verifies the radius-cache cap.

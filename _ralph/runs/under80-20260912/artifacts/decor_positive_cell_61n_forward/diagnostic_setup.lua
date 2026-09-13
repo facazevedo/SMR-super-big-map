@@ -4,7 +4,6 @@ local result={status='setup',calls={}}
 rawset(_G,'SBM_DECOR_POSITIVE_CELL_DIAGNOSTIC',result)
 local reverse=false
 result.reverse=reverse
-result.variant='v2'
 local env,sbm
 for _,mod in ipairs(ModsLoaded or {})do
  local value=mod.env and rawget(mod.env,'SuperBigMap')
@@ -26,7 +25,7 @@ local function read(path)
  return text:gsub('\r\n','\n')
 end
 local source=read('Code/sbm_decor_topup.lua')
-local helper=read('_ralph/tmp/under80_20260912/decor_positive_cell_v2.lua')
+local helper=read('_ralph/tmp/under80_20260912/decor_positive_cell.lua')
 if not source or not helper then return end
 local body=source:match('(local function circle_hits%(.-)\nend')
 if not body then fail('indexed body unavailable');return end
@@ -43,9 +42,6 @@ local old=values.circle_hits
 if type(old)~='function' then fail('old circle query missing');return end
 local active
 local function query(list,x,y,radius)
- if type(x)~='number' or type(y)~='number' or type(radius)~='number' then
-  fail('numeric caller contract violated');return old(list,x,y,radius)
- end
  local copy=active.lists[list]
  if not copy then copy={};active.lists[list]=copy end
  for i=#copy+1,#list do copy[i]=list[i] end

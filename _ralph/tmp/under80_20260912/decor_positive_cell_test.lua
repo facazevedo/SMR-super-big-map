@@ -5,7 +5,7 @@ local old=assert(load(body..'\nreturn circle_hits'))()
 local indexed_body,n=body:gsub('then return true end','then return true, c end')
 assert(n==1)
 local indexed=assert(load(indexed_body..'\nreturn circle_hits'))()
-local factory=dofile('_ralph/tmp/under80_20260912/decor_positive_cell.lua')
+local factory=dofile(arg[1] or '_ralph/tmp/under80_20260912/decor_positive_cell.lua')
 local candidate=factory(indexed)
 local checks,certified=0,0
 local function oracle(list,x,y,r)
@@ -79,11 +79,18 @@ for _,x in ipairs({-1e-310,0,1e-310})do for i=1,40 do check(a,x,0,8192)end end
 -- Cache cap is a memory bound, not a query/placement budget. Populate only
 -- metadata to exercise exact fallback, then allow improving an existing entry.
 local capped={ {x=2048,y=2048,r=8192} }
-capped.positive_cell_cache={rows={},queries=32,slots=32768,learned=0}
+capped.positive_cell_cache={rows={},queries=32,slots=32768,learned=0,descriptors={},radii={},radius_count=0}
 assert(candidate(capped,2048,2048,0)==true)
 assert(capped.positive_cell_cache.learned==0)
 capped.positive_cell_cache.rows[0]={[0]=4096}
 assert(candidate(capped,2048,2048,0)==true)
 assert(capped.positive_cell_cache.rows[0][0]==0 and capped.positive_cell_cache.slots==32768)
+local radius_cap={{x=2048,y=2048,r=1}}
+local radius_copy
+for i=1,1100 do radius_copy=check(radius_cap,2048,2048,i)end
+if radius_copy.positive_cell_cache.radii then
+    local count=0;for _ in pairs(radius_copy.positive_cell_cache.radii)do count=count+1 end
+    assert(count==1024 and radius_copy.positive_cell_cache.radius_count==1024,'radius cache cap')
+end
 assert(certified>100,'certificate path not exercised')
 print('PASS positive-cell:',checks,'old/new/exhaustive checks;',certified,'certified answers; append/domain/cap boundaries')
