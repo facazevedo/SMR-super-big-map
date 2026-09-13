@@ -1,0 +1,17 @@
+{
+  "reverse": false,
+  "native_oracle": {
+    "issues": [
+      "signed f32 copyrect",
+      "signed f32 copyrect",
+      "signed f32 copyrect",
+      "signed f32 copyrect",
+      "signed f32 copyrect",
+      "signed f32 copyrect"
+    ],
+    "checks": 2566
+  },
+  "status": "fail",
+  "error": "native packet/copy oracle failed",
+  "calls": []
+}

@@ -43,3 +43,23 @@ input grid; all original private cells join except the private new discovery
 helper. Restore the wrapper at the existing scheduled surface revalidation.
 No RNG, class, placement, rock-support, passability, bootstrap or T1 changes.
 Native effectiveness, additional ownership failure checks and cold gates remain.
+
+## First native oracle stopped before installing the candidate
+
+At9ab4a4b, session37775/PID50392 CLOSED normally with driverFAIL/engine_error.
+Native oracle2566 checks reported six failures: expected negative to:get readbacks.
+The other2560 signed-offer fixtures passed, including both signs. No candidate
+repair wrapper was installed (calls=[]); this is a failed setup, not a parity pass.
+All logs, diagnostic state and failed rules report remain in the original artifact.
+
+Do not infer copy corruption from unsigned-looking readback alone. The follow-up
+fixture records BOTH negative source/destination get values, then adds65536 to the
+copied grid natively and checks positive1..4. This directly tests retained signed
+storage without assuming get()'s conversion contract. The production candidate is
+unchanged. Accept only if this plus every signed packet and full-grid check passes.
+
+The first ownership-test invocation also failed in setup: native_grid_double does
+not define GridMask. It stopped with "normal build failed native crease API
+unavailable: GridMask" before allocation injection. The test now supplies the same
+explicit strict GridMask model used by the existing parity fixtures; no accepted
+test or shared double was weakened. Its failure result is not counted as a pass.

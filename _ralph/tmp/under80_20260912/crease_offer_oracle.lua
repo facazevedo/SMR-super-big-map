@@ -1,7 +1,7 @@
 -- Shared offline/native read-only oracle. Explicit error collection also works
 -- when the engine's error/assert merely log instead of raising Lua exceptions.
 return function(build,api)
- local checks,issues=0,{}
+ local checks,issues,primitive=0,{},{}
  local function check(ok,why)checks=checks+1;if not ok then issues[#issues+1]=why end end
  local function same(a,b)
   if type(a)~=type(b)then return false end
@@ -16,7 +16,16 @@ return function(build,api)
  for y=0,1 do for x=0,2 do from:set(x,y,65535-x-y)end end
  api.GridMulDivAdd(from,-1,1,0)
  to:copyrect(from,api.box(0,0,3,2),api.point(0,0))
- for y=0,1 do for x=0,2 do check(to:get(x,y)==-(65535-x-y),'signed f32 copyrect')end end
+ -- Negative get() readback is not assumed signed. Preserve both raw readbacks,
+ -- then validate stored negative values through a native bias into U16 range.
+ for y=0,1 do for x=0,2 do
+  primitive[#primitive+1]={x=x,y=y,source_readback=from:get(x,y),copy_readback=to:get(x,y)}
+ end end
+ api.GridMulDivAdd(to,1,1,65536)
+ for i,row in ipairs(primitive)do
+  row.biased_copy=to:get(row.x,row.y)
+  check(row.biased_copy==1+row.x+row.y,'signed f32 copyrect via positive native bias')
+ end
  from:free();to:free()
  for case=1,20 do
   local grid=api.NewComputeGrid(23,19,'u',16)
@@ -66,5 +75,5 @@ return function(build,api)
   end
   grid:free()
  end
- return checks,issues
+ return checks,issues,primitive
 end

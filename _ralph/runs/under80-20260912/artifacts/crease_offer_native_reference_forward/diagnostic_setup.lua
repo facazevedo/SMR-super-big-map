@@ -62,8 +62,8 @@ local oracle_source=read('_ralph/tmp/under80_20260912/crease_offer_oracle.lua')
 if not oracle_source then return end
 local oracle_chunk,why=load(oracle_source,'@crease-offer-oracle','t',env)
 if not oracle_chunk then fail(why);return end
-local checks,issues,primitive=oracle_chunk()(build,api)
-result.native_oracle={checks=checks,issues=issues,primitive=primitive}
+local checks,issues=oracle_chunk()(build,api)
+result.native_oracle={checks=checks,issues=issues}
 if type(issues)~='table' or #issues>0 then fail('native packet/copy oracle failed');return end
 local function equal(a,b)
  if type(a)~=type(b)then return false end
