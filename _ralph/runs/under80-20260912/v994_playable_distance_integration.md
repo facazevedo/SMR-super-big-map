@@ -114,3 +114,17 @@ free order. Existing actual-helper4130 and source identity/order checks still
 PASS. Generated/profile Lua syntax and Python audit compile PASS. Production
 unchanged from065ab3f. Protocol fixed in v994_cold_protocol.md before native helper
 replay or cold samples; no gain claim from the unexecuted replay.
+
+Actual-helper replay at73e8cf3 completed41530 CLOSEDexit0, PID60368 /
+creation134337924901189046. Full native cached-output/predecessor/private4/rock/
+normal-process audit PASS. Old/new1286/1051ms and new/old1054/1285ms:235/231ms
+savings. Both complete helper counter sets match production, including two native
+calibrations,total308 vs629 transforms,two guards,eight allocations/frees,zero
+invalidations and restored isolated owner/class. Fresh-game guard clear.
+
+Positive both-order result meets the prospectively fixed cold prerequisite.
+Next execute exactly referenceA/B/C plus control in v994_reference; all four
+raw results retained, no unchanged retry. review_v994.py retains full five-site
+and reference/source/native/offline/deployment gates and requires mean<85.
+No cold sample collected before this record. Source/RNG review is the inspected
+supported implementation and exact native proofs above, not profiler timings.
