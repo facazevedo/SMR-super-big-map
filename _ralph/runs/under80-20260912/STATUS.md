@@ -1993,3 +1993,18 @@ source hashes, artifacts/v992_revised_target_offline. Source/RNG review is recor
 in v992_revised_target_review.md; separate reviewer preserves the old v992 rejection.
 Next freeze/deploy and the declared reference3/control, not a success claim from
 historical timings. Current accepted baseline is stillv987average87.069667s.
+
+Fresh raw-mask reassessment at0d05dac completed29649 CLOSEDexit0, four normal
+owned shutdowns and full reference/control auditPASS.87.036/86.203/89.520s =>
+average87.586333s, control28.718s. Below85 FALSE; old84.664s not reproduced.
+No five-site follow-through or repeat. Accepted56fbf44/v987 restored exactly,
+syntax and38-file deployauditPASS; acceptedaverage87.069667s remains authoritative.
+This turn PROGRESS: full fresh negative confirmation and exact restoration.
+
+Prepared private playable_distance_contract.lua/.py, syntax/compilePASS. Tests
+D(A OR B) against native GridMin(D(A),D(B)) on12 bounded U16 scratch cases,
+including nonempty/empty/edge/circle/sparse and actual768x768,616448 comparedcells,
+96 owned allocations/releases expected. Also independently checks OR/min output
+boundaries and unchanged sources. Completed experiment status is distinct from
+whether the identity holds; no native result or speedup yet. No maps/RNG/hooks
+or production changes in the probe. Freeze then run its fresh hidden mapless driver.

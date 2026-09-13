@@ -64,3 +64,23 @@ Execution67639 CLOSEDexit0: all85 original commands PASS, including actual-helpe
 and source/transaction fixtures. Source hashes stayed frozen throughout and are
 retained in v992_revised_target_offline. Next normal deploy/commit and fresh
 three-run reference/control confirmation; no reassessment startup result yet.
+
+## Fresh confirmation completed: target not reproduced
+
+Frozen0d05dac, execution29649 CLOSEDexit0. All four processes closed normally;
+full reference/control/predecessor/private/individual-rock audit PASS with no issues.
+Reference87.036/86.203/89.520s, arithmetic mean87.586333s; native control28.718s.
+Acceptedv987 average87.069667s, so this is also0.516667s slower in the recorded
+finite comparison (no causal/statistical-significance claim). Historical84.664s
+did not reproduce. All three fresh samples remain included, with separate mean
+audit preserving the original full reference audit and its median87.036s.
+
+Reassessment NOT promoted, no five-site cold follow-through and no retry under
+this same criterion. Restored the three owned production files exactly to
+56fbf44/v987 with apply_patch, full payload diff empty, syntax and38-file normal
+deployment sync/audit PASS. Old and new raw-mask evidence remain separate.
+
+PID/creation identities:32640/134337882887915731,59364/134337884638376141,
+56296/134337886379212342,58712/134337888144865970. No live game after capture.
+Next genuinely distinct lead: native Playable distance-field composition, first
+a mapless full-cell scratch identity test; no production optimization inferred.
