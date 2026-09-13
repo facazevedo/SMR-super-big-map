@@ -40,3 +40,14 @@ all returned reports/tracks/counters and full U16 grids via exact signed f32
 differences/extrema; clean up all comparison grids. Capture full-map parity and
 restore original closure beforeT1. Diagnostics exclude clone/comparison time
 from old/new block timers but are still ordered warm stage tests, not acceptance.
+
+First native shadow CLOSED normally at cce1d69, session11122/PID39668. Source
+37748736 cells and destination67108864 cells match exactly (signed difference
+extrema both0), every returned report/track/counter equal, all comparison grids
+freed, original closure restored beforeT1. Full predecessor/private/rock parity PASS.
+Old/new source264/201ms and destination4042/3248ms. Source discovery has only
+singletons, so its63ms difference is not explained by contiguous grouping; ordered
+execution, native-grid ownership/cache layout or timing variability may contribute.
+Do not present the794ms destination difference as a clean isolated optimization
+gain. Next fresh diagnostic reverses order: candidate first on clone, original
+second on actual grid, with the same complete outputs and full-map validation.
