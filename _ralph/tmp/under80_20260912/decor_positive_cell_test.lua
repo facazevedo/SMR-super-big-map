@@ -7,6 +7,16 @@ assert(n==1)
 local indexed=assert(load(indexed_body..'\nreturn circle_hits'))()
 local factory=dofile(arg[1] or '_ralph/tmp/under80_20260912/decor_positive_cell.lua')
 local candidate=factory(indexed)
+if arg[2]=='admitted' then
+    -- Exercise all inherited numeric/cap fixtures in v3's admitted state.
+    -- Separate admission_test uses actual unmodified serials through4096 calls.
+    local actual=candidate
+    candidate=function(list,x,y,r)
+        if not list.spatial_index then indexed(list,x,y,r) end
+        list.spatial_index.serial=math.max(list.spatial_index.serial,4096)
+        return actual(list,x,y,r)
+    end
+end
 local checks,certified=0,0
 local function oracle(list,x,y,r)
     for i=1,#list do

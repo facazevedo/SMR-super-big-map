@@ -101,3 +101,21 @@ not use map IDs, alter candidates, skip RNG or cache negative answers. Its extra
 bookkeeping must be measured, not assumed free. Separately pursue the larger
 collection-only crease-offer opportunity for reference startup time. An eventual
 combination requires independent exact oracles and immutable cold acceptance.
+
+## New v3 workload admission investigation
+
+After v988's mixed cold timing (not promoted), production remains exact56fbf44/v987.
+v3 changes only admission to the private v2 certificate: existing per-list full-query
+serial must reach4096 before allocating ANY certificate/descriptor/radius tables.
+It adds no low-workload counter, map ID branch, placement budget or skipped query.
+After admission the prior numeric proof, positive-only certificates, list lifetime,
+append semantics and caps are literal v2. This is a new variant, not a v2 rerun.
+
+Offline15198 exact queries pass using actual serials (first4096 no cache, first
+learned hit4097, repeated certification, append/lifetime,5000 negative queries).
+Inherited55681 numeric/old-new/exhaustive/cap comparisons pass in explicitly admitted
+test state,1825 certified answers; the test adapter advances metadata only to reach
+that branch, so it does NOT prove natural admission. Separate15198 test does that.
+Unchanged conditional Fraction bounds pass. No speedup claim before native tests.
+Generate frozen forward/reverse setups using the established full-query comparator;
+measure reference first to screen low-workload overhead, then61N if worthwhile.
