@@ -6345,45 +6345,60 @@ local function BootstrapPassagesAndDeferWonders(env)
 	if cfg_bool("PAIRING_SOURCE_PASSABILITY_BRIDGE", true) then
 		local retention = surface_map.SuperBigMapRetainedNativeSourceMap
 		local source_map = type(retention) == "table" and retention.map or nil
-		if type(source_map) ~= "table" or type(source_map.GetRandomPassablePoint) ~= "function"
-			or type(source_map.GetPassablePointNearby) ~= "function" then
-			RestoreSurfaceBuildableBridge()
-			error("retained native source map for the passage passability bridge is unavailable")
+		local bridge_available = type(source_map) == "table"
+			and type(source_map.GetRandomPassablePoint) == "function"
+			and type(source_map.GetPassablePointNearby) == "function"
+		-- This whole function runs once per map (Surface, then Underground), but the retention
+		-- lives on the single shared surface map object and is released as soon as the SURFACE
+		-- pass closes its selection window ("in-place vanilla source requires no retained backing
+		-- release", reason="passage bootstrap selection window closed"). By the time the
+		-- Underground pass arrives the retention is legitimately gone -- consumed, not corrupt --
+		-- and raising here aborted underground first access entirely.
+		--
+		-- This bridge is an optional fallback-quality improvement (config
+		-- PAIRING_SOURCE_PASSABILITY_BRIDGE narrows a measured defect in marker-fallback
+		-- passability sampling). Skipping it is the same tolerance the config flag already grants,
+		-- so degrade gracefully rather than taking the pass down.
+		if not bridge_available then
+			LoadingStep("skipped source passability bridge (retained native source map unavailable for this pass -- expected on a second/Underground bootstrap after Surface already released it)", {
+			}, surface_map)
 		end
-		if rawget(surface_map, "GetRandomPassablePoint") ~= nil
-			or rawget(surface_map, "GetPassablePointNearby") ~= nil then
+		if bridge_available and (rawget(surface_map, "GetRandomPassablePoint") ~= nil
+			or rawget(surface_map, "GetPassablePointNearby") ~= nil) then
 			RestoreSurfaceBuildableBridge()
 			error("surface map already shadows the passable-point API; refusing to nest the source view")
 		end
-		surface_map.SuperBigMapPassagePassableBridgeCalls = 0
-		surface_map.SuperBigMapPassagePassableBridgeNearbyCalls = 0
-		local random_point_shadow, nearby_shadow
-		random_point_shadow = function(self, ...)
-			surface_map.SuperBigMapPassagePassableBridgeCalls =
-				(surface_map.SuperBigMapPassagePassableBridgeCalls or 0) + 1
-			return source_map:GetRandomPassablePoint(...)
-		end
-		-- GetRandomPassable (Lua/Pathfinding.lua:161) is the fallback's second half; it has never been
-		-- reached in a measured run, but leaving it on the expanded field would reintroduce exactly the
-		-- defect this bridge removes.
-		nearby_shadow = function(self, ...)
-			surface_map.SuperBigMapPassagePassableBridgeNearbyCalls =
-				(surface_map.SuperBigMapPassagePassableBridgeNearbyCalls or 0) + 1
-			return source_map:GetPassablePointNearby(...)
-		end
-		surface_map.GetRandomPassablePoint = random_point_shadow
-		surface_map.GetPassablePointNearby = nearby_shadow
-		restore_passability_bridge = function()
-			if rawget(surface_map, "GetRandomPassablePoint") == random_point_shadow then
-				surface_map.GetRandomPassablePoint = nil
+		if bridge_available then
+			surface_map.SuperBigMapPassagePassableBridgeCalls = 0
+			surface_map.SuperBigMapPassagePassableBridgeNearbyCalls = 0
+			local random_point_shadow, nearby_shadow
+			random_point_shadow = function(self, ...)
+				surface_map.SuperBigMapPassagePassableBridgeCalls =
+					(surface_map.SuperBigMapPassagePassableBridgeCalls or 0) + 1
+				return source_map:GetRandomPassablePoint(...)
 			end
-			if rawget(surface_map, "GetPassablePointNearby") == nearby_shadow then
-				surface_map.GetPassablePointNearby = nil
+			-- GetRandomPassable (Lua/Pathfinding.lua:161) is the fallback's second half; it has never been
+			-- reached in a measured run, but leaving it on the expanded field would reintroduce exactly the
+			-- defect this bridge removes.
+			nearby_shadow = function(self, ...)
+				surface_map.SuperBigMapPassagePassableBridgeNearbyCalls =
+					(surface_map.SuperBigMapPassagePassableBridgeNearbyCalls or 0) + 1
+				return source_map:GetPassablePointNearby(...)
 			end
+			surface_map.GetRandomPassablePoint = random_point_shadow
+			surface_map.GetPassablePointNearby = nearby_shadow
+			restore_passability_bridge = function()
+				if rawget(surface_map, "GetRandomPassablePoint") == random_point_shadow then
+					surface_map.GetRandomPassablePoint = nil
+				end
+				if rawget(surface_map, "GetPassablePointNearby") == nearby_shadow then
+					surface_map.GetPassablePointNearby = nil
+				end
+			end
+			LoadingStep("native surface passage passability bridged to the retained source map", {
+				source_slot = tostring(retention.slot),
+			}, surface_map)
 		end
-		LoadingStep("native surface passage passability bridged to the retained source map", {
-			source_slot = tostring(retention.slot),
-		}, surface_map)
 	end
 	end
 	local successful = {}
