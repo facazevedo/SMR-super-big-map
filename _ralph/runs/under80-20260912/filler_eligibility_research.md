@@ -198,3 +198,41 @@ Current production remains56fbf44/v987,accepted86.606/worst92.125; full<80/<85
 unmet. This turn PROGRESS: new kernel,12375modelchecks,two full native mutation
 proofs, measured primitive savings and a clean API-semantic discovery. No startup
 performance claim or production promotion.
+
+## Paired-boundary private implementation ready for native qualification
+
+filler_paired_cache.lua now separates mask() and intersect(). The first call
+fully writes the raw mask andowns an immutable raw clone; the matching second
+call writes current eligibility andowns a separate maintained clone. Hits copy
+both outputs at their original boundaries. Clear updates never touch raw masks.
+One pending destination/entry pair is allowed; wrong/overlapping pairs fail.
+Clears between a mask andits And are handled correctly, including a new entry
+whose eligibility has not been constructed yet. Caller grids remain borrowed.
+Partial clone/free failures retain precise ownership andclose releases each
+owned role individually. Pending close fails butstill cleans all owned grids.
+
+11304 model checks PASS across capacities0/1/2/3/5/7, raw-versus-eligible output
+at each boundary, interleaved clears, trial writes, evictions, boolean native And
+semantics, integer admission, aliases, copy/clone/mask/And/update failures,
+wrong/pending pairs, invalidation andretryable cleanup.3738 paired observer
+checks plus203 retained native-procedure checks also PASS (15245 total).
+All9 filler_paired_offline commands PASS, exactaccepted56fbf44 production and
+38-file deployment audit unchanged. No native paired result yet in this entry.
+
+filler_paired_build.py makes10 reversible changes to the proven mutation observer.
+Native shadow now compares the complete raw-mask output BEFORE the real And,
+then complete eligibility AFTER it. Each original native call still executes
+once; every actual paired GridMask/GridAnd return tuple is separately censused.
+An additional actual-distance-source check follows each mask. Both-order private
+replays perform BOTH cached writes/copies andall live/multiple-owned-grid clears,
+with allocation/init/eviction/cleanup charged as before. No one-copy shortcut.
+Pair payload bound32MiB, capacity7 at768x768; up to14 owned cache grids, with
+fixed comparison/source/journal scratch accounted separately. Pending contexts
+andall resources must clear at normal/error/rebound lifecycle boundaries.
+
+Next freeze andrun61N thenreference via filler_paired_profile.lua and full
+filler_paired_audit.py, querySBM_NATIVE_PROC_DIAGNOSTIC. Require exact native
+before/after grids/return tuples, fullpredecessor/private/rock/process audits,
+matching complete replay work counters andboth-order costs. Integration remains
+conditional on these results andsupported owner bridging; no production debug,
+engine edits, altered RNG or omitted native readiness/rebuild work is permitted.
