@@ -77,3 +77,13 @@ the five-site matrix against v983_matrix; every timing must remain visible.
 The experiment is an incremental step toward the full under85 scope, not a
 replacement target. Source review and review_v974.py need a v985 entry before
 freeze; no v985 production candidate exists yet.
+
+Subsequent production candidate b54df8f/v985 passed all82 offline commands but
+FAILED its declared cold gate:91.231/89.371/90.542, median90.542 vs90.244;
+control29.317 vs28.532. Exact reference/private/rock evidence PASS, audit issues
+empty, all four owned processes closed normally. Production restored to v983;
+candidate and tests recoverable in b54df8f. Do not rerun unchanged v985 as a rescue.
+The single-function shadow's _ENV-based operand context adds lookup overhead
+relative to production's lexical locals; its absolute stage savings were never
+an acceptance benchmark. Preserve its exact complete-mask evidence separately
+from this negative cold result. Larger bottleneck reductions are still needed.

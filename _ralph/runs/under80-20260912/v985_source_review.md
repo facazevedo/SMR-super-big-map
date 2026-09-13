@@ -40,3 +40,13 @@ the five-site matrix against v983_matrix, with all site timing regressions visib
 Full ten-rule/source/process review is required before acceptance. The user target
 is strictly under85 across reference and all five sites, including scheduled
 surface revalidation beforeT1. An incremental gain does not establish that goal.
+
+Cold acceptance FAILED at immutable b54df8f. Session18759 CLOSED normally:
+reference91.231/89.371/90.542s, median90.542 vs90.244, a0.298s regression;
+native control29.317 vs28.532. All four owned processes43080/38988/44936/38464
+normally closed with full flushed logs. Exact predecessor/repeat/private-stream/
+individual-rock comparisons and automated reference gates PASS; audit issues empty.
+No five-site promotion, discarded sample or rescue repeat. The diagnostic stage
+reduction did not establish a startup gain. Restore production to acceptedv983
+byte-for-byte and remove the two candidate-only production tests; all candidate
+source/tests are recoverable in b54df8f and research copies remain in _ralph/tmp.

@@ -723,3 +723,30 @@ actual f4d1da6/production whole-mask/full-patch oracles. Session4184 CLOSED exit
 Evidence: artifacts/v985_offline, v985_source_review.md. Freeze this checkpoint
 and audited38-file deployment for reference3/control against the declared
 v983_confirmation_reference median90.244s. No cold result yet; under85 unproven.
+
+## v985 rejected: exact masks, no cold reference improvement
+
+Frozen b54df8f, session18759 CLOSED exit0. PIDs43080/38988/44936/control38464
+normally quit; complete flushed logs and private/full-grid/individual-rock capture.
+Reference91.231/89.371/90.542s, median90.542 vs confirmedv98390.244, slower0.298s.
+Control29.317 vs28.532. All exact predecessor/repeat/reference gates PASS, audit
+issues empty. No five-site promotion, discarded sample or rescue repeat.
+
+Restore production byte-for-byte to f4d1da6/v983/sector76/generator298, and active
+offline inventory to the accepted80 commands. Two candidate-only test files are
+removed from _ralph/tools/parity, recoverable in b54df8f; research copies retained.
+Allv985 evidence remains archived. Under85 is not reached; no game remains live.
+The native shadow used _ENV-based operand lookup rather than the production
+lexical layout, so its absolute stage cost includes additional context overhead.
+Its106 exact native masks remain correctness evidence, not startup-gain evidence.
+
+Next independent lead: inspect the current RepairInternalHeightStep cost split
+before another small cold candidate. Height stretch remains8.288s in the latest
+reference shadow (whole stage, not additive components). The native discovery
+and translation paths already exist; do not blindly resurrect rejectedv976
+packed buffers orv981 guide indexing. RefineIndexedHeightStep currently repeats
+cached sample(perp-1)/sample(perp) calls inside each width iteration, while live
+refinement already has a sliding window. First measure actual indexed-refinement,
+guide, native translation and feather-join costs using cloned original functions
+with every private cell joined and lexical operand layout preserved. Hoisting
+immutable cached operands is only a lead, not yet an implementation or gain.
