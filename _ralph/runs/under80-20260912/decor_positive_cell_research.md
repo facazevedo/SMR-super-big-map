@@ -146,3 +146,19 @@ with only the private winning-circle second return. No v988 terrain changes comb
 Full actual integration source/geometry/admission checks pass; comparators pinned
 to git56fbf44 so the new Code is never its own baseline. Deployment staysv987 until
 all87 commands pass. See v989_source_review.md for contract, bounds and cold gates.
+
+## v989 cold testing complete: four site regressions, not promoted
+
+All87 actual production checks passed; frozenb130478 then completed reference64402
+and five-site91253 in nine normally closed owned processes. All exact/private/full
+grid/rock/source/process audits PASS. Reference median86.520s versus86.606s is
+essentially flat, not a reliable speedup claim.61N improved92.125->91.474s, but
+15S88.653->90.450,24S88.711->88.802,45S82.053->85.638,17S86.546->87.440 regressed.
+No causal attribution of all startup differences to the query helper is justified.
+All samples and the mixed evidence remain in v989_source_review.md/cold artifacts.
+
+v989 NOT promoted. Production and deployment restored to exact56fbf44/v987,38/38
+auditPASS, no game live. Do not cold-repeat this unchanged candidate or combine it
+with rejectedv988 hoping to hide the regressions. The slow-map native/cold benefit
+is retained as a qualified research result, not a broad release improvement. A
+larger, genuinely new all-map optimization remains necessary for the full target.

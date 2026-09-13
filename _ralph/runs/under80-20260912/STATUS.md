@@ -1271,3 +1271,28 @@ reference improvement and exact correctness permit five viaverify_port.py agains
 v987_matrix. review_v974.py supports989/87tests/three production files. No rescue
 reruns, rejectedcandidatecombination, baseline relabel or new timing claims.
 Goal active; both requested85 and stored80 all-site thresholds remain unmet.
+
+## v989 cold batch CLOSED; rejected for mixed timing; v987 restored
+
+This turn is PROGRESS: immutableb130478 completed nine unique cold processes and
+all exact correctness/source/RNG/process reviews, yielding new counterevidence.
+Reference64402 CLOSED samples86.520/86.523/84.159 median86.520s versus86.606s;
+control28.991s.0.086s narrow gate improvement is not a reliable speedup claim.
+Five91253 CLOSED15S90.450 (+1.797slower),24S88.802 (+0.091slower),45S85.638
+(+3.585slower),61N91.474 (-0.651faster),17S87.440 (+0.894slower). All exact
+full/private/rock/native-control checks PASS. v989_all_ten_rules_review.json closes
+all87 offline, all nine unique normally exited owned processes and auditedpayload;
+explicit all_scenarios_faster=false and target unmet. No rescue repeats or relabel.
+
+v989 NOT promoted despite the slow-map improvement. All original artifacts and
+b130478 preserved. Only owned three production files patched back to56fbf44/v987,
+generator299/sector76/DecorTopUp.VERSION10. Entire Code/metadata/items comparison
+is exact; standard deploy sync38/38 auditPASS, no stale deletion. Fresh game check
+clear, all test handles terminal, no active candidate or running game remains.
+Accepted cold results unchanged: reference86.606s, worst61N92.125s. Goal ACTIVE.
+
+Next safe larger lead: stronger adaptive apron numeric certificates, with exact
+scalar correction for every inconclusive value. Review current accepted correction
+counts and source before devising a genuinely new bound; do not merely rerun
+rejected crease/decor variants or infer helper causation from full-startup noise.
+Preserve mandatory terrain/rock/RNG/underground-bootstrap/rebuild/T1 constraints.

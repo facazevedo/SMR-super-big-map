@@ -63,3 +63,36 @@ Full actual-production suite39125 CLOSED PASS all87 commands. Final source hashe
 match every current Code/metadata/items file. Four unique native process/private/
 full-output audits pass. No game is live. Candidate is ready for committed cold
 testing, not accepted. Deployment is intentionally stillv987 until that phase starts.
+
+## Closed cold result: exact, but not promoted
+
+Frozen b130478 completed reference session64402 and five-site session91253. All
+nine unique owned processes CLOSED normally with complete captured logs. Reference
+samples86.520/86.523/84.159s, median86.520s versusv98786.606s. The0.086s (0.0993%)
+difference is not a reliable reference speedup claim; it narrowly passed only the
+predeclared gate to run the five-site comparison. Control28.991s versus29.156s.
+All reference predecessor/repeat/private/full-grid/individual-rock checks pass.
+
+| Site | v987 seconds | v989 seconds | Saving seconds |
+| --- | ---: | ---: | ---: |
+| 15S67E | 88.653 | 90.450 | -1.797 |
+| 24S74W | 88.711 | 88.802 | -0.091 |
+| 45S120W | 82.053 | 85.638 | -3.585 |
+| 61N136W | 92.125 | 91.474 | 0.651 |
+| 17S11W | 86.546 | 87.440 | -0.894 |
+
+All five full predecessor/private/terrain/rock/native-control checks pass. Final
+v989_all_ten_rules_review.json records87 offline commands, nine unique process
+identities, complete source/RNG/inherited visual audit and38-file deployment audit.
+It also explicitly records all_scenarios_faster=false and both targets unmet.
+61N's cold saving is consistent with the diagnostic lead but cannot cancel four
+other regressions. No claim attributes every startup difference to this helper.
+The snapshot attempt counts are preserved (15S12468,24S61918,45S3032,61N727247,
+17S4539); they are not exact query/cache-admission counters, and must not be used
+to infer an unrecorded cache census. No rescue repeat or baseline relabel performed.
+
+Candidate NOT promoted. Only the three owned production files restored via patch
+to exact56fbf44/v987; source comparison confirms Code/metadata/items equality.
+Standard deploy sync/audit38/38PASS, no stale deletion, fresh check no live game.
+All native/offline/cold evidence and b130478 remain preserved. Accepted timing is
+stillv987reference86.606s and worst61N92.125s; restoration is not a new timing test.

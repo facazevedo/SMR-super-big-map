@@ -77,6 +77,17 @@ any integration. Do not combine or cold-repeat unchanged rejected candidates.
 The all-site sub85 target is still unmet; neither diagnostic gains nor a reference
 median below85 imply consistent startup below85 across the validation matrix.
 
+## Workload-admitted positive-cell follow-through: v989 not promoted
+
+A genuinely new4096-full-query admission gate removed unused reference cache
+learning and retained716..763ms diagnostic61N savings in both orders. All four
+native shadows,87 actual production checks and nine cold correctness processes
+passed. However, coldv989 reference86.520s was essentially flat versus86.606s;
+61N improved0.651s while15S/24S/45S/17S regressed1.797/0.091/3.585/0.894s.
+Candidateb130478 NOT promoted; acceptedv987 restored/audited, all evidence retained.
+See v989_source_review.md. The next larger remaining all-map lead is stronger
+adaptive apron bounds, not unchanged rejected-candidate cold repeats.
+
 ## Follow-through: first alternative accepted as v987
 
 The native outer-mask alternative passed all83 offline checks, six-site exact
