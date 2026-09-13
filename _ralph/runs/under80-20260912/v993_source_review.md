@@ -51,3 +51,17 @@ v993_paired_filler_integration.md for exact identities and censuses.
 This proves tested correctness and actual production activation, not all-site
 startup improvement. Candidate is not promoted yet. Cold samples and full six-site
 performance decision are missing; under-80 and under-85 targets remain unproven.
+
+## Explicit user acceptance revision before cold samples
+
+The user changed the requested end state to reference START-to-T1 median below
+85 seconds, measured over three runs. The five additional sites still require
+complete preservation checks, but no longer impose an all-site startup threshold.
+The older goal/performance wording above records the original investigation, not
+the current acceptance criterion. No v993 cold sample existed when this changed.
+
+Use existing reference A/B/C/control and five-site exact verification workflows.
+review_v974.py --version 993 keeps the full 85-command/source/deployment/nine-unique-
+process/correctness review and records the revised timing predicate separately.
+All historical versions retain their original decisions and timing predicates.
+No under-80 or all-site speedup will be claimed from reference-only success.

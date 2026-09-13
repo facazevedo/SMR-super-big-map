@@ -1,5 +1,24 @@
 # Prospective v993 contemporaneous cold comparison
 
+## Superseded before execution by explicit user target change
+
+The user changed the goal to **reference START-to-T1 median below 85 seconds**.
+This supersedes the all-six-site under-80 goal and the 38-process performance
+protocol below. No manifest was initialized and no cold sample had started.
+The five other maps remain full correctness/regression checks, not an all-site
+startup threshold. Preserve this old design as history; do not execute it or
+silently treat its stronger thresholds as the user's current objective.
+
+New finite plan: candidate v993 reference A/B/C plus native control through the
+existing measure_port.py reference workflow, full audit_reference.py comparison
+against accepted v987, then five-site exact predecessor/private/rock verification.
+Reference success requires the three-sample median strictly below 85 seconds and
+all preservation gates passing. Retain every timing; no best-run selection or
+rescue reruns. Candidate source/native proofs remain valid. The unlaunched
+paired_cold.py prototype is not needed for this revised acceptance workflow.
+
+## Historical unexecuted protocol
+
 Declared after both integrated native audits passed, before any v993 cold sample.
 This is a new paired algorithm, not a retry/reinterpretation of rejected v992.
 Historical v987 and all rejected results stay intact and will be reported alongside

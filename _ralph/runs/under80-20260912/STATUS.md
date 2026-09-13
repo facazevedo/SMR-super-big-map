@@ -1950,3 +1950,17 @@ Source review completed in v993_source_review.md. Prospectively declared full
 38-process alternating accepted/candidate comparison in v993_cold_protocol.md;
 next implement/verify its two-frozen-payload driver and auditor, then execute it.
 No cold sample yet; candidate not promoted and full goal remains active/unmet.
+
+## Explicit user goal revision before cold execution
+
+The user now requests reference START-to-T1 median **below85s**, not under80s
+across allsix sites. The remaining five maps retain full correctness/regression
+checks without an all-site time threshold. Accepted reference86.606s is still
+above this revised target. No v993 cold sample or paired manifest exists.
+
+The 38-process alternating protocol is superseded before execution. Next use the
+existing finite reference3/control measurement and full audit, followed by the
+five-site exact preservation workflow. The new paired_cold.py and fixture file
+are unlaunched experimental tools; they are not required by the revised workflow.
+Never mark the prior under80 objective achieved to change its tracker text: use
+the user's explicit revised acceptance criterion for subsequent work.
