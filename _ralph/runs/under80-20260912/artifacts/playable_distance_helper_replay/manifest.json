@@ -1,0 +1,5 @@
+{
+  "observer_sha256": "10aec92cfab9ef35b62e6f7aef137ac8839d1b738ed0bff80ce60f61779ebdcc",
+  "bridge_sha256": "9fca49fb33d10f45ff279237bf61a4e703d5e833c4fd9f263ed168276f1bbc8c",
+  "qualification": "Target-operation sequence through actual helper, including literal supported bridge on isolated private owner; unchanged weighting/RNG excluded."
+}

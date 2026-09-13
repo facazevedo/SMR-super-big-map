@@ -105,3 +105,12 @@ installation/restoration, dispatch, both calibration calls, input guards and all
 allocations/frees in both orders. Keep original event journal and final outputs
 exact. Only then decide whether to spend the finite reference3/control batch;
 below85 mean plus five-site correctness is still required for goal completion.
+
+Prepared immutable playable_distance_helper_replay observer/bridge and runtime
+profile. Model876 checks PASS: actual production helper with independent native
+oracle, complete target-operation replay, exact counter match, first-call native
+calibration, literal bridge install/restore on isolated tables and final native
+free order. Existing actual-helper4130 and source identity/order checks still
+PASS. Generated/profile Lua syntax and Python audit compile PASS. Production
+unchanged from065ab3f. Protocol fixed in v994_cold_protocol.md before native helper
+replay or cold samples; no gain claim from the unexecuted replay.
