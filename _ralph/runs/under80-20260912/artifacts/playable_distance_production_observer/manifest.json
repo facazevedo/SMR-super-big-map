@@ -1,0 +1,4 @@
+{
+  "sha256": "4eab09d495f8bdad7bdfbfa903a2d8efa13c6ad75893683e32e77f7fd5fea68c",
+  "qualification": "Exact v2 shadow with private oracle calls unwrapped from production wrappers; no production debug usage."
+}
