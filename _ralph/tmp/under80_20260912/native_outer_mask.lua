@@ -13,11 +13,12 @@ return function(api, row, scalar, epsilon_numerator)
     if row.atan2_present or not integer(w) or not integer(h) or w<2 or h<2
         or w>4096 or h>4096 or (step~=1 and step~=4) or not integer(row.x0)
         or not integer(row.y0) or not finite(p.core_cells) or p.core_cells<1
-        or not finite(row.base_transition) or row.base_transition<1
+        or not finite(row.base_transition) or row.base_transition<1 or p.core_cells>row.base_transition
         or not finite(p.relief_x) or not finite(p.relief_y)
         or math.abs(p.relief_x)>1 or math.abs(p.relief_y)>1
         or not finite(row.irregularity) or row.irregularity<0 or row.irregularity>0.45
-        or not integer(epsilon_numerator) or epsilon_numerator<1 or epsilon_numerator>16 then
+        or (epsilon_numerator~=nil and (not integer(epsilon_numerator)
+            or epsilon_numerator<1 or epsilon_numerator>16)) then
         return nil, stats, 'unsupported research domain'
     end
     local function domain(cx, cy)
@@ -27,12 +28,20 @@ return function(api, row, scalar, epsilon_numerator)
         return dx*dx+dy*dy<=16777216
     end
     if not domain(p.cx,p.cy) then return nil,stats,'coordinate square domain' end
+    local allowance_units=321
     for _,g in ipairs(row.guards) do
-        if not domain(g.cx,g.cy) or not finite(g.radius) or g.radius<0
-            or not finite(g.transition) or g.transition<0 then
+        if not domain(g.cx,g.cy) or not finite(g.radius) or g.radius<1
+            or not finite(g.transition) or g.transition<0
+            or (g.transition>0 and (g.transition<0.25 or g.transition>128)) then
             return nil,stats,'unsupported protection domain'
         end
+        if g.transition>0 then allowance_units=allowance_units+82+6*g.radius/g.transition end
     end
+    local derived_numerator=math.ceil(allowance_units/256)
+    if derived_numerator>16 then return nil,stats,'research error budget exceeds supported range' end
+    epsilon_numerator=epsilon_numerator or derived_numerator
+    stats.experimental_epsilon_numerator=epsilon_numerator
+    stats.derived_numerator=derived_numerator
     local owned, lookup = {}, {}
     local function own(grid)
         require_value(grid~=nil and grid~=false,'native outer allocation failed')
@@ -43,7 +52,7 @@ return function(api, row, scalar, epsilon_numerator)
     local function new() return own(api.NewComputeGrid(w,h,'f',32)) end
     local function ratio(value)
         require_value(finite(value),'nonfinite native coefficient')
-        local q=8388608
+        local q=1073741824
         while math.abs(value)*q>16777215 do q=q/2 end
         return math.floor(value*q+0.5),q
     end
@@ -56,6 +65,18 @@ return function(api, row, scalar, epsilon_numerator)
         -- Powers-of-two scaling is exact; API arguments remain integral.
         api.GridMulDivAdd(grid,q,1,n)
         api.GridMulDivAdd(grid,1,q,0)
+    end
+    local function finite_positive(grid)
+        require_value(api.GridCount(grid,0,2147483647)==w*h,'nonfinite/out-of-range native arithmetic')
+    end
+    local function reciprocal(grid)
+        local original=clone(grid)
+        api.GridPow(grid,-1,1)
+        finite_positive(grid)
+        api.GridMulDivAdd(original,grid,1,-1);api.GridAbs(original)
+        api.GridMulDivAdd(original,16777216,1,0)
+        require_value(api.GridCount(original,4,2147483647)==0,'native outer reciprocal residual')
+        stats.reciprocal_checks=(stats.reciprocal_checks or 0)+1
     end
     local function field(axis,center)
         local grid=new()
@@ -74,14 +95,25 @@ return function(api, row, scalar, epsilon_numerator)
         api.GridMulDivAdd(grid,1,1,(axis=='x' and row.x0 or row.y0)-center)
         return grid
     end
-    local function distance(cx,cy)
+    local function distance(cx,cy,need_root)
         local x,y=field('x',cx),field('y',cy)
         local square,y2=clone(x),clone(y)
         api.GridMulDivAdd(square,x,1,0);api.GridMulDivAdd(y2,y,1,0)
         api.GridAdd(square,y2)
         -- Squares/sum are exact within the qualified integer domain.
-        local radius=clone(square)
+        if need_root==false then return nil,x,y,square end
+        local squared=clone(square)
+        api.GridClamp(squared,1,2147483647)
+        local radius=clone(squared)
         api.GridPow(radius,1,2)
+        finite_positive(radius)
+        local residual=clone(radius)
+        api.GridMulDivAdd(residual,radius,1,0)
+        api.GridAddMulDiv(residual,squared,-1);api.GridAbs(residual)
+        api.GridAddMulDiv(residual,squared,-2,16777216)
+        api.GridMulDivAdd(residual,1073741824,1,0)
+        require_value(api.GridCount(residual,1,2147483647)==0,'native outer root residual')
+        stats.root_checks=(stats.root_checks or 0)+1
         return radius,x,y,square
     end
     local function smooth(t)
@@ -97,7 +129,7 @@ return function(api, row, scalar, epsilon_numerator)
     local ok,why=pcall(function()
         local radius,x,y=distance(p.cx,p.cy)
         local inverse=clone(radius)
-        api.GridClamp(inverse,1,2147483647);api.GridPow(inverse,-1,1)
+        api.GridClamp(inverse,1,2147483647);reciprocal(inverse)
         api.GridMulDivAdd(x,inverse,1,0);api.GridMulDivAdd(y,inverse,1,0)
         mul(x,p.relief_x);mul(y,p.relief_y);api.GridAdd(x,y)
         local along=x
@@ -107,19 +139,20 @@ return function(api, row, scalar, epsilon_numerator)
         if harmonic==nil then
             harmonic=.52*math.sin(p.phase)+.30*math.sin(-p.phase*1.37)+.18*math.sin(p.phase*.73)
         end
+        require_value(finite(harmonic) and math.abs(harmonic)<=1,'native outer harmonic domain')
         add(width,1+row.irregularity*harmonic-.12)
         local linear=clone(along);api.GridMulDivAdd(linear,-6,100,0);api.GridAdd(width,linear)
         -- Clamp endpoints are integer-only: use the exactly scaled U24 interval.
         api.GridMulDivAdd(width,16777216,1,0)
         api.GridClamp(width,8388608,22649242)
         api.GridMulDivAdd(width,1,16777216,0)
-        mul(width,row.base_transition);api.GridPow(width,-1,1)
+        mul(width,row.base_transition);reciprocal(width)
         add(radius,-p.core_cells);api.GridMulDivAdd(radius,width,1,0)
         api.GridClamp(radius,0,1)
         local weight=smooth(radius)
         api.GridMulDivAdd(weight,-1,1,1);api.GridClamp(weight,0,1)
         for _,g in ipairs(row.guards) do
-            local d,_,_,square=distance(g.cx,g.cy)
+            local d,_,_,square=distance(g.cx,g.cy,g.transition>0)
             local protection
             if g.transition==0 then
                 -- Integer squared distances permit a separated threshold. Resolve

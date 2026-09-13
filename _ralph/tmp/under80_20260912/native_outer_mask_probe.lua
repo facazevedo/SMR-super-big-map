@@ -34,7 +34,7 @@ if not pc then fail(why);return end
 env.ProtectedTerrainBlendWeight=pc()
 local api={}
 for _,name in ipairs({'NewComputeGrid','GridMulDivAdd','GridAdd','GridAddMulDiv',
-    'GridPow','GridMask','GridClamp','GridRound','GridCount','GridForeach','point','box'}) do
+    'GridPow','GridAbs','GridMask','GridClamp','GridRound','GridCount','GridForeach','point','box'}) do
     api[name]=rawget(_G,name)
     if type(api[name])~='function' then fail('missing native '..name);return end
 end
@@ -54,7 +54,7 @@ local ok,err=pcall(function()
             return scalar_chunk()
         end
         local before=GetPreciseTicks()
-        local grid,stats,problem=native(api,row,scalar,1)
+        local grid,stats,problem=native(api,row,scalar)
         local elapsed=GetPreciseTicks()-before
         if not grid then fail('patch '..index..': '..tostring(problem));return end
         local entry={patch=index,guards=#row.guards,kernel_ms=elapsed,stats=stats,checked=0}
