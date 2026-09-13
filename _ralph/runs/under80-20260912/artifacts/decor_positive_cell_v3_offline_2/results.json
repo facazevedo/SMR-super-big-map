@@ -1,0 +1,41 @@
+[
+  {
+    "command": [
+      "lua",
+      "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tmp\\under80_20260912\\decor_positive_cell_admission_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "lua",
+      "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tmp\\under80_20260912\\decor_positive_cell_test.lua",
+      "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tmp\\under80_20260912\\decor_positive_cell_v3.lua",
+      "admitted"
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "lua",
+      "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tmp\\under80_20260912\\decor_positive_cell_test.lua",
+      "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tmp\\under80_20260912\\decor_positive_cell_v2.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "python",
+      "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tmp\\under80_20260912\\decor_positive_cell_bound_test.py"
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tmp\\under80_20260912\\decor_positive_cell_v3.lua"
+    ],
+    "exit": 0
+  }
+]

@@ -1,0 +1,1 @@
+PASS conditional positive-cell bounds: integer squares exact; corner error 3.725745156835103e-09 ; predicate rounding loss 7.479684427380562e-09 ; index endpoint error 1.493026502430439e-08 all below one-unit reserves

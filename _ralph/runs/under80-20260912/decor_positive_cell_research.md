@@ -119,3 +119,17 @@ that branch, so it does NOT prove natural admission. Separate15198 test does tha
 Unchanged conditional Fraction bounds pass. No speedup claim before native tests.
 Generate frozen forward/reverse setups using the established full-query comparator;
 measure reference first to screen low-workload overhead, then61N if worthwhile.
+
+First retained offline runner FAILED its textual source-equality assertion because
+two explanatory comment lines were absent; all executable lines matched. The
+earlier direct behavioral/bounds tests passed independently. The shell sequence
+continued to commit/native launch despite this assertion; preserve the failed
+attempt as failed. Follow-up runner removes only the two explicitly asserted
+comment lines for exact source comparison and writes a separate artifact directory.
+No candidate executable code changed, and no behavioral assertion was relaxed.
+
+Native v3 reference forward session79434/PID40324 at5c78882 CLOSED normally PASS:
+all1806 queries exact, no certificates or cache tables admitted (full1589+217),
+old16ms/new9ms. This tiny diagnostic difference is not a claimed speedup; the
+useful evidence is absence of v2's unused learning. Full predecessor/private/rock/
+process audit PASS. Next inspect slow61N and reverse order before any integration.

@@ -1,0 +1,14 @@
+First retained runner attempt FAILED before executing its five subprocess commands:
+AssertionError: Post-admission numeric algorithm changed
+
+The prior direct admission/geometry/bounds invocations passed, but this runner is
+not a pass. Its source comparison required comments to match too. Read-only diff
+showed exactly two omitted comment lines describing the farthest-corner bound;
+every executable line matches. Follow-up runner compares exact source after
+removing only that explicitly asserted two-line comment from v2. It writes a new
+artifact directory; this failed attempt is retained, not overwritten.
+
+The shell sequence did not stop on this Python failure and committed/launched the
+native reference at5c78882. No production changes were made. The native reference
+closed normally with all1806 queries, full/private/rock parity and process audit
+PASS. This does not retroactively make the offline runner pass.

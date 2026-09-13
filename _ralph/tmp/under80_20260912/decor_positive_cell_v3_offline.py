@@ -3,13 +3,16 @@ import json
 from pathlib import Path
 import subprocess
 root=Path(__file__).resolve().parents[3]
-out=root/'_ralph/runs/under80-20260912/artifacts/decor_positive_cell_v3_offline'
+out=root/'_ralph/runs/under80-20260912/artifacts/decor_positive_cell_v3_offline_2'
 out.mkdir(parents=True,exist_ok=False)
 base=root/'_ralph/tmp/under80_20260912'
 a=(base/'decor_positive_cell_v2.lua').read_text()
 b=(base/'decor_positive_cell_v3.lua').read_text()
 anchor='        local active ='
-assert a[a.index(anchor):]==b[b.index(anchor):],'Post-admission numeric algorithm changed'
+comment=('                -- For center m and padded half-width2049, the farthest axis\n'
+         '                -- distance is abs(m-c)+2049. One extra unit encloses roundoff.\n')
+assert a.count(comment)==1 and comment not in b
+assert a[a.index(anchor):].replace(comment,'')==b[b.index(anchor):], 'Post-admission code changed'
 commands=[['lua',str(base/'decor_positive_cell_admission_test.lua')],
     ['lua',str(base/'decor_positive_cell_test.lua'),str(base/'decor_positive_cell_v3.lua'),'admitted'],
     ['lua',str(base/'decor_positive_cell_test.lua'),str(base/'decor_positive_cell_v2.lua')],
@@ -23,4 +26,4 @@ for i,command in enumerate(commands):
     print(proc.stdout+proc.stderr,end='')
 (out/'results.json').write_text(json.dumps(results,indent=2))
 assert all(r['exit']==0 for r in results)
-print('PASS all5 checks plus literal post-admission algorithm equality')
+print('PASS all5 checks plus exact post-admission source equality except two declared comment lines')
