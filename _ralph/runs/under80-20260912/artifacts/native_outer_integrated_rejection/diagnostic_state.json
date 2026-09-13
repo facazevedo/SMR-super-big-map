@@ -1,0 +1,137 @@
+{
+  "calls": [
+    {
+      "report": {
+        "dirty_height_regions": [],
+        "rocket_pads": 12,
+        "dirty_region_count": 0,
+        "native_mask_samples": 0,
+        "reason": "height-grid shaping failed",
+        "resources": 46,
+        "resource_clusters": 12,
+        "native_raster_cells": 0,
+        "map_width": 819200,
+        "patches": 1,
+        "rocket_pads_modified": 12,
+        "resource_sites_modified": 44,
+        "error": "native outer root residual",
+        "height_grid_height": 8192,
+        "modified_cells": 0,
+        "surface_resources": 28,
+        "forced_resource_repairs": 0,
+        "ring_sectors": 2,
+        "map_height": 819200,
+        "height_grid_width": 8192,
+        "dirty_region_certificate_version": 1,
+        "native_sample_step": 4,
+        "rocket_shape_radius": 6,
+        "height_tile_size": 100,
+        "rocket_sampling": {
+          "viable_candidates": 66,
+          "pruned_range": 1164,
+          "height_hits": 15530,
+          "relief_reads": 108,
+          "bounded": {
+            "seed": 933144333,
+            "exhausted_groups": 0,
+            "universe": 5941,
+            "continued_groups": 0,
+            "groups": 12,
+            "attempts": 3072
+          },
+          "height_misses": 13339,
+          "edge_rejected": 1125,
+          "pruned_score": 0,
+          "selected_groups": 12
+        },
+        "rocket_shape_hexes": 91,
+        "extractor_resources": 18
+      },
+      "freed": 14,
+      "before": {
+        "bytes": 118263351,
+        "height": 8192,
+        "width": 8192,
+        "hash": "-8518814995951037847"
+      },
+      "install_calls": 0,
+      "new_failures": 1,
+      "injected": 1,
+      "after": {
+        "bytes": 118263351,
+        "height": 8192,
+        "width": 8192,
+        "hash": "-8518814995951037847"
+      },
+      "allocations": 14,
+      "all_freed": true
+    },
+    {
+      "report": {
+        "dirty_height_regions": [],
+        "rocket_pads": 12,
+        "dirty_region_count": 0,
+        "native_mask_samples": 0,
+        "reason": "height-grid shaping failed",
+        "resources": 46,
+        "resource_clusters": 12,
+        "native_raster_cells": 0,
+        "map_width": 819200,
+        "patches": 1,
+        "rocket_pads_modified": 12,
+        "resource_sites_modified": 44,
+        "error": "native outer root residual",
+        "height_grid_height": 8192,
+        "modified_cells": 0,
+        "surface_resources": 28,
+        "forced_resource_repairs": 17,
+        "ring_sectors": 2,
+        "map_height": 819200,
+        "height_grid_width": 8192,
+        "dirty_region_certificate_version": 1,
+        "native_sample_step": 4,
+        "rocket_shape_radius": 6,
+        "height_tile_size": 100,
+        "rocket_sampling": {
+          "viable_candidates": 66,
+          "pruned_range": 1164,
+          "height_hits": 15530,
+          "relief_reads": 108,
+          "bounded": {
+            "seed": 933144333,
+            "exhausted_groups": 0,
+            "universe": 5941,
+            "continued_groups": 0,
+            "groups": 12,
+            "attempts": 3072
+          },
+          "height_misses": 13339,
+          "edge_rejected": 1125,
+          "pruned_score": 0,
+          "selected_groups": 12
+        },
+        "rocket_shape_hexes": 91,
+        "extractor_resources": 18
+      },
+      "freed": 14,
+      "before": {
+        "bytes": 118263351,
+        "height": 8192,
+        "width": 8192,
+        "hash": "-8518814995951037847"
+      },
+      "install_calls": 0,
+      "new_failures": 1,
+      "injected": 1,
+      "after": {
+        "bytes": 118263351,
+        "height": 8192,
+        "width": 8192,
+        "hash": "-8518814995951037847"
+      },
+      "allocations": 14,
+      "all_freed": true
+    }
+  ],
+  "status": "pass"
+}

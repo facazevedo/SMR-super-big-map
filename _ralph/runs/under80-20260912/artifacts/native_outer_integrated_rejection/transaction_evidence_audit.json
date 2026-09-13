@@ -1,0 +1,17 @@
+{
+  "status": "partial_evidence_not_original_test_pass",
+  "transaction_contract": "pass",
+  "calls": 2,
+  "freed_per_call": [
+    14,
+    14
+  ],
+  "installed_height_unchanged_per_call": true,
+  "install_calls": 0,
+  "failure_visible_in_log_and_state": true,
+  "full_verifier_rejected": true,
+  "rules_status": "complete",
+  "early_startup_abort_proved": false,
+  "original_expected_failure_driver": "failed; assumptions engine_error and single call were false",
+  "cold_acceptance": false
+}

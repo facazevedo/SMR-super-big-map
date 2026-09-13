@@ -1,0 +1,13 @@
+{
+  "verdict": "fail",
+  "differences": [
+    "enrichment_digest"
+  ],
+  "note": "Runtime parity only; engine-RNG source audit is separate.",
+  "full_snapshot_differences": [
+    "Surface.height",
+    "Surface.pass_grids",
+    "Surface.sites"
+  ],
+  "rock_grounding_differences": []
+}

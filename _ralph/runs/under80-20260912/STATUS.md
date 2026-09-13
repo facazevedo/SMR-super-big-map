@@ -1068,3 +1068,23 @@ SetHeightGrid calls, unchanged full installed-height hashes, all tracked mask/
 patch/working grids freed, and reported OptimizationFailure. It uses only a private
 recompiled function and private API wrappers, never module/global replacement.
 Next run that expected failure, then integrated full parity and offline/cold gates.
+
+## Integrated injected failure: transaction contained, early-abort assumption false
+
+Expected-failure session96722/PID39220 CLOSED normally atca6c963. Original driver
+FAIL is preserved: it expected rules_status=engine_error and one preparation call,
+but the engine logged errors and continued to T1/underground access; preparation
+was called twice. Full verifier correctly FAILed enrichment_digest, Surface.height,
+Surface.pass_grids and Surface.sites. This is intentionally invalid-map evidence,
+not a successful correctness run and not early-startup-abort proof.
+
+For EACH injected call, captured installed-height hash/bytes/dimensions remained
+identical, SetHeightGrid count0, all14 owned mask/patch/working grids freed, and one
+OptimizationFailure recorded. Flushed log contains both OptimizationFailure and
+LUA ERROR; final snapshot retains both failures. The narrow transaction contract
+is proved by transaction_evidence_audit.json without changing the failed original
+driver/verifier verdict. No scalar rescue was introduced.
+
+Next inspect successful integrated fast-path parity independently. Production and
+deployment still accepted v983. Early-abort behavior is not claimed or repaired by
+this optimization; no acceptance tests have been weakened.

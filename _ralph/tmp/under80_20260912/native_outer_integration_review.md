@@ -46,3 +46,18 @@ The duplicate scalar expression is intentional for this first research draft so
 existing predecessor tests remain meaningful. Before promotion, verify both copies
 are identical mechanically and ensure future tests exercise the correction copy,
 not only the preserved scalar branch. Formatting/readability cleanup remains due.
+
+## Injected native integration result
+
+Atca6c963, both injected preparations returned the root-residual report and made
+zero terrain-installation calls. Each released all14 tracked grids and left the
+complete installed-height serialization hash unchanged. Each recorded a visible
+OptimizationFailure. However, the game called preparation again and progressed
+to T1 despite logged LUA ERRORs. The original expected-failure driver FAILed its
+early-abort/single-call assumptions; this failure is retained. The full ordinary
+verifier also FAILed the intentionally invalid final map, as it must.
+
+transaction_evidence_audit.json characterizes only transaction containment,
+cleanup and visible rejection. It does not convert the original failure test to a
+pass or prove early startup abort. Successful-path correctness and all cold gates
+remain required; no runtime verifier or engine behavior was changed to fit this test.
