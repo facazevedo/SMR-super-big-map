@@ -3608,6 +3608,7 @@ local function PrepareOuterResourceTerrain(map)
 	local native_add_mul_div = Global("GridAddMulDiv")
 	local native_add = Global("GridAdd")
 	local native_circle_set = Global("GridCircleSet")
+	local native_fill = Global("GridFill")
 	local native_clamp = Global("GridClamp")
 	local native_abs = Global("GridAbs")
 	local native_count = Global("GridCount")
@@ -3624,6 +3625,7 @@ local function PrepareOuterResourceTerrain(map)
 	require_native("GridAddMulDiv", native_add_mul_div)
 	require_native("GridAdd", native_add)
 	require_native("GridCircleSet", native_circle_set)
+	require_native("GridFill", native_fill)
 	require_native("GridClamp", native_clamp)
 	require_native("GridAbs", native_abs)
 	require_native("GridCount", native_count)
@@ -3764,12 +3766,37 @@ local function PrepareOuterResourceTerrain(map)
 				local coarse_height = math.floor((local_height - 1) / sample_step) + 1
 				local coarse = own(native_new_grid(coarse_width, coarse_height, "f", 32))
 				assert(coarse, "native coarse-mask allocation failed")
+				native_fill(coarse, 0)
+				-- The enclosure only removes guaranteed-zero cells. All evaluated cells
+				-- retain the predecessor expression, order, and U12 rounding below.
+				-- Bound arithmetic away from overflow and cancellation; unsupported
+				-- numeric domains still evaluate the complete original rectangle.
+				local bounded = radius >= 0 and radius <= 65536
+					and patch.core_cells >= 0 and patch.core_cells <= radius
+					and patch.cx >= -65536 and patch.cx <= 65536
+					and patch.cy >= -65536 and patch.cy <= 65536
+					and x0 >= -65536 and x1 <= 65536
+					and y0 >= -65536 and y1 <= 65536
+					and (sample_step == 1 or sample_step == 4)
+				local enclosure_radius = radius + 1.0
 				-- Missing atan2 deliberately means angle0. Reuse its literal harmonic
 				-- within this patch; do not change that existing terrain fallback.
 				local cached_zero_sine, cached_zero_harmonic
 				for coarse_y = 0, coarse_height - 1 do
 					local y = y0 + coarse_y * sample_step
-					for coarse_x = 0, coarse_width - 1 do
+					local first_x, last_x = 0, coarse_width - 1
+					if bounded then
+						local dy = y - patch.cy
+						if math.abs(dy) > enclosure_radius then
+							last_x = -1
+						else
+							local span = math.sqrt(math.max(0,
+								enclosure_radius * enclosure_radius - dy * dy)) + 2 * sample_step
+							first_x = math.max(0, math.floor((patch.cx - span - x0) / sample_step))
+							last_x = math.min(last_x, math.ceil((patch.cx + span - x0) / sample_step))
+						end
+					end
+					for coarse_x = first_x, last_x do
 						local x = x0 + coarse_x * sample_step
 						local dx, dy = x - patch.cx, y - patch.cy
 						local distance = math.sqrt(dx * dx + dy * dy)
@@ -3810,10 +3837,11 @@ local function PrepareOuterResourceTerrain(map)
 								weight = 1 - smooth
 							end
 						end
-						for _, protected in ipairs(protection_blends) do
+						for protected_index = 1, #protection_blends do
 							-- Zero times any finite protection weight remains zero. Stop only
 							-- at exact zero; do not quantize or prune a small nonzero feather.
 							if weight == 0 then break end
+							local protected = protection_blends[protected_index]
 							local px, py = x - protected.cx, y - protected.cy
 							weight = weight * ProtectedTerrainBlendWeight(math.sqrt(px * px + py * py),
 								protected.radius, protected.transition)

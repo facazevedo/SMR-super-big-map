@@ -712,3 +712,14 @@ oracles to actual predecessor/production sources, run all82 offline commands,
 then freeze and measure reference3/control against v983_confirmation_reference.
 Do not fold rejectedv984 decor into this declared experiment. Five-site validation
 and all ten rules still required after a positive reference gate. Under85 unmet.
+
+## v985 production candidate: exact outer enclosure
+
+Production now matches the native-shadowed research TerrainCopy exactly after
+newline normalization; only generator299/runtime985/release text also change.
+Sector76 and every other module remain acceptedv983. Rejectedv984 decor is absent.
+All82 offline commands PASS, including all80 inherited checks and the two new
+actual f4d1da6/production whole-mask/full-patch oracles. Session4184 CLOSED exit0.
+Evidence: artifacts/v985_offline, v985_source_review.md. Freeze this checkpoint
+and audited38-file deployment for reference3/control against the declared
+v983_confirmation_reference median90.244s. No cold result yet; under85 unproven.

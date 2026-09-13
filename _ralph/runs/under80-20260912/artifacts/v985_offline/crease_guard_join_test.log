@@ -1,0 +1,9 @@
+PASS left: full production repair closes ramp including along-edge corners
+PASS left: non-clipped join writes unchanged
+PASS right: full production repair closes ramp including along-edge corners
+PASS right: non-clipped join writes unchanged
+PASS top: full production repair closes ramp including along-edge corners
+PASS top: non-clipped join writes unchanged
+PASS bottom: full production repair closes ramp including along-edge corners
+PASS bottom: non-clipped join writes unchanged
+8 full crease guard-join checks passed on native 8192 grids
