@@ -16,6 +16,9 @@ local config = {}
 -- disabled in published builds.
 config.DebugLoggingEnabled = false
 config.DebugLoadingTimings = false
+-- TEMPORARY optimization investigation; independent of broad debug channels.
+-- Set false before cold performance acceptance runs. Records are in the Mars log.
+config.TraceOptimizationTimings = true
 config.DebugEnrichmentAudit = false
 config.DebugElevatorTraversal = false
 config.DebugElevatorSupply = false
@@ -861,6 +864,7 @@ C.ENABLE_MOD = true
 local debug_logging_enabled = as_bool(config.DebugLoggingEnabled)
 C.DEBUG_LOGGING_ENABLED = debug_logging_enabled
 C.DEBUG_LOADING_TIMINGS = debug_logging_enabled and as_bool(config.DebugLoadingTimings)
+C.TRACE_OPTIMIZATION_TIMINGS = as_bool(config.TraceOptimizationTimings)
 C.DEBUG_ENRICHMENT_AUDIT = debug_logging_enabled and as_bool(config.DebugEnrichmentAudit)
 C.DEBUG_ELEVATOR_TRAVERSAL = debug_logging_enabled and as_bool(config.DebugElevatorTraversal)
 C.DEBUG_ELEVATOR_SUPPLY = debug_logging_enabled and as_bool(config.DebugElevatorSupply)

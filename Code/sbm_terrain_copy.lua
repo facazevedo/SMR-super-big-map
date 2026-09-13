@@ -947,6 +947,13 @@ local function BuildHeightStepDiscoveryIndex(api, grid, axis, perp0, perp1, alon
 	return rows, detail
 end
 
+-- TEMPORARY optimization probes; safe when diagnostics are absent in fixture environments.
+local function OptimizationBegin(name)
+	local diagnostics = SuperBigMap.Diagnostics
+	return diagnostics and type(diagnostics.OptimizationBegin) == "function"
+		and diagnostics.OptimizationBegin(name) or false
+end
+
 -- Batched translation of independent rows within ONE already-selected track.
 -- No feather/refinement/track reordering. Caller feathers these rows immediately.
 local function TranslateHeightTrack(api, grid, axis, before_edge, rows, maximum)
@@ -1063,6 +1070,8 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 	end
 
 
+	local probe = type(OptimizationBegin) == "function"
+		and OptimizationBegin(wide_ring_only and "crease source" or "crease destination")
 	local relief = mx - mn
 	-- A source crease can be about 0.7-1.0% of total relief per cell. The former 2.5%
 	-- threshold was therefore higher than the wall itself and guaranteed a no-op on that map.
@@ -1575,7 +1584,9 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 			end
 		end
 		collect_ring("x", w, h, "left", "right")
+		if probe then probe:Mark("collect x: native discovery + scalar offers + tracks") end
 		collect_ring("y", h, w, "top", "bottom")
+		if probe then probe:Mark("collect y: native discovery + scalar offers + tracks") end
 		if discovery_error then return end -- No qualification or height writes on failure.
 		if refinement_guide then discovery_stats.refinement = refinement_guide.stats end
 
@@ -1622,6 +1633,7 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 				qualified[#qualified + 1] = track
 			end
 		end
+		if probe then probe:Mark("qualify and validate tracks") end
 		if #qualified == 0 then return end
 		table.sort(qualified, function(a, b) return a.score > b.score end)
 		-- The length/density/average/max gate above reduces the first multi-cell attempt's 1,249
@@ -1748,8 +1760,14 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 			selected.max_offset = max_offset
 		end
 		selected_tracks[1].qualified = #qualified
+		if probe then probe:Mark("refine selected tracks + translate + feather") end
 	end)
 	if type(resume) == "function" then pcall(resume, "SBMInternalHeightStepRepair") end
+	if probe then probe:Finish({ width = w, height = h, candidates = #tracks,
+		selected = #selected_tracks, native_cells = discovery_stats.cells,
+		native_candidates = discovery_stats.candidates,
+		error = translation_error or discovery_error or (not ok_repair and tostring(repair_err)) or "",
+	}, ok_repair and not translation_error and not discovery_error) end
 	if translation_error then
 		return false, { reason = "native crease translation failed", error = translation_error,
 			error_stage = "native crease translation" }, nil, discovery_stats
@@ -2835,6 +2853,7 @@ local function PrepareOuterResourceTerrain(map)
 		return false, { reason = "height grid dimensions unavailable", resources = 0, patches = 0 }
 	end
 
+	local probe = type(OptimizationBegin) == "function" and OptimizationBegin("outer resource terrain")
 	local const_tbl = Global("const")
 	local height_tile = (type(const_tbl) == "table"
 		and type(const_tbl.HeightTileSize) == "number" and const_tbl.HeightTileSize > 0)
@@ -3916,6 +3935,7 @@ local function PrepareOuterResourceTerrain(map)
 	local pause = Global("PauseInfiniteLoopDetection")
 	local resume = Global("ResumeInfiniteLoopDetection")
 	if type(pause) == "function" then pcall(pause, "SBMOuterResourceTerrain") end
+	if probe then probe:Mark("resource census + patch planning") end
 	local ok_apply, apply_error
 	if #native_missing > 0 then
 		ok_apply, apply_error = false,
@@ -3936,6 +3956,7 @@ local function PrepareOuterResourceTerrain(map)
 		end
 	end
 	if type(resume) == "function" then pcall(resume, "SBMOuterResourceTerrain") end
+	if probe then probe:Mark("transaction clone + patch raster + terminal repair") end
 	if not ok_apply then
 		OptimizationFailure("outer resource terrain native raster", tostring(apply_error), map)
 	end
@@ -3947,6 +3968,9 @@ local function PrepareOuterResourceTerrain(map)
 	end
 	if grid and grid ~= raw and type(grid.free) == "function" then pcall(grid.free, grid) end
 
+	if probe then probe:Finish({ patches = shaped_patches, modified_cells = modified_cells,
+		native_raster_cells = native_raster_cells, native_mask_samples = native_mask_samples,
+	}, ok_apply and set_ok) end
 	map.SuperBigMapOuterResourceTerrainSites = resource_sites
 	map.SuperBigMapOuterResourceRocketPads = rocket_sites
 	local report = {
@@ -7864,6 +7888,9 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 	local dependant_index_by_map = {}
 	local dependant_scan_stats = { scans = 0, objects = 0, matches = 0 }
 	local function build_dependant_index(map)
+		local probe = type(OptimizationBegin) == "function" and OptimizationBegin("passage dependant index")
+		local objects_before = probe and dependant_scan_stats.objects
+		local matches_before = probe and dependant_scan_stats.matches
 		local by_anchor = {}
 		local anchors = dependency_anchors_by_map[map] or {}
 		for i = 1, #anchors do by_anchor[anchors[i]] = {} end
@@ -7891,6 +7918,10 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 			end)
 		end
 		dependant_index_by_map[map] = by_anchor
+		if probe then probe:Finish({ anchors = #anchors,
+			objects = dependant_scan_stats.objects - objects_before,
+			matches = dependant_scan_stats.matches - matches_before,
+		}) end
 		return by_anchor
 	end
 	local function move_dependants(map, anchor, old_x, old_y, new_x, new_y)

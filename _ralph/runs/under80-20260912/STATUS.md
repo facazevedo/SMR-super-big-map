@@ -826,3 +826,37 @@ new baseline guides genuinely new candidates; old result labels remain untouched
 After baseline confirmation, a larger native discovery offer-certificate lead is
 outlined in native_crease_offers_next.md. No v987 exists. Goal stays under85 across
 reference/five with all rules, terrain fixes, RNG and scheduled revalidation intact.
+
+## User-requested temporary probes and Astra extra-high review
+
+The user requested temporary debug logs and an Astra extra-high alternatives review.
+Added switchable buffered boundary probes to the working tree (no algorithm change):
+crease source/destination, outer resource terrain, decor stages, passage dependant
+index. TraceOptimizationTimings is temporarily TRUE, independent of broad logging.
+This deployment is instrumented v983, NOT the byte-identical cold accepted payload
+and NOT v987. Restart rather than hot-reload; version/patch guards were not bumped.
+Set the new flag FALSE and redeploy before any cold timing comparison.
+
+Session65915 CLOSED exit0: all81 offline checks PASS including new timing tests.
+Session24447 CLOSED exit0: fresh reference14N134W diagnostic, owned PID48084 with
+captured creation identity, clean normal quit. All five probe kinds emitted records;
+diagnostic statusPASS and full predecessor/runtime/snapshot/individual-rock parity
+PASS with zero differences. No live game remains. Deploy audit38/38PASS.
+Evidence: artifacts/temporary_optimization_probes_offline and
+artifacts/temporary_optimization_probes_reference. HEAD stayed555fb22 during the
+run; instrumentation was in the working tree, so that HEAD alone is not its code
+identity. Four changed deployed Code files constitute the diagnostic payload.
+Their exact delta from that HEAD is preserved as diagnostic_payload.patch in the
+reference artifact folder (reverse-apply check passed against the measured tree).
+
+New sparse timings: destination collection2375ms, qualification40ms, selected
+refinement/writes1471ms; outer planning121ms/raster4095ms/installation28ms;
+surface decor414ms; initial passage indexes63/162ms. Instrumented only, not savings
+or a new baseline. All original work, required rebuilds and RNG calls remain intact.
+
+User-requested gpt-6-astra/xhigh read-only review completed; recommendations and
+prior-candidate caveats are in astra_optimization_alternatives.md. Leading targets
+are a complete native outer mask with exact correction, simpler collection-only
+native crease offers, and exact positive decor obstruction certificates for slow
+sites. Relation-first passage classification is a smaller new lead. Under85 remains
+unmet; the previously declared unchanged five-site confirmation is still NOT run.

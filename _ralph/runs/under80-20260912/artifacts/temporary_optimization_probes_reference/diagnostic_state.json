@@ -1,0 +1,75 @@
+{
+  "calls": [
+    {
+      "name": "crease source",
+      "duration_ms": 245,
+      "checkpoints": 5,
+      "printed": true,
+      "ok": true
+    },
+    {
+      "name": "crease destination",
+      "duration_ms": 3886,
+      "checkpoints": 5,
+      "printed": true,
+      "ok": true
+    },
+    {
+      "name": "passage dependant index",
+      "duration_ms": 63,
+      "checkpoints": 1,
+      "printed": true,
+      "ok": true
+    },
+    {
+      "name": "passage dependant index",
+      "duration_ms": 162,
+      "checkpoints": 1,
+      "printed": true,
+      "ok": true
+    },
+    {
+      "name": "decor top-up",
+      "duration_ms": 414,
+      "checkpoints": 5,
+      "printed": true,
+      "ok": true
+    },
+    {
+      "name": "outer resource terrain",
+      "duration_ms": 4244,
+      "checkpoints": 3,
+      "printed": true,
+      "ok": true
+    },
+    {
+      "name": "passage dependant index",
+      "duration_ms": 62,
+      "checkpoints": 1,
+      "printed": true,
+      "ok": true
+    },
+    {
+      "name": "passage dependant index",
+      "duration_ms": 184,
+      "checkpoints": 1,
+      "printed": true,
+      "ok": true
+    },
+    {
+      "name": "decor top-up",
+      "duration_ms": 78,
+      "checkpoints": 1,
+      "printed": true,
+      "ok": true
+    },
+    {
+      "name": "passage dependant index",
+      "duration_ms": 68,
+      "checkpoints": 1,
+      "printed": true,
+      "ok": true
+    }
+  ],
+  "status": "pass"
+}

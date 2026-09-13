@@ -1,0 +1,237 @@
+diff --git a/Code/sbm_config.lua b/Code/sbm_config.lua
+index b081e99..0b04c3d 100644
+--- a/Code/sbm_config.lua
++++ b/Code/sbm_config.lua
+@@ -16,6 +16,9 @@ local config = {}
+ -- disabled in published builds.
+ config.DebugLoggingEnabled = false
+ config.DebugLoadingTimings = false
++-- TEMPORARY optimization investigation; independent of broad debug channels.
++-- Set false before cold performance acceptance runs. Records are in the Mars log.
++config.TraceOptimizationTimings = true
+ config.DebugEnrichmentAudit = false
+ config.DebugElevatorTraversal = false
+ config.DebugElevatorSupply = false
+@@ -861,6 +864,7 @@ C.ENABLE_MOD = true
+ local debug_logging_enabled = as_bool(config.DebugLoggingEnabled)
+ C.DEBUG_LOGGING_ENABLED = debug_logging_enabled
+ C.DEBUG_LOADING_TIMINGS = debug_logging_enabled and as_bool(config.DebugLoadingTimings)
++C.TRACE_OPTIMIZATION_TIMINGS = as_bool(config.TraceOptimizationTimings)
+ C.DEBUG_ENRICHMENT_AUDIT = debug_logging_enabled and as_bool(config.DebugEnrichmentAudit)
+ C.DEBUG_ELEVATOR_TRAVERSAL = debug_logging_enabled and as_bool(config.DebugElevatorTraversal)
+ C.DEBUG_ELEVATOR_SUPPLY = debug_logging_enabled and as_bool(config.DebugElevatorSupply)
+diff --git a/Code/sbm_decor_topup.lua b/Code/sbm_decor_topup.lua
+index 69b688a..b82049d 100644
+--- a/Code/sbm_decor_topup.lua
++++ b/Code/sbm_decor_topup.lua
+@@ -233,6 +233,9 @@ end
+ -- ScaleMarkersToFull have moved every marker to its stretched position. Failures are recorded
+ -- explicitly; a partially completed pass is never advertised as complete or rolled back.
+ function DecorTopUp.Run(map, pass_edits_already_suspended)
++	local diagnostics = SuperBigMap.Diagnostics
++	local probe = diagnostics and type(diagnostics.OptimizationBegin) == "function"
++		and diagnostics.OptimizationBegin("decor top-up")
+ 	local stats = { version = DecorTopUp.VERSION, enabled = false, placed = 0, objects = 0 }
+ 	DecorTopUp.LastStats = stats
+ 	local ok, err = pcall(function()
+@@ -643,6 +646,7 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
+ 		end
+ 
+ 		-- 5. Vanilla's loop over the sites it left unused, until the deficit is met.
++		if probe then probe:Mark("census + matcher preparation") end
+ 		local placed_authored, skipped_bounds, skipped_band = 0, 0, 0
+ 		local guard = #unused * 2 + 8
+ 		while placed < target and #unused > 0 and guard > 0 do
+@@ -668,6 +672,7 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
+ 		end
+ 		stats.placed_authored = placed_authored
+ 		stats.sites_exhausted = #unused == 0 and placed < target
++		if probe then probe:Mark("authored sites") end
+ 
+ 		-- 6. Synthetic sites.  The map authors too few free decor sites for 1.778x density: at
+ 		--    14N134W, 137 of the 152 sites vanilla left unused sit inside Border/Slope prefab radii
+@@ -780,6 +785,7 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
+ 				end
+ 			end
+ 			local random_attempts = attempts
++			if probe then probe:Mark("synthetic setup + random search") end
+ 			local finite_cursors, finite_attempts = {}, 0
+ 			-- A miss streak is not proof that legal ground is exhausted. Continue through
+ 			-- a finite seeded cell cover of the interior, retaining each template's matcher,
+@@ -818,6 +824,7 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
+ 					end
+ 				end
+ 			end
++			if probe then probe:Mark("finite candidate search") end
+ 			stats.synthetic_templates_exhausted = exhausted
+ 			stats.synthetic_random_attempts = random_attempts
+ 			stats.synthetic_finite_attempts = finite_attempts
+@@ -857,6 +864,7 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
+ 		stats.error = string.format("decor candidate search incomplete: placed=%s target=%s",
+ 			tostring(stats.placed), tostring(stats.target))
+ 	end
++	if probe then probe:Finish(stats, not stats.error) end
+ 	if stats.error then
+ 		local State = SuperBigMap.State or {}
+ 		SuperBigMap.State = State
+diff --git a/Code/sbm_diagnostics.lua b/Code/sbm_diagnostics.lua
+index d66dc75..5b4b35d 100644
+--- a/Code/sbm_diagnostics.lua
++++ b/Code/sbm_diagnostics.lua
+@@ -87,6 +87,41 @@ end
+ 
+ local Diagnostics = {}
+ 
++-- TEMPORARY boundary-only probes: buffer checkpoints, print after the measured work.
++-- No per-cell hooks, gameplay state, RNG reads, threads, or loading-session changes.
++-- A disabled probe performs no clock reads or record allocations.
++function Diagnostics.OptimizationBegin(name)
++	if Config().TRACE_OPTIMIZATION_TIMINGS ~= true then return false end
++	local started = Now()
++	local token = { name = name, started = started, previous = started, rows = {} }
++	function token:Mark(stage)
++		if self.finished then return end
++		local now = Now()
++		self.rows[#self.rows + 1] = { stage = stage, duration_ms = now - self.previous }
++		self.previous = now
++	end
++	function token:Finish(data, ok)
++		if self.finished then return false end
++		self:Mark("finish")
++		self.finished = true
++		-- Logging failures must never replace a terrain error or invalidate a good map.
++		return pcall(function()
++			for index, row in ipairs(self.rows) do
++				Print("OptimizationTiming", self.name, {
++					checkpoint = index, stage = row.stage, duration_ms = row.duration_ms,
++					instrumented = true,
++				})
++			end
++			local out = CopyData(data)
++			out.duration_ms = self.previous - self.started
++			out.ok = ok ~= false
++			out.instrumented = true
++			Print("OptimizationTiming", "TOTAL " .. self.name, out)
++		end)
++	end
++	return token
++end
++
+ function Diagnostics.LoadingEnabled()
+ 	return Enabled() and Config().DEBUG_LOADING_TIMINGS == true
+ end
+diff --git a/Code/sbm_terrain_copy.lua b/Code/sbm_terrain_copy.lua
+index d13f6da..3322c19 100644
+--- a/Code/sbm_terrain_copy.lua
++++ b/Code/sbm_terrain_copy.lua
+@@ -947,6 +947,13 @@ local function BuildHeightStepDiscoveryIndex(api, grid, axis, perp0, perp1, alon
+ 	return rows, detail
+ end
+ 
++-- TEMPORARY optimization probes; safe when diagnostics are absent in fixture environments.
++local function OptimizationBegin(name)
++	local diagnostics = SuperBigMap.Diagnostics
++	return diagnostics and type(diagnostics.OptimizationBegin) == "function"
++		and diagnostics.OptimizationBegin(name) or false
++end
++
+ -- Batched translation of independent rows within ONE already-selected track.
+ -- No feather/refinement/track reordering. Caller feathers these rows immediately.
+ local function TranslateHeightTrack(api, grid, axis, before_edge, rows, maximum)
+@@ -1063,6 +1070,8 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
+ 	end
+ 
+ 
++	local probe = type(OptimizationBegin) == "function"
++		and OptimizationBegin(wide_ring_only and "crease source" or "crease destination")
+ 	local relief = mx - mn
+ 	-- A source crease can be about 0.7-1.0% of total relief per cell. The former 2.5%
+ 	-- threshold was therefore higher than the wall itself and guaranteed a no-op on that map.
+@@ -1575,7 +1584,9 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
+ 			end
+ 		end
+ 		collect_ring("x", w, h, "left", "right")
++		if probe then probe:Mark("collect x: native discovery + scalar offers + tracks") end
+ 		collect_ring("y", h, w, "top", "bottom")
++		if probe then probe:Mark("collect y: native discovery + scalar offers + tracks") end
+ 		if discovery_error then return end -- No qualification or height writes on failure.
+ 		if refinement_guide then discovery_stats.refinement = refinement_guide.stats end
+ 
+@@ -1622,6 +1633,7 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
+ 				qualified[#qualified + 1] = track
+ 			end
+ 		end
++		if probe then probe:Mark("qualify and validate tracks") end
+ 		if #qualified == 0 then return end
+ 		table.sort(qualified, function(a, b) return a.score > b.score end)
+ 		-- The length/density/average/max gate above reduces the first multi-cell attempt's 1,249
+@@ -1748,8 +1760,14 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
+ 			selected.max_offset = max_offset
+ 		end
+ 		selected_tracks[1].qualified = #qualified
++		if probe then probe:Mark("refine selected tracks + translate + feather") end
+ 	end)
+ 	if type(resume) == "function" then pcall(resume, "SBMInternalHeightStepRepair") end
++	if probe then probe:Finish({ width = w, height = h, candidates = #tracks,
++		selected = #selected_tracks, native_cells = discovery_stats.cells,
++		native_candidates = discovery_stats.candidates,
++		error = translation_error or discovery_error or (not ok_repair and tostring(repair_err)) or "",
++	}, ok_repair and not translation_error and not discovery_error) end
+ 	if translation_error then
+ 		return false, { reason = "native crease translation failed", error = translation_error,
+ 			error_stage = "native crease translation" }, nil, discovery_stats
+@@ -2835,6 +2853,7 @@ local function PrepareOuterResourceTerrain(map)
+ 		return false, { reason = "height grid dimensions unavailable", resources = 0, patches = 0 }
+ 	end
+ 
++	local probe = type(OptimizationBegin) == "function" and OptimizationBegin("outer resource terrain")
+ 	local const_tbl = Global("const")
+ 	local height_tile = (type(const_tbl) == "table"
+ 		and type(const_tbl.HeightTileSize) == "number" and const_tbl.HeightTileSize > 0)
+@@ -3916,6 +3935,7 @@ local function PrepareOuterResourceTerrain(map)
+ 	local pause = Global("PauseInfiniteLoopDetection")
+ 	local resume = Global("ResumeInfiniteLoopDetection")
+ 	if type(pause) == "function" then pcall(pause, "SBMOuterResourceTerrain") end
++	if probe then probe:Mark("resource census + patch planning") end
+ 	local ok_apply, apply_error
+ 	if #native_missing > 0 then
+ 		ok_apply, apply_error = false,
+@@ -3936,6 +3956,7 @@ local function PrepareOuterResourceTerrain(map)
+ 		end
+ 	end
+ 	if type(resume) == "function" then pcall(resume, "SBMOuterResourceTerrain") end
++	if probe then probe:Mark("transaction clone + patch raster + terminal repair") end
+ 	if not ok_apply then
+ 		OptimizationFailure("outer resource terrain native raster", tostring(apply_error), map)
+ 	end
+@@ -3947,6 +3968,9 @@ local function PrepareOuterResourceTerrain(map)
+ 	end
+ 	if grid and grid ~= raw and type(grid.free) == "function" then pcall(grid.free, grid) end
+ 
++	if probe then probe:Finish({ patches = shaped_patches, modified_cells = modified_cells,
++		native_raster_cells = native_raster_cells, native_mask_samples = native_mask_samples,
++	}, ok_apply and set_ok) end
+ 	map.SuperBigMapOuterResourceTerrainSites = resource_sites
+ 	map.SuperBigMapOuterResourceRocketPads = rocket_sites
+ 	local report = {
+@@ -7864,6 +7888,9 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
+ 	local dependant_index_by_map = {}
+ 	local dependant_scan_stats = { scans = 0, objects = 0, matches = 0 }
+ 	local function build_dependant_index(map)
++		local probe = type(OptimizationBegin) == "function" and OptimizationBegin("passage dependant index")
++		local objects_before = probe and dependant_scan_stats.objects
++		local matches_before = probe and dependant_scan_stats.matches
+ 		local by_anchor = {}
+ 		local anchors = dependency_anchors_by_map[map] or {}
+ 		for i = 1, #anchors do by_anchor[anchors[i]] = {} end
+@@ -7891,6 +7918,10 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
+ 			end)
+ 		end
+ 		dependant_index_by_map[map] = by_anchor
++		if probe then probe:Finish({ anchors = #anchors,
++			objects = dependant_scan_stats.objects - objects_before,
++			matches = dependant_scan_stats.matches - matches_before,
++		}) end
+ 		return by_anchor
+ 	end
+ 	local function move_dependants(map, anchor, old_x, old_y, new_x, new_y)
