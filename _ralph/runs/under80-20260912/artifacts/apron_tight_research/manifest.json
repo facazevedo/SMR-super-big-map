@@ -1,0 +1,7 @@
+{
+  "baseline": "56fbf44",
+  "production_changed": false,
+  "source_sha256": "a5e3e36c3b31580afccef9d391cbaa587ce98cdbe35b54afbcb4ca663cc05f16",
+  "candidate_sha256": "152b4008cac6db284ca006a60f6e49839a54b4edce576033927baa80f60efc54",
+  "qualification": "Private candidate; conditional proof and offline/native/cold gates are separate"
+}
