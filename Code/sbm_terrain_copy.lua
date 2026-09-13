@@ -9593,11 +9593,66 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 			return nil, "passage source hex unavailable"
 		end
 		local ok_z, z = pcall(buildable.GetZ, buildable, q, r)
-		if not ok_z or type(z) ~= "number" or z ~= math.floor(z)
-			or z < 0 or z == unbuildable_z or z >= 65535 then
-			return nil, "passage source buildable level invalid"
+		if ok_z and type(z) == "number" and z == math.floor(z)
+			and z >= 0 and z ~= unbuildable_z and z < 65535 then
+			return z, nil, q, r
 		end
-		return z, nil, q, r
+
+		-- The passage's own generated placement can legitimately sit on unbuildable ground.
+		-- Unlike the surface, an underground cavern's shape is irregular and independent of the
+		-- layout above it, so a spot that is open floor up top has no guarantee of being open
+		-- floor below. Measured here: the buildable read itself succeeds and simply returns the
+		-- unbuildable sentinel, i.e. genuine terrain, not an API or source/expanded-domain
+		-- mismatch. Hard-failing aborted underground first access with "true underground passage
+		-- source level unavailable: passage source buildable level invalid".
+		--
+		-- Walk out to the nearest spot that can take the footprint, exactly as vanilla's own
+		-- FindPassageSpawnPos (Lua/Buildings/SurfacePassage.lua) does for the same situation --
+		-- including its retry loop, because a single attempt from a bad start can find nothing
+		-- within the native search's bounded radius. This is read-only: it samples a nearby
+		-- valid level to use as this passage's reference height and never moves the anchor,
+		-- which still happens later once the real destination has been cleared.
+		local fallback_q, fallback_r, fallback_z
+		local find_area = Global("FindBuildableAreaAround")
+		local object_grid = map.object_hex_grid
+		if type(find_area) == "function" and object_grid and elevator_shape then
+			local angle = type(anchor.GetAngle) == "function"
+				and SafeCall(anchor.GetAngle, anchor) or 0
+			local get_random_around = Global("GetRandomPassableAroundOnMap")
+			local get_random = Global("GetRandomPassable")
+			local search_pos = pos
+			local attempts = 16
+			while not fallback_z and attempts > 0 do
+				attempts = attempts - 1
+				local ok_find, fx, fy = pcall(find_area, object_grid, buildable, search_pos, angle,
+					elevator_shape, nil)
+				if ok_find and type(fx) == "number" and type(fy) == "number" then
+					local ok_fhex, fq, fr = pcall(world_to_hex, point_fn(fx, fy))
+					if ok_fhex and type(fq) == "number" and type(fr) == "number" then
+						local ok_fz, fz = pcall(buildable.GetZ, buildable, fq, fr)
+						if ok_fz and type(fz) == "number" and fz == math.floor(fz)
+							and fz >= 0 and fz ~= unbuildable_z and fz < 65535 then
+							fallback_q, fallback_r, fallback_z = fq, fr, fz
+						end
+					end
+				end
+				if not fallback_z and attempts > 0 then
+					-- Re-roll the start so the next bounded search covers different ground.
+					local ok_reroll, new_pos
+					if type(get_random_around) == "function" then
+						ok_reroll, new_pos = pcall(get_random_around, map, search_pos)
+					end
+					if not (ok_reroll and new_pos) and type(get_random) == "function" then
+						ok_reroll, new_pos = pcall(get_random, map)
+					end
+					if ok_reroll and new_pos then search_pos = new_pos end
+				end
+			end
+		end
+		if fallback_z then
+			return fallback_z, nil, fallback_q, fallback_r
+		end
+		return nil, "passage source buildable level invalid"
 	end
 
 	-- Lazy first access runs only after the underground terrain/buildable grids have been stretched

@@ -479,7 +479,12 @@ end
 
 local function StretchEligibleForDeferredBounds(map)
 	local config = SuperBigMap.Config or {}
-	local env = map and map.mapdata and map.mapdata.Environment
+	local mapdata = map and map.mapdata
+	-- 1.1.0 COMPAT FIX: see Engine.EnsureMapDataEnvironment.
+	if type(Engine.EnsureMapDataEnvironment) == "function" then
+		Engine.EnsureMapDataEnvironment(mapdata)
+	end
+	local env = mapdata and mapdata.Environment
 	local desired = map and map.SuperBigMapDesiredWidthTiles
 	local generator = map and map.SuperBigMapGeneratorWidthTiles
 	return IsModMap(map)
@@ -489,7 +494,14 @@ end
 
 local function ShouldSkipNewMapBuildableRebuild(map)
 	local config = SuperBigMap.Config or {}
-	local env = map and map.mapdata and map.mapdata.Environment
+	local mapdata = map and map.mapdata
+	-- 1.1.0 COMPAT FIX: mapdata.Environment is nil here without the backfill, which
+	-- silently forces this optimization off on every map -- the full, non-deferred
+	-- buildable-grid rebuild then runs unconditionally on the expanded destination.
+	if type(Engine.EnsureMapDataEnvironment) == "function" then
+		Engine.EnsureMapDataEnvironment(mapdata)
+	end
+	local env = mapdata and mapdata.Environment
 	local buildable = map and map.buildable
 	return config.OPTIMIZE_POSTLOAD_DEFERRED_BOUNDS == true
 		and config.OPTIMIZE_STRETCH_DEFERRED_REBUILDS == true

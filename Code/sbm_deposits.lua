@@ -730,6 +730,46 @@ end
 local function IsReachableFromUndergroundEntrance(map, pt, known_q, known_r)
 	local state = BuildUndergroundReachability(map)
 	if not state or state.available ~= true or not pt then return false end
+	-- HARD SAFETY GUARD -- do not remove without re-testing underground first access.
+	--
+	-- The native ConnectivityCheck below takes the entire process down with an access
+	-- violation when asked about an underground map that is not the engine's current map.
+	-- Caught live under a debugger; the faulting instruction is
+	--     0x140179d2f:  mov %al,(%r15,%rdx,1)
+	-- the byte write of a loop expanding a packed passability bit-grid into a byte work
+	-- buffer. At the fault r15 -- the destination buffer pointer -- is 0x1000, i.e. 4096,
+	-- the grid's own cell dimension: a grid SIZE sitting where its DATA POINTER belongs.
+	-- That map's connectivity data is simply not in a queryable state.
+	--
+	-- That is exactly the first-access situation: the underground is materialized in slot 2
+	-- while the Surface is still the current map, with its rubble-wall grids temporarily
+	-- removed by the enclosing top-up transaction.
+	--
+	-- pcall CANNOT catch a native access violation, so the pcall around the call below gives
+	-- no protection at all -- this has to be prevented rather than handled. It also explains
+	-- why the crash appeared to move between TopUpDeposits and TopUpAnomalies and between
+	-- runs: most candidates are rejected earlier as unbuildable rock/void and never reach
+	-- here, so it fires on whichever call first finds a genuinely valid candidate.
+	--
+	-- Fallback: accept the candidate. The caller has already required the hex to be
+	-- buildable, which EvaluateDepositTerrain in this same file documents as the underground
+	-- accessibility measure ("hills/rock/void are unbuildable, the floor is buildable").
+	-- Worst case a deposit lands in an isolated pocket; before this guard, the first valid
+	-- candidate killed the game outright and nothing was placed at all.
+	local current_map = Global("CurrentMap")
+	if current_map ~= map then
+		if state.skipped_offmap == nil then
+			state.skipped_offmap = 0
+			local warn = rawget(_G, "print")
+			if warn then
+				warn("[Super Big Map][UndergroundReachability] native ConnectivityCheck skipped: "
+					.. "target map is not CurrentMap (unsafe, crashes the process); "
+					.. "falling back to the buildable-grid accessibility rule")
+			end
+		end
+		state.skipped_offmap = state.skipped_offmap + 1
+		return true
+	end
 	local has_known_hex = type(known_q) == "number" and type(known_r) == "number"
 	local key = has_known_hex and (tostring(known_q) .. ":" .. tostring(known_r)) or nil
 	if key then

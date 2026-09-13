@@ -2619,6 +2619,12 @@ local function IsEligibleMapData(map_slot, mapdata, map_instance)
 		return false, "feature disabled"
 	end
 
+	-- 1.1.0 COMPAT FIX: defensive per-call backfill in case this mapdata wasn't part
+	-- of the bulk Global("MapData") pass (e.g. a dynamically-created entry).
+	if type(Engine.EnsureMapDataEnvironment) == "function" then
+		Engine.EnsureMapDataEnvironment(mapdata)
+	end
+
 	-- Underground expansion (config STRETCH_UNDERGROUND): the underground map generates in its
 	-- own slot with Environment=="Underground"; when the flag is on it is exempt from the
 	-- main-slot-only and surface-only gates, so it gets the same 8192 allocation + native-capped
@@ -5822,9 +5828,14 @@ local function CaptureDeferredWonderSourceFlattenTarget(map, marker, wonder_clas
 	if type(entity) ~= "string" or entity == "" then
 		return false, "building template entity unavailable"
 	end
-	local shape = Global("GetEnclosedShape")(entity)
+	-- 1.1.0 COMPAT FIX: GetEnclosedShape was removed from the engine entirely (confirmed
+	-- absent from the current reference source, not just renamed), so calling it directly
+	-- crashes with "attempt to call a nil value". Fall through to the pre-existing
+	-- outline+shrink fallback below, same as when it used to return an empty shape.
+	local get_enclosed_shape = Global("GetEnclosedShape")
+	local shape = type(get_enclosed_shape) == "function" and get_enclosed_shape(entity) or {}
 	if type(shape) ~= "table" then
-		return false, "vanilla enclosed shape unavailable"
+		shape = {}
 	end
 	if #shape == 0 then
 		shape = Global("ShrinkShape")(Global("GetEntityOutlineShape")(entity), 2)
@@ -6279,8 +6290,23 @@ local function BootstrapPassagesAndDeferWonders(env)
 		-- numbers).
 		local source_max_radius = math.max(source_world_w, source_world_h) / 2
 		if rawget(surface_map, "GetMapSize") ~= nil then
+			-- A leftover shadow here is not a concurrent nesting attempt, it is debris from a
+			-- PRIOR, ABANDONED call. The engine suspends and resumes random-map generation across
+			-- frames ("Lua Error during suspended pass edits, resuming: map 2, reason
+			-- RandomMapGenerate") and retries by starting a fresh call rather than resuming the
+			-- aborted one, so that dead call's restore_fallback_radius closure -- a plain local --
+			-- never ran and is gone, leaving the field installed on the shared map object.
+			--
+			-- Raising here killed the whole process rather than just the pass, and the cleanup it
+			-- did run could not help: restore_fallback_radius is still nil at this point on every
+			-- fresh call, so RestoreSurfaceBuildableBridge() was a no-op for this specific field.
+			-- Nothing outside this file ever writes surface_map.GetMapSize, so a leftover is always
+			-- ours and always safe to clear before installing a correct one.
 			RestoreSurfaceBuildableBridge()
-			error("surface map already shadows GetMapSize; refusing to nest the source extent view")
+			surface_map.GetMapSize = nil
+			LoadingStep("cleared stale surface passage fallback radius shadow (prior suspended pass never restored it)", {
+				source_width = source_world_w, source_height = source_world_h,
+			}, surface_map)
 		end
 		-- A counter, not just a flag: an installed-but-never-consulted shadow (calls == 0) means
 		-- the fallback radius came from somewhere else, which is a different defect from a wrong
@@ -6319,45 +6345,60 @@ local function BootstrapPassagesAndDeferWonders(env)
 	if cfg_bool("PAIRING_SOURCE_PASSABILITY_BRIDGE", true) then
 		local retention = surface_map.SuperBigMapRetainedNativeSourceMap
 		local source_map = type(retention) == "table" and retention.map or nil
-		if type(source_map) ~= "table" or type(source_map.GetRandomPassablePoint) ~= "function"
-			or type(source_map.GetPassablePointNearby) ~= "function" then
-			RestoreSurfaceBuildableBridge()
-			error("retained native source map for the passage passability bridge is unavailable")
+		local bridge_available = type(source_map) == "table"
+			and type(source_map.GetRandomPassablePoint) == "function"
+			and type(source_map.GetPassablePointNearby) == "function"
+		-- This whole function runs once per map (Surface, then Underground), but the retention
+		-- lives on the single shared surface map object and is released as soon as the SURFACE
+		-- pass closes its selection window ("in-place vanilla source requires no retained backing
+		-- release", reason="passage bootstrap selection window closed"). By the time the
+		-- Underground pass arrives the retention is legitimately gone -- consumed, not corrupt --
+		-- and raising here aborted underground first access entirely.
+		--
+		-- This bridge is an optional fallback-quality improvement (config
+		-- PAIRING_SOURCE_PASSABILITY_BRIDGE narrows a measured defect in marker-fallback
+		-- passability sampling). Skipping it is the same tolerance the config flag already grants,
+		-- so degrade gracefully rather than taking the pass down.
+		if not bridge_available then
+			LoadingStep("skipped source passability bridge (retained native source map unavailable for this pass -- expected on a second/Underground bootstrap after Surface already released it)", {
+			}, surface_map)
 		end
-		if rawget(surface_map, "GetRandomPassablePoint") ~= nil
-			or rawget(surface_map, "GetPassablePointNearby") ~= nil then
+		if bridge_available and (rawget(surface_map, "GetRandomPassablePoint") ~= nil
+			or rawget(surface_map, "GetPassablePointNearby") ~= nil) then
 			RestoreSurfaceBuildableBridge()
 			error("surface map already shadows the passable-point API; refusing to nest the source view")
 		end
-		surface_map.SuperBigMapPassagePassableBridgeCalls = 0
-		surface_map.SuperBigMapPassagePassableBridgeNearbyCalls = 0
-		local random_point_shadow, nearby_shadow
-		random_point_shadow = function(self, ...)
-			surface_map.SuperBigMapPassagePassableBridgeCalls =
-				(surface_map.SuperBigMapPassagePassableBridgeCalls or 0) + 1
-			return source_map:GetRandomPassablePoint(...)
-		end
-		-- GetRandomPassable (Lua/Pathfinding.lua:161) is the fallback's second half; it has never been
-		-- reached in a measured run, but leaving it on the expanded field would reintroduce exactly the
-		-- defect this bridge removes.
-		nearby_shadow = function(self, ...)
-			surface_map.SuperBigMapPassagePassableBridgeNearbyCalls =
-				(surface_map.SuperBigMapPassagePassableBridgeNearbyCalls or 0) + 1
-			return source_map:GetPassablePointNearby(...)
-		end
-		surface_map.GetRandomPassablePoint = random_point_shadow
-		surface_map.GetPassablePointNearby = nearby_shadow
-		restore_passability_bridge = function()
-			if rawget(surface_map, "GetRandomPassablePoint") == random_point_shadow then
-				surface_map.GetRandomPassablePoint = nil
+		if bridge_available then
+			surface_map.SuperBigMapPassagePassableBridgeCalls = 0
+			surface_map.SuperBigMapPassagePassableBridgeNearbyCalls = 0
+			local random_point_shadow, nearby_shadow
+			random_point_shadow = function(self, ...)
+				surface_map.SuperBigMapPassagePassableBridgeCalls =
+					(surface_map.SuperBigMapPassagePassableBridgeCalls or 0) + 1
+				return source_map:GetRandomPassablePoint(...)
 			end
-			if rawget(surface_map, "GetPassablePointNearby") == nearby_shadow then
-				surface_map.GetPassablePointNearby = nil
+			-- GetRandomPassable (Lua/Pathfinding.lua:161) is the fallback's second half; it has never been
+			-- reached in a measured run, but leaving it on the expanded field would reintroduce exactly the
+			-- defect this bridge removes.
+			nearby_shadow = function(self, ...)
+				surface_map.SuperBigMapPassagePassableBridgeNearbyCalls =
+					(surface_map.SuperBigMapPassagePassableBridgeNearbyCalls or 0) + 1
+				return source_map:GetPassablePointNearby(...)
 			end
+			surface_map.GetRandomPassablePoint = random_point_shadow
+			surface_map.GetPassablePointNearby = nearby_shadow
+			restore_passability_bridge = function()
+				if rawget(surface_map, "GetRandomPassablePoint") == random_point_shadow then
+					surface_map.GetRandomPassablePoint = nil
+				end
+				if rawget(surface_map, "GetPassablePointNearby") == nearby_shadow then
+					surface_map.GetPassablePointNearby = nil
+				end
+			end
+			LoadingStep("native surface passage passability bridged to the retained source map", {
+				source_slot = tostring(retention.slot),
+			}, surface_map)
 		end
-		LoadingStep("native surface passage passability bridged to the retained source map", {
-			source_slot = tostring(retention.slot),
-		}, surface_map)
 	end
 	end
 	local successful = {}
@@ -6534,7 +6575,13 @@ function WonderVerticalDiagnostics.ReserveDeferredUndergroundWonderFootprints(ma
 	local world_to_hex = Global("WorldToHex")
 	local rotate = Global("HexRotate")
 	local angle_to_direction = Global("HexAngleToDirection")
-	if type(templates) ~= "table" or type(get_enclosed) ~= "function"
+	-- get_enclosed (GetEnclosedShape) is deliberately NOT required: that engine function no
+	-- longer exists at all on 1.1.0, so requiring it made this fail 100% of the time and
+	-- permanently blocked underground first access ("The underground could not be prepared
+	-- safely" -> "underground wonder footprint helpers are unavailable"). The use site below
+	-- already treats it as optional; this guard simply never got updated to match.
+	-- GetEntityOutlineShape alone is sufficient, and is still required here.
+	if type(templates) ~= "table"
 		or type(get_outline) ~= "function" or type(point_fn) ~= "function"
 		or type(world_to_hex) ~= "function" or type(rotate) ~= "function"
 		or type(angle_to_direction) ~= "function"
@@ -6565,7 +6612,22 @@ function WonderVerticalDiagnostics.ReserveDeferredUndergroundWonderFootprints(ma
 			end
 			local ok_direction, direction = pcall(angle_to_direction, marker)
 			if not ok_direction or type(direction) ~= "number" then direction = 0 end
-			local shapes = { get_enclosed(entity), get_outline(entity) }
+			-- 1.1.0 COMPAT FIX: GetEnclosedShape no longer exists in the engine at all, so
+			-- get_enclosed is nil here. The previous table literal
+			--     { <nil>, get_outline(entity) }
+			-- put that nil in slot 1, and ipairs() stops at the FIRST nil -- so slot 2, the only
+			-- real shape data we have on 1.1.0, was never read. Every buried wonder's footprint
+			-- silently resolved to zero hexes and the caller then failed with "no footprint hexes
+			-- resolved for <class>", blocking underground first access. (It presented as one
+			-- specific wonder only because that is whichever class the map happens to process
+			-- first.) Append instead of using fixed indices so the list can never contain a hole.
+			local shapes = {}
+			if type(get_enclosed) == "function" then
+				local enclosed_shape = get_enclosed(entity)
+				if enclosed_shape then shapes[#shapes + 1] = enclosed_shape end
+			end
+			local outline_shape = get_outline(entity)
+			if outline_shape then shapes[#shapes + 1] = outline_shape end
 			local instance_hexes = 0
 			for _, source_shape in ipairs(shapes) do
 				if type(source_shape) == "table" and #source_shape > 0 then
@@ -7135,7 +7197,9 @@ function WonderVerticalDiagnostics.FlattenDeferredWonder(
 	local flatten = Global("FlattenTerrainInShape")
 	local unbuildable = Global("buildUnbuildableZ")()
 	local map = wonder:GetMap()
-	local shape = get_enclosed(wonder:GetEntity())
+	-- 1.1.0 COMPAT FIX: GetEnclosedShape no longer exists in the engine at all.
+	local shape = type(get_enclosed) == "function" and get_enclosed(wonder:GetEntity()) or {}
+	if type(shape) ~= "table" then shape = {} end
 	if #shape == 0 then shape = shrink(get_outline(wonder:GetEntity()), 2) end
 	if type(ratios) == "table" then
 		shape = ScaleHexShapeForExpansion(shape, ratios.scale_x, ratios.scale_y)
@@ -7380,8 +7444,10 @@ function WonderVerticalDiagnostics.ReseatAll(map, reason)
 			wonder.SuperBigMapWonderExpectedY = target_y
 			wonder.SuperBigMapWonderXYTransformMode = "exact_world_affine"
 			local entity = type(wonder.GetEntity) == "function" and wonder:GetEntity() or nil
-			local shape = type(entity) == "string" and get_enclosed(entity) or nil
-			if type(shape) == "table" and #shape == 0 then
+			-- 1.1.0 COMPAT FIX: GetEnclosedShape no longer exists in the engine at all.
+			local shape = type(entity) == "string" and type(get_enclosed) == "function"
+				and get_enclosed(entity) or nil
+			if type(shape) ~= "table" or #shape == 0 then
 				shape = shrink(get_outline(entity), 2)
 			end
 			if type(shape) ~= "table" or #shape == 0 then
@@ -14576,6 +14642,13 @@ function SuperBigMap.FinalizeDeferredBreakthroughAnomalyInitialization(map, reas
 end
 
 local function PatchRandomMapGenerator()
+	-- 1.1.0 COMPAT FIX: backfill mapdata.Environment (removed by Haemimont in 1.1.0; see
+	-- Engine.BackfillAllMapDataEnvironments). IsEligibleMapData below reads it raw, and
+	-- without this every map is silently classified "not a surface map" -- the whole
+	-- expansion pipeline installs and reports success while never actually engaging.
+	if type(Engine.BackfillAllMapDataEnvironments) == "function" then
+		Engine.BackfillAllMapDataEnvironments()
+	end
 	-- This class hook is independent from the generator wrapper identity. Re-verify it before the
 	-- version guard because ClassesBuilt can replace class methods without replacing the generator.
 	SuperBigMap.PatchDeferredBreakthroughAnomalyInitialization()
@@ -18653,8 +18726,12 @@ function SuperBigMap.GenerationReadiness.RevokeDeferredUndergroundFalseCompletio
 			or surface_anchor.SuperBigMapCommittedPassageLocked ~= true then
 			return false, "passage pair " .. tostring(index) .. " is not reciprocal and locked"
 		end
-		local ux, uy = PointXY(ObjectPosition(underground_anchor))
-		local sx, sy = PointXY(ObjectPosition(surface_anchor))
+		-- ObjectPosition is a file-local alias in sbm_terrain_copy.lua / sbm_object_clone.lua
+		-- and was never defined here, so these two calls raised "attempt to call a nil value
+		-- (global 'ObjectPosition')" on every underground first access and this entire
+		-- verification silently did nothing. The rest of this file uses Engine.ObjectPos.
+		local ux, uy = PointXY(Engine.ObjectPos(underground_anchor))
+		local sx, sy = PointXY(Engine.ObjectPos(surface_anchor))
 		local source_x = tonumber(underground_anchor.SuperBigMapCommittedPassageSourceX)
 		local source_y = tonumber(underground_anchor.SuperBigMapCommittedPassageSourceY)
 		local final_x = tonumber(underground_anchor.SuperBigMapCommittedPassageX)

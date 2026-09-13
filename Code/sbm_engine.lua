@@ -45,6 +45,45 @@ function Engine.TryCall(fn, ...)
 	return pcall(fn, ...)
 end
 
+-- 1.1.0 COMPAT: Haemimont removed the static mapdata.Environment field in favor of a
+-- GameStates table read through mapdata:GetEnvironment() (their own MapData.lua even
+-- comments "mod mapdata still ships the removed Environment property"). Every raw
+-- mapdata.Environment read in this mod silently returns nil on 1.1.0+ as a result --
+-- notably IsEligibleMapData's "not a surface map" check, which gates the entire
+-- expansion pipeline. Rather than rewrite every .Environment read, backfill the real
+-- field once it's resolvable, so existing reads keep working unchanged.
+function Engine.EnsureMapDataEnvironment(mapdata)
+	if type(mapdata) ~= "table" then
+		return mapdata
+	end
+	if mapdata.Environment == nil and type(mapdata.GetEnvironment) == "function" then
+		local ok, env = pcall(mapdata.GetEnvironment, mapdata)
+		if ok and type(env) == "string" and env ~= "" then
+			mapdata.Environment = env
+		end
+	end
+	return mapdata
+end
+
+-- Backfill every known MapData preset in one pass. Idempotent and cheap; safe to
+-- call repeatedly (mod enable, ClassesBuilt re-verification, etc.).
+function Engine.BackfillAllMapDataEnvironments()
+	local map_data_table = Engine.Global("MapData")
+	if type(map_data_table) ~= "table" then
+		return 0
+	end
+	local count = 0
+	for _, mapdata in pairs(map_data_table) do
+		if type(mapdata) == "table" then
+			Engine.EnsureMapDataEnvironment(mapdata)
+			if mapdata.Environment ~= nil then
+				count = count + 1
+			end
+		end
+	end
+	return count
+end
+
 -- Lua 5.3/5.4 table.unpack with a fallback to the global unpack.
 function Engine.Unpack(t, first, last)
 	local unpack_fn = table.unpack or rawget(_G, "unpack")
