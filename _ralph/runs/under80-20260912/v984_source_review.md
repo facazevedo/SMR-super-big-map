@@ -57,3 +57,15 @@ sites after a positive reference median. Require the targeted61N sample also to
 improve versus v983 before acceptance. No excluded or rescue samples. Report all
 site timings, including any regressions, without inferring uniform speedup.
 The effective under85-second goal is still unmet and cannot be claimed here.
+
+Cold acceptance FAILED: immutable67feaec, session55510 normally closed all four
+owned processes31492/40472/14616/control41232. Reference89.815/90.014/90.289,
+median90.014 vs86.718; control31.753 vs28.844. Exact predecessor/repeat/private/
+rock comparisons and automated reference gates PASS; audit issues empty. No
+five-site promotion, excluded sample or rescue repeat. Restore production and
+test inventory to acceptedv983; candidate source/oracles are recoverable67feaec.
+
+The similarly slower native control suggests a common timing shift, but does
+not establish its cause or justify normalizing/overriding acceptance. Declare a
+new unchanged-v983 baseline confirmation batch AFTER restoration; keep its data
+separate and never substitute it into the rejectedv984 comparison.

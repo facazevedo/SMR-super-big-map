@@ -628,3 +628,21 @@ inherited terrain/rock/RNG/readiness suite and new decor oracles/proof. Full sou
 parse and hygiene PASS. Freeze this checkpoint for reference3/control; test payload
 will be candidate984, not an accepted replacement until all performance/output
 gates pass. No owned game is live. Candidate DecorTopUp matches native variant2.
+
+## v984 rejected; v983 restored; baseline confirmation next
+
+Cold55510 CLOSED exit0, immutable67feaec/runtime984, owned PIDs31492/40472/14616/
+control41232, all normally quit with flushed logs. Reference89.815/90.014/90.289,
+median90.014 vs86.718; control31.753 vs28.844. Exact predecessor/repeat/private/
+individual-rock parity and reference automated gates PASS; audit issues empty.
+Performance gate fails. No five-site promotion, excluded sample or rescue repeat.
+Restore all production byte-for-byte to f4d1da6/v983/sector76/generator298. Remove
+only the three candidate production parity files; recoverable in67feaec. Research
+fixtures, native evidence and failed cold batch remain preserved.
+
+The control increased2.909s as reference median increased3.296s; the cause is NOT
+established. Reference-a decor itself394ms versus prior390ms, so do not attribute
+the whole timing difference to decor helper execution. Next run one declared
+fresh reference3/control batch on restored, unchanged acceptedv983 to revalidate
+CURRENT baseline timings. This is separate confirmation evidence, not a rescue
+or a replacement for any rejectedv984 sample. Keep the candidate rejected.

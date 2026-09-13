@@ -1,0 +1,299 @@
+					Render 0:00:00:212
+*** executable info
+Timestamp:     	69e75da5
+Date:          	Tue Apr 21 07:21:09 2026
+Command line:  	-nointro -no_interactive_asserts -stdout -crash_folder D:\PROJS\SMR\smr-harness\.state\game-crashes\20260913-000302-18d4b8793e5405a8 -hidden
+Compiler:      	194435214, 142 (VS 2019) or newer
+
+
+*** hardware info
+CPU name      	Intel(R) Core(TM) i9-10900X CPU @ 3.70GHz
+CPU MHz       	3696
+CPU cores     	10/20
+Phys. Memory   	130752 MBytes
+Memory In Use  	27%
+Disk Free      	93263 MBytes
+
+
+*** OS info
+OS:            	Windows 11
+Version:       	10.0.26100 
+
+
+*** Debug::Init()
+
+
+					Render 0:00:00:610
+Steam initialized (AppId 3215050, Beta branch ???)
+SteamFilterText is unavailable for user's language and will act as a passthrough.
+					Render 0:00:00:614
+Drive type for game installation: SSD, savegames: SSD
+Language: English
+					Render 0:00:01:430
+Starting hidden
+					Render 0:00:03:526
+*** graphics info
+GPU                            	NVIDIA GeForce RTX 5090 Feature Level: 12.1 {  DoublePrecisionFloatShaderOps: 1 OutputMergerLogicOp: 1 MinPrecisionSupport: 2 TiledResourcesTier: 3 ResourceBindingTier: 3 PSSpecifiedStencilRefSupported: 0 TypedUAVLoadAdditionalFormats: 1 ROVsSupported: 1 ConservativeRasterizationTier: 3 MaxGPUVirtualAddressBitsPerResource: 40 StandardSwizzle64KBSupported: 0 CrossNodeSharingTier: 0 CrossAdapterRowMajorTextureSupported: 0 VPAndRTArrayIndexFromAnyShaderFeedingRasterizerSupportedWithoutGSEmulation: 1 ResourceHeapTier: 2 NotZeroedPools: 1 UMA: 0 UnalignedBlockTextures: 1}
+API                            	d3d12
+GPU Driver Version             	32.0.15.7688
+GPU Driver Package Version     	576.88
+GPU Dedicated Video Memory     	32101 MB
+					Render 0:00:03:761
+
+Libs: Network, Sequences, MouseTrackWin, DumbAI, MapGen, Paradox, TriggersAndEvents, Notifications, Research, Resources, DevToolsPublic, DebugAdapter 
+
+					Render 0:00:04:162
+
+Platform: asserts, cheats, debug, desktop, editor, goldmaster, paradox, pc, steam
+
+						Game Task 0:00:04:170
+
+** Entity stats:
+  entities: 2920
+  unique state names: 335 / 1023
+  unique spot names: 370
+  unique spot transforms: 19621
+  max surface radius: 47680 cm
+
+					Render 0:00:05:508
+*** audio info
+Audio Endpoint                 	Speakers (Realtek(R) Audio)
+							Lua 0:00:05:586
+Lua revision: 392284
+Assets revision: 30889
+Steam AppID: 3215050
+Build version: 1.0.7.392284
+Build branch:  Release
+							Lua 0:00:05:589
+[DebugAdapter] Started at 127.0.0.1:8165
+							Lua 0:00:05:598
+Account storage loaded successfully in 7 ms
+DLC thomas loaded, lua revision 392284, assets revision 30889
+							Lua 0:00:05:609
+[mod] Loaded mod def No Wonders (id no-wonders, v0.00-001) unpacked from appdata
+[mod] Loaded mod def Animalia - Restored Wildlife (id Animalia, v0.00-018) unpacked from appdata
+[mod] Loaded mod def Martian Waters Snow (id MartianWatersSnow, v0.00-407) unpacked from appdata
+[mod] Loaded mod def Project Ark (id ProjectArk, v0.00-004) unpacked from appdata
+[mod] Loaded mod def Auto Clear Rubble (id AutoClearRubble, v1.00-023) unpacked from appdata
+[mod] Loaded mod def Super Big Map (id SuperBigMap, v0.00-984) unpacked from appdata
+[mod] Loaded mod def Buried Cables and Pipes (id bcp, v0.00-433) unpacked from appdata
+[mod] Loaded mod def Whale - Aquatic Life for Mars Seas (id Whale, v0.00-10033) unpacked from appdata
+[mod] Loaded mod def Bridges Blender (id bridges-blender, v0.00-008) unpacked from appdata
+[mod] Loaded mod def Filter Landing Spots (id FilterLandingSpots, v0.00-018) packed from pops
+[mod] Loaded mod def Toggle Console Log Off (id TCLoff7, v1.00-005) unpacked from appdata
+[mod] Loaded mod def Humpback Whale - Aquatic Life for Mars Seas (id HumpbackWhale, v0.00-10009) unpacked from appdata
+[mod] Loaded mod def invisible-passage-ramp (id IPRAMP, v0.00-068) unpacked from appdata
+[mod] Loaded mod def Attribute Inspector (id AttributeInspector, v0.00-014) unpacked from appdata
+[mod] Loaded mod def Copy Move (id CopyMove, v0.00-001) unpacked from appdata
+[mod] Loaded mod def My Wild Pet (id MyWildPet, v0.00-005) unpacked from appdata
+[mod] Loaded mod def Scenario Editor (id SRM-scenario-editor, v0.00-045) unpacked from appdata
+[mod] Loaded mod def Mute Notifications (id MuteNotifications, v0.00-060) unpacked from appdata
+[mod] Loaded mod def Real Mars Terrain (id RealMarsTerrain, v0.00-007) unpacked from appdata
+[mod] Loaded mod def DLSS 5 Neural Rendering - Experimental (id vzlLtM, v0.00-002) unpacked from appdata
+[mod] Loaded mod def Scenario Editor Terrains (id SRM-scenario-editor-terrains, v0.00-001) unpacked from appdata
+[mod] Loaded mod def Bridges (id Bridges, v0.00-099) unpacked from appdata
+[mod] Loaded mod def Planet Dawn (id PlanetDawn, v1.00-193) unpacked from appdata
+[mod] Loaded mod def Colony Control (id ColonyControl, v0.00-014) unpacked from appdata
+[mod] Loaded mod def Extra Maps (id ExtraMaps, v0.00-011) unpacked from appdata
+[mod] Loaded mod def insert-objects (id insert-objects, v0.00-005) unpacked from appdata
+[mod] Loaded mod def Rover Drive Mode (id RoverDriveMode, v0.00-195) unpacked from appdata
+[mod] Loaded mod def Disable All Mods (id DisableAllMods, v0.00-012) unpacked from appdata
+							Lua 0:00:07:506
+Reloading done in 1881 ms
+							Lua 0:00:07:507
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:62107
+							Lua 0:00:07:508
+Available DLCs: thomas(Interplanetary Codex) 
+							Lua 0:00:08:390
+[preset] Preset postprocess took 155 ms.
+							Lua 0:00:08:497
+479 / 479 particle streams loaded in 97 ms.
+							Lua 0:00:08:634
+[PdxSDK] Started up. Took 3009
+							Lua 0:00:09:476
+Received achievements from Steam.
+							Lua 0:00:09:752
+[mod] Loaded mod items for: TCLoff7, SuperBigMap
+							Lua 0:00:10:367
+[Braze] Initialized. SE: true, SB false
+							Lua 0:00:10:492
+[Braze] ContentCards 2/2. FullSync true. Headers nil. Retry 0
+							Lua 0:00:10:552
+[PdxSDKMods] Mod 147865 v 6 is up to date. Nothing to download.							Lua 0:00:10:553
+
+							Lua 0:00:10:758
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:62122
+							Lua 0:00:10:939
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:62124
+							Lua 0:00:10:976
+Game Seed:  ralph_seed_parity_14n134w 7803657426806324293 
+							Lua 0:00:11:018
+*** Reloading assets from folder 'BinAssets/'
+							Lua 0:00:13:937
+*** Assets reloaded in 2.9 s, read 207.0 MB, read speed 70.9 MB/s, average read 5057 bytes.
+							Lua 0:00:13:938
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:62126
+[DebugAdapter] Connection lost to 127.0.0.1:62124 
+[DebugAdapter] Connection lost to 127.0.0.1:62122 
+[DebugAdapter] Connection lost to 127.0.0.1:62107 
+							Lua 0:00:16:838
+Map::Init: 0.34000 ms
+							Lua 0:00:16:839
+Map::Load: 69.78000 ms
+CreateMap: 69.91000 ms
+							Lua 0:00:16:862
+MapLoadRandom:  -6547363612841328389 
+							Lua 0:00:20:136
+Map (slot 1) changed to "PreGame" in 9151 ms.
+							Lua 0:00:20:333
+[DebugAdapter] Connection lost to 127.0.0.1:62126 
+							Lua 0:00:21:219
+Map::Done: 0.43000 ms
+							Lua 0:00:21:342
+Map::Init: 0.13000 ms
+Map::Load: 112.23000 ms
+CreateMap: 112.29000 ms
+							Lua 0:00:21:786
+Buildable grid ready: 8/596 valid zones.
+							Lua 0:00:21:801
+game_settings:
+    sponsor: IMM
+    profile: rocketscientist
+    founding_faction: MarsDemocraticParty
+    rival_colonies: Roscosmos, Japan, NASA
+    mystery_random: 
+    game_rules: RoughTerrain
+more_game_settings: save_game_id: FFmS3mvHHw7MJh_8, mystery: BlackCubeMystery, coordinates: 14N134W, landing_spot: , logo: IMM
+map_conditions: altitude: 6457, temperature: -15, cold_wave: 36, dust_devils: 127, dust_storm: 219, meteors: 36
+map_resources: concrete: 109, metals: 109, precious_metals: 109, water: 102
+							Lua 0:00:21:846
+MapLoadRandom:  -5538293783684720034 
+							Lua 0:00:24:238
+Map (slot 1) changed to "BlankBigTerraceCMix_02" in 4065 ms.
+							Lua 0:00:28:562
+Buildable grid ready: 39/838 valid zones.
+							Lua 0:00:30:606
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:59474
+							Lua 0:00:31:635
+Map::Init: 0.15000 ms
+Map::Load: 81.17000 ms
+CreateMap: 81.23000 ms
+							Lua 0:00:31:803
+Buildable grid ready: 1/5 valid zones.
+							Lua 0:00:31:815
+MapLoadRandom:  1530420972503388060 
+							Lua 0:00:33:540
+Map (slot 2) changed to "BlankUnderground_04" in 2936 ms.
+							Lua 0:00:39:242
+[DebugAdapter] Connection lost to 127.0.0.1:59474 
+							Lua 0:00:40:685
+Buildable grid ready: 1/7 valid zones.
+							Lua 0:00:46:767
+starting sector selected: D7
+							Lua 0:00:49:387
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:59488
+							Lua 0:00:50:230
+[DebugAdapter] Connection lost to 127.0.0.1:59488 
+							Lua 0:00:51:965
+[RULES] surface half complete; starting first access
+							Lua 0:00:51:966
+[RULES] scan test: no TerrainDeposit in an unexplored sector to scan sector=nil status nil->nil deposit vis nil->nil gate nil->nil
+							Lua 0:00:52:124
+Missing spot 'Top' in 'MapSharedDepot' state 'idle'
+							Lua 0:00:52:129
+
+!!! Quick Build !!!
+							Lua 0:00:59:574
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:59497
+							Lua 0:01:00:230
+[DebugAdapter] Connection lost to 127.0.0.1:59497 
+							Lua 0:01:03:627
+[RULES] t0t1=31753 hex=615x710 enrich=60011931/403 decor=5381/0 ring_decor=0 sectors=100 revealed=1 passages=2 signs=2 deps=1 vis_unexp=0 glued=0/2 max_ring=342
+[RULES] seeds: surface=-8909488827485014858 pin_ug=5083534300309579687(pinned) pin_game=ralph_seed_parity_14n134w kept=ralph_seed_parity_14n134w game_seed=7803657426806324293 matches=true
+[RULES] mode: expand_map=false lifecycle=vanilla_session active=false settle=5000ms ratio=1.0 (control: EXPAND MAP off, no stretch)
+[RULES] passages: surf UndergroundPassage hex=237,310 world=392000,268460 sector=C4(8,5) ring_band=false ring_distance=198 stamped_distance=-1 vanilla_surface_src=nil,nil underground_src=nil,nil stamped_image=nil,nil committed=nil,nil twin=[SurfacePassage hex=39,402 world=240000,348132 image_hex=39,402] | surf UndergroundPassage hex=-52,389 world=142500,336874 sector=J5(1,6) ring_band=false ring_distance=342 stamped_distance=-1 vanilla_surface_src=nil,nil underground_src=nil,nil stamped_image=nil,nil committed=nil,nil twin=[SurfacePassage hex=290,281 world=430500,243346 image_hex=290,281]
+[RULES] surface decor: target=nil placed=nil (auth=nil synth=nil) sites=nil used=nil unused=nil templates=nil attempts=nil ms=nil radius=6500/9029/16238 nn=2118/10265
+[RULES] surface decor detail: 
+[RULES] underground passages: SurfacePassage hex=290,281 world=430500,243346 image_hex=290,281 committed_src=nil,nil true_image=nil,nil linked=true | SurfacePassage hex=39,402 world=240000,348132 image_hex=39,402 committed_src=nil,nil true_image=nil,nil linked=true
+[RULES] signs: SurfaceUndergroundTunnelSign hex=241,310 vis=true scale=550 sector=C4/unexplored | SurfaceUndergroundTunnelSign hex=-56,393 vis=true scale=550 sector=J5/unexplored
+[RULES] revealed: D7(7,8):scanned start=unavailable
+[RULES] first access: ok=true error=none method=ConstructionController:Place snapped to the surface passage displays=2 hex 615x710 -> 615x710
+							Lua 0:01:03:628
+[RULES] first access route: route=probe_global mod_gate=false cascade_cities=1 cascade_disabled=true pre=prep=false done=nil running=nil pending=nil desired=nil gen=nil
+[RULES] gate env: vanilla_env=false probe_g=false mod_env=false ccms=no-env is_wrapper=false is_original=false caller_wrapper=false
+[RULES] first access displays: cover_boxes=0 begins=0 ends=0 refs_final=0 in_window=2 (idChangeCurrentMapSlot/2 idSaveProfile/SaveAccountStorage3) outside=0 ()
+[RULES] first access cover events: 
+[RULES] first access screens: idChangeCurrentMapSlot/2 @228ms window=in prep=false done=nil running=nil pending=nil desired=nil gen=nil  <- stack traceback: <- ...R/super-big-map/_ralph/tmp/.tmp_rules_probe_instance.lua:1050: in upvalue 'short_stack' <- ...R/super-big-map/_ralph/tmp/.tmp_rules_probe_instance.lua:1086: in function 'LoadingScreenOpen' <- CommonLua/Core/map.lua:394: in function 'ChangeCurrentMapSlot' <- [C]: in function 'pcall' <- ...R/super-big-map/_ralph/tmp/.tmp_rules_probe_instance.lua:1344: in function <...R/sup || idSaveProfile/SaveAccountStorage3 @942ms window=in prep=false done=nil running=nil pending=nil desired=nil gen=nil  <- stack traceback: <- ...R/super-big-map/_ralph/tmp/.tmp_rules_probe_instance.lua:1050: in upvalue 'short_stack' <- ...R/super-big-map/_ralph/tmp/.tmp_rules_probe_instance.lua:1086: in function 'LoadingScreenOpen' <- CommonLua/AccountStorage.lua:140: in function <CommonLua/AccountStorage.lua:130>
+[RULES] underground after access: passages: SurfacePassage hex=290,281 world=430500,243346 authored_image_ring=0 twin=-52,389 glue_ring=342 linked=true ring_band=false sector=B3(9,4) | SurfacePassage hex=39,402 world=240000,348132 authored_image_ring=0 twin=237,310 glue_ring=198 linked=true ring_band=false sector=G5(4,6)
+[RULES] underground wonder reachability (0 calls): absent
+[RULES] underground enrichment reachability audit (hook=installed, 0 calls): none
+[RULES] underground decor: enabled=true src=module_lastfields reason=nil target=nil placed=nil (auth=nil synth=nil) objects=nil ring=nil/0 dropped=nil/nil sites=0 used=0 gen=true passes=0 ratio=25 seed=nil(nil) area=nil cosmetic=268 ring_cosmetic=1
+[RULES] underground decor classes: 
+[RULES] underground band cosmetics: Rocks_04@247,706:native_scale=nil:scale=118
+[RULES] underground after access: enrich=858203460/159 imprints=2 (hex=290,281 vis=true scale=100 | hex=39,402 vis=true scale=100) revealed=0/100
+[RULES] underground passage carriers: 2 (hex=290,281 entity=ElevatorBuildIndicator_Underground vis=true opacity=100 elevator=false decals=1{vis=true scale=100 opacity=100} | hex=39,402 entity=ElevatorBuildIndicator_UndergroundImprint vis=false opacity=100 elevator=true decals=1{vis=true scale=100 opacity=100})
+							Lua 0:01:09:756
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:59507
+							Lua 0:01:09:955
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:59509
+							Lua 0:01:10:159
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:59511
+							Lua 0:01:10:230
+[DebugAdapter] Connection lost to 127.0.0.1:59511 
+[DebugAdapter] Connection lost to 127.0.0.1:59509 
+[DebugAdapter] Connection lost to 127.0.0.1:59507 
+							Lua 0:01:10:539
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:59515
+							Lua 0:01:10:722
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:59517
+							Lua 0:01:14:476
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:59519
+[DebugAdapter] Connection lost to 127.0.0.1:59517 
+[DebugAdapter] Connection lost to 127.0.0.1:59515 
+							Lua 0:01:14:673
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:59522
+							Lua 0:01:14:849
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:59525
+							Lua 0:01:15:082
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:59528
+							Lua 0:01:15:231
+[DebugAdapter] Connection lost to 127.0.0.1:59528 
+[DebugAdapter] Connection lost to 127.0.0.1:59525 
+							Lua 0:01:15:232
+[DebugAdapter] Connection lost to 127.0.0.1:59522 
+[DebugAdapter] Connection lost to 127.0.0.1:59519 
+							Lua 0:01:15:583
+
+
+Stopping the game threads from the Lua side with exit code 0.
+
+					Render 0:01:15:590
+
+
+Stopping the game threads after receiving WM_QUIT.
+
+[QUIT] Waiting the game state to finish...
+							Lua 0:01:15:860
+[QUIT] Game state finished.
+[QUIT] Stopping game state thread...
+					Render 0:01:15:866
+Map::Done: 3.73000 ms
+					Render 0:01:15:872
+Map::Done: 2.45000 ms
+					Render 0:01:15:875
+[Sound] Stopping...
+					Render 0:01:15:881
+[Sound] Done.
+					Render 0:01:15:882
+Hook 'Shader :: CompileEffect' not found!
+					Render 0:01:15:958
+DestroyVideos: 1 videos not cleaned up
+					Render 0:01:16:086
+[DebugAdapter] Stopped
+					Render 0:01:16:244
+
+
+*** Debug::Done()
+Time (ms)	76244
+
+
