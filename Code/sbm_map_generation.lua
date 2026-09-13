@@ -6575,7 +6575,13 @@ function WonderVerticalDiagnostics.ReserveDeferredUndergroundWonderFootprints(ma
 	local world_to_hex = Global("WorldToHex")
 	local rotate = Global("HexRotate")
 	local angle_to_direction = Global("HexAngleToDirection")
-	if type(templates) ~= "table" or type(get_enclosed) ~= "function"
+	-- get_enclosed (GetEnclosedShape) is deliberately NOT required: that engine function no
+	-- longer exists at all on 1.1.0, so requiring it made this fail 100% of the time and
+	-- permanently blocked underground first access ("The underground could not be prepared
+	-- safely" -> "underground wonder footprint helpers are unavailable"). The use site below
+	-- already treats it as optional; this guard simply never got updated to match.
+	-- GetEntityOutlineShape alone is sufficient, and is still required here.
+	if type(templates) ~= "table"
 		or type(get_outline) ~= "function" or type(point_fn) ~= "function"
 		or type(world_to_hex) ~= "function" or type(rotate) ~= "function"
 		or type(angle_to_direction) ~= "function"
@@ -6606,8 +6612,22 @@ function WonderVerticalDiagnostics.ReserveDeferredUndergroundWonderFootprints(ma
 			end
 			local ok_direction, direction = pcall(angle_to_direction, marker)
 			if not ok_direction or type(direction) ~= "number" then direction = 0 end
-			-- 1.1.0 COMPAT FIX: GetEnclosedShape no longer exists in the engine at all.
-			local shapes = { type(get_enclosed) == "function" and get_enclosed(entity) or nil, get_outline(entity) }
+			-- 1.1.0 COMPAT FIX: GetEnclosedShape no longer exists in the engine at all, so
+			-- get_enclosed is nil here. The previous table literal
+			--     { <nil>, get_outline(entity) }
+			-- put that nil in slot 1, and ipairs() stops at the FIRST nil -- so slot 2, the only
+			-- real shape data we have on 1.1.0, was never read. Every buried wonder's footprint
+			-- silently resolved to zero hexes and the caller then failed with "no footprint hexes
+			-- resolved for <class>", blocking underground first access. (It presented as one
+			-- specific wonder only because that is whichever class the map happens to process
+			-- first.) Append instead of using fixed indices so the list can never contain a hole.
+			local shapes = {}
+			if type(get_enclosed) == "function" then
+				local enclosed_shape = get_enclosed(entity)
+				if enclosed_shape then shapes[#shapes + 1] = enclosed_shape end
+			end
+			local outline_shape = get_outline(entity)
+			if outline_shape then shapes[#shapes + 1] = outline_shape end
 			local instance_hexes = 0
 			for _, source_shape in ipairs(shapes) do
 				if type(source_shape) == "table" and #source_shape > 0 then
