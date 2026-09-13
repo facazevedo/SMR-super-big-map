@@ -929,3 +929,21 @@ cost before considering production. Current Code/deployment stays byte-identical
 f4d1da6/v983,38/38 auditPASS. Debug probes remain archived in d5a1e3e, inactive.
 Fresh comparison paths: v983_confirmation_reference and v983_matrix_confirmation.
 Under85 across reference plus five remains unmet; no new optimization promoted.
+
+## Private native mask: exact captured outputs, unsafe engine failure path
+
+The conservative private prototype matches all 948237 captured scalar U12 cells
+with 128803 scalar corrections and 996 ms kernel-only native time. Conditional
+rational arithmetic bounds and 6365 offline Lua checks pass. These are NOT a
+production certificate, full-map shadow, or cold-run improvement.
+
+Native fault session98581/PID41000 CLOSED normally, statusFAIL: multiplying the
+root by 1000 triggered a logged residual error, but did not reject the mask.
+Engine error() did not abort the pcall body as ordinary Lua tests assumed.
+The remaining three fault cases were not reached. Prototype explicitly marked
+unsafe and private. Next establish explicit native failure propagation/cleanup,
+then complete proof premises, fault coverage and both-order full-map shadows.
+
+Evidence: native_outer_mask_research.md and artifacts/native_outer_mask_bound_scratch
+and native_outer_mask_residual_faults. Production/deployment unchanged v983, 38/38
+auditPASS. Under85 across all six remains unmet; no production candidate promoted.

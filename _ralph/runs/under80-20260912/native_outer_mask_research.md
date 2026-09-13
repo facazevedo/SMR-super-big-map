@@ -118,3 +118,43 @@ propagation and U12 ambiguity correction before trusting any cells. Compare the
 native kernel against every captured scalar U12 cell and both-order full terrain
 shadows, then evaluate allocation/correction cost. No production change is justified
 by this numerical study alone.
+
+## Private native prototype and failure-path counterexample
+
+Research only; production remains accepted f4d1da6/v983. The prototype preserves
+integer coordinate fields and guard order, handles zero-width guards with exact
+integer squared-distance thresholds, and corrects ambiguous U12 cells using the
+literal production scalar formula. No full-map shadow or cold candidate was run.
+
+Preserved successive experiments (all owned engines shut down normally):
+
+| Artifact | Result | Corrections | Kernel-only time |
+| --- | --- | ---: | ---: |
+| native_outer_mask_scratch | Refused patch 3, unsupported hard guard | — | — |
+| native_outer_mask_scratch_2 | All 948237 cells exact; unproved fixed budget | 51444 | 416 ms |
+| native_outer_mask_checked_scratch | All cells exact; subsequently found allowance integer-division and residual-range defects | 108649 | 877 ms |
+| native_outer_mask_bound_scratch | All cells exact with corrected conservative allowance, N=2..4 | 128803 | 996 ms |
+| native_outer_mask_residual_faults | FAIL: corrupted root did not produce rejection | — | — |
+
+The corrected allowance is ceil((324 + sum_soft(82 + 6*r/T))/256.0).
+The explicit floating divisor matters in the engine. Amplified residuals are
+clamped before counting so a large error cannot escape the upper census bound.
+The exact-rational bound script passes conditional arithmetic propagation, but
+native primitive/source-double/underflow premises remain audit obligations.
+It is not a production certificate. The private offline Lua suite passes 6365
+checks, including all 26 allocation-failure positions and several arithmetic,
+callback and cleanup failures; it uses ordinary Lua error semantics.
+
+Crucial native counterexample: PID 41000 logged `[LUA ERROR] native outer root
+residual` after GridPow's root was multiplied by 1000, yet the prototype returned
+a mask instead of rejecting it. The engine error() used by require_value logs
+and returns in this context. Thus its pcall-based rejection assumption is invalid,
+even though the numerical residual detected the fault. The first case stopped
+the probe; the remaining three planned perturbations were NOT exercised.
+Preserve the failing logs. Do not describe the prototype as fail-closed or deploy it.
+
+Next gate: explicit, engine-verified failure propagation and cleanup that does
+not depend on global error()/assert() throwing, including callback failures.
+Then repeat every native fault case, audit arithmetic premises/domain boundaries,
+and run both-order complete-map shadows before considering production/cold timing.
+996 ms is an isolated kernel measurement, not demonstrated end-to-end savings.

@@ -1,0 +1,7 @@
+{
+  "ok": true,
+  "exit": 0,
+  "data": {
+    "result": "NATIVE_OUTER_MASK_SCRATCH_PASS {\n\tmetatable = table: 000002007FF24780 [1]\n}"
+  }
+}

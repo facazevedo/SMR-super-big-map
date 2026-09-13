@@ -1,0 +1,10 @@
+{
+  "error": "fault was not rejected: large root",
+  "calls": [
+    {
+      "name": "large root",
+      "rejected": false
+    }
+  ],
+  "status": "fail"
+}

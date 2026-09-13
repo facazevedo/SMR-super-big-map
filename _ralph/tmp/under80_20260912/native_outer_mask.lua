@@ -1,6 +1,9 @@
 -- PRIVATE RESEARCH ONLY. The epsilon below is NOT a proved certificate.
 -- Caller must independently compare EVERY returned U12 cell with the scalar oracle.
 -- Never deploy this function on the strength of a successful captured-data test.
+-- KNOWN UNSAFE FAILURE PATH: native_outer_mask_residual_faults demonstrated that
+-- the engine's error() logs and returns here; require_value does not abort work.
+-- Offline Lua failure tests do NOT establish engine failure containment.
 return function(api, row, scalar, epsilon_numerator)
     local math, type, ipairs = math, type, ipairs
     local w, h, step = row.width, row.height, row.sample_step
@@ -28,7 +31,7 @@ return function(api, row, scalar, epsilon_numerator)
         return dx*dx+dy*dy<=16777216
     end
     if not domain(p.cx,p.cy) then return nil,stats,'coordinate square domain' end
-    local allowance_units=321
+    local allowance_units=324
     for _,g in ipairs(row.guards) do
         if not domain(g.cx,g.cy) or not finite(g.radius) or g.radius<1
             or not finite(g.transition) or g.transition<0
@@ -37,7 +40,7 @@ return function(api, row, scalar, epsilon_numerator)
         end
         if g.transition>0 then allowance_units=allowance_units+82+6*g.radius/g.transition end
     end
-    local derived_numerator=math.ceil(allowance_units/256)
+    local derived_numerator=math.ceil(allowance_units/256.0)
     if derived_numerator>16 then return nil,stats,'research error budget exceeds supported range' end
     epsilon_numerator=epsilon_numerator or derived_numerator
     stats.experimental_epsilon_numerator=epsilon_numerator
@@ -75,7 +78,8 @@ return function(api, row, scalar, epsilon_numerator)
         finite_positive(grid)
         api.GridMulDivAdd(original,grid,1,-1);api.GridAbs(original)
         api.GridMulDivAdd(original,16777216,1,0)
-        require_value(api.GridCount(original,4,2147483647)==0,'native outer reciprocal residual')
+        api.GridClamp(original,0,16)
+        require_value(api.GridCount(original,4,32)==0,'native outer reciprocal residual')
         stats.reciprocal_checks=(stats.reciprocal_checks or 0)+1
     end
     local function field(axis,center)
@@ -112,7 +116,8 @@ return function(api, row, scalar, epsilon_numerator)
         api.GridAddMulDiv(residual,squared,-1);api.GridAbs(residual)
         api.GridAddMulDiv(residual,squared,-2,16777216)
         api.GridMulDivAdd(residual,1073741824,1,0)
-        require_value(api.GridCount(residual,1,2147483647)==0,'native outer root residual')
+        api.GridClamp(residual,0,16)
+        require_value(api.GridCount(residual,1,32)==0,'native outer root residual')
         stats.root_checks=(stats.root_checks or 0)+1
         return radius,x,y,square
     end

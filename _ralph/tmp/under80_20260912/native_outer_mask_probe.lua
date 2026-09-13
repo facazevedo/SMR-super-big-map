@@ -57,6 +57,9 @@ local ok,err=pcall(function()
         local grid,stats,problem=native(api,row,scalar)
         local elapsed=GetPreciseTicks()-before
         if not grid then fail('patch '..index..': '..tostring(problem));return end
+        if stats.derived_numerator<2 or stats.experimental_epsilon_numerator~=stats.derived_numerator then
+            grid:free();fail('native error allowance rounding/override');return
+        end
         local entry={patch=index,guards=#row.guards,kernel_ms=elapsed,stats=stats,checked=0}
         result.calls[#result.calls+1]=entry
         local bytes=read(data..string.format('patch_%03d_scalar.u16',index))
