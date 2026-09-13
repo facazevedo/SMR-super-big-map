@@ -1,0 +1,81 @@
+{
+  "calls": [
+    {
+      "height": 6144,
+      "width": 6144,
+      "cells": 37748736,
+      "new_ms": 229,
+      "cleanup_ok": true,
+      "difference_min": 0,
+      "grids_equal": true,
+      "difference_max": 0,
+      "returns_equal": true,
+      "wide_ring_only": true,
+      "old_ms": 274
+    },
+    {
+      "height": 8192,
+      "width": 8192,
+      "cells": 67108864,
+      "new_ms": 3275,
+      "cleanup_ok": true,
+      "difference_min": 0,
+      "grids_equal": true,
+      "difference_max": 0,
+      "returns_equal": true,
+      "wide_ring_only": false,
+      "old_ms": 4217
+    }
+  ],
+  "reverse": false,
+  "native_oracle": {
+    "checks": 2566,
+    "issues": [],
+    "primitive": [
+      {
+        "copy_readback": 4294901761,
+        "y": 0,
+        "x": 0,
+        "source_readback": 4294901761,
+        "biased_copy": 1
+      },
+      {
+        "copy_readback": 4294901762,
+        "y": 0,
+        "x": 1,
+        "source_readback": 4294901762,
+        "biased_copy": 2
+      },
+      {
+        "copy_readback": 4294901763,
+        "y": 0,
+        "x": 2,
+        "source_readback": 4294901763,
+        "biased_copy": 3
+      },
+      {
+        "copy_readback": 4294901762,
+        "y": 1,
+        "x": 0,
+        "source_readback": 4294901762,
+        "biased_copy": 2
+      },
+      {
+        "copy_readback": 4294901763,
+        "y": 1,
+        "x": 1,
+        "source_readback": 4294901763,
+        "biased_copy": 3
+      },
+      {
+        "copy_readback": 4294901764,
+        "y": 1,
+        "x": 2,
+        "source_readback": 4294901764,
+        "biased_copy": 4
+      }
+    ]
+  },
+  "restored": true,
+  "status": "pass"
+}

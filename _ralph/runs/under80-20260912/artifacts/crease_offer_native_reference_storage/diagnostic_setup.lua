@@ -2,7 +2,7 @@
 -- comparison. Candidate runs only on the same pending grids as the predecessor.
 local result={status='setup',calls={}}
 rawset(_G,'SBM_CREASE_OFFER_SHADOW',result)
-local reverse=true
+local reverse=false
 result.reverse=reverse
 local env,sbm
 for _,mod in ipairs(ModsLoaded or {})do

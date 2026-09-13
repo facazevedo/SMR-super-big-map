@@ -63,3 +63,29 @@ not define GridMask. It stopped with "normal build failed native crease API
 unavailable: GridMask" before allocation injection. The test now supplies the same
 explicit strict GridMask model used by the existing parity fixtures; no accepted
 test or shared double was weakened. Its failure result is not counted as a pass.
+
+## Signed storage and full native reference verified
+
+Session56002/PID17572 CLOSED normally at413956a. Native oracle2566 PASS. Source and
+copied negative get() readbacks both returned4294901761..4294901764; adding65536
+natively to the copy yielded the exact expected positive1..4. Thus signed storage
+and copy are correct; the initial six assertions misunderstood Lua get readback.
+The original failed setup remains failed and archived, not rewritten as a pass.
+
+Full old/new RepairInternalHeightStep comparison PASS: all37748736 source and
+67108864 destination U16 cells exact, complete returns equal, scratch freed and
+wrapper restored. Full predecessor/final/rock parity PASS. Source274ms/new229ms;
+destination4217ms/new3275ms (942ms diagnostic destination saving, not cold startup).
+
+Ownership regression150 PASS: normal old/new both49 allocations, every allocation
+position returns nil/false/throws, plus the new signed-copy throw; owned grids freed,
+input unchanged and failures visible. First missing-GridMask test setup remains
+documented above and is not counted among these passing cases.
+
+After native evidence, correct the SHARED OFFLINE f32-to-f32 copy model to preserve
+signed storage rather than use the unsigned setter. This is a test-model correction,
+not a harness/engine change or relaxed assertion. A dedicated six-value native-
+matched regression and all83 accepted-v987 commands must pass before integration.
+Other formats retain the old model. Public negative get() semantics are not modeled
+by this internal arithmetic double; oracles must use native bias for such checks.
+Next reverse full native order with unchanged candidate source.

@@ -35,7 +35,15 @@ function methods:copyrect(source,bounds,destination)
 	local sw,sh=source:size()
 	assert(bounds.x0>=0 and bounds.y0>=0 and bounds.x1<=sw and bounds.y1<=sh)
 	for y=bounds.y0,bounds.y1-1 do for x=bounds.x0,bounds.x1-1 do
-		self:set(destination.x+x-bounds.x0,destination.y+y-bounds.y0,source:get(x,y))
+		local dx,dy=destination.x+x-bounds.x0,destination.y+y-bounds.y0
+		if self.format=="f" and source.format=="f" then
+			-- Native f32 copyrect preserves signed storage; it does NOT go through
+			-- the unsigned Lua setter. Engine proof: crease_offer_native_reference_storage.
+			assert(dx>=0 and dx<self.w and dy>=0 and dy<self.h)
+			self.values[dy*self.w+dx]=source:get(x,y)
+		else
+			self:set(dx,dy,source:get(x,y))
+		end
 	end end
 end
 api.NewComputeGrid=make

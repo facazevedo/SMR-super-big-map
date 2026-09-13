@@ -11,22 +11,27 @@ return function(build,api)
   return true
  end
  -- Actual native copyrect must preserve signed f32, unlike the unsigned setter.
- local from,to=api.NewComputeGrid(3,2,'f',32),api.NewComputeGrid(3,2,'f',32)
- if not from or not to then return checks,{'primitive allocation failed'} end
- for y=0,1 do for x=0,2 do from:set(x,y,65535-x-y)end end
- api.GridMulDivAdd(from,-1,1,0)
- to:copyrect(from,api.box(0,0,3,2),api.point(0,0))
- -- Negative get() readback is not assumed signed. Preserve both raw readbacks,
- -- then validate stored negative values through a native bias into U16 range.
- for y=0,1 do for x=0,2 do
-  primitive[#primitive+1]={x=x,y=y,source_readback=from:get(x,y),copy_readback=to:get(x,y)}
- end end
- api.GridMulDivAdd(to,1,1,65536)
- for i,row in ipairs(primitive)do
-  row.biased_copy=to:get(row.x,row.y)
-  check(row.biased_copy==1+row.x+row.y,'signed f32 copyrect via positive native bias')
+ for _,divisor in ipairs({1,8})do
+  local from,to=api.NewComputeGrid(3,2,'f',32),api.NewComputeGrid(3,2,'f',32)
+  if not from or not to then return checks,{'primitive allocation failed'} end
+  for y=0,1 do for x=0,2 do from:set(x,y,65535-x-y)end end
+  api.GridMulDivAdd(from,-1,divisor,0)
+  to:copyrect(from,api.box(0,0,3,2),api.point(0,0))
+  -- No signed/fractional get() assumption: bias and rescale stored values
+  -- natively into exact small positive integers before checking their values.
+  local rows={}
+  for y=0,1 do for x=0,2 do
+   local row={x=x,y=y,divisor=divisor,source_readback=from:get(x,y),copy_readback=to:get(x,y)}
+   rows[#rows+1]=row;primitive[#primitive+1]=row
+  end end
+  api.GridMulDivAdd(to,1,1,65536/divisor)
+  api.GridMulDivAdd(to,divisor,1,0)
+  for _,row in ipairs(rows)do
+   row.biased_copy=to:get(row.x,row.y)
+   check(row.biased_copy==1+row.x+row.y,'signed/fractional f32 copy via positive native bias')
+  end
+  from:free();to:free()
  end
- from:free();to:free()
  for case=1,20 do
   local grid=api.NewComputeGrid(23,19,'u',16)
   if not grid then return checks,{'fixture allocation failed'}end

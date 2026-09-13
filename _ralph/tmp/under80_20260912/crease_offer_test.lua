@@ -3,24 +3,8 @@ local f=assert(io.open(path,'r'));local source=f:read('*a');f:close()
 local body=assert(source:match('(local function BuildHeightStepDiscoveryIndex.-)\nend'))..'\nend'
 local build=assert(load(body..'\nreturn BuildHeightStepDiscoveryIndex'))()
 local api=dofile('_ralph/tools/parity/native_grid_double.lua')
--- The shared double routes copyrect through its unsigned set() emulation.
--- A private raw f32-to-f32 copy model is required here, and is NOT native proof.
--- The shared oracle checks real signed native copyrect before any promotion.
-local probe=api.NewComputeGrid(1,1,'f',32)
-local methods=getmetatable(probe).__index
-probe:free()
-local prior_copy=methods.copyrect
-function methods:copyrect(from,bounds,to)
- if self.format~='f' or from.format~='f' then return prior_copy(self,from,bounds,to)end
- assert(not self.freed)
- local sw,sh=from:size()
- assert(bounds.x0>=0 and bounds.y0>=0 and bounds.x1<=sw and bounds.y1<=sh)
- for y=bounds.y0,bounds.y1-1 do for x=bounds.x0,bounds.x1-1 do
-  local dx,dy=to.x+x-bounds.x0,to.y+y-bounds.y0
-  assert(dx>=0 and dy>=0 and dx<self.w and dy<self.h)
-  self.values[dy*self.w+dx]=from:get(x,y)
- end end
-end
+-- Use the shared signed-storage copy model corrected AFTER native evidence.
+-- No private model override hides the behavior from inherited parity tests.
 for _,inclusive in ipairs({false,true})do
  api.GridMask=function(input,output,lo,hi)
   local w,h=input:size()
