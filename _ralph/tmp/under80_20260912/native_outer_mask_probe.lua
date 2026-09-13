@@ -34,7 +34,7 @@ if not pc then fail(why);return end
 env.ProtectedTerrainBlendWeight=pc()
 local api={}
 for _,name in ipairs({'NewComputeGrid','GridMulDivAdd','GridAdd','GridAddMulDiv',
-    'GridPow','GridClamp','GridRound','GridCount','GridForeach','point','box'}) do
+    'GridPow','GridMask','GridClamp','GridRound','GridCount','GridForeach','point','box'}) do
     api[name]=rawget(_G,name)
     if type(api[name])~='function' then fail('missing native '..name);return end
 end

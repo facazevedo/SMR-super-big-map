@@ -29,8 +29,8 @@ return function(api, row, scalar, epsilon_numerator)
     if not domain(p.cx,p.cy) then return nil,stats,'coordinate square domain' end
     for _,g in ipairs(row.guards) do
         if not domain(g.cx,g.cy) or not finite(g.radius) or g.radius<0
-            or not finite(g.transition) or g.transition<=0 then
-            return nil,stats,'unsupported protection domain (including zero-width guards)'
+            or not finite(g.transition) or g.transition<0 then
+            return nil,stats,'unsupported protection domain'
         end
     end
     local owned, lookup = {}, {}
@@ -119,13 +119,32 @@ return function(api, row, scalar, epsilon_numerator)
         local weight=smooth(radius)
         api.GridMulDivAdd(weight,-1,1,1);api.GridClamp(weight,0,1)
         for _,g in ipairs(row.guards) do
-            local d=distance(g.cx,g.cy)
-            add(d,-g.radius)
-            -- Reciprocal coefficient is rounded on the CPU for this prototype;
-            -- its exact production error treatment remains an open proof obligation.
-            mul(d,1.0/g.transition)
-            api.GridClamp(d,0,1)
-            local protection=smooth(d);api.GridClamp(protection,0,1)
+            local d,_,_,square=distance(g.cx,g.cy)
+            local protection
+            if g.transition==0 then
+                -- Integer squared distances permit a separated threshold. Resolve
+                -- it with the literal scalar sqrt predicate, including exact tangency.
+                local cutoff=math.floor(g.radius*g.radius)
+                local resolved=false
+                for attempt=1,4 do
+                    if cutoff>0 and math.sqrt(cutoff)>g.radius then cutoff=cutoff-1
+                    elseif math.sqrt(cutoff+1)<=g.radius then cutoff=cutoff+1
+                    else resolved=true;break end
+                end
+                require_value(resolved and cutoff>=0 and cutoff<8388608,'hard guard threshold domain')
+                protection=new()
+                api.GridMulDivAdd(square,2,1,0)
+                -- Inputs are even exact integers; threshold is odd and <2^24.
+                api.GridMask(square,protection,2*cutoff+1,2147483647)
+                stats.hard_guards=(stats.hard_guards or 0)+1
+            else
+                add(d,-g.radius)
+                -- Reciprocal coefficient is rounded on the CPU for this prototype;
+                -- its exact production error treatment remains an open proof obligation.
+                mul(d,1.0/g.transition)
+                api.GridClamp(d,0,1)
+                protection=smooth(d);api.GridClamp(protection,0,1)
+            end
             api.GridMulDivAdd(weight,protection,1,0)
         end
         api.GridClamp(weight,0,1)
