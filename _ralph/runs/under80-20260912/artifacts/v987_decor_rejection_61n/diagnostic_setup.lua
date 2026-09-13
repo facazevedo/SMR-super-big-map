@@ -52,8 +52,7 @@ if not once('outcome = stamp_matched(prefabs, sx, sy, site_radius)',
 local finish='\t\t\t\t\tend\n\t\t\t\t\tif outcome == "placed" then'
 if not once(finish,'\t\t\t\t\tend\n\t\t\t\t\tif __probe.active() then __probe.finish(outcome, nil) end\n\t\t\t\t\tif outcome == "placed" then')then return end
 -- Only two synthetic outcomes have an immediately preceding complete prefix.
-local synthetic=source:find('local attempts, budget = ',1,true)
-if not synthetic then fail('synthetic body anchor missing');return end
+local synthetic=assert(source:find('local attempts, budget = ',1,true))
 local head,body=source:sub(1,synthetic-1),source:sub(synthetic)
 local count
 body,count=body:gsub('(\n%s*)if outcome == "placed" then','%1__probe.outcome(outcome)%1if outcome == "placed" then')

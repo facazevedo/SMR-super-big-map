@@ -86,7 +86,9 @@ for _,mode in ipairs({'normal','rebound','missing_source','run_failure'})do
  mod_env.SuperBigMap=sbm
  assert(load(read('Code/sbm_decor_topup.lua'),'actual accepted decor','t',mod_env))()
  local original,final=sbm.DecorTopUp.Run,sbm.GenerationGrids.RebuildFinal
- local harness=setmetatable({ModsLoaded={{env=mod_env}},print=function()end},{__index=_G});harness._G=harness
+ -- Shipped assert is diagnostic/log-oriented, not Lua's value-returning assert.
+ local harness=setmetatable({ModsLoaded={{env=mod_env}},print=function()end,
+  assert=function()return nil end},{__index=_G});harness._G=harness
  harness.AsyncFileToString=function(path)
   if mode=='missing_source'then return 'missing' end
   return nil,read(path:gsub('^D:/PROJS/SMR/super%-big%-map/',''))

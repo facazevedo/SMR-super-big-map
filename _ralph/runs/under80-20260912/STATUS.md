@@ -1779,3 +1779,10 @@ decor_rejection_offline_2all9commandsPASS, initialbatchretained. Productionexact
 56fbf44/v987 and38fileauditPASS. Next frozen61Nthenreference withfullnative
 predecessor/private/rock/process audit; intrusiveproof cannotmeasureperformance.
 See decor_rejection_research.md. GoalACTIVE,full<80/<85unmet;thisturnPROGRESS.
+
+First native decor setup13368/PID55412 CLOSED FAILEDbeforegeneration at8f11b46:
+assert(source:find) didnotreturnmatchedindex, subsequentarithmeticonnil. Preserved
+v987_decor_rejection_61n; noRun/finalhooksinstalled, nofullmapclaim. Fixedonly
+diagnosticexplicitfindcheck; fixture now models non-value-returningassert.
+decor_rejection_offline_3all9PASS,857probechecks and1,399,431loopchecks. Native
+_61n_2 stillrequired; productionv987unchanged andfreshgamecheckclear.

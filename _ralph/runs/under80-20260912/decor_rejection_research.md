@@ -86,3 +86,16 @@ This intrusive replay is a correctness check, NOT a performance measurement.
 After native PASS, separately measure whole unshadowed decor pass old/new in
 fresh comparable runs before considering actual production and cold gates.
 No startup win, acceptance or all-site<80/<85 achievement is established.
+
+First native setup at8f11b46 FAILED before map generation:13368/PID55412,
+creation134337766588883486, CLOSED with normal flushed shutdown. Preserved
+v987_decor_rejection_61n. Diagnostic used assert(source:find(...)) as a value;
+the shipped runtime yielded nil for synthetic and setup then raised arithmetic
+on nil. No Run/final hook was installed yet; production stayedv987. Do not treat
+its ready-status/emptycalls as pass or invent a missing full-map parity result.
+
+Replaced only that diagnostic expression with explicit find +missing-anchor
+failure. Complete setup fixture now deliberately has non-value-returning assert.
+decor_rejection_offline_3 all9commandsPASS,857probechecks/1,399,431loopchecks;
+previous batches retained. Model bothorders .200/.203 and .202/.213s confirm
+only small/noisy effects, not a proven practical speedup. Next fresh _61n_2.

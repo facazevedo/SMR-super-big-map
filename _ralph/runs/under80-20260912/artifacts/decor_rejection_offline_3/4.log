@@ -1,0 +1,2 @@
+PASS 1399431 checks across 119 exact synthetic-loop cases and 1399190 complete ordered events
+MODEL ONLY old/new 0.200000/0.203000 s; new/old 0.202000/0.213000 s
