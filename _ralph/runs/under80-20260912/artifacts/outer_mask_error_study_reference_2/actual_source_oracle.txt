@@ -1,0 +1,4 @@
+Command: lua _ralph/tmp/under80_20260912/outer_mask_study_oracle.lua _ralph/runs/under80-20260912/artifacts/outer_mask_error_study_reference_2
+Exit: 0
+PASS actual production scalar oracle: 948237 U12 mask samples, 56 real protected/unprotected patches
+Reference only: this does not validate the proposed native arithmetic or prove its error bound.

@@ -1,0 +1,28 @@
+{
+  "samples": 30276,
+  "guards": 7,
+  "raw_u12_differences": 7,
+  "observed_max_weight_error": 1.3212308809240625e-06,
+  "hypothetical_budgets": {
+    "1": {
+      "ambiguous": 1600,
+      "false_certificate": 0
+    },
+    "2": {
+      "ambiguous": 3155,
+      "false_certificate": 0
+    },
+    "4": {
+      "ambiguous": 6431,
+      "false_certificate": 0
+    },
+    "8": {
+      "ambiguous": 29477,
+      "false_certificate": 0
+    },
+    "16": {
+      "ambiguous": 30276,
+      "false_certificate": 0
+    }
+  }
+}

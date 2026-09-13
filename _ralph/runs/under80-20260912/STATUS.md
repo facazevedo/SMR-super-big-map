@@ -904,3 +904,28 @@ native_outer_mask_research.md records why protected patches must be included:
 43/56 patches,841067/948237 samples and2459/2675 instrumented scalar-loop ms.
 Next run the geometry capture separately with full reference parity, then the
 empirical study. No native kernel or mathematical error certificate exists yet.
+
+## Outer-mask geometry and representation screening closed
+
+At fd5f4e9, fresh geometry session92873/PID40532 CLOSED normally, diagnosticPASS and
+complete reference predecessor/full-snapshot/individual-rock parityPASS. Captured
+all56 real patches and111 ordered protection guards /948237 coarse samples.
+All patch/guard centers are integers. No production files changed and no game
+remains. Native outer-mask implementation/certificate still absent.
+
+Offline studies58560/96518 (normalized) and8400 (world coordinates) CLOSED. Actual
+production Lua scalar oracle matches ALL948237 serialized U12 reference samples for
+both augmented studies. Normalized f32 prototype312 raw U12 differences, maxweight
+error4.8068e-5; integer-world variant209 differences, max1.3765e-6, with all coordinate
+and squared-sum domain assertions passing. Hypothetical1/65536 budget has51449
+ambiguous cells in the world variant; it is NOT a proved bound/native result.
+Normalized1/65536 and2/65536 budgets are actually exceeded on9/2 samples despite
+zero observed false rounding certificates. Preserve this counterevidence.
+
+Research and exact next gates: native_outer_mask_research.md. Next implement and
+prove a private integer-grid-coordinate native kernel, retaining ordered guards,
+exact ambiguity corrections and original full-grid outputs; measure real native
+cost before considering production. Current Code/deployment stays byte-identical
+f4d1da6/v983,38/38 auditPASS. Debug probes remain archived in d5a1e3e, inactive.
+Fresh comparison paths: v983_confirmation_reference and v983_matrix_confirmation.
+Under85 across reference plus five remains unmet; no new optimization promoted.

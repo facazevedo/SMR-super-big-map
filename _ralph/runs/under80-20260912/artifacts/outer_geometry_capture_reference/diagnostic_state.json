@@ -1,0 +1,2558 @@
+{
+  "calls": [
+    {
+      "environment": "Surface",
+      "report": {
+        "rocket_shape_radius": 6,
+        "reason": "minimal resource terrain prepared",
+        "native_mask_samples": 948237,
+        "resource_clusters": 12,
+        "resource_sites_modified": 44,
+        "resources": 46,
+        "rocket_shape_hexes": 91,
+        "map_width": 819200,
+        "error": "",
+        "forced_resource_repairs": 0,
+        "native_raster_cells": 15007032,
+        "extractor_resources": 18,
+        "height_grid_height": 8192,
+        "map_height": 819200,
+        "dirty_region_certificate_version": 1,
+        "dirty_region_count": 56,
+        "height_grid_width": 8192,
+        "surface_resources": 28,
+        "height_tile_size": 100,
+        "modified_cells": 4303261,
+        "native_sample_step": 4,
+        "ring_sectors": 2,
+        "rocket_pads_modified": 12,
+        "dirty_height_regions": [
+          {
+            "q": -406,
+            "y1": 8121,
+            "x1": 685,
+            "y0": 7864,
+            "x0": 424,
+            "kind": "surface",
+            "source": "patch",
+            "r": 923
+          },
+          {
+            "q": -281,
+            "y1": 6353,
+            "x1": 913,
+            "y0": 6096,
+            "x0": 656,
+            "kind": "surface",
+            "source": "patch",
+            "r": 719
+          },
+          {
+            "q": -279,
+            "y1": 6365,
+            "x1": 937,
+            "y0": 6104,
+            "x0": 680,
+            "kind": "surface",
+            "source": "patch",
+            "r": 720
+          },
+          {
+            "q": -105,
+            "y1": 7985,
+            "x1": 3621,
+            "y0": 7700,
+            "x0": 3336,
+            "kind": "surface",
+            "source": "patch",
+            "r": 906
+          },
+          {
+            "q": -102,
+            "y1": 7985,
+            "x1": 3653,
+            "y0": 7688,
+            "x0": 3356,
+            "kind": "surface",
+            "source": "patch",
+            "r": 905
+          },
+          {
+            "q": -77,
+            "y1": 2145,
+            "x1": 525,
+            "y0": 1888,
+            "x0": 264,
+            "kind": "surface",
+            "source": "patch",
+            "r": 233
+          },
+          {
+            "q": -75,
+            "y1": 2121,
+            "x1": 529,
+            "y0": 1860,
+            "x0": 268,
+            "kind": "surface",
+            "source": "patch",
+            "r": 230
+          },
+          {
+            "q": -41,
+            "y1": 1657,
+            "x1": 673,
+            "y0": 1056,
+            "x0": 72,
+            "kind": "surface",
+            "source": "patch",
+            "r": 157
+          },
+          {
+            "q": -38,
+            "y1": 1465,
+            "x1": 529,
+            "y0": 1164,
+            "x0": 228,
+            "kind": "surface",
+            "source": "patch",
+            "r": 152
+          },
+          {
+            "q": -38,
+            "y1": 1505,
+            "x1": 557,
+            "y0": 1176,
+            "x0": 232,
+            "kind": "surface",
+            "source": "patch",
+            "r": 155
+          },
+          {
+            "q": 101,
+            "y1": 885,
+            "x1": 1605,
+            "y0": 496,
+            "x0": 1212,
+            "kind": "surface",
+            "source": "patch",
+            "r": 80
+          },
+          {
+            "q": 105,
+            "y1": 925,
+            "x1": 1693,
+            "y0": 408,
+            "x0": 1176,
+            "kind": "surface",
+            "source": "patch",
+            "r": 77
+          },
+          {
+            "q": 163,
+            "y1": 981,
+            "x1": 2269,
+            "y0": 644,
+            "x0": 1928,
+            "kind": "surface",
+            "source": "patch",
+            "r": 94
+          },
+          {
+            "q": 169,
+            "y1": 925,
+            "x1": 2277,
+            "y0": 664,
+            "x0": 2020,
+            "kind": "surface",
+            "source": "patch",
+            "r": 92
+          },
+          {
+            "q": 171,
+            "y1": 1069,
+            "x1": 2437,
+            "y0": 540,
+            "x0": 1908,
+            "kind": "surface",
+            "source": "patch",
+            "r": 93
+          },
+          {
+            "q": 288,
+            "y1": 8045,
+            "x1": 7577,
+            "y0": 7784,
+            "x0": 7320,
+            "kind": "surface",
+            "source": "patch",
+            "r": 914
+          },
+          {
+            "q": 294,
+            "y1": 8149,
+            "x1": 7769,
+            "y0": 7556,
+            "x0": 7176,
+            "kind": "surface",
+            "source": "patch",
+            "r": 907
+          },
+          {
+            "q": 349,
+            "y1": 621,
+            "x1": 3905,
+            "y0": 364,
+            "x0": 3644,
+            "kind": "surface",
+            "source": "patch",
+            "r": 57
+          },
+          {
+            "q": 350,
+            "y1": 757,
+            "x1": 4065,
+            "y0": 156,
+            "x0": 3464,
+            "kind": "surface",
+            "source": "patch",
+            "r": 53
+          },
+          {
+            "q": 473,
+            "y1": 4761,
+            "x1": 7533,
+            "y0": 4504,
+            "x0": 7276,
+            "kind": "surface",
+            "source": "patch",
+            "r": 535
+          },
+          {
+            "q": 476,
+            "y1": 4769,
+            "x1": 7577,
+            "y0": 4476,
+            "x0": 7284,
+            "kind": "surface",
+            "source": "patch",
+            "r": 534
+          },
+          {
+            "q": 478,
+            "y1": 4889,
+            "x1": 7729,
+            "y0": 4288,
+            "x0": 7128,
+            "kind": "surface",
+            "source": "patch",
+            "r": 530
+          },
+          {
+            "q": 529,
+            "y1": 4793,
+            "x1": 8149,
+            "y0": 4352,
+            "x0": 7708,
+            "kind": "surface",
+            "source": "patch",
+            "r": 528
+          },
+          {
+            "q": 530,
+            "y1": 4725,
+            "x1": 8085,
+            "y0": 4468,
+            "x0": 7824,
+            "kind": "surface",
+            "source": "patch",
+            "r": 531
+          },
+          {
+            "q": 609,
+            "y1": 3269,
+            "x1": 8041,
+            "y0": 2980,
+            "x0": 7748,
+            "kind": "surface",
+            "source": "patch",
+            "r": 361
+          },
+          {
+            "q": 612,
+            "y1": 3233,
+            "x1": 8041,
+            "y0": 2964,
+            "x0": 7776,
+            "kind": "surface",
+            "source": "patch",
+            "r": 358
+          },
+          {
+            "q": -405,
+            "y1": 8189,
+            "x1": 841,
+            "y0": 7756,
+            "x0": 316,
+            "kind": "extractor",
+            "source": "patch",
+            "r": 926
+          },
+          {
+            "q": -403,
+            "y1": 8173,
+            "x1": 765,
+            "y0": 7812,
+            "x0": 404,
+            "kind": "extractor",
+            "source": "patch",
+            "r": 923
+          },
+          {
+            "q": -401,
+            "y1": 8141,
+            "x1": 749,
+            "y0": 7860,
+            "x0": 468,
+            "kind": "extractor",
+            "source": "patch",
+            "r": 924
+          },
+          {
+            "q": -280,
+            "y1": 6505,
+            "x1": 1085,
+            "y0": 5892,
+            "x0": 472,
+            "kind": "extractor",
+            "source": "patch",
+            "r": 716
+          },
+          {
+            "q": -278,
+            "y1": 6521,
+            "x1": 1117,
+            "y0": 5896,
+            "x0": 492,
+            "kind": "extractor",
+            "source": "patch",
+            "r": 717
+          },
+          {
+            "q": -104,
+            "y1": 8169,
+            "x1": 3805,
+            "y0": 7556,
+            "x0": 3192,
+            "kind": "extractor",
+            "source": "patch",
+            "r": 908
+          },
+          {
+            "q": -78,
+            "y1": 2189,
+            "x1": 569,
+            "y0": 1792,
+            "x0": 172,
+            "kind": "extractor",
+            "source": "patch",
+            "r": 230
+          },
+          {
+            "q": -75,
+            "y1": 2277,
+            "x1": 697,
+            "y0": 1652,
+            "x0": 72,
+            "kind": "extractor",
+            "source": "patch",
+            "r": 227
+          },
+          {
+            "q": -35,
+            "y1": 1593,
+            "x1": 689,
+            "y0": 1020,
+            "x0": 116,
+            "kind": "extractor",
+            "source": "patch",
+            "r": 151
+          },
+          {
+            "q": 91,
+            "y1": 477,
+            "x1": 1317,
+            "y0": 0,
+            "x0": 692,
+            "kind": "extractor",
+            "source": "patch",
+            "r": 19
+          },
+          {
+            "q": 102,
+            "y1": 977,
+            "x1": 1717,
+            "y0": 352,
+            "x0": 1092,
+            "kind": "extractor",
+            "source": "patch",
+            "r": 77
+          },
+          {
+            "q": 166,
+            "y1": 1109,
+            "x1": 2433,
+            "y0": 484,
+            "x0": 1808,
+            "kind": "extractor",
+            "source": "patch",
+            "r": 92
+          },
+          {
+            "q": 291,
+            "y1": 8101,
+            "x1": 7681,
+            "y0": 7656,
+            "x0": 7236,
+            "kind": "extractor",
+            "source": "patch",
+            "r": 910
+          },
+          {
+            "q": 291,
+            "y1": 8189,
+            "x1": 7785,
+            "y0": 7592,
+            "x0": 7160,
+            "kind": "extractor",
+            "source": "patch",
+            "r": 913
+          },
+          {
+            "q": 352,
+            "y1": 729,
+            "x1": 4053,
+            "y0": 204,
+            "x0": 3528,
+            "kind": "extractor",
+            "source": "patch",
+            "r": 54
+          },
+          {
+            "q": 475,
+            "y1": 4917,
+            "x1": 7721,
+            "y0": 4292,
+            "x0": 7096,
+            "kind": "extractor",
+            "source": "patch",
+            "r": 532
+          },
+          {
+            "q": 527,
+            "y1": 4909,
+            "x1": 8189,
+            "y0": 4284,
+            "x0": 7612,
+            "kind": "extractor",
+            "source": "patch",
+            "r": 531
+          },
+          {
+            "q": 609,
+            "y1": 3413,
+            "x1": 8189,
+            "y0": 2788,
+            "x0": 7568,
+            "kind": "extractor",
+            "source": "patch",
+            "r": 358
+          },
+          {
+            "q": -401,
+            "y1": 8069,
+            "x1": 797,
+            "y0": 7376,
+            "x0": 104,
+            "kind": "rocket",
+            "source": "patch",
+            "r": 892
+          },
+          {
+            "q": -270,
+            "y1": 6293,
+            "x1": 1081,
+            "y0": 5600,
+            "x0": 388,
+            "kind": "rocket",
+            "source": "patch",
+            "r": 687
+          },
+          {
+            "q": -133,
+            "y1": 8181,
+            "x1": 3541,
+            "y0": 7488,
+            "x0": 2848,
+            "kind": "rocket",
+            "source": "patch",
+            "r": 905
+          },
+          {
+            "q": -84,
+            "y1": 2665,
+            "x1": 845,
+            "y0": 1972,
+            "x0": 152,
+            "kind": "rocket",
+            "source": "patch",
+            "r": 268
+          },
+          {
+            "q": -3,
+            "y1": 1645,
+            "x1": 1065,
+            "y0": 952,
+            "x0": 372,
+            "kind": "rocket",
+            "source": "patch",
+            "r": 150
+          },
+          {
+            "q": 66,
+            "y1": 1045,
+            "x1": 1409,
+            "y0": 352,
+            "x0": 716,
+            "kind": "rocket",
+            "source": "patch",
+            "r": 81
+          },
+          {
+            "q": 134,
+            "y1": 1117,
+            "x1": 2129,
+            "y0": 424,
+            "x0": 1436,
+            "kind": "rocket",
+            "source": "patch",
+            "r": 89
+          },
+          {
+            "q": 300,
+            "y1": 7869,
+            "x1": 7689,
+            "y0": 7176,
+            "x0": 6996,
+            "kind": "rocket",
+            "source": "patch",
+            "r": 869
+          },
+          {
+            "q": 306,
+            "y1": 1073,
+            "x1": 3825,
+            "y0": 380,
+            "x0": 3132,
+            "kind": "rocket",
+            "source": "patch",
+            "r": 84
+          },
+          {
+            "q": 503,
+            "y1": 5081,
+            "x1": 8109,
+            "y0": 4388,
+            "x0": 7416,
+            "kind": "rocket",
+            "source": "patch",
+            "r": 547
+          },
+          {
+            "q": 515,
+            "y1": 4737,
+            "x1": 8029,
+            "y0": 4044,
+            "x0": 7336,
+            "kind": "rocket",
+            "source": "patch",
+            "r": 507
+          },
+          {
+            "q": 586,
+            "y1": 3661,
+            "x1": 8121,
+            "y0": 2968,
+            "x0": 7428,
+            "kind": "rocket",
+            "source": "patch",
+            "r": 383
+          }
+        ],
+        "patches": 56,
+        "rocket_sampling": {
+          "height_misses": 13339,
+          "height_hits": 15530,
+          "selected_groups": 12,
+          "pruned_range": 1164,
+          "pruned_score": 0,
+          "bounded": {
+            "seed": 933144333,
+            "groups": 12,
+            "universe": 5941,
+            "exhausted_groups": 0,
+            "attempts": 3072,
+            "continued_groups": 0
+          },
+          "edge_rejected": 1125,
+          "viable_candidates": 66,
+          "relief_reads": 108
+        },
+        "rocket_pads": 12
+      },
+      "patches": [
+        {
+          "height": 65,
+          "irregularity": 0,
+          "radius": 126.36299999999999,
+          "base_transition": 80.77999999999999,
+          "width": 66,
+          "guards": [],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.467159067191262,
+          "y0": 7864,
+          "sample_step": 4,
+          "x0": 424,
+          "patch": {
+            "phase": 3,
+            "kind": "surface",
+            "relief_y": 0.06871474847613608,
+            "core_cells": 17.31,
+            "relief_x": -0.9976363482461239,
+            "cy": 7993,
+            "cx": 555
+          }
+        },
+        {
+          "height": 65,
+          "irregularity": 0,
+          "radius": 126.36299999999999,
+          "base_transition": 80.77999999999999,
+          "width": 65,
+          "guards": [],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.5344655336939149,
+          "y0": 6096,
+          "sample_step": 4,
+          "x0": 656,
+          "patch": {
+            "phase": 2,
+            "kind": "surface",
+            "relief_y": 0.8635566842741882,
+            "core_cells": 17.31,
+            "relief_x": -0.5042517754508853,
+            "cy": 6226,
+            "cx": 785
+          }
+        },
+        {
+          "height": 66,
+          "irregularity": 0,
+          "radius": 126.36299999999999,
+          "base_transition": 80.77999999999999,
+          "width": 65,
+          "guards": [
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 6226,
+              "cx": 785
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.5344655336939149,
+          "y0": 6104,
+          "sample_step": 4,
+          "x0": 680,
+          "patch": {
+            "phase": 2,
+            "kind": "surface",
+            "relief_y": 0.5662841843790731,
+            "core_cells": 17.31,
+            "relief_x": -0.8242100597069462,
+            "cy": 6235,
+            "cx": 810
+          }
+        },
+        {
+          "height": 72,
+          "irregularity": 0,
+          "radius": 139.28250000000003,
+          "base_transition": 90.35000000000001,
+          "width": 72,
+          "guards": [],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.26362902798118754,
+          "y0": 7700,
+          "sample_step": 4,
+          "x0": 3336,
+          "patch": {
+            "phase": 1,
+            "kind": "surface",
+            "relief_y": 0.1836724069145051,
+            "core_cells": 17.31,
+            "relief_x": 0.9829875110794809,
+            "cy": 7845,
+            "cx": 3480
+          }
+        },
+        {
+          "height": 75,
+          "irregularity": 0,
+          "radius": 146.3025,
+          "base_transition": 95.55,
+          "width": 75,
+          "guards": [
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 7845,
+              "cx": 3480
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.26362902798118754,
+          "y0": 7688,
+          "sample_step": 4,
+          "x0": 3356,
+          "patch": {
+            "phase": 1,
+            "kind": "surface",
+            "relief_y": 0.7498378553650925,
+            "core_cells": 17.31,
+            "relief_x": 0.6616216370868463,
+            "cy": 7837,
+            "cx": 3505
+          }
+        },
+        {
+          "height": 65,
+          "irregularity": 0,
+          "radius": 126.36299999999999,
+          "base_transition": 80.77999999999999,
+          "width": 66,
+          "guards": [],
+          "atan2_present": false,
+          "cached_zero_harmonic": -0.7473465003172615,
+          "y0": 1888,
+          "sample_step": 4,
+          "x0": 264,
+          "patch": {
+            "phase": 5,
+            "kind": "surface",
+            "relief_y": -0.5768643694538694,
+            "core_cells": 17.31,
+            "relief_x": 0.8168399471466792,
+            "cy": 2017,
+            "cx": 395
+          }
+        },
+        {
+          "height": 66,
+          "irregularity": 0,
+          "radius": 126.36299999999999,
+          "base_transition": 80.77999999999999,
+          "width": 66,
+          "guards": [
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 2017,
+              "cx": 395
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": -0.13810474551344937,
+          "y0": 1860,
+          "sample_step": 4,
+          "x0": 268,
+          "patch": {
+            "phase": 4,
+            "kind": "surface",
+            "relief_y": -0.5729754744019815,
+            "core_cells": 17.31,
+            "relief_x": 0.8195725140180241,
+            "cy": 1991,
+            "cx": 400
+          }
+        },
+        {
+          "height": 151,
+          "irregularity": 0,
+          "radius": 297.73199999999997,
+          "base_transition": 207.71999999999997,
+          "width": 151,
+          "guards": [],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.26362902798118754,
+          "y0": 1056,
+          "sample_step": 4,
+          "x0": 72,
+          "patch": {
+            "phase": 1,
+            "kind": "surface",
+            "relief_y": 0.998300485012604,
+            "core_cells": 17.31,
+            "relief_x": 0.0582764242520048,
+            "cy": 1359,
+            "cx": 375
+          }
+        },
+        {
+          "height": 76,
+          "irregularity": 0,
+          "radius": 148.05750000000003,
+          "base_transition": 96.85000000000001,
+          "width": 76,
+          "guards": [
+            {
+              "transition": 8.669721643826726,
+              "radius": 17.31,
+              "cy": 1359,
+              "cx": 375
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.26362902798118754,
+          "y0": 1164,
+          "sample_step": 4,
+          "x0": 228,
+          "patch": {
+            "phase": 1,
+            "kind": "surface",
+            "relief_y": -0.9871855264674093,
+            "core_cells": 17.31,
+            "relief_x": -0.15957674120392354,
+            "cy": 1316,
+            "cx": 380
+          }
+        },
+        {
+          "height": 83,
+          "irregularity": 0,
+          "radius": 160.34250000000003,
+          "base_transition": 105.95,
+          "width": 82,
+          "guards": [
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 1359,
+              "cx": 375
+            },
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 1316,
+              "cx": 380
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.26362902798118754,
+          "y0": 1176,
+          "sample_step": 4,
+          "x0": 232,
+          "patch": {
+            "phase": 1,
+            "kind": "surface",
+            "relief_y": 0.9998212060753294,
+            "core_cells": 17.31,
+            "relief_x": -0.01890914810544358,
+            "cy": 1342,
+            "cx": 395
+          }
+        },
+        {
+          "height": 98,
+          "irregularity": 0,
+          "radius": 192.81,
+          "base_transition": 130.0,
+          "width": 99,
+          "guards": [],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.5344655336939149,
+          "y0": 496,
+          "sample_step": 4,
+          "x0": 1212,
+          "patch": {
+            "phase": 2,
+            "kind": "surface",
+            "relief_y": -0.5508822316464979,
+            "core_cells": 17.31,
+            "relief_x": 0.834582989795607,
+            "cy": 692,
+            "cx": 1410
+          }
+        },
+        {
+          "height": 130,
+          "irregularity": 0,
+          "radius": 255.99000000000004,
+          "base_transition": 176.8,
+          "width": 130,
+          "guards": [
+            {
+              "transition": 1.4493775937428666,
+              "radius": 17.31,
+              "cy": 692,
+              "cx": 1410
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.5344655336939149,
+          "y0": 408,
+          "sample_step": 4,
+          "x0": 1176,
+          "patch": {
+            "phase": 2,
+            "kind": "surface",
+            "relief_y": -0.7746508185742678,
+            "core_cells": 17.31,
+            "relief_x": 0.6323892071202802,
+            "cy": 666,
+            "cx": 1435
+          }
+        },
+        {
+          "height": 85,
+          "irregularity": 0,
+          "radius": 166.485,
+          "base_transition": 110.5,
+          "width": 86,
+          "guards": [],
+          "atan2_present": false,
+          "cached_zero_harmonic": -0.7473465003172615,
+          "y0": 644,
+          "sample_step": 4,
+          "x0": 1928,
+          "patch": {
+            "phase": 5,
+            "kind": "surface",
+            "relief_y": -0.9659573619503585,
+            "core_cells": 17.31,
+            "relief_x": 0.25870132371888654,
+            "cy": 814,
+            "cx": 2100
+          }
+        },
+        {
+          "height": 66,
+          "irregularity": 0,
+          "radius": 126.36299999999999,
+          "base_transition": 80.77999999999999,
+          "width": 65,
+          "guards": [
+            {
+              "transition": 18.521321022345692,
+              "radius": 17.31,
+              "cy": 814,
+              "cx": 2100
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": -0.7473465003172615,
+          "y0": 664,
+          "sample_step": 4,
+          "x0": 2020,
+          "patch": {
+            "phase": 5,
+            "kind": "surface",
+            "relief_y": -0.6010144227932431,
+            "core_cells": 17.31,
+            "relief_x": 0.7992381770126504,
+            "cy": 796,
+            "cx": 2150
+          }
+        },
+        {
+          "height": 133,
+          "irregularity": 0,
+          "radius": 261.25500000000005,
+          "base_transition": 180.70000000000002,
+          "width": 133,
+          "guards": [
+            {
+              "transition": 40.91806987208503,
+              "radius": 17.31,
+              "cy": 814,
+              "cx": 2100
+            },
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 796,
+              "cx": 2150
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": -0.7473465003172615,
+          "y0": 540,
+          "sample_step": 4,
+          "x0": 1908,
+          "patch": {
+            "phase": 5,
+            "kind": "surface",
+            "relief_y": -0.1157264111379169,
+            "core_cells": 17.31,
+            "relief_x": 0.9932811272571014,
+            "cy": 805,
+            "cx": 2175
+          }
+        },
+        {
+          "height": 66,
+          "irregularity": 0,
+          "radius": 126.36299999999999,
+          "base_transition": 80.77999999999999,
+          "width": 65,
+          "guards": [],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.467159067191262,
+          "y0": 7784,
+          "sample_step": 4,
+          "x0": 7320,
+          "patch": {
+            "phase": 3,
+            "kind": "surface",
+            "relief_y": -0.3073481447740817,
+            "core_cells": 17.31,
+            "relief_x": 0.951597140550522,
+            "cy": 7915,
+            "cx": 7450
+          }
+        },
+        {
+          "height": 149,
+          "irregularity": 0,
+          "radius": 293.7225,
+          "base_transition": 204.75,
+          "width": 149,
+          "guards": [
+            {
+              "transition": 31.304198895398034,
+              "radius": 17.31,
+              "cy": 7915,
+              "cx": 7450
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.467159067191262,
+          "y0": 7556,
+          "sample_step": 4,
+          "x0": 7176,
+          "patch": {
+            "phase": 3,
+            "kind": "surface",
+            "relief_y": -0.7246197775776939,
+            "core_cells": 17.31,
+            "relief_x": 0.68914887937459,
+            "cy": 7854,
+            "cx": 7475
+          }
+        },
+        {
+          "height": 65,
+          "irregularity": 0,
+          "radius": 126.36299999999999,
+          "base_transition": 80.77999999999999,
+          "width": 66,
+          "guards": [],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.467159067191262,
+          "y0": 364,
+          "sample_step": 4,
+          "x0": 3644,
+          "patch": {
+            "phase": 3,
+            "kind": "surface",
+            "relief_y": -0.7943578329771962,
+            "core_cells": 17.31,
+            "relief_x": -0.6074501075707971,
+            "cy": 493,
+            "cx": 3775
+          }
+        },
+        {
+          "height": 151,
+          "irregularity": 0,
+          "radius": 297.73199999999997,
+          "base_transition": 207.71999999999997,
+          "width": 151,
+          "guards": [
+            {
+              "transition": 1.7805494464025955,
+              "radius": 17.31,
+              "cy": 493,
+              "cx": 3775
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.467159067191262,
+          "y0": 156,
+          "sample_step": 4,
+          "x0": 3464,
+          "patch": {
+            "phase": 3,
+            "kind": "surface",
+            "relief_y": -0.09931700776727714,
+            "core_cells": 17.31,
+            "relief_x": -0.9950558436430362,
+            "cy": 458,
+            "cx": 3765
+          }
+        },
+        {
+          "height": 65,
+          "irregularity": 0,
+          "radius": 126.36299999999999,
+          "base_transition": 80.77999999999999,
+          "width": 65,
+          "guards": [],
+          "atan2_present": false,
+          "cached_zero_harmonic": -0.595571782802588,
+          "y0": 4504,
+          "sample_step": 4,
+          "x0": 7276,
+          "patch": {
+            "phase": 6,
+            "kind": "surface",
+            "relief_y": 0.34696119668613956,
+            "core_cells": 17.31,
+            "relief_x": 0.937879484792221,
+            "cy": 4633,
+            "cx": 7405
+          }
+        },
+        {
+          "height": 74,
+          "irregularity": 0,
+          "radius": 143.67000000000002,
+          "base_transition": 93.60000000000001,
+          "width": 74,
+          "guards": [
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 4633,
+              "cx": 7405
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": -0.595571782802588,
+          "y0": 4476,
+          "sample_step": 4,
+          "x0": 7284,
+          "patch": {
+            "phase": 6,
+            "kind": "surface",
+            "relief_y": -0.002953324391399912,
+            "core_cells": 17.31,
+            "relief_x": 0.9999956389280101,
+            "cy": 4624,
+            "cx": 7430
+          }
+        },
+        {
+          "height": 151,
+          "irregularity": 0,
+          "radius": 297.73199999999997,
+          "base_transition": 207.71999999999997,
+          "width": 151,
+          "guards": [
+            {
+              "transition": 15.986323715519976,
+              "radius": 17.31,
+              "cy": 4633,
+              "cx": 7405
+            },
+            {
+              "transition": 0.38000000000000256,
+              "radius": 17.31,
+              "cy": 4624,
+              "cx": 7430
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": -0.595571782802588,
+          "y0": 4288,
+          "sample_step": 4,
+          "x0": 7128,
+          "patch": {
+            "phase": 6,
+            "kind": "surface",
+            "relief_y": -0.24829121280143748,
+            "core_cells": 17.31,
+            "relief_x": 0.9686854358591294,
+            "cy": 4589,
+            "cx": 7430
+          }
+        },
+        {
+          "height": 111,
+          "irregularity": 0,
+          "radius": 217.38000000000005,
+          "base_transition": 148.20000000000002,
+          "width": 111,
+          "guards": [],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.26362902798118754,
+          "y0": 4352,
+          "sample_step": 4,
+          "x0": 7708,
+          "patch": {
+            "phase": 1,
+            "kind": "surface",
+            "relief_y": 0.12513872152498737,
+            "core_cells": 17.31,
+            "relief_x": -0.9921392545278569,
+            "cy": 4572,
+            "cx": 7930
+          }
+        },
+        {
+          "height": 65,
+          "irregularity": 0,
+          "radius": 126.36299999999999,
+          "base_transition": 80.77999999999999,
+          "width": 66,
+          "guards": [
+            {
+              "transition": 1.4493775937428666,
+              "radius": 17.31,
+              "cy": 4572,
+              "cx": 7930
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.26362902798118754,
+          "y0": 4468,
+          "sample_step": 4,
+          "x0": 7824,
+          "patch": {
+            "phase": 1,
+            "kind": "surface",
+            "relief_y": 0.5470029609443501,
+            "core_cells": 17.31,
+            "relief_x": -0.8371306712324629,
+            "cy": 4598,
+            "cx": 7955
+          }
+        },
+        {
+          "height": 73,
+          "irregularity": 0,
+          "radius": 142.79250000000002,
+          "base_transition": 92.95,
+          "width": 74,
+          "guards": [],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.0,
+          "y0": 2980,
+          "sample_step": 4,
+          "x0": 7748,
+          "patch": {
+            "phase": 0,
+            "kind": "surface",
+            "relief_y": -0.08109502490579922,
+            "core_cells": 17.31,
+            "relief_x": 0.9967063744832416,
+            "cy": 3126,
+            "cx": 7895
+          }
+        },
+        {
+          "height": 68,
+          "irregularity": 0,
+          "radius": 130.50750000000002,
+          "base_transition": 83.85000000000001,
+          "width": 67,
+          "guards": [
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 3126,
+              "cx": 7895
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.0,
+          "y0": 2964,
+          "sample_step": 4,
+          "x0": 7776,
+          "patch": {
+            "phase": 0,
+            "kind": "surface",
+            "relief_y": -0.7315905744962907,
+            "core_cells": 17.31,
+            "relief_x": 0.681744256527466,
+            "cy": 3100,
+            "cx": 7910
+          }
+        },
+        {
+          "height": 109,
+          "irregularity": 0,
+          "radius": 258.75500000000005,
+          "base_transition": 170.3,
+          "width": 132,
+          "guards": [
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 7993,
+              "cx": 555
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.467159067191262,
+          "y0": 7756,
+          "sample_step": 4,
+          "x0": 316,
+          "patch": {
+            "phase": 3,
+            "kind": "extractor",
+            "relief_y": 0.9150695356511539,
+            "core_cells": 28.849999999999998,
+            "relief_x": -0.4032961008033449,
+            "cy": 8019,
+            "cx": 580
+          }
+        },
+        {
+          "height": 91,
+          "irregularity": 0,
+          "radius": 178.025,
+          "base_transition": 110.5,
+          "width": 91,
+          "guards": [
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 7993,
+              "cx": 555
+            },
+            {
+              "transition": 0,
+              "radius": 28.849999999999998,
+              "cy": 8019,
+              "cx": 580
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.467159067191262,
+          "y0": 7812,
+          "sample_step": 4,
+          "x0": 404,
+          "patch": {
+            "phase": 3,
+            "kind": "extractor",
+            "relief_y": 0.5307808561847898,
+            "core_cells": 28.849999999999998,
+            "relief_x": -0.8475091047934183,
+            "cy": 7993,
+            "cx": 585
+          }
+        },
+        {
+          "height": 71,
+          "irregularity": 0,
+          "radius": 137.90300000000002,
+          "base_transition": 80.78,
+          "width": 71,
+          "guards": [
+            {
+              "transition": 9.418772926361012,
+              "radius": 17.31,
+              "cy": 7993,
+              "cx": 555
+            },
+            {
+              "transition": 0,
+              "radius": 28.849999999999998,
+              "cy": 8019,
+              "cx": 580
+            },
+            {
+              "transition": 0,
+              "radius": 28.849999999999998,
+              "cy": 7993,
+              "cx": 585
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.467159067191262,
+          "y0": 7860,
+          "sample_step": 4,
+          "x0": 468,
+          "patch": {
+            "phase": 3,
+            "kind": "extractor",
+            "relief_y": 0.9915095306014199,
+            "core_cells": 28.849999999999998,
+            "relief_x": -0.13003403680018621,
+            "cy": 8001,
+            "cx": 610
+          }
+        },
+        {
+          "height": 154,
+          "irregularity": 0,
+          "radius": 303.50750000000005,
+          "base_transition": 203.45000000000002,
+          "width": 154,
+          "guards": [
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 6226,
+              "cx": 785
+            },
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 6235,
+              "cx": 810
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.26362902798118754,
+          "y0": 5892,
+          "sample_step": 4,
+          "x0": 472,
+          "patch": {
+            "phase": 1,
+            "kind": "extractor",
+            "relief_y": 0.5310034235810343,
+            "core_cells": 28.849999999999998,
+            "relief_x": -0.8473696738408927,
+            "cy": 6200,
+            "cx": 780
+          }
+        },
+        {
+          "height": 157,
+          "irregularity": 0,
+          "radius": 309.272,
+          "base_transition": 207.71999999999997,
+          "width": 157,
+          "guards": [
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 6226,
+              "cx": 785
+            },
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 6235,
+              "cx": 810
+            },
+            {
+              "transition": 0,
+              "radius": 28.849999999999998,
+              "cy": 6200,
+              "cx": 780
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.5344655336939149,
+          "y0": 5896,
+          "sample_step": 4,
+          "x0": 492,
+          "patch": {
+            "phase": 2,
+            "kind": "extractor",
+            "relief_y": 0.609355899448014,
+            "core_cells": 28.849999999999998,
+            "relief_x": -0.792896833016693,
+            "cy": 6209,
+            "cx": 805
+          }
+        },
+        {
+          "height": 154,
+          "irregularity": 0,
+          "radius": 303.50199999999995,
+          "base_transition": 207.71999999999997,
+          "width": 154,
+          "guards": [
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 7845,
+              "cx": 3480
+            },
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 7837,
+              "cx": 3505
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.26362902798118754,
+          "y0": 7556,
+          "sample_step": 4,
+          "x0": 3192,
+          "patch": {
+            "phase": 1,
+            "kind": "extractor",
+            "relief_y": 0.7526595038975616,
+            "core_cells": 23.08,
+            "relief_x": 0.658409956784279,
+            "cy": 7863,
+            "cx": 3500
+          }
+        },
+        {
+          "height": 100,
+          "irregularity": 0,
+          "radius": 195.94750000000005,
+          "base_transition": 128.05,
+          "width": 100,
+          "guards": [
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 2017,
+              "cx": 395
+            },
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 1991,
+              "cx": 400
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": -0.13810474551344937,
+          "y0": 1792,
+          "sample_step": 4,
+          "x0": 172,
+          "patch": {
+            "phase": 4,
+            "kind": "extractor",
+            "relief_y": -0.7837552736514776,
+            "core_cells": 23.08,
+            "relief_x": -0.6210697795123328,
+            "cy": 1991,
+            "cx": 370
+          }
+        },
+        {
+          "height": 157,
+          "irregularity": 0,
+          "radius": 309.272,
+          "base_transition": 207.71999999999997,
+          "width": 157,
+          "guards": [
+            {
+              "transition": 6.792809179494906,
+              "radius": 17.31,
+              "cy": 2017,
+              "cx": 395
+            },
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 1991,
+              "cx": 400
+            },
+            {
+              "transition": 0,
+              "radius": 23.08,
+              "cy": 1991,
+              "cx": 370
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": -0.13810474551344937,
+          "y0": 1652,
+          "sample_step": 4,
+          "x0": 72,
+          "patch": {
+            "phase": 4,
+            "kind": "extractor",
+            "relief_y": -0.5158744331973413,
+            "core_cells": 28.849999999999998,
+            "relief_x": -0.8566642102792212,
+            "cy": 1965,
+            "cx": 385
+          }
+        },
+        {
+          "height": 144,
+          "irregularity": 0,
+          "radius": 283.32500000000005,
+          "base_transition": 188.5,
+          "width": 144,
+          "guards": [
+            {
+              "transition": 13.873324079214537,
+              "radius": 17.31,
+              "cy": 1359,
+              "cx": 375
+            },
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 1316,
+              "cx": 380
+            },
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 1342,
+              "cx": 395
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.26362902798118754,
+          "y0": 1020,
+          "sample_step": 4,
+          "x0": 116,
+          "patch": {
+            "phase": 1,
+            "kind": "extractor",
+            "relief_y": -0.9624075938877823,
+            "core_cells": 28.849999999999998,
+            "relief_x": -0.27160932095038554,
+            "cy": 1307,
+            "cx": 405
+          }
+        },
+        {
+          "height": 120,
+          "irregularity": 0,
+          "radius": 309.272,
+          "base_transition": 207.71999999999997,
+          "width": 157,
+          "guards": [],
+          "atan2_present": false,
+          "cached_zero_harmonic": -0.13810474551344937,
+          "y0": 0,
+          "sample_step": 4,
+          "x0": 692,
+          "patch": {
+            "phase": 4,
+            "kind": "extractor",
+            "relief_y": 0.4542592833506206,
+            "core_cells": 28.849999999999998,
+            "relief_x": 0.89086952102414,
+            "cy": 165,
+            "cx": 1004
+          }
+        },
+        {
+          "height": 157,
+          "irregularity": 0,
+          "radius": 309.272,
+          "base_transition": 207.71999999999997,
+          "width": 157,
+          "guards": [
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 692,
+              "cx": 1410
+            },
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 666,
+              "cx": 1435
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.5344655336939149,
+          "y0": 352,
+          "sample_step": 4,
+          "x0": 1092,
+          "patch": {
+            "phase": 2,
+            "kind": "extractor",
+            "relief_y": -0.8613179175806449,
+            "core_cells": 28.849999999999998,
+            "relief_x": 0.508066378394144,
+            "cy": 666,
+            "cx": 1405
+          }
+        },
+        {
+          "height": 157,
+          "irregularity": 0,
+          "radius": 309.272,
+          "base_transition": 207.71999999999997,
+          "width": 157,
+          "guards": [
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 814,
+              "cx": 2100
+            },
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 796,
+              "cx": 2150
+            },
+            {
+              "transition": 9.571499172371102,
+              "radius": 17.31,
+              "cy": 805,
+              "cx": 2175
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": -0.7473465003172615,
+          "y0": 484,
+          "sample_step": 4,
+          "x0": 1808,
+          "patch": {
+            "phase": 5,
+            "kind": "extractor",
+            "relief_y": -0.9427532965869918,
+            "core_cells": 28.849999999999998,
+            "relief_x": 0.3334909620579835,
+            "cy": 796,
+            "cx": 2120
+          }
+        },
+        {
+          "height": 112,
+          "irregularity": 0,
+          "radius": 218.39000000000001,
+          "base_transition": 140.4,
+          "width": 112,
+          "guards": [
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 7915,
+              "cx": 7450
+            },
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 7854,
+              "cx": 7475
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.467159067191262,
+          "y0": 7656,
+          "sample_step": 4,
+          "x0": 7236,
+          "patch": {
+            "phase": 3,
+            "kind": "extractor",
+            "relief_y": -0.6288928393923727,
+            "core_cells": 28.849999999999998,
+            "relief_x": 0.7774919913163089,
+            "cy": 7880,
+            "cx": 7460
+          }
+        },
+        {
+          "height": 150,
+          "irregularity": 0,
+          "radius": 309.272,
+          "base_transition": 207.71999999999997,
+          "width": 157,
+          "guards": [
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 7915,
+              "cx": 7450
+            },
+            {
+              "transition": 5.84,
+              "radius": 17.31,
+              "cy": 7854,
+              "cx": 7475
+            },
+            {
+              "transition": 0,
+              "radius": 28.849999999999998,
+              "cy": 7880,
+              "cx": 7460
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.467159067191262,
+          "y0": 7592,
+          "sample_step": 4,
+          "x0": 7160,
+          "patch": {
+            "phase": 3,
+            "kind": "extractor",
+            "relief_y": 0.022671566917927252,
+            "core_cells": 28.849999999999998,
+            "relief_x": 0.9997429669937598,
+            "cy": 7906,
+            "cx": 7475
+          }
+        },
+        {
+          "height": 132,
+          "irregularity": 0,
+          "radius": 259.63250000000005,
+          "base_transition": 170.95000000000002,
+          "width": 132,
+          "guards": [
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 493,
+              "cx": 3775
+            },
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 458,
+              "cx": 3765
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.467159067191262,
+          "y0": 204,
+          "sample_step": 4,
+          "x0": 3528,
+          "patch": {
+            "phase": 3,
+            "kind": "extractor",
+            "relief_y": -0.6273441955549859,
+            "core_cells": 28.849999999999998,
+            "relief_x": -0.7787421012783805,
+            "cy": 467,
+            "cx": 3790
+          }
+        },
+        {
+          "height": 157,
+          "irregularity": 0,
+          "radius": 309.272,
+          "base_transition": 207.71999999999997,
+          "width": 157,
+          "guards": [
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 4633,
+              "cx": 7405
+            },
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 4624,
+              "cx": 7430
+            },
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 4589,
+              "cx": 7430
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": -0.595571782802588,
+          "y0": 4292,
+          "sample_step": 4,
+          "x0": 7096,
+          "patch": {
+            "phase": 6,
+            "kind": "extractor",
+            "relief_y": 0.03744825591105212,
+            "core_cells": 28.849999999999998,
+            "relief_x": 0.9992985680612277,
+            "cy": 4607,
+            "cx": 7410
+          }
+        },
+        {
+          "height": 157,
+          "irregularity": 0,
+          "radius": 309.272,
+          "base_transition": 207.71999999999997,
+          "width": 145,
+          "guards": [
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 4572,
+              "cx": 7930
+            },
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 4598,
+              "cx": 7955
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.26362902798118754,
+          "y0": 4284,
+          "sample_step": 4,
+          "x0": 7612,
+          "patch": {
+            "phase": 1,
+            "kind": "extractor",
+            "relief_y": 0.2876110203736457,
+            "core_cells": 28.849999999999998,
+            "relief_x": -0.9577473053784231,
+            "cy": 4598,
+            "cx": 7925
+          }
+        },
+        {
+          "height": 157,
+          "irregularity": 0,
+          "radius": 309.272,
+          "base_transition": 207.71999999999997,
+          "width": 156,
+          "guards": [
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 3126,
+              "cx": 7895
+            },
+            {
+              "transition": 0,
+              "radius": 17.31,
+              "cy": 3100,
+              "cx": 7910
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.0,
+          "y0": 2788,
+          "sample_step": 4,
+          "x0": 7568,
+          "patch": {
+            "phase": 0,
+            "kind": "extractor",
+            "relief_y": -0.5029551260529368,
+            "core_cells": 28.849999999999998,
+            "relief_x": 0.8643125251765558,
+            "cy": 3100,
+            "cx": 7880
+          }
+        },
+        {
+          "height": 174,
+          "irregularity": 0,
+          "radius": 343.89199999999994,
+          "base_transition": 207.71999999999994,
+          "width": 174,
+          "guards": [
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 7993,
+              "cx": 555
+            },
+            {
+              "transition": 80.78,
+              "radius": 28.849999999999998,
+              "cy": 8019,
+              "cx": 580
+            },
+            {
+              "transition": 80.78,
+              "radius": 28.849999999999998,
+              "cy": 7993,
+              "cx": 585
+            },
+            {
+              "transition": 80.78,
+              "radius": 28.849999999999998,
+              "cy": 8001,
+              "cx": 610
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.26362902798118754,
+          "y0": 7376,
+          "sample_step": 4,
+          "x0": 104,
+          "patch": {
+            "phase": 1,
+            "kind": "rocket",
+            "relief_y": 0.4969963297877527,
+            "core_cells": 63.47,
+            "relief_x": -0.8677526422763018,
+            "cy": 7724,
+            "cx": 450
+          }
+        },
+        {
+          "height": 174,
+          "irregularity": 0,
+          "radius": 343.89199999999994,
+          "base_transition": 207.71999999999994,
+          "width": 174,
+          "guards": [
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 6226,
+              "cx": 785
+            },
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 6235,
+              "cx": 810
+            },
+            {
+              "transition": 80.78,
+              "radius": 28.849999999999998,
+              "cy": 6200,
+              "cx": 780
+            },
+            {
+              "transition": 80.78,
+              "radius": 28.849999999999998,
+              "cy": 6209,
+              "cx": 805
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.0,
+          "y0": 5600,
+          "sample_step": 4,
+          "x0": 388,
+          "patch": {
+            "phase": 0,
+            "kind": "rocket",
+            "relief_y": -0.5510442145331447,
+            "core_cells": 63.47,
+            "relief_x": 0.8344760473671785,
+            "cy": 5949,
+            "cx": 735
+          }
+        },
+        {
+          "height": 174,
+          "irregularity": 0,
+          "radius": 343.89199999999994,
+          "base_transition": 207.71999999999994,
+          "width": 174,
+          "guards": [
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 7845,
+              "cx": 3480
+            },
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 7837,
+              "cx": 3505
+            },
+            {
+              "transition": 80.78,
+              "radius": 23.08,
+              "cy": 7863,
+              "cx": 3500
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.0,
+          "y0": 7488,
+          "sample_step": 4,
+          "x0": 2848,
+          "patch": {
+            "phase": 0,
+            "kind": "rocket",
+            "relief_y": -0.9941683063870927,
+            "core_cells": 63.47,
+            "relief_x": -0.10783959650990797,
+            "cy": 7837,
+            "cx": 3195
+          }
+        },
+        {
+          "height": 174,
+          "irregularity": 0,
+          "radius": 343.89199999999994,
+          "base_transition": 207.71999999999994,
+          "width": 174,
+          "guards": [
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 2017,
+              "cx": 395
+            },
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 1991,
+              "cx": 400
+            },
+            {
+              "transition": 80.78,
+              "radius": 23.08,
+              "cy": 1991,
+              "cx": 370
+            },
+            {
+              "transition": 80.78,
+              "radius": 28.849999999999998,
+              "cy": 1965,
+              "cx": 385
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.0,
+          "y0": 1972,
+          "sample_step": 4,
+          "x0": 152,
+          "patch": {
+            "phase": 0,
+            "kind": "rocket",
+            "relief_y": 0.972186012301859,
+            "core_cells": 63.47,
+            "relief_x": 0.2342100712706645,
+            "cy": 2320,
+            "cx": 500
+          }
+        },
+        {
+          "height": 174,
+          "irregularity": 0,
+          "radius": 343.89199999999994,
+          "base_transition": 207.71999999999994,
+          "width": 174,
+          "guards": [
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 1359,
+              "cx": 375
+            },
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 1316,
+              "cx": 380
+            },
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 1342,
+              "cx": 395
+            },
+            {
+              "transition": 80.78,
+              "radius": 28.849999999999998,
+              "cy": 1307,
+              "cx": 405
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.5344655336939149,
+          "y0": 952,
+          "sample_step": 4,
+          "x0": 372,
+          "patch": {
+            "phase": 2,
+            "kind": "rocket",
+            "relief_y": 0.473178277780807,
+            "core_cells": 63.47,
+            "relief_x": -0.8809666948508267,
+            "cy": 1299,
+            "cx": 720
+          }
+        },
+        {
+          "height": 174,
+          "irregularity": 0,
+          "radius": 343.89199999999994,
+          "base_transition": 207.71999999999994,
+          "width": 174,
+          "guards": [
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 692,
+              "cx": 1410
+            },
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 666,
+              "cx": 1435
+            },
+            {
+              "transition": 80.78,
+              "radius": 28.849999999999998,
+              "cy": 666,
+              "cx": 1405
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.26362902798118754,
+          "y0": 352,
+          "sample_step": 4,
+          "x0": 716,
+          "patch": {
+            "phase": 1,
+            "kind": "rocket",
+            "relief_y": -0.5356714357535471,
+            "core_cells": 63.47,
+            "relief_x": -0.8444264994170501,
+            "cy": 701,
+            "cx": 1065
+          }
+        },
+        {
+          "height": 174,
+          "irregularity": 0,
+          "radius": 343.89199999999994,
+          "base_transition": 207.71999999999994,
+          "width": 174,
+          "guards": [
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 692,
+              "cx": 1410
+            },
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 666,
+              "cx": 1435
+            },
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 814,
+              "cx": 2100
+            },
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 796,
+              "cx": 2150
+            },
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 805,
+              "cx": 2175
+            },
+            {
+              "transition": 80.78,
+              "radius": 28.849999999999998,
+              "cy": 666,
+              "cx": 1405
+            },
+            {
+              "transition": 80.78,
+              "radius": 28.849999999999998,
+              "cy": 796,
+              "cx": 2120
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": -0.13810474551344937,
+          "y0": 424,
+          "sample_step": 4,
+          "x0": 1436,
+          "patch": {
+            "phase": 4,
+            "kind": "rocket",
+            "relief_y": 0.5991079317606155,
+            "core_cells": 63.47,
+            "relief_x": -0.8006682746940319,
+            "cy": 770,
+            "cx": 1785
+          }
+        },
+        {
+          "height": 174,
+          "irregularity": 0,
+          "radius": 343.89199999999994,
+          "base_transition": 207.71999999999994,
+          "width": 174,
+          "guards": [
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 7915,
+              "cx": 7450
+            },
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 7854,
+              "cx": 7475
+            },
+            {
+              "transition": 80.78,
+              "radius": 28.849999999999998,
+              "cy": 7880,
+              "cx": 7460
+            },
+            {
+              "transition": 80.78,
+              "radius": 28.849999999999998,
+              "cy": 7906,
+              "cx": 7475
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.26362902798118754,
+          "y0": 7176,
+          "sample_step": 4,
+          "x0": 6996,
+          "patch": {
+            "phase": 1,
+            "kind": "rocket",
+            "relief_y": -0.013568688136198598,
+            "core_cells": 63.47,
+            "relief_x": 0.9999079411137121,
+            "cy": 7525,
+            "cx": 7345
+          }
+        },
+        {
+          "height": 174,
+          "irregularity": 0,
+          "radius": 343.89199999999994,
+          "base_transition": 207.71999999999994,
+          "width": 174,
+          "guards": [
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 493,
+              "cx": 3775
+            },
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 458,
+              "cx": 3765
+            },
+            {
+              "transition": 80.78,
+              "radius": 28.849999999999998,
+              "cy": 467,
+              "cx": 3790
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.467159067191262,
+          "y0": 380,
+          "sample_step": 4,
+          "x0": 3132,
+          "patch": {
+            "phase": 3,
+            "kind": "rocket",
+            "relief_y": -0.7669315431733165,
+            "core_cells": 63.47,
+            "relief_x": -0.6417289210295851,
+            "cy": 727,
+            "cx": 3480
+          }
+        },
+        {
+          "height": 174,
+          "irregularity": 0,
+          "radius": 343.89199999999994,
+          "base_transition": 207.71999999999994,
+          "width": 174,
+          "guards": [
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 4633,
+              "cx": 7405
+            },
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 4624,
+              "cx": 7430
+            },
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 4589,
+              "cx": 7430
+            },
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 4572,
+              "cx": 7930
+            },
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 4598,
+              "cx": 7955
+            },
+            {
+              "transition": 80.78,
+              "radius": 28.849999999999998,
+              "cy": 4607,
+              "cx": 7410
+            },
+            {
+              "transition": 80.78,
+              "radius": 28.849999999999998,
+              "cy": 4598,
+              "cx": 7925
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.26362902798118754,
+          "y0": 4388,
+          "sample_step": 4,
+          "x0": 7416,
+          "patch": {
+            "phase": 1,
+            "kind": "rocket",
+            "relief_y": 0.40337037452349184,
+            "core_cells": 63.47,
+            "relief_x": 0.915036797597112,
+            "cy": 4737,
+            "cx": 7765
+          }
+        },
+        {
+          "height": 174,
+          "irregularity": 0,
+          "radius": 343.89199999999994,
+          "base_transition": 207.71999999999994,
+          "width": 174,
+          "guards": [
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 4633,
+              "cx": 7405
+            },
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 4624,
+              "cx": 7430
+            },
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 4589,
+              "cx": 7430
+            },
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 4572,
+              "cx": 7930
+            },
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 4598,
+              "cx": 7955
+            },
+            {
+              "transition": 80.78,
+              "radius": 28.849999999999998,
+              "cy": 4607,
+              "cx": 7410
+            },
+            {
+              "transition": 80.78,
+              "radius": 28.849999999999998,
+              "cy": 4598,
+              "cx": 7925
+            },
+            {
+              "transition": 80.78,
+              "radius": 63.47,
+              "cy": 4737,
+              "cx": 7765
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": -0.595571782802588,
+          "y0": 4044,
+          "sample_step": 4,
+          "x0": 7336,
+          "patch": {
+            "phase": 6,
+            "kind": "rocket",
+            "relief_y": 0.625348036316571,
+            "core_cells": 63.47,
+            "relief_x": -0.7803459703714812,
+            "cy": 4390,
+            "cx": 7685
+          }
+        },
+        {
+          "height": 174,
+          "irregularity": 0,
+          "radius": 343.89199999999994,
+          "base_transition": 207.71999999999994,
+          "width": 174,
+          "guards": [
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 3126,
+              "cx": 7895
+            },
+            {
+              "transition": 80.78,
+              "radius": 17.31,
+              "cy": 3100,
+              "cx": 7910
+            },
+            {
+              "transition": 80.78,
+              "radius": 28.849999999999998,
+              "cy": 3100,
+              "cx": 7880
+            }
+          ],
+          "atan2_present": false,
+          "cached_zero_harmonic": 0.26362902798118754,
+          "y0": 2968,
+          "sample_step": 4,
+          "x0": 7428,
+          "patch": {
+            "phase": 1,
+            "kind": "rocket",
+            "relief_y": 0.9489211523363099,
+            "core_cells": 63.47,
+            "relief_x": -0.31551330661119464,
+            "cy": 3316,
+            "cx": 7775
+          }
+        }
+      ]
+    }
+  ],
+  "status": "pass"
+}

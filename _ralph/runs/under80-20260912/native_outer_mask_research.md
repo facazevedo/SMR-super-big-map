@@ -66,3 +66,55 @@ not certified by this study.
 5. Only then consider a genuinely new frozen candidate and all reference/control/
    five-site performance and correctness gates. No skipped samples, RNG changes,
    work cuts, altered reconstruction, or omitted scheduled revalidation.
+
+## Captured real geometry and numerical screening completed
+
+Geometry session92873, owned PID40532, CLOSED normally at fd5f4e9; diagnosticPASS,
+all56 patches/948237 samples captured, complete predecessor/full-snapshot/
+individual-rock parityPASS. Evidence: artifacts/outer_geometry_capture_reference.
+
+Normalized-coordinate study58560 CLOSED, augmented replay96518 CLOSED. Both report
+312 raw U12 differences and observed maximum weight error4.806765651910183e-5.
+The largest error is patch12 at(1428,692), a guard centered(1410,692), radius17.31,
+transition1.4493775937428666. Reference weight0.45472693792247565 versus proposed
+0.45477500557899475. Small normalized-coordinate errors amplify across that narrow
+transition. Budgets1/65536 and2/65536 were exceeded on9 and2 samples respectively,
+despite zero observed false rounding certificates. Therefore absence of a failed
+rounded result cannot validate either budget. Budget4/65536 observed205016 ambiguous
+samples(21.621%);8/65536 requires935218(98.627%), illustrating a correction-cost cliff.
+
+The complete capture has integer patch centers56/56 and integer guard centers111/111.
+Minimum positive guard transition is0.380000000000003. This suggests a better input
+representation: keep integer grid-space coordinate differences/squared sums exact
+instead of normalizing first. A second numerical variant asserts integer offsets
+and every squared sum<=2^24 on all captured samples, then carries f32 operations in
+grid units. These domain checks pass for the entire capture. Any eventual native
+implementation still needs explicit numeric qualification and positive-storage/
+signed-decode checks, not assumptions about other maps or custom inputs.
+
+World-coordinate study8400 CLOSED:209 raw U12 differences, maximum observed error
+1.3764691164652731e-6 (about35x smaller than the normalized variant). Hypothetical
+budget1/65536 observes51449 ambiguous cells(5.426%) and zero bound exceedances or
+false certificates. This is screening evidence, NOT a mathematical or engine proof
+of that budget and NOT a speedup. All five budget summaries remain in results.json.
+
+Actual-source scalar oracle passes ALL948237 U12 values across all56 patches for
+both augmented normalized and world-coordinate studies. The oracle extracts the
+production scalar mask and protection function directly, cross-checking the Python
+reference and captured geometry against actual Lua. It does not validate the f32
+candidate, native root behavior or any untested inputs. Artifacts preserve the first
+study, augmented study and world-coordinate study separately, plus literal scalar
+binary outputs and oracle results.
+
+### Next experiment
+
+Prioritize a private integer-grid-coordinate NativeOuterMask prototype over the
+normalized-coordinate variant. Preserve full mask dimensions/resampling and guard
+order. Generate exact coordinate fields with positive integer storage plus native
+signed decode; qualify square/add bounds explicitly. Encode scalar coefficients
+using legal integer-ratio native arguments. Establish new checked root/reciprocal
+bounds, protection transition/discontinuity handling, polynomial/product error
+propagation and U12 ambiguity correction before trusting any cells. Compare the
+native kernel against every captured scalar U12 cell and both-order full terrain
+shadows, then evaluate allocation/correction cost. No production change is justified
+by this numerical study alone.

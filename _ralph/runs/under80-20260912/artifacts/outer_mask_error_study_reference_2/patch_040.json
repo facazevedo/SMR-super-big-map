@@ -1,0 +1,39 @@
+{
+  "samples": 23550,
+  "guards": 3,
+  "raw_u12_differences": 11,
+  "observed_max_weight_error": 1.5051129858667522e-05,
+  "worst_location": {
+    "x": 7456,
+    "y": 7848,
+    "scalar": 0.3883184204135348,
+    "proposed": 0.38830336928367615
+  },
+  "hypothetical_budgets": {
+    "1": {
+      "ambiguous": 1273,
+      "false_certificate": 0,
+      "bound_exceeded": 0
+    },
+    "2": {
+      "ambiguous": 2588,
+      "false_certificate": 0,
+      "bound_exceeded": 0
+    },
+    "4": {
+      "ambiguous": 5143,
+      "false_certificate": 0,
+      "bound_exceeded": 0
+    },
+    "8": {
+      "ambiguous": 23466,
+      "false_certificate": 0,
+      "bound_exceeded": 0
+    },
+    "16": {
+      "ambiguous": 23550,
+      "false_certificate": 0,
+      "bound_exceeded": 0
+    }
+  }
+}
