@@ -179,3 +179,35 @@ candidate/scalar U12 coarse cell before resampling, then feeds matching candidat
 masks through the unchanged terrain pipeline. The normal rules runner will check
 complete predecessor parity. This still does not establish arithmetic premises
 or a cold performance improvement. Production remains unchanged.
+
+### Both-order full reference shadows
+
+Both ran the identical 8a5a90e kernel and original private function cells; no
+production/deployment change or checkpoint change occurred between orders.
+
+| Artifact | Owned PID | Compared coarse cells | Native kernel | Scalar loop | Full predecessor parity |
+| --- | ---: | ---: | ---: | ---: | --- |
+| native_outer_mask_shadow_native_first | 32516 | 948237 / 56 patches | 967 ms | 2417 ms | PASS |
+| native_outer_mask_shadow_scalar_first | 38620 | 948237 / 56 patches | 930 ms | 2445 ms | PASS |
+
+Sessions58141/46745 CLOSED normally. Every compared candidate mask was used in
+the unchanged resampling/terrain pipeline. Full runtime comparison reports no
+rule differences, no full-snapshot differences and no rock-grounding differences.
+Runtime RNG comparisons do not replace the independent source audit. Diagnostic
+elapsed times include both kernels and exhaustive reads, not cold candidate time.
+The paired kernel difference is 1450/1515 ms, not a demonstrated START-to-T1 gain.
+
+After both runs, the proof-domain audit found huge coordinates could lose scalar
+step increments while native coordinates retain them. A new offline regression
+reproduced acceptance of that unsupported domain. Fixed by explicit finite bounds
+on grid origins and every center. Also require the original radius expression,
+finite phase, matching literal harmonic cache, and manual allowance at least the
+derived value. All refusals precede allocation. The ordinary-Lua suite now passes
+6382 checks, including a logging-only error() regression. Conditional rational
+bounds still pass; source-double, interval and primitive premises remain open.
+
+Qualified native replay18057/PID22068 CLOSED normally: all948237 captured scalar
+cells exact,128803 corrections,1033ms kernel-only; no Lua errors. Artifact:
+native_outer_mask_qualified_scratch. The qualified revision is newer than the
+both-order full-map checkpoint, so those full-map results are not mislabeled as
+tests of its new refusal guards. No engine remains; production/deployment unchanged.

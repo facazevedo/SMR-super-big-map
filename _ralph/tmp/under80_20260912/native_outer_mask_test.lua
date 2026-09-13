@@ -106,4 +106,25 @@ local api,owned=api_for()
 local row=fixture();row.patch.cx=.5
 local output,_,why=native(api,row,scalar(row))
 check(output==nil and why~=nil and #owned==0,'unsupported domain allocated/published')
+-- Engine-style logging-only error() must not be used as control flow.
+local api,owned=api_for('huge_root')
+local original_error,logged=error,0
+_G.error=function()logged=logged+1 end
+local output,_,why=native(api,fixture(),scalar(fixture()))
+_G.error=original_error
+check(output==nil and why~=nil and logged==0,'rejection depends on throwing error()')
+for _,g in ipairs(owned)do check(g.freed,'logging-only error cleanup leak')end
+-- Proof-domain regressions: every refusal must precede allocation.
+for _,case in ipairs({'huge_coordinates','wrong_radius','small_budget','wrong_harmonic'}) do
+    local row=fixture()
+    local epsilon
+    if case=='huge_coordinates' then row.x0=1e20;row.y0=1e20;row.patch.cx=1e20;row.patch.cy=1e20
+    elseif case=='wrong_radius' then row.radius=1
+    elseif case=='small_budget' then epsilon=1
+    elseif case=='wrong_harmonic' then row.cached_zero_harmonic=.5 end
+    local api,owned=api_for()
+    local output,_,why=native(api,row,scalar(row),epsilon)
+    if output then output:free() end
+    check(output==nil and why~=nil and #owned==0,'unqualified input accepted/allocated: '..case)
+end
 print('PASS private native outer mask: '..checks..' exact/failure checks; '..total..' allocation failure points')

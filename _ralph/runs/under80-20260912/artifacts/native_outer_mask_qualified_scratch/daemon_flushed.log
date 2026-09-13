@@ -1,0 +1,278 @@
+					Render 0:00:00:319
+*** executable info
+Timestamp:     	69e75da5
+Date:          	Tue Apr 21 07:21:09 2026
+Command line:  	-nointro -no_interactive_asserts -stdout -crash_folder D:\PROJS\SMR\smr-harness\.state\game-crashes\20260913-032454-18d4c37d3ea9411c -hidden
+Compiler:      	194435214, 142 (VS 2019) or newer
+
+
+*** hardware info
+CPU name      	Intel(R) Core(TM) i9-10900X CPU @ 3.70GHz
+CPU MHz       	3696
+CPU cores     	10/20
+Phys. Memory   	130752 MBytes
+Memory In Use  	28%
+					Render 0:00:00:320
+Disk Free      	89492 MBytes
+
+
+*** OS info
+OS:            	Windows 11
+Version:       	10.0.26100 
+
+
+*** Debug::Init()
+
+
+					Render 0:00:00:745
+Steam initialized (AppId 3215050, Beta branch ???)
+SteamFilterText is unavailable for user's language and will act as a passthrough.
+					Render 0:00:00:749
+Drive type for game installation: SSD, savegames: SSD
+Language: English
+					Render 0:00:01:561
+Starting hidden
+					Render 0:00:03:638
+*** graphics info
+GPU                            	NVIDIA GeForce RTX 5090 Feature Level: 12.1 {  DoublePrecisionFloatShaderOps: 1 OutputMergerLogicOp: 1 MinPrecisionSupport: 2 TiledResourcesTier: 3 ResourceBindingTier: 3 PSSpecifiedStencilRefSupported: 0 TypedUAVLoadAdditionalFormats: 1 ROVsSupported: 1 ConservativeRasterizationTier: 3 MaxGPUVirtualAddressBitsPerResource: 40 StandardSwizzle64KBSupported: 0 CrossNodeSharingTier: 0 CrossAdapterRowMajorTextureSupported: 0 VPAndRTArrayIndexFromAnyShaderFeedingRasterizerSupportedWithoutGSEmulation: 1 ResourceHeapTier: 2 NotZeroedPools: 1 UMA: 0 UnalignedBlockTextures: 1}
+API                            	d3d12
+GPU Driver Version             	32.0.15.7688
+GPU Driver Package Version     	576.88
+GPU Dedicated Video Memory     	32101 MB
+					Render 0:00:03:867
+
+Libs: Network, Sequences, MouseTrackWin, DumbAI, MapGen, Paradox, TriggersAndEvents, Notifications, Research, Resources, DevToolsPublic, DebugAdapter 
+
+					Render 0:00:04:288
+
+Platform: asserts, cheats, debug, desktop, editor, goldmaster, paradox, pc, steam
+
+						Game Task 0:00:04:296
+
+** Entity stats:
+  entities: 2920
+  unique state names: 335 / 1023
+  unique spot names: 370
+  unique spot transforms: 19621
+  max surface radius: 47680 cm
+
+					Render 0:00:05:696
+*** audio info
+Audio Endpoint                 	Speakers (Realtek(R) Audio)
+							Lua 0:00:05:767
+Lua revision: 392284
+Assets revision: 30889
+Steam AppID: 3215050
+							Lua 0:00:05:768
+Build version: 1.0.7.392284
+Build branch:  Release
+							Lua 0:00:05:771
+[DebugAdapter] Started at 127.0.0.1:8165
+							Lua 0:00:05:779
+Account storage loaded successfully in 8 ms
+							Lua 0:00:05:780
+DLC thomas loaded, lua revision 392284, assets revision 30889
+							Lua 0:00:05:791
+[mod] Loaded mod def Filter Landing Spots (id FilterLandingSpots, v0.00-018) packed from pops
+[mod] Loaded mod def Whale - Aquatic Life for Mars Seas (id Whale, v0.00-10033) unpacked from appdata
+[mod] Loaded mod def My Wild Pet (id MyWildPet, v0.00-005) unpacked from appdata
+[mod] Loaded mod def Colony Control (id ColonyControl, v0.00-014) unpacked from appdata
+[mod] Loaded mod def Super Big Map (id SuperBigMap, v0.00-983) unpacked from appdata
+[mod] Loaded mod def Animalia - Restored Wildlife (id Animalia, v0.00-018) unpacked from appdata
+[mod] Loaded mod def Humpback Whale - Aquatic Life for Mars Seas (id HumpbackWhale, v0.00-10009) unpacked from appdata
+[mod] Loaded mod def Project Ark (id ProjectArk, v0.00-004) unpacked from appdata
+[mod] Loaded mod def Martian Waters Snow (id MartianWatersSnow, v0.00-407) unpacked from appdata
+[mod] Loaded mod def Scenario Editor (id SRM-scenario-editor, v0.00-045) unpacked from appdata
+[mod] Loaded mod def Buried Cables and Pipes (id bcp, v0.00-433) unpacked from appdata
+[mod] Loaded mod def Toggle Console Log Off (id TCLoff7, v1.00-005) unpacked from appdata
+[mod] Loaded mod def Real Mars Terrain (id RealMarsTerrain, v0.00-007) unpacked from appdata
+[mod] Loaded mod def invisible-passage-ramp (id IPRAMP, v0.00-068) unpacked from appdata
+[mod] Loaded mod def DLSS 5 Neural Rendering - Experimental (id vzlLtM, v0.00-002) unpacked from appdata
+[mod] Loaded mod def Planet Dawn (id PlanetDawn, v1.00-193) unpacked from appdata
+[mod] Loaded mod def No Wonders (id no-wonders, v0.00-001) unpacked from appdata
+[mod] Loaded mod def Copy Move (id CopyMove, v0.00-001) unpacked from appdata
+[mod] Loaded mod def Scenario Editor Terrains (id SRM-scenario-editor-terrains, v0.00-001) unpacked from appdata
+[mod] Loaded mod def Mute Notifications (id MuteNotifications, v0.00-060) unpacked from appdata
+[mod] Loaded mod def Attribute Inspector (id AttributeInspector, v0.00-014) unpacked from appdata
+[mod] Loaded mod def insert-objects (id insert-objects, v0.00-005) unpacked from appdata
+[mod] Loaded mod def Rover Drive Mode (id RoverDriveMode, v0.00-195) unpacked from appdata
+[mod] Loaded mod def Extra Maps (id ExtraMaps, v0.00-011) unpacked from appdata
+[mod] Loaded mod def Auto Clear Rubble (id AutoClearRubble, v1.00-023) unpacked from appdata
+[mod] Loaded mod def Disable All Mods (id DisableAllMods, v0.00-012) unpacked from appdata
+[mod] Loaded mod def Bridges (id Bridges, v0.00-099) unpacked from appdata
+[mod] Loaded mod def Bridges Blender (id bridges-blender, v0.00-008) unpacked from appdata
+							Lua 0:00:07:710
+Reloading done in 1903 ms
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:52301
+							Lua 0:00:07:711
+Available DLCs: thomas(Interplanetary Codex) 
+							Lua 0:00:08:595
+[preset] Preset postprocess took 156 ms.
+							Lua 0:00:08:703
+479 / 479 particle streams loaded in 96 ms.
+							Lua 0:00:08:838
+[PdxSDK] Started up. Took 3032
+							Lua 0:00:09:725
+Received achievements from Steam.
+							Lua 0:00:10:009
+[mod] Loaded mod items for: TCLoff7, SuperBigMap
+							Lua 0:00:10:666
+[Braze] Initialized. SE: true, SB false
+							Lua 0:00:10:759
+[PdxSDKMods] Mod 147865 v 6 is up to date. Nothing to download.
+							Lua 0:00:10:769
+[Braze] ContentCards 2/2. FullSync true. Headers nil. Retry 0
+							Lua 0:00:11:037
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:52318
+							Lua 0:00:11:217
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:52320
+							Lua 0:00:11:248
+NATIVE_OUTER_MASK_PATCH 1 checked=4290 corrected=454 kernel_ms=3
+							Lua 0:00:11:264
+NATIVE_OUTER_MASK_PATCH 2 checked=4225 corrected=482 kernel_ms=3
+							Lua 0:00:11:282
+NATIVE_OUTER_MASK_PATCH 3 checked=4290 corrected=420 kernel_ms=3
+							Lua 0:00:11:302
+NATIVE_OUTER_MASK_PATCH 4 checked=5184 corrected=564 kernel_ms=4
+							Lua 0:00:11:326
+NATIVE_OUTER_MASK_PATCH 5 checked=5625 corrected=564 kernel_ms=4
+							Lua 0:00:11:343
+NATIVE_OUTER_MASK_PATCH 6 checked=4290 corrected=465 kernel_ms=3
+							Lua 0:00:11:361
+NATIVE_OUTER_MASK_PATCH 7 checked=4356 corrected=446 kernel_ms=3
+							Lua 0:00:11:449
+NATIVE_OUTER_MASK_PATCH 8 checked=22801 corrected=2457 kernel_ms=15
+							Lua 0:00:11:474
+NATIVE_OUTER_MASK_PATCH 9 checked=5776 corrected=573 kernel_ms=4
+							Lua 0:00:11:504
+NATIVE_OUTER_MASK_PATCH 10 checked=6806 corrected=702 kernel_ms=5
+							Lua 0:00:11:542
+NATIVE_OUTER_MASK_PATCH 11 checked=9702 corrected=1038 kernel_ms=6
+							Lua 0:00:11:613
+NATIVE_OUTER_MASK_PATCH 12 checked=16900 corrected=1728 kernel_ms=12
+							Lua 0:00:11:641
+NATIVE_OUTER_MASK_PATCH 13 checked=7310 corrected=767 kernel_ms=5
+							Lua 0:00:11:659
+NATIVE_OUTER_MASK_PATCH 14 checked=4290 corrected=447 kernel_ms=3
+							Lua 0:00:11:739
+NATIVE_OUTER_MASK_PATCH 15 checked=17689 corrected=1854 kernel_ms=14
+							Lua 0:00:11:756
+NATIVE_OUTER_MASK_PATCH 16 checked=4290 corrected=484 kernel_ms=2
+							Lua 0:00:11:850
+NATIVE_OUTER_MASK_PATCH 17 checked=22201 corrected=2403 kernel_ms=16
+							Lua 0:00:11:867
+NATIVE_OUTER_MASK_PATCH 18 checked=4290 corrected=463 kernel_ms=3
+							Lua 0:00:11:964
+NATIVE_OUTER_MASK_PATCH 19 checked=22801 corrected=2381 kernel_ms=16
+							Lua 0:00:11:980
+NATIVE_OUTER_MASK_PATCH 20 checked=4225 corrected=431 kernel_ms=3
+							Lua 0:00:12:003
+NATIVE_OUTER_MASK_PATCH 21 checked=5476 corrected=533 kernel_ms=4
+							Lua 0:00:12:115
+NATIVE_OUTER_MASK_PATCH 22 checked=22801 corrected=3646 kernel_ms=26
+							Lua 0:00:12:163
+NATIVE_OUTER_MASK_PATCH 23 checked=12321 corrected=1351 kernel_ms=8
+							Lua 0:00:12:181
+NATIVE_OUTER_MASK_PATCH 24 checked=4290 corrected=430 kernel_ms=3
+							Lua 0:00:12:202
+NATIVE_OUTER_MASK_PATCH 25 checked=5402 corrected=611 kernel_ms=4
+							Lua 0:00:12:222
+NATIVE_OUTER_MASK_PATCH 26 checked=4556 corrected=497 kernel_ms=4
+							Lua 0:00:12:287
+NATIVE_OUTER_MASK_PATCH 27 checked=14388 corrected=1786 kernel_ms=12
+							Lua 0:00:12:325
+NATIVE_OUTER_MASK_PATCH 28 checked=8281 corrected=878 kernel_ms=7
+							Lua 0:00:12:350
+NATIVE_OUTER_MASK_PATCH 29 checked=5041 corrected=519 kernel_ms=5
+							Lua 0:00:12:457
+NATIVE_OUTER_MASK_PATCH 30 checked=23716 corrected=2510 kernel_ms=18
+							Lua 0:00:12:576
+NATIVE_OUTER_MASK_PATCH 31 checked=24649 corrected=2638 kernel_ms=21
+							Lua 0:00:12:682
+NATIVE_OUTER_MASK_PATCH 32 checked=23716 corrected=2489 kernel_ms=18
+							Lua 0:00:12:727
+NATIVE_OUTER_MASK_PATCH 33 checked=10000 corrected=1042 kernel_ms=7
+							Lua 0:00:12:847
+NATIVE_OUTER_MASK_PATCH 34 checked=24649 corrected=2582 kernel_ms=20
+							Lua 0:00:12:946
+NATIVE_OUTER_MASK_PATCH 35 checked=20736 corrected=2091 kernel_ms=16
+							Lua 0:00:13:024
+NATIVE_OUTER_MASK_PATCH 36 checked=18840 corrected=2492 kernel_ms=15
+							Lua 0:00:13:137
+NATIVE_OUTER_MASK_PATCH 37 checked=24649 corrected=2615 kernel_ms=19
+							Lua 0:00:13:255
+NATIVE_OUTER_MASK_PATCH 38 checked=24649 corrected=2576 kernel_ms=20
+							Lua 0:00:13:311
+NATIVE_OUTER_MASK_PATCH 39 checked=12544 corrected=1279 kernel_ms=9
+							Lua 0:00:13:428
+NATIVE_OUTER_MASK_PATCH 40 checked=23550 corrected=2589 kernel_ms=21
+							Lua 0:00:13:506
+NATIVE_OUTER_MASK_PATCH 41 checked=17424 corrected=1869 kernel_ms=13
+							Lua 0:00:13:625
+NATIVE_OUTER_MASK_PATCH 42 checked=24649 corrected=2705 kernel_ms=22
+							Lua 0:00:13:731
+NATIVE_OUTER_MASK_PATCH 43 checked=22765 corrected=2640 kernel_ms=19
+							Lua 0:00:13:841
+NATIVE_OUTER_MASK_PATCH 44 checked=24492 corrected=2660 kernel_ms=18
+							Lua 0:00:14:015
+NATIVE_OUTER_MASK_PATCH 45 checked=30276 corrected=5050 kernel_ms=43
+							Lua 0:00:14:186
+NATIVE_OUTER_MASK_PATCH 46 checked=30276 corrected=4928 kernel_ms=41
+							Lua 0:00:14:346
+NATIVE_OUTER_MASK_PATCH 47 checked=30276 corrected=4937 kernel_ms=38
+							Lua 0:00:14:523
+NATIVE_OUTER_MASK_PATCH 48 checked=30276 corrected=4991 kernel_ms=46
+							Lua 0:00:14:697
+NATIVE_OUTER_MASK_PATCH 49 checked=30276 corrected=5079 kernel_ms=43
+							Lua 0:00:14:859
+NATIVE_OUTER_MASK_PATCH 50 checked=30276 corrected=4997 kernel_ms=38
+							Lua 0:00:15:081
+NATIVE_OUTER_MASK_PATCH 51 checked=30276 corrected=6703 kernel_ms=69
+							Lua 0:00:15:253
+NATIVE_OUTER_MASK_PATCH 52 checked=30276 corrected=4968 kernel_ms=42
+							Lua 0:00:15:414
+NATIVE_OUTER_MASK_PATCH 53 checked=30276 corrected=5094 kernel_ms=39
+							Lua 0:00:15:635
+NATIVE_OUTER_MASK_PATCH 54 checked=30276 corrected=6430 kernel_ms=66
+							Lua 0:00:15:870
+NATIVE_OUTER_MASK_PATCH 55 checked=30276 corrected=6639 kernel_ms=74
+							Lua 0:00:16:030
+NATIVE_OUTER_MASK_PATCH 56 checked=30276 corrected=4836 kernel_ms=38
+[DebugAdapter] Connection lost to 127.0.0.1:52318 
+[DebugAdapter] Connection lost to 127.0.0.1:52301 
+							Lua 0:00:16:202
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:52326
+							Lua 0:00:16:422
+[DebugAdapter] New connection to DebugAddapter 127.0.0.1:52329
+							Lua 0:00:16:924
+
+
+Stopping the game threads from the Lua side with exit code 0.
+
+					Render 0:00:16:941
+
+
+Stopping the game threads after receiving WM_QUIT.
+
+[QUIT] Waiting the game state to finish...
+							Lua 0:00:17:141
+[QUIT] Game state finished.
+[QUIT] Stopping game state thread...
+[Sound] Stopping...
+					Render 0:00:17:148
+[Sound] Done.
+					Render 0:00:17:149
+Hook 'Shader :: CompileEffect' not found!
+					Render 0:00:17:216
+DestroyVideos: 1 videos not cleaned up
+					Render 0:00:17:246
+[DebugAdapter] Connection lost to 127.0.0.1:52320 
+[DebugAdapter] Connection lost to 127.0.0.1:52326 
+[DebugAdapter] Stopped
+					Render 0:00:17:372
+
+
+*** Debug::Done()
+Time (ms)	17372
+
+

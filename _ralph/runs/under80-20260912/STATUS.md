@@ -947,3 +947,34 @@ then complete proof premises, fault coverage and both-order full-map shadows.
 Evidence: native_outer_mask_research.md and artifacts/native_outer_mask_bound_scratch
 and native_outer_mask_residual_faults. Production/deployment unchanged v983, 38/38
 auditPASS. Under85 across all six remains unmet; no production candidate promoted.
+
+## Native mask failure handling repaired; both-order full-map shadows pass
+
+This continuation is PROGRESS, not a blocked/no-progress turn. Explicit failure
+propagation replaces reliance on engine error() throwing. Native scratch sessions
+27562/PID37824 and 70042/PID47028 CLOSED normally: all four arithmetic perturbations,
+all 26 allocation-failure points and missing/duplicate/invalid-coordinate/scalar
+callback tests pass, with tracked cleanup and no Lua errors.
+
+Frozen checkpoint8a5a90e full reference shadows both CLOSED normally:
+
+- Native-first58141/PID32516: all948237 cells/56 patches exact, native967ms versus
+  scalar2417ms; complete predecessor/full-snapshot/rock-grounding parityPASS.
+- Scalar-first46745/PID38620: all948237 cells/56 patches exact, native930ms versus
+  scalar2445ms; complete predecessor/full-snapshot/rock-grounding parityPASS.
+
+Every compared candidate mask was used in the unchanged downstream pipeline.
+The1450/1515ms kernel difference is diagnostic evidence, NOT a cold START-to-T1
+improvement. All production files and deployment still match accepted v983.
+
+After those frozen runs, added finite coordinate/phase bounds, original-radius
+qualification, literal harmonic-cache verification and refusal of undersized
+manual error budgets. Offline huge-coordinate regression failed before the fix;
+6382 checks pass afterward. Qualified native scratch18057/PID22068 CLOSED normally:
+all948237 scalar cells still exact,128803 corrections,1033ms isolated kernel.
+
+Next discharge remaining native primitive/source-double/interval error premises,
+then validate the qualified candidate across additional scenarios before a
+production/cold decision. See native_outer_mask_research.md and the private
+native_outer_mask_source_audit.md. Under85 across all six remains unproven; the
+goal stays active and no production optimization was promoted this turn.

@@ -18,7 +18,8 @@ return function(api, row, scalar, epsilon_numerator)
     end
     if row.atan2_present or not integer(w) or not integer(h) or w<2 or h<2
         or w>4096 or h>4096 or (step~=1 and step~=4) or not integer(row.x0)
-        or not integer(row.y0) or not finite(p.core_cells) or p.core_cells<1
+        or not finite(row.x0) or not integer(row.y0) or not finite(row.y0)
+        or not finite(p.core_cells) or p.core_cells<1 or not finite(p.phase)
         or not finite(row.base_transition) or row.base_transition<1 or p.core_cells>row.base_transition
         or not finite(p.relief_x) or not finite(p.relief_y)
         or math.abs(p.relief_x)>1 or math.abs(p.relief_y)>1
@@ -27,8 +28,16 @@ return function(api, row, scalar, epsilon_numerator)
             or epsilon_numerator<1 or epsilon_numerator>16)) then
         return nil, stats, 'unsupported research domain'
     end
+    if not finite(row.radius) or row.radius~=p.core_cells+row.base_transition*1.35 then
+        return nil,stats,'outer radius does not match scalar bound'
+    end
+    local harmonic=.52*math.sin(p.phase)+.30*math.sin(-p.phase*1.37)+.18*math.sin(p.phase*.73)
+    if not finite(harmonic) or math.abs(harmonic)>1
+        or (row.cached_zero_harmonic~=nil and row.cached_zero_harmonic~=harmonic) then
+        return nil,stats,'native outer harmonic domain/cache'
+    end
     local function domain(cx, cy)
-        if not integer(cx) or not integer(cy) then return false end
+        if not integer(cx) or not finite(cx) or not integer(cy) or not finite(cy) then return false end
         local dx=math.max(math.abs(row.x0-cx),math.abs(row.x0+(w-1)*step-cx))
         local dy=math.max(math.abs(row.y0-cy),math.abs(row.y0+(h-1)*step-cy))
         return dx*dx+dy*dy<=16777216
@@ -45,6 +54,9 @@ return function(api, row, scalar, epsilon_numerator)
     end
     local derived_numerator=math.ceil(allowance_units/256.0)
     if derived_numerator>16 then return nil,stats,'research error budget exceeds supported range' end
+    if epsilon_numerator and epsilon_numerator<derived_numerator then
+        return nil,stats,'manual error budget below derived allowance'
+    end
     epsilon_numerator=epsilon_numerator or derived_numerator
     stats.experimental_epsilon_numerator=epsilon_numerator
     stats.derived_numerator=derived_numerator
@@ -162,11 +174,6 @@ return function(api, row, scalar, epsilon_numerator)
         local width=clone(along)
         if not width then return end
         api.GridMulDivAdd(width,along,1,0);api.GridMulDivAdd(width,24,100,0)
-        local harmonic=row.cached_zero_harmonic
-        if harmonic==nil then
-            harmonic=.52*math.sin(p.phase)+.30*math.sin(-p.phase*1.37)+.18*math.sin(p.phase*.73)
-        end
-        if not require_value(finite(harmonic) and math.abs(harmonic)<=1,'native outer harmonic domain') then return end
         if not add(width,1+row.irregularity*harmonic-.12) then return end
         local linear=clone(along)
         if not linear then return end
