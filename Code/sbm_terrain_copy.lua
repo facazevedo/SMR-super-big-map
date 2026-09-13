@@ -2111,7 +2111,17 @@ local function RasterNaturalMountainBaseAprons(api, grid, selected, policy)
 	    api.GridClamp(polynomial,0,1)
 	    api.GridMulDivAdd(polynomial,W,1,0)
 	    api.GridRound(polynomial)
-	    return polynomial
+	    -- Private local certificate: reuse consumed cube; original weight is unchanged.
+	    local c=policy.core_fraction
+	    local d=math.floor(((0.0000056+0.0000018/(c+0.0))/(1.0-c))*W+6)+2
+	    cube:copyrect(radius,api.box(0,0,w,h),api.point(0,0))
+	    api.GridMulDivAdd(cube,-1,1,1)
+	    api.GridMulDivAdd(cube,radius,1,0)
+	    api.GridMulDivAdd(cube,W,1,d+2)
+	    api.GridClamp(cube,0,W/4)
+	    api.GridMulDivAdd(cube,cube,W,0)
+	    api.GridMulDivAdd(cube,90*d,W,240)
+	    return polynomial,nil,cube
 	end
 	local required = {"NewComputeGrid","GridRepack","IsComputeGrid","GridResample",
 		"GridMulDivAdd","GridAddMulDiv","GridAdd","GridClamp","GridAbs","GridCount","GridForeach",
@@ -2212,8 +2222,9 @@ local function RasterNaturalMountainBaseAprons(api, grid, selected, policy)
 				api.GridMulDivAdd(seed,1,1,-bias)
 				local plane=own(api.GridResample(seed,w,h,true))
 				if not plane then return "native apron plane allocation failed" end
-				local native_mask,mask_error=NativeApronMask(api,own,candidate,policy,short_radius,long_radius,x0,y0,w,h)
+				local native_mask,mask_error,local_error=NativeApronMask(api,own,candidate,policy,short_radius,long_radius,x0,y0,w,h)
 				if mask_error then return mask_error end
+				if native_mask and not local_error then return "native apron local error missing" end
 				local mask_samples=0
 				if native_mask then
 					mask=native_mask
@@ -2258,10 +2269,13 @@ local function RasterNaturalMountainBaseAprons(api, grid, selected, policy)
 				api.GridAddMulDiv(uncertainty,plane,-1);api.GridAbs(uncertainty)
 				local sensitivity=own(mask:clone())
 				if not sensitivity then return "native apron sensitivity allocation failed" end
-				api.GridMulDivAdd(sensitivity,1,1,error_numerator*256);api.GridClamp(sensitivity,0,W)
+				if native_mask then api.GridAddMulDiv(sensitivity,local_error,1,3)
+				else api.GridMulDivAdd(sensitivity,1,1,error_numerator*256) end
+				api.GridClamp(sensitivity,0,W)
 				api.GridMulDivAdd(sensitivity,sensitivity,W,0)
 				api.GridMulDivAdd(uncertainty,sensitivity,W,0)
-				api.GridMulDivAdd(uncertainty,3*error_numerator,65536,0)
+				if native_mask then api.GridMulDivAdd(uncertainty,local_error,W,0)
+				else api.GridMulDivAdd(uncertainty,3*error_numerator,65536,0) end
 				if not native_mask then api.GridFill(uncertainty,0) end
 				api.GridMulDivAdd(result,inverse,W,0)
 				api.GridMulDivAdd(plane,cube,W,0)
@@ -2270,7 +2284,8 @@ local function RasterNaturalMountainBaseAprons(api, grid, selected, policy)
 				-- candidate cell with the literal pre-port raster before this can become production.
 				local magnitude=max(math.abs(target(x0,y0)),math.abs(target(x1,y0)),
 					math.abs(target(x0,y1)),math.abs(target(x1,y1)))
-				local margin=ceil((max(math.abs(relative_min),math.abs(relative_max))+magnitude)*H/524288)+4
+				-- A separate H unit covers newly introduced tiny arithmetic terms.
+				local margin=ceil((max(math.abs(relative_min),math.abs(relative_max))+magnitude)*H/524288)+4+(native_mask and 1 or 0)
 				local function rounded(offset)
 					local value=own(result:clone())
 					if not value then return nil end

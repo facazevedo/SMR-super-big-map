@@ -1,0 +1,4 @@
+PASS actual native-shadowed local field; six exact replacements only, scalar/RNG/rebuild code unchanged
+warning: in the working copy of 'Code/sbm_terrain_copy.lua', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'Code/sbm_version.lua', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'metadata.lua', LF will be replaced by CRLF the next time Git touches it

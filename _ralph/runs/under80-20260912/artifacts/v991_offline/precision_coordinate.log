@@ -1,0 +1,2 @@
+PASS adaptive-Q22 apron: 38115 exact three-way cells; reduced cases 21
+PASS every legacy assertion/case retained; same local field used for both error terms, scalar coefficients unchanged

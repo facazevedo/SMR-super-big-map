@@ -1415,3 +1415,26 @@ replay COMPLETE actual production suite + new proof/oracle/failure/source gates,
 then frozen reference3/control and five declared cold gates againstv987. See
 apron_local_research.md for full details. Accepted median86.606s/worst92.125s;
 neither all-site <85 nor stored full<80 objective is achieved or claimed.
+
+## v991 actual-production replay CLOSED PASS; cold acceptance next
+
+Previous turn PROGRESS yielded both-order exact native local-sensitivity shadows.
+This turn staged ONLY exact86fff28-shadowed TerrainCopy plus generator303 and
+metadata991 (sector76 unchanged). Six declared replacements reverse to literal
+56fbf44; no rejected crease/decor combination. Current accepted baseline staysv987.
+
+Complete actual-production suite25468 CLOSED88/88PASS in v991_offline, hashes
+frozen/unchanged.82 unchanged accepted commands, one extended legacy precision
+instrumentation retaining EVERY38115-cell case/comparator/assertion and scalar
+coefficient path, plus five local proof/source/oracle/failure/raster checks.
+The new instrumentation verifies identical E3 field identity for upper/cubic
+terms, qualified-core and field range; original fixture remains untouched.
+v991_source_review.md covers the numeric/ownership/source/RNG/rebuild/process
+scope and the pending reference3/control+five gates. review_v974.py supports991,
+88 checks and the declared v987 comparators; no changed acceptance semantics.
+
+No game/test live and no coldv991 sample yet. Commit/freeze this passing candidate,
+standard sync/audit38files, then reference3/control against86.606s/29.156s. Only
+strict reference improvement AND exact preservation permits five againstv987:
+88.653/88.711/82.053/92.125/86.546. Preserve every result; no rescue repeats or
+baseline relabels. Goal ACTIVE and full<80/<85 targets still unmet.
