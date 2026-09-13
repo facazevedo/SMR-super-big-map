@@ -1,0 +1,3170 @@
+{
+  "status": "pass",
+  "config_unchanged": true,
+  "started_at": 231172951,
+  "restore_reason": "post-pipeline scheduled revalidation",
+  "elapsed_ms": 101733,
+  "calls": [
+    {
+      "inputs": {
+        "source_slot": 15
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "error": "nil"
+      },
+      "name": "allocate temporary vanilla backing",
+      "id": 1,
+      "ok": true,
+      "exclusive_ms": 2955,
+      "parent": 0,
+      "start_ms": 17245,
+      "duration_ms": 2955
+    },
+    {
+      "inputs": {
+        "target_slot": "15"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "mode": "ChangeCurrentMapSlot",
+        "target_slot": "15"
+      },
+      "name": "switch temporary generator current slot",
+      "id": 2,
+      "ok": true,
+      "exclusive_ms": 1228,
+      "parent": 0,
+      "start_ms": 20200,
+      "duration_ms": 1228
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "ResolveBuildable"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "ResolveBuildable"
+      },
+      "name": "RandomMap procedure: ResolveBuildable",
+      "id": 5,
+      "ok": true,
+      "exclusive_ms": 411,
+      "parent": 4,
+      "start_ms": 27137,
+      "duration_ms": 411
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceColdAreas"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceColdAreas"
+      },
+      "name": "RandomMap procedure: PlaceColdAreas",
+      "id": 6,
+      "ok": true,
+      "exclusive_ms": 2,
+      "parent": 4,
+      "start_ms": 27548,
+      "duration_ms": 2
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceArtefacts"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceArtefacts"
+      },
+      "name": "RandomMap procedure: PlaceArtefacts",
+      "id": 7,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 4,
+      "start_ms": 27550,
+      "duration_ms": 0
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindFeatures_RepulseDeposits"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindFeatures_RepulseDeposits"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindFeatures_RepulseDeposits",
+      "id": 10,
+      "ok": true,
+      "exclusive_ms": 1,
+      "parent": 9,
+      "start_ms": 27560,
+      "duration_ms": 1
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindFeatures_Deposits"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindFeatures_Deposits"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindFeatures_Deposits",
+      "id": 11,
+      "ok": true,
+      "exclusive_ms": 46,
+      "parent": 9,
+      "start_ms": 27561,
+      "duration_ms": 46
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindFeatures_Anomalies"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindFeatures_Anomalies"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindFeatures_Anomalies",
+      "id": 12,
+      "ok": true,
+      "exclusive_ms": 1,
+      "parent": 9,
+      "start_ms": 27607,
+      "duration_ms": 1
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindFeatures_EffectDeposits"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindFeatures_EffectDeposits"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindFeatures_EffectDeposits",
+      "id": 13,
+      "ok": true,
+      "exclusive_ms": 8,
+      "parent": 9,
+      "start_ms": 27608,
+      "duration_ms": 8
+    },
+    {
+      "inputs": {
+        "randless": "true",
+        "tag": "PlaceAnomalies_FindFeatures"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindFeatures"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindFeatures",
+      "id": 9,
+      "ok": true,
+      "exclusive_ms": 9,
+      "parent": 8,
+      "start_ms": 27554,
+      "duration_ms": 65
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindClusters"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindClusters"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindClusters",
+      "id": 14,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 8,
+      "start_ms": 27619,
+      "duration_ms": 0
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindAnomalies_Breakthrough"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindAnomalies_Breakthrough"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindAnomalies_Breakthrough",
+      "id": 15,
+      "ok": true,
+      "exclusive_ms": 42,
+      "parent": 8,
+      "start_ms": 27619,
+      "duration_ms": 42
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindDeposits_surf_Metals"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindDeposits_surf_Metals"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindDeposits_surf_Metals",
+      "id": 17,
+      "ok": true,
+      "exclusive_ms": 1,
+      "parent": 16,
+      "start_ms": 27662,
+      "duration_ms": 1
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindDeposits_surf_Polymers"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindDeposits_surf_Polymers"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindDeposits_surf_Polymers",
+      "id": 18,
+      "ok": true,
+      "exclusive_ms": 1,
+      "parent": 16,
+      "start_ms": 27663,
+      "duration_ms": 1
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindDeposits_subs_Metals"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindDeposits_subs_Metals"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindDeposits_subs_Metals",
+      "id": 19,
+      "ok": true,
+      "exclusive_ms": 1,
+      "parent": 16,
+      "start_ms": 27664,
+      "duration_ms": 1
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindDeposits_subs_PreciousMetals"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindDeposits_subs_PreciousMetals"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindDeposits_subs_PreciousMetals",
+      "id": 20,
+      "ok": true,
+      "exclusive_ms": 1,
+      "parent": 16,
+      "start_ms": 27665,
+      "duration_ms": 1
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindDeposits_subs_Water"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindDeposits_subs_Water"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindDeposits_subs_Water",
+      "id": 21,
+      "ok": true,
+      "exclusive_ms": 1,
+      "parent": 16,
+      "start_ms": 27666,
+      "duration_ms": 1
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindDeposits_terr_Concrete"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindDeposits_terr_Concrete"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindDeposits_terr_Concrete",
+      "id": 22,
+      "ok": true,
+      "exclusive_ms": 1,
+      "parent": 16,
+      "start_ms": 27667,
+      "duration_ms": 1
+    },
+    {
+      "inputs": {
+        "randless": "true",
+        "tag": "PlaceAnomalies_FindDeposits"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindDeposits"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindDeposits",
+      "id": 16,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 8,
+      "start_ms": 27662,
+      "duration_ms": 6
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindAnomalies_TechUnlock"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindAnomalies_TechUnlock"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindAnomalies_TechUnlock",
+      "id": 24,
+      "ok": true,
+      "exclusive_ms": 1,
+      "parent": 23,
+      "start_ms": 27668,
+      "duration_ms": 1
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindAnomalies_Event"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindAnomalies_Event"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindAnomalies_Event",
+      "id": 25,
+      "ok": true,
+      "exclusive_ms": 1,
+      "parent": 23,
+      "start_ms": 27669,
+      "duration_ms": 1
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindAnomalies_FreeTech"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindAnomalies_FreeTech"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindAnomalies_FreeTech",
+      "id": 26,
+      "ok": true,
+      "exclusive_ms": 1,
+      "parent": 23,
+      "start_ms": 27670,
+      "duration_ms": 1
+    },
+    {
+      "inputs": {
+        "randless": "true",
+        "tag": "PlaceAnomalies_FindAnomalies"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindAnomalies"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindAnomalies",
+      "id": 23,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 8,
+      "start_ms": 27668,
+      "duration_ms": 3
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindEffectDeposits"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindEffectDeposits"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindEffectDeposits",
+      "id": 27,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 8,
+      "start_ms": 27671,
+      "duration_ms": 0
+    },
+    {
+      "inputs": {
+        "randless": "true",
+        "tag": "PlaceAnomalies_AlignToHexGrid"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_AlignToHexGrid"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_AlignToHexGrid",
+      "id": 28,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 8,
+      "start_ms": 27671,
+      "duration_ms": 0
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_PlaceDeposits"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_PlaceDeposits"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_PlaceDeposits",
+      "id": 29,
+      "ok": true,
+      "exclusive_ms": 28,
+      "parent": 8,
+      "start_ms": 27671,
+      "duration_ms": 28
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_PlaceBreakthroughAnomalies"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_PlaceBreakthroughAnomalies"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_PlaceBreakthroughAnomalies",
+      "id": 30,
+      "ok": true,
+      "exclusive_ms": 1,
+      "parent": 8,
+      "start_ms": 27699,
+      "duration_ms": 1
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_PlaceTechUnlockAnomalies"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_PlaceTechUnlockAnomalies"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_PlaceTechUnlockAnomalies",
+      "id": 31,
+      "ok": true,
+      "exclusive_ms": 1,
+      "parent": 8,
+      "start_ms": 27700,
+      "duration_ms": 1
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_PlaceFreeTechAnomalies"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_PlaceFreeTechAnomalies"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_PlaceFreeTechAnomalies",
+      "id": 32,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 8,
+      "start_ms": 27701,
+      "duration_ms": 0
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_PlaceEventAnomalies"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_PlaceEventAnomalies"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_PlaceEventAnomalies",
+      "id": 33,
+      "ok": true,
+      "exclusive_ms": 1,
+      "parent": 8,
+      "start_ms": 27701,
+      "duration_ms": 1
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_PlaceEffectDeposits"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_PlaceEffectDeposits"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_PlaceEffectDeposits",
+      "id": 34,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 8,
+      "start_ms": 27702,
+      "duration_ms": 0
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies",
+      "id": 8,
+      "ok": true,
+      "exclusive_ms": 5,
+      "parent": 4,
+      "start_ms": 27550,
+      "duration_ms": 152
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceObstructions"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceObstructions"
+      },
+      "name": "RandomMap procedure: PlaceObstructions",
+      "id": 35,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 4,
+      "start_ms": 27702,
+      "duration_ms": 0
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "ClearLandingZones"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "tag": "ClearLandingZones"
+      },
+      "name": "RandomMap procedure: ClearLandingZones",
+      "id": 36,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 4,
+      "start_ms": 27702,
+      "duration_ms": 0
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": [],
+      "name": "RandomMapGenerator.OnGenerateLogic",
+      "id": 4,
+      "ok": true,
+      "exclusive_ms": 1,
+      "parent": 3,
+      "start_ms": 27137,
+      "duration_ms": 566
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": [],
+      "name": "vanilla RandomMapGenerator.DoGenerate",
+      "id": 3,
+      "ok": true,
+      "exclusive_ms": 5718,
+      "parent": 0,
+      "start_ms": 21429,
+      "duration_ms": 6284
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": [],
+      "name": "refresh temporary source object radius",
+      "id": 37,
+      "ok": true,
+      "exclusive_ms": 18,
+      "parent": 0,
+      "start_ms": 27713,
+      "duration_ms": 18
+    },
+    {
+      "inputs": {
+        "mode": "flush"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "mode": "flushed"
+      },
+      "name": "finalize temporary source pass edits",
+      "id": 38,
+      "ok": true,
+      "exclusive_ms": 1816,
+      "parent": 0,
+      "start_ms": 27731,
+      "duration_ms": 1816
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "coordinate_count": "336"
+      },
+      "name": "capture native enrichment coordinates",
+      "id": 39,
+      "ok": true,
+      "exclusive_ms": 5,
+      "parent": 0,
+      "start_ms": 29548,
+      "duration_ms": 5
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "record_count": "336"
+      },
+      "name": "capture native enrichment value records",
+      "id": 40,
+      "ok": true,
+      "exclusive_ms": 75,
+      "parent": 0,
+      "start_ms": 29553,
+      "duration_ms": 75
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "selection": "table: 0000022401734130"
+      },
+      "name": "capture vanilla initial sector",
+      "id": 41,
+      "ok": true,
+      "exclusive_ms": 6,
+      "parent": 0,
+      "start_ms": 29628,
+      "duration_ms": 6
+    },
+    {
+      "inputs": {
+        "target_slot": "1"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "mode": "ChangeCurrentMapSlot",
+        "target_slot": "1"
+      },
+      "name": "switch temporary generator current slot",
+      "id": 42,
+      "ok": true,
+      "exclusive_ms": 658,
+      "parent": 0,
+      "start_ms": 29634,
+      "duration_ms": 658
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": [],
+      "name": "helper crease repair source",
+      "id": 45,
+      "ok": true,
+      "exclusive_ms": 247,
+      "parent": 44,
+      "start_ms": 30346,
+      "duration_ms": 247
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": [],
+      "name": "helper crease repair destination",
+      "id": 46,
+      "ok": true,
+      "exclusive_ms": 1572,
+      "parent": 44,
+      "start_ms": 31805,
+      "duration_ms": 1572
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": [],
+      "name": "helper native apron raster",
+      "id": 48,
+      "ok": true,
+      "exclusive_ms": 1580,
+      "parent": 47,
+      "start_ms": 33755,
+      "duration_ms": 1580
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": [],
+      "name": "helper natural apron",
+      "id": 47,
+      "ok": true,
+      "exclusive_ms": 248,
+      "parent": 44,
+      "start_ms": 33507,
+      "duration_ms": 1828
+    },
+    {
+      "inputs": {
+        "interpolate": "true",
+        "scale_values": "true"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "internal_step_repair": "no edge-facing outer-ring step; no edge-facing outer-ring step",
+        "internal_step_rows": 0,
+        "extraction_path": "direct_source_compute",
+        "full_cells": "8192x8192",
+        "error": "",
+        "internal_step_modified": 0
+      },
+      "name": "terrain grid stretch: height",
+      "id": 44,
+      "ok": true,
+      "exclusive_ms": 1429,
+      "parent": 43,
+      "start_ms": 30292,
+      "duration_ms": 5076
+    },
+    {
+      "inputs": {
+        "interpolate": "false",
+        "scale_values": "false"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "internal_step_repair": "not requested",
+        "internal_step_rows": 0,
+        "extraction_path": "direct_source_compute",
+        "full_cells": "8192x8192",
+        "error": "",
+        "internal_step_modified": 0
+      },
+      "name": "terrain grid stretch: type",
+      "id": 49,
+      "ok": true,
+      "exclusive_ms": 637,
+      "parent": 43,
+      "start_ms": 35368,
+      "duration_ms": 637
+    },
+    {
+      "inputs": {
+        "direct_source": "true"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "source_alias": "none",
+        "error": "captured/native clutter source unavailable",
+        "destination_alias": "none"
+      },
+      "name": "terrain clutter grid stretch",
+      "id": 50,
+      "ok": false,
+      "exclusive_ms": 0,
+      "parent": 43,
+      "start_ms": 36005,
+      "duration_ms": 0
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "completed_grids": "2",
+        "error": ""
+      },
+      "name": "stretch temporary source terrain directly to destination",
+      "id": 43,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 0,
+      "start_ms": 30292,
+      "duration_ms": 5713
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": [],
+      "name": "copy generated map state",
+      "id": 51,
+      "ok": true,
+      "exclusive_ms": 1,
+      "parent": 0,
+      "start_ms": 36005,
+      "duration_ms": 1
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "transferred": "16314"
+      },
+      "name": "transfer generated non-enrichment objects",
+      "id": 52,
+      "ok": true,
+      "exclusive_ms": 1402,
+      "parent": 0,
+      "start_ms": 36006,
+      "duration_ms": 1402
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": [],
+      "name": "capture transferred decor relief from temporary terrain",
+      "id": 53,
+      "ok": true,
+      "exclusive_ms": 2859,
+      "parent": 0,
+      "start_ms": 37408,
+      "duration_ms": 2859
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": [],
+      "name": "rebuild destination grids after source migration",
+      "id": 54,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 0,
+      "start_ms": 40267,
+      "duration_ms": 0
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "ResolveBuildable"
+      },
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "tag": "ResolveBuildable"
+      },
+      "name": "RandomMap procedure: ResolveBuildable",
+      "id": 57,
+      "ok": true,
+      "exclusive_ms": 922,
+      "parent": 56,
+      "start_ms": 59328,
+      "duration_ms": 922
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceColdAreas"
+      },
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceColdAreas"
+      },
+      "name": "RandomMap procedure: PlaceColdAreas",
+      "id": 58,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 56,
+      "start_ms": 60250,
+      "duration_ms": 0
+    },
+    {
+      "inputs": {
+        "source_slot": "15",
+        "reason": "passage bootstrap selection window closed"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 1,
+      "outputs": {
+        "error": "nil"
+      },
+      "name": "unload retained vanilla source backing",
+      "id": 60,
+      "ok": true,
+      "exclusive_ms": 312,
+      "parent": 59,
+      "start_ms": 61317,
+      "duration_ms": 312
+    },
+    {
+      "inputs": [],
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "passages": 2,
+        "wonders_deferred": 2,
+        "planned_pairs": 2
+      },
+      "name": "deferred underground passage bootstrap",
+      "id": 59,
+      "ok": true,
+      "exclusive_ms": 1352,
+      "parent": 56,
+      "start_ms": 60250,
+      "duration_ms": 1664
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindFeatures_RepulseDeposits"
+      },
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindFeatures_RepulseDeposits"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindFeatures_RepulseDeposits",
+      "id": 63,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 62,
+      "start_ms": 61918,
+      "duration_ms": 0
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindFeatures_Deposits"
+      },
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindFeatures_Deposits"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindFeatures_Deposits",
+      "id": 64,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 62,
+      "start_ms": 61918,
+      "duration_ms": 0
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindFeatures_Anomalies"
+      },
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindFeatures_Anomalies"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindFeatures_Anomalies",
+      "id": 65,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 62,
+      "start_ms": 61918,
+      "duration_ms": 0
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindFeatures_EffectDeposits"
+      },
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindFeatures_EffectDeposits"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindFeatures_EffectDeposits",
+      "id": 66,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 62,
+      "start_ms": 61918,
+      "duration_ms": 0
+    },
+    {
+      "inputs": {
+        "randless": "true",
+        "tag": "PlaceAnomalies_FindFeatures"
+      },
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindFeatures"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindFeatures",
+      "id": 62,
+      "ok": true,
+      "exclusive_ms": 3,
+      "parent": 61,
+      "start_ms": 61918,
+      "duration_ms": 3
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindClusters"
+      },
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindClusters"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindClusters",
+      "id": 67,
+      "ok": true,
+      "exclusive_ms": 4,
+      "parent": 61,
+      "start_ms": 61921,
+      "duration_ms": 4
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindAnomalies_Breakthrough"
+      },
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindAnomalies_Breakthrough"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindAnomalies_Breakthrough",
+      "id": 68,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 61,
+      "start_ms": 61925,
+      "duration_ms": 0
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindDeposits_subs_Metals"
+      },
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindDeposits_subs_Metals"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindDeposits_subs_Metals",
+      "id": 70,
+      "ok": true,
+      "exclusive_ms": 1,
+      "parent": 69,
+      "start_ms": 61925,
+      "duration_ms": 1
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindDeposits_subs_PreciousMetals"
+      },
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindDeposits_subs_PreciousMetals"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindDeposits_subs_PreciousMetals",
+      "id": 71,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 69,
+      "start_ms": 61927,
+      "duration_ms": 0
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindDeposits_subs_Water"
+      },
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindDeposits_subs_Water"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindDeposits_subs_Water",
+      "id": 72,
+      "ok": true,
+      "exclusive_ms": 1,
+      "parent": 69,
+      "start_ms": 61927,
+      "duration_ms": 1
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindDeposits_terr_Concrete"
+      },
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindDeposits_terr_Concrete"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindDeposits_terr_Concrete",
+      "id": 73,
+      "ok": true,
+      "exclusive_ms": 1,
+      "parent": 69,
+      "start_ms": 61928,
+      "duration_ms": 1
+    },
+    {
+      "inputs": {
+        "randless": "true",
+        "tag": "PlaceAnomalies_FindDeposits"
+      },
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindDeposits"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindDeposits",
+      "id": 69,
+      "ok": true,
+      "exclusive_ms": 1,
+      "parent": 61,
+      "start_ms": 61925,
+      "duration_ms": 4
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindAnomalies_TechUnlock"
+      },
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindAnomalies_TechUnlock"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindAnomalies_TechUnlock",
+      "id": 75,
+      "ok": true,
+      "exclusive_ms": 1,
+      "parent": 74,
+      "start_ms": 61929,
+      "duration_ms": 1
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindAnomalies_Event"
+      },
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindAnomalies_Event"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindAnomalies_Event",
+      "id": 76,
+      "ok": true,
+      "exclusive_ms": 1,
+      "parent": 74,
+      "start_ms": 61930,
+      "duration_ms": 1
+    },
+    {
+      "inputs": {
+        "randless": "true",
+        "tag": "PlaceAnomalies_FindAnomalies"
+      },
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindAnomalies"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindAnomalies",
+      "id": 74,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 61,
+      "start_ms": 61929,
+      "duration_ms": 2
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindEffectDeposits_ResearchEffectDeposit"
+      },
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindEffectDeposits_ResearchEffectDeposit"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindEffectDeposits_ResearchEffectDeposit",
+      "id": 78,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 77,
+      "start_ms": 61931,
+      "duration_ms": 0
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_FindEffectDeposits"
+      },
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_FindEffectDeposits"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_FindEffectDeposits",
+      "id": 77,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 61,
+      "start_ms": 61931,
+      "duration_ms": 0
+    },
+    {
+      "inputs": {
+        "randless": "true",
+        "tag": "PlaceAnomalies_AlignToHexGrid"
+      },
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_AlignToHexGrid"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_AlignToHexGrid",
+      "id": 79,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 61,
+      "start_ms": 61931,
+      "duration_ms": 0
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_PlaceDeposits"
+      },
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_PlaceDeposits"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_PlaceDeposits",
+      "id": 80,
+      "ok": true,
+      "exclusive_ms": 8,
+      "parent": 61,
+      "start_ms": 61931,
+      "duration_ms": 8
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_PlaceBreakthroughAnomalies"
+      },
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_PlaceBreakthroughAnomalies"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_PlaceBreakthroughAnomalies",
+      "id": 81,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 61,
+      "start_ms": 61939,
+      "duration_ms": 0
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_PlaceTechUnlockAnomalies"
+      },
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_PlaceTechUnlockAnomalies"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_PlaceTechUnlockAnomalies",
+      "id": 82,
+      "ok": true,
+      "exclusive_ms": 1,
+      "parent": 61,
+      "start_ms": 61939,
+      "duration_ms": 1
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_PlaceFreeTechAnomalies"
+      },
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_PlaceFreeTechAnomalies"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_PlaceFreeTechAnomalies",
+      "id": 83,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 61,
+      "start_ms": 61940,
+      "duration_ms": 0
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_PlaceEventAnomalies"
+      },
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_PlaceEventAnomalies"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_PlaceEventAnomalies",
+      "id": 84,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 61,
+      "start_ms": 61940,
+      "duration_ms": 0
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies_PlaceEffectDeposits"
+      },
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies_PlaceEffectDeposits"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies_PlaceEffectDeposits",
+      "id": 85,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 61,
+      "start_ms": 61940,
+      "duration_ms": 0
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceAnomalies"
+      },
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceAnomalies"
+      },
+      "name": "RandomMap procedure: PlaceAnomalies",
+      "id": 61,
+      "ok": true,
+      "exclusive_ms": 4,
+      "parent": 56,
+      "start_ms": 61914,
+      "duration_ms": 26
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "PlaceObstructions"
+      },
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "tag": "PlaceObstructions"
+      },
+      "name": "RandomMap procedure: PlaceObstructions",
+      "id": 86,
+      "ok": true,
+      "exclusive_ms": 25,
+      "parent": 56,
+      "start_ms": 61940,
+      "duration_ms": 25
+    },
+    {
+      "inputs": {
+        "randless": "nil",
+        "tag": "ClearLandingZones"
+      },
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": {
+        "tag": "ClearLandingZones"
+      },
+      "name": "RandomMap procedure: ClearLandingZones",
+      "id": 87,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 56,
+      "start_ms": 61966,
+      "duration_ms": 0
+    },
+    {
+      "inputs": [],
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": [],
+      "name": "RandomMapGenerator.OnGenerateLogic",
+      "id": 56,
+      "ok": true,
+      "exclusive_ms": 1,
+      "parent": 55,
+      "start_ms": 59328,
+      "duration_ms": 2638
+    },
+    {
+      "inputs": [],
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "thread": 1,
+      "outputs": [],
+      "name": "source-view RandomMapGenerator.DoGenerate on expanded backing",
+      "id": 55,
+      "ok": true,
+      "exclusive_ms": 7064,
+      "parent": 0,
+      "start_ms": 52275,
+      "duration_ms": 9702
+    },
+    {
+      "inputs": {
+        "direct_source": "false"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": {
+        "source_alias": "none",
+        "error": "captured/native clutter source unavailable",
+        "destination_alias": "none"
+      },
+      "name": "terrain clutter grid stretch",
+      "id": 89,
+      "ok": false,
+      "exclusive_ms": 0,
+      "parent": 88,
+      "start_ms": 63868,
+      "duration_ms": 0
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": {
+        "source_cells": "3072x3072"
+      },
+      "name": "terrain map grid colorize: source extraction",
+      "id": 91,
+      "ok": true,
+      "exclusive_ms": 4,
+      "parent": 90,
+      "start_ms": 63868,
+      "duration_ms": 4
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": {
+        "destination_cells": "4096x4096",
+        "target_bits": "?",
+        "target_format": "hierarchical"
+      },
+      "name": "terrain map grid colorize: destination metadata",
+      "id": 92,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 90,
+      "start_ms": 63872,
+      "duration_ms": 0
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": [],
+      "name": "terrain map grid colorize: compute conversion",
+      "id": 93,
+      "ok": true,
+      "exclusive_ms": 52,
+      "parent": 90,
+      "start_ms": 63872,
+      "duration_ms": 52
+    },
+    {
+      "inputs": {
+        "destination_cells": "4096x4096",
+        "interpolate": "false"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": [],
+      "name": "terrain map grid colorize: resample",
+      "id": 94,
+      "ok": true,
+      "exclusive_ms": 125,
+      "parent": 90,
+      "start_ms": 63924,
+      "duration_ms": 125
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": {
+        "mode": "editor_set_grid"
+      },
+      "name": "terrain map grid colorize: destination write",
+      "id": 95,
+      "ok": true,
+      "exclusive_ms": 596,
+      "parent": 90,
+      "start_ms": 64049,
+      "duration_ms": 596
+    },
+    {
+      "inputs": {
+        "interpolate": "false"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": [],
+      "name": "terrain map grid stretch: colorize",
+      "id": 90,
+      "ok": true,
+      "exclusive_ms": 7,
+      "parent": 88,
+      "start_ms": 63868,
+      "duration_ms": 784
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": {
+        "source_cells": "6144x6144"
+      },
+      "name": "terrain map grid BiomeGrid: source extraction",
+      "id": 97,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 96,
+      "start_ms": 64652,
+      "duration_ms": 0
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": {
+        "destination_cells": "8192x8192",
+        "target_bits": "?",
+        "target_format": "hierarchical"
+      },
+      "name": "terrain map grid BiomeGrid: destination metadata",
+      "id": 98,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 96,
+      "start_ms": 64652,
+      "duration_ms": 0
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": [],
+      "name": "terrain map grid BiomeGrid: compute conversion",
+      "id": 99,
+      "ok": true,
+      "exclusive_ms": 123,
+      "parent": 96,
+      "start_ms": 64652,
+      "duration_ms": 123
+    },
+    {
+      "inputs": {
+        "destination_cells": "8192x8192",
+        "interpolate": "false"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": [],
+      "name": "terrain map grid BiomeGrid: resample",
+      "id": 100,
+      "ok": true,
+      "exclusive_ms": 517,
+      "parent": 96,
+      "start_ms": 64775,
+      "duration_ms": 517
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": {
+        "mode": "vanilla_map_import_direct_copy"
+      },
+      "name": "terrain map grid BiomeGrid: destination write",
+      "id": 101,
+      "ok": true,
+      "exclusive_ms": 262,
+      "parent": 96,
+      "start_ms": 65292,
+      "duration_ms": 262
+    },
+    {
+      "inputs": {
+        "interpolate": "false"
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": [],
+      "name": "terrain map grid stretch: BiomeGrid",
+      "id": 96,
+      "ok": true,
+      "exclusive_ms": 18,
+      "parent": 88,
+      "start_ms": 64652,
+      "duration_ms": 920
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": {
+        "deferred_gameplay_rebuild": "false"
+      },
+      "name": "invalidate expanded terrain",
+      "id": 102,
+      "ok": true,
+      "exclusive_ms": 39,
+      "parent": 88,
+      "start_ms": 65572,
+      "duration_ms": 39
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": {
+        "moved": 0
+      },
+      "name": "surface scale marker objects",
+      "id": 103,
+      "ok": true,
+      "exclusive_ms": 20,
+      "parent": 88,
+      "start_ms": 66356,
+      "duration_ms": 20
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": {
+        "mismatches": 0
+      },
+      "name": "surface verify native enrichment transform",
+      "id": 104,
+      "ok": true,
+      "exclusive_ms": 6,
+      "parent": 88,
+      "start_ms": 66376,
+      "duration_ms": 6
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": {
+        "markers_unresolved": 116,
+        "seed": -8390921514018468018,
+        "environment": "Surface",
+        "decorated_circles": 376,
+        "synthetic_random_attempts": 26108,
+        "preset": "MAIN",
+        "synthetic_rejected_obstruct": 652582,
+        "sites_prestretched": 1461,
+        "fallback_sites": 131,
+        "enabled": true,
+        "sites_exhausted": true,
+        "band_known": true,
+        "synthetic_escalations": 762,
+        "synthetic_templates_left": 0,
+        "decor_sites": 1461,
+        "skipped_by_obstruct": 1077,
+        "placed": 190,
+        "synthetic_finite_attempts": 701139,
+        "dropped_out_of_band": 13,
+        "markers_resolved": 1911,
+        "decoration_ratio": 25,
+        "skipped_no_match": 0,
+        "synthetic_rejected_band": 24,
+        "unused_sites": 1216,
+        "synthetic_attempts": 727247,
+        "synthetic_templates_exhausted": 0,
+        "seed_source": "generator",
+        "sites_relocated": 0,
+        "generator_present": true,
+        "vanilla_decor_groups": 245,
+        "area_factor": 1.778,
+        "synthetic_rejected_terrain": 13198,
+        "objects": 5456,
+        "decoration_passes": 2,
+        "placed_synthetic": 181,
+        "synthetic_max_reach_percent": 2800,
+        "synthetic_templates": 254,
+        "ms": 9617,
+        "synthetic_rejected_failed": 0,
+        "synthetic_rejected_decorated": 60756,
+        "ring_objects": 0,
+        "skipped_by_decorated": 130,
+        "synthetic_reach_cap_percent": 2800,
+        "skipped_band": 0,
+        "synthetic_budget": 36200,
+        "version": 10,
+        "skipped_obstructed": 1207,
+        "synthetic_finite_templates_left": 254,
+        "synthetic_rejected_no_match": 0,
+        "synthetic_rejected_bounds": 502,
+        "failed": 0,
+        "placed_authored": 9,
+        "synthetic_allowed_types": 17,
+        "synthetic_rejected_empty": 4,
+        "skipped_bounds": 0,
+        "obstruct_circles": 302,
+        "dropped_non_cosmetic": 51,
+        "target": 190
+      },
+      "name": "surface engine decor pass",
+      "id": 105,
+      "ok": true,
+      "exclusive_ms": 9617,
+      "parent": 88,
+      "start_ms": 66382,
+      "duration_ms": 9617
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": {
+        "authoritative_passability_rebuild": true
+      },
+      "name": "surface resume combined pass edits",
+      "id": 106,
+      "ok": true,
+      "exclusive_ms": 5711,
+      "parent": 88,
+      "start_ms": 75999,
+      "duration_ms": 5711
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": {
+        "scanned": 1
+      },
+      "name": "surface select stretched vanilla initial reveal",
+      "id": 107,
+      "ok": true,
+      "exclusive_ms": 57,
+      "parent": 88,
+      "start_ms": 81710,
+      "duration_ms": 57
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": {
+        "error": ""
+      },
+      "name": "surface final RebuildBuildableGrid",
+      "id": 108,
+      "ok": true,
+      "exclusive_ms": 944,
+      "parent": 88,
+      "start_ms": 81767,
+      "duration_ms": 944
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": {
+        "first_result": "nil"
+      },
+      "name": "surface enforce scan gate",
+      "id": 109,
+      "ok": true,
+      "exclusive_ms": 4,
+      "parent": 88,
+      "start_ms": 82712,
+      "duration_ms": 4
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": {
+        "first_result": "nil"
+      },
+      "name": "surface top-up resources",
+      "id": 110,
+      "ok": true,
+      "exclusive_ms": 540,
+      "parent": 88,
+      "start_ms": 82716,
+      "duration_ms": 540
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": {
+        "first_result": "true"
+      },
+      "name": "surface prepare outer resource terrain",
+      "id": 111,
+      "ok": true,
+      "exclusive_ms": 1852,
+      "parent": 88,
+      "start_ms": 83256,
+      "duration_ms": 1852
+    },
+    {
+      "inputs": {
+        "regions": 50,
+        "dependency_margin": 100
+      },
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": {
+        "error": "",
+        "regions": 50
+      },
+      "name": "surface outer resource dirty-region RebuildPassability (after outer resource terrain preparation)",
+      "id": 112,
+      "ok": true,
+      "exclusive_ms": 1191,
+      "parent": 88,
+      "start_ms": 85108,
+      "duration_ms": 1191
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": {
+        "error": ""
+      },
+      "name": "surface outer resource RebuildBuildableGrid (after outer resource terrain preparation)",
+      "id": 113,
+      "ok": true,
+      "exclusive_ms": 878,
+      "parent": 88,
+      "start_ms": 86299,
+      "duration_ms": 878
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": {
+        "first_result": "nil"
+      },
+      "name": "surface top-up anomalies",
+      "id": 114,
+      "ok": true,
+      "exclusive_ms": 374,
+      "parent": 88,
+      "start_ms": 87183,
+      "duration_ms": 374
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": {
+        "first_result": "nil"
+      },
+      "name": "surface top-up effect deposits",
+      "id": 115,
+      "ok": true,
+      "exclusive_ms": 38,
+      "parent": 88,
+      "start_ms": 87557,
+      "duration_ms": 38
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": {
+        "first_result": "nil"
+      },
+      "name": "surface register top-up markers",
+      "id": 116,
+      "ok": true,
+      "exclusive_ms": 4,
+      "parent": 88,
+      "start_ms": 87595,
+      "duration_ms": 4
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": {
+        "first_result": "0"
+      },
+      "name": "surface resolve marker overlaps",
+      "id": 117,
+      "ok": true,
+      "exclusive_ms": 28,
+      "parent": 88,
+      "start_ms": 87599,
+      "duration_ms": 28
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": {
+        "topups": 251,
+        "surface_quota_spacing_violations": 0,
+        "first_duplicate_hex_pair": "",
+        "outer_ring_spacing_violations": 0,
+        "density_status": "resources=true anomalies=true effects=true",
+        "markers": 583,
+        "surface_quota_topups": 40,
+        "violations": 0,
+        "first_repulsion_violation": "",
+        "duplicate_hex_pairs": 0
+      },
+      "name": "surface hard top-up spacing audit",
+      "id": 118,
+      "ok": true,
+      "exclusive_ms": 59,
+      "parent": 88,
+      "start_ms": 87627,
+      "duration_ms": 59
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": {
+        "first_result": "true"
+      },
+      "name": "surface top-up placement audit",
+      "id": 119,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 88,
+      "start_ms": 87686,
+      "duration_ms": 0
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": {
+        "audit_ok": "true",
+        "error": ""
+      },
+      "name": "diagnostic surface enrichment audit",
+      "id": 120,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 88,
+      "start_ms": 87696,
+      "duration_ms": 0
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": [],
+      "name": "native final InvalidateHeight",
+      "id": 123,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 122,
+      "start_ms": 88927,
+      "duration_ms": 0
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": [],
+      "name": "native final InvalidateType",
+      "id": 124,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 122,
+      "start_ms": 88927,
+      "duration_ms": 0
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": [],
+      "name": "native final RebuildPassability",
+      "id": 125,
+      "ok": true,
+      "exclusive_ms": 5345,
+      "parent": 122,
+      "start_ms": 88927,
+      "duration_ms": 5345
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": {
+        "error": ""
+      },
+      "name": "surface final RebuildPassability (after last object-grid transaction)",
+      "id": 122,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 121,
+      "start_ms": 88927,
+      "duration_ms": 5345
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": {
+        "error": ""
+      },
+      "name": "surface final RebuildBuildableGrid (after last object-grid transaction)",
+      "id": 126,
+      "ok": true,
+      "exclusive_ms": 952,
+      "parent": 121,
+      "start_ms": 94287,
+      "duration_ms": 952
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": [],
+      "name": "helper final rebuild: after last object-grid transaction",
+      "id": 121,
+      "ok": true,
+      "exclusive_ms": 31,
+      "parent": 88,
+      "start_ms": 88911,
+      "duration_ms": 6328
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 2,
+      "outputs": {
+        "terrain_grids": 4,
+        "error": ""
+      },
+      "name": "surface expansion pipeline",
+      "id": 88,
+      "ok": true,
+      "exclusive_ms": 2102,
+      "parent": 0,
+      "start_ms": 63743,
+      "duration_ms": 31496
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 3,
+      "outputs": [],
+      "name": "native final InvalidateHeight",
+      "id": 129,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 128,
+      "start_ms": 95485,
+      "duration_ms": 0
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 3,
+      "outputs": [],
+      "name": "native final InvalidateType",
+      "id": 130,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 128,
+      "start_ms": 95485,
+      "duration_ms": 0
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 3,
+      "outputs": [],
+      "name": "native final RebuildPassability",
+      "id": 131,
+      "ok": true,
+      "exclusive_ms": 5288,
+      "parent": 128,
+      "start_ms": 95485,
+      "duration_ms": 5288
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 3,
+      "outputs": {
+        "error": ""
+      },
+      "name": "surface final RebuildPassability (post-pipeline scheduled revalidation)",
+      "id": 128,
+      "ok": true,
+      "exclusive_ms": 0,
+      "parent": 127,
+      "start_ms": 95485,
+      "duration_ms": 5288
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 3,
+      "outputs": {
+        "error": ""
+      },
+      "name": "surface final RebuildBuildableGrid (post-pipeline scheduled revalidation)",
+      "id": 132,
+      "ok": true,
+      "exclusive_ms": 945,
+      "parent": 127,
+      "start_ms": 100788,
+      "duration_ms": 945
+    },
+    {
+      "inputs": [],
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "thread": 3,
+      "outputs": [],
+      "name": "helper final rebuild: post-pipeline scheduled revalidation",
+      "id": 127,
+      "ok": true,
+      "exclusive_ms": 31,
+      "parent": 0,
+      "start_ms": 95469,
+      "duration_ms": 6264
+    }
+  ],
+  "span_count": 132,
+  "completed_spans": 132,
+  "restored": true,
+  "events": [
+    {
+      "kind": "start",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 9861,
+      "name": "expanded map allocation"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 10063,
+      "name": "lifecycle: NewMapObject"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 11171,
+      "name": "lifecycle: PreNewMap"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 11215,
+      "name": "lifecycle: NewMap"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 11216,
+      "name": "prefab feature game logic correspondence"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 11217,
+      "name": "lifecycle: UndergroundDarknessState"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 11309,
+      "name": "lifecycle: NewMapLoaded"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 11310,
+      "name": "prefab feature game logic correspondence"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 11311,
+      "name": "lifecycle: UndergroundDarknessState"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 15684,
+      "name": "lifecycle: PostNewMapLoaded"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 15685,
+      "name": "prefab feature game logic correspondence"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 15685,
+      "name": "lifecycle: UndergroundDarknessState"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 16098,
+      "name": "lifecycle: CurrentMapChangeDone"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 16099,
+      "name": "prefab feature game logic correspondence"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 16099,
+      "name": "lifecycle: UndergroundDarknessState"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 16117,
+      "name": "lifecycle: UndergroundDarknessState"
+    },
+    {
+      "kind": "start",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 17245,
+      "name": "RandomMapGenerator.DoGenerate"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 17245,
+      "name": "attempt exact temporary-source transaction"
+    },
+    {
+      "kind": "phase",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 17245,
+      "name": "Generating the exact vanilla source terrain..."
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 17245,
+      "name": "temporary source transaction begin"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 20200,
+      "name": "temporary source backing verified"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 20648,
+      "name": "lifecycle: CurrentMapChangeDone"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 20648,
+      "name": "lifecycle: UndergroundDarknessState"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 20649,
+      "name": "lifecycle: UndergroundDarknessState"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 20649,
+      "name": "lifecycle: UndergroundDarknessState"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 21428,
+      "name": "native clutter access probe"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 27713,
+      "name": "captured vanilla native clutter operation"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 27713,
+      "name": "native clutter access probe"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 29548,
+      "name": "native surface passage buildable retained"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 29628,
+      "name": "native enrichment records captured"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 29634,
+      "name": "vanilla initial sector captured"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 29973,
+      "name": "lifecycle: UndergroundDarknessState"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 30180,
+      "name": "lifecycle: CurrentMapChangeDone"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 30181,
+      "name": "prefab feature game logic correspondence"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 30181,
+      "name": "lifecycle: UndergroundDarknessState"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 30199,
+      "name": "lifecycle: UndergroundDarknessState"
+    },
+    {
+      "kind": "phase",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 30292,
+      "name": "Migrating the vanilla source into the expanded terrain..."
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 33507,
+      "name": "terrain height similarity transform"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 35335,
+      "name": "natural mountain-base buildable aprons"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 36005,
+      "name": "direct source terrain grid suite complete"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 36006,
+      "name": "native enrichment records staged on destination"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 40267,
+      "name": "decoration relief capture complete"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 40267,
+      "name": "temporary vanilla backing retained for the passage passability bridge"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 40274,
+      "name": "staged enrichment records survived source unload"
+    },
+    {
+      "kind": "phase",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 40274,
+      "name": "Finishing the expanded map..."
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 40274,
+      "name": "temporary source transaction complete"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 44707,
+      "name": "lifecycle: MapGenerated"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 44944,
+      "name": "prefab feature game logic correspondence"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 44944,
+      "name": "lifecycle: UndergroundDarknessState"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 44966,
+      "name": "lifecycle: UndergroundDarknessState"
+    },
+    {
+      "kind": "start",
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "at_ms": 44968,
+      "name": "expanded map allocation"
+    },
+    {
+      "kind": "step",
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "at_ms": 44969,
+      "name": "lifecycle: NewMapObject"
+    },
+    {
+      "kind": "step",
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "at_ms": 46197,
+      "name": "lifecycle: PreNewMap"
+    },
+    {
+      "kind": "step",
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "at_ms": 46487,
+      "name": "lifecycle: NewMap"
+    },
+    {
+      "kind": "step",
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "at_ms": 46488,
+      "name": "prefab feature game logic correspondence"
+    },
+    {
+      "kind": "step",
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "at_ms": 46769,
+      "name": "lifecycle: UndergroundDarknessState"
+    },
+    {
+      "kind": "step",
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "at_ms": 46866,
+      "name": "lifecycle: NewMapLoaded"
+    },
+    {
+      "kind": "step",
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "at_ms": 46867,
+      "name": "prefab feature game logic correspondence"
+    },
+    {
+      "kind": "step",
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "at_ms": 46867,
+      "name": "lifecycle: UndergroundDarknessState"
+    },
+    {
+      "kind": "step",
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "at_ms": 51411,
+      "name": "lifecycle: PostNewMapLoaded"
+    },
+    {
+      "kind": "step",
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "at_ms": 51413,
+      "name": "prefab feature game logic correspondence"
+    },
+    {
+      "kind": "step",
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "at_ms": 51413,
+      "name": "lifecycle: UndergroundDarknessState"
+    },
+    {
+      "kind": "start",
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "at_ms": 51429,
+      "name": "RandomMapGenerator.DoGenerate"
+    },
+    {
+      "kind": "step",
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "at_ms": 51429,
+      "name": "attempt exact temporary-source transaction"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 52275,
+      "name": "surface passage pairing grid ready"
+    },
+    {
+      "kind": "step",
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "at_ms": 52275,
+      "name": "native clutter access probe"
+    },
+    {
+      "kind": "step",
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "at_ms": 60257,
+      "name": "underground buried wonder source vertical geometry"
+    },
+    {
+      "kind": "step",
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "at_ms": 60524,
+      "name": "underground buried wonder source vertical geometry"
+    },
+    {
+      "kind": "step",
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "at_ms": 60634,
+      "name": "native underground wonder footprint cleared"
+    },
+    {
+      "kind": "step",
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "at_ms": 61105,
+      "name": "native underground wonder footprint cleared"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 61257,
+      "name": "native surface passage buildable bridge installed"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 61257,
+      "name": "native surface passage fallback radius pinned to the source extent"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 61257,
+      "name": "native surface passage passability bridged to the retained source map"
+    },
+    {
+      "kind": "step",
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "at_ms": 61965,
+      "name": "temporary native underground wonders removed"
+    },
+    {
+      "kind": "step",
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "at_ms": 61975,
+      "name": "captured vanilla native clutter operation"
+    },
+    {
+      "kind": "step",
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "at_ms": 61975,
+      "name": "underground mark grid allocated at backing scale"
+    },
+    {
+      "kind": "step",
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "at_ms": 61975,
+      "name": "source prefab raster transaction serialized"
+    },
+    {
+      "kind": "step",
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "at_ms": 61977,
+      "name": "native clutter access probe"
+    },
+    {
+      "kind": "step",
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "at_ms": 63367,
+      "name": "lifecycle: MapGenerated"
+    },
+    {
+      "kind": "step",
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "at_ms": 63408,
+      "name": "prefab feature game logic correspondence"
+    },
+    {
+      "kind": "step",
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "at_ms": 63408,
+      "name": "lifecycle: UndergroundDarknessState"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 63431,
+      "name": "lifecycle: UndergroundDarknessState"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 63478,
+      "name": "lifecycle: MapSectorsReady"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 63506,
+      "name": "lifecycle: CityInitialized"
+    },
+    {
+      "kind": "step",
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "at_ms": 63566,
+      "name": "lifecycle: MapSectorsReady"
+    },
+    {
+      "kind": "step",
+      "map": "BlankUnderground_03",
+      "environment": "Underground",
+      "at_ms": 63591,
+      "name": "lifecycle: CityInitialized"
+    },
+    {
+      "kind": "phase",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 63752,
+      "name": "Please wait."
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 63867,
+      "name": "surface custom loading handoff"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 63868,
+      "name": "using decor relief captured from temporary source"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 63868,
+      "name": "terrain grids already stretched directly from temporary source"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 63868,
+      "name": "terrain clutter grid unavailable; continuing diagnostic generation"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 65611,
+      "name": "terrain stretch grid suite complete"
+    },
+    {
+      "kind": "phase",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 65611,
+      "name": "Repositioning surface rocks and decorations"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 66062,
+      "name": "native rock support grounding complete"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 66062,
+      "name": "decoration stretch placement complete"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 66288,
+      "name": "prefab feature game logic correspondence"
+    },
+    {
+      "kind": "phase",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 66288,
+      "name": "Restoring the vanilla resources and anomalies"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 66356,
+      "name": "deferred vanilla breakthrough initialization complete"
+    },
+    {
+      "kind": "phase",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 66356,
+      "name": "Repositioning surface resource deposits"
+    },
+    {
+      "kind": "phase",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 66382,
+      "name": "Restoring surface decoration density"
+    },
+    {
+      "kind": "phase",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 81767,
+      "name": "Rebuilding the surface build grid"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 82712,
+      "name": "natural mountain-base buildable apron audit"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 82712,
+      "name": "surface mountain-base apron buildable verdict"
+    },
+    {
+      "kind": "phase",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 82716,
+      "name": "Distributing surface resources and anomalies"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 85107,
+      "name": "outer resource access and cluster landing terrain"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 87183,
+      "name": "outer resource terrain final audit"
+    },
+    {
+      "kind": "phase",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 88266,
+      "name": "Aligning the underground entrances"
+    },
+    {
+      "kind": "phase",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 88911,
+      "name": "Finalizing surface gameplay grids"
+    },
+    {
+      "kind": "phase",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 94287,
+      "name": "Rebuilding the final surface build grid"
+    },
+    {
+      "kind": "step",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 95468,
+      "name": "derived object provenance recorded"
+    },
+    {
+      "kind": "finish",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 95469,
+      "name": "surface expansion complete"
+    },
+    {
+      "kind": "phase",
+      "map": "BlankTerraceBig_05",
+      "environment": "Surface",
+      "at_ms": 100788,
+      "name": "Rebuilding the final surface build grid"
+    }
+  ],
+  "open_spans": 0,
+  "issues": [],
+  "hooks": 13
+}

@@ -141,3 +141,12 @@ corrections with exact outputs. v991 NOT promoted; acceptedv987 restored/audited
 See v991_source_review.md; tiny deltas are not claims of statistical significance.
 The next useful investigation is a fresh sparse acceptedv987 pipeline/substage
 census (reference and worst61N) before selecting another small helper change.
+
+Fresh accepted-v987 sparse profiles now PASS full output/private/rock/process
+audits:134/132 complete spans, no leaked hooks or Config changes. Coarse wall
+times show decor419/9617ms reference/61N, passage bootstrap6404/1664ms, destination
+crease3936/1572ms. These are map-specific large costs, not additive savings.
+Next split bootstrap's native clearance, bridge copy, passage search, resumes and
+common-hex planning before selecting a new implementation. See
+sparse_pipeline_research.md and artifacts/v987_sparse_comparison. Productionv987
+and cold baseline are unchanged; no claimed target achievement.

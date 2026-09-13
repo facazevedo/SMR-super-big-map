@@ -1472,3 +1472,45 @@ larger remaining cost before selecting another micro-optimization; retain all
 required immediate/scheduled rebuilds, bootstrap and T1 readiness. Existing yield
 or skip hypotheses are not revived by this note. Accepted reference86.606s and
 worst92.125s remain authoritative; full goal ACTIVE, not achieved or blocked.
+
+## Fresh accepted-v987 sparse profiles CLOSED: larger map-specific costs identified
+
+Previous turn PROGRESS completed v991 production/cold tests and restoration9401eb1.
+This turn is PROGRESS: new bounded restorable sparse probe plus115 fixture checks,
+four-command prerequisite replay, and two fully audited native profiles. No
+production edits; no revived rejected candidate. Prototype checkpoint7ab0d73.
+
+sparse_pipeline_profile.lua captures existing LoadingBegin/End boundaries into
+bounded memory, with per-coroutine parent IDs and same-thread child subtraction.
+Only diagnostic LoadingEnabled temporarily returns true; Config/function-profiler/
+engine settings remain unchanged. Four coarse terrain helper upvalues and final
+rebuild component wrappers add detail. No per-cell timers or module reload.
+Setup validates before mutation; explicit failure latches, error-path restoration,
+full nil-preserving tuples, thirteen main-hook identity restoration and caps.
+
+Reference16066/PID45880 and61N40466/PID45532 CLOSED normally, profile.py and
+sparse_pipeline_audit.py PASS full predecessor/private-four-fields/individual-rock/
+version987/incident/flushed logs/no engine errors.134/132 completed spans, zero
+open, all hooks restored, config unchanged. Artifactsv987_sparse_reference and
+v987_sparse_61n; comparison JSON/Markdown generated in v987_sparse_comparison.
+
+Fresh wall spans (not additive): decor419/9617ms reference/61N; underground
+source-view15020/9702ms containing passage bootstrap6404/1664; destination crease
+3936/1572; natural apron2153/1828 containing native raster1895/1580; outer resource
+terrain2297/1852; decor relief capture2203/2859; combined pass resume5129/5711;
+two nonoverlapping final native passability rebuilds9792/10633. Source-view parent
+exclusive remainder7620/7064 is WALL time including uninstrumented work/waits,
+not CPU attribution or a demonstrated optimization ceiling.
+
+Next concrete action: split unchanged BootstrapPassagesAndDeferWonders into
+coarse wonder/bridge-copy/passage-search/resume/restore/common-hex-plan/verification
+phases on reference and61N. Preserve private upvalue cells, every native operation,
+RNG draw/clearance/placement, eager bootstrap and immediate+scheduled rebuilds.
+No copy optimization or bypass is yet proved; measurement must identify the cost.
+See sparse_pipeline_research.md for source anchors, caveats and further decor lead.
+
+All processes terminal, fresh-game check clear. Entire Code/metadata/items still
+exact56fbf44/v987,38/38 deployment auditPASS. No cold sample or claimed startup gain
+this turn. Accepted86.606s reference/worst92.125s remain authoritative. Full<80 and
+<85 targets unmet; goal ACTIVE, not blocked. Do not use old intrusive helper totals
+as fresh native cost or resume any unchanged rejected candidate for rescue timing.

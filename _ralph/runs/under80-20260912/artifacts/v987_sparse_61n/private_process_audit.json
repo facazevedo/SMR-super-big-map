@@ -1,0 +1,25 @@
+{
+  "status": "pass",
+  "issues": [],
+  "site": "61N136W",
+  "checkpoint": {
+    "commit": "7ab0d7311ab2d51b4301877d06df6d6bc26f5ae9",
+    "diagnostic_only": true
+  },
+  "identity": [
+    45532,
+    134337659459296857
+  ],
+  "predecessor": "_ralph\\runs\\under80-20260912\\artifacts\\v987_matrix\\61n136w_a",
+  "pair": {
+    "verdict": "pass",
+    "differences": [],
+    "note": "Runtime parity only; engine-RNG source audit is separate.",
+    "full_snapshot_differences": [],
+    "rock_grounding_differences": []
+  },
+  "private_fields_checked": 4,
+  "spans": 132,
+  "normal_shutdown": true,
+  "qualification": "Sparse diagnostic wall spans, not CPU time or cold acceptance. Nested and cross-thread spans are not additive."
+}

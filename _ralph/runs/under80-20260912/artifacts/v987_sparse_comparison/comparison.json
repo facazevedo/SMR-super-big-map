@@ -1,0 +1,208 @@
+{
+  "rows": [
+    {
+      "name": "source-view RandomMapGenerator.DoGenerate on expanded backing",
+      "reference": {
+        "inclusive_ms": 15020,
+        "same_thread_exclusive_ms": 7620,
+        "span_ids": [
+          56
+        ],
+        "calls": 1
+      },
+      "61n136w": {
+        "inclusive_ms": 9702,
+        "same_thread_exclusive_ms": 7064,
+        "span_ids": [
+          55
+        ],
+        "calls": 1
+      }
+    },
+    {
+      "name": "deferred underground passage bootstrap",
+      "reference": {
+        "inclusive_ms": 6404,
+        "same_thread_exclusive_ms": 6088,
+        "span_ids": [
+          60
+        ],
+        "calls": 1
+      },
+      "61n136w": {
+        "inclusive_ms": 1664,
+        "same_thread_exclusive_ms": 1352,
+        "span_ids": [
+          59
+        ],
+        "calls": 1
+      }
+    },
+    {
+      "name": "surface engine decor pass",
+      "reference": {
+        "inclusive_ms": 419,
+        "same_thread_exclusive_ms": 419,
+        "span_ids": [
+          107
+        ],
+        "calls": 1
+      },
+      "61n136w": {
+        "inclusive_ms": 9617,
+        "same_thread_exclusive_ms": 9617,
+        "span_ids": [
+          105
+        ],
+        "calls": 1
+      }
+    },
+    {
+      "name": "helper crease repair destination",
+      "reference": {
+        "inclusive_ms": 3936,
+        "same_thread_exclusive_ms": 3936,
+        "span_ids": [
+          47
+        ],
+        "calls": 1
+      },
+      "61n136w": {
+        "inclusive_ms": 1572,
+        "same_thread_exclusive_ms": 1572,
+        "span_ids": [
+          46
+        ],
+        "calls": 1
+      }
+    },
+    {
+      "name": "helper natural apron",
+      "reference": {
+        "inclusive_ms": 2153,
+        "same_thread_exclusive_ms": 258,
+        "span_ids": [
+          48
+        ],
+        "calls": 1
+      },
+      "61n136w": {
+        "inclusive_ms": 1828,
+        "same_thread_exclusive_ms": 248,
+        "span_ids": [
+          47
+        ],
+        "calls": 1
+      }
+    },
+    {
+      "name": "helper native apron raster",
+      "reference": {
+        "inclusive_ms": 1895,
+        "same_thread_exclusive_ms": 1895,
+        "span_ids": [
+          49
+        ],
+        "calls": 1
+      },
+      "61n136w": {
+        "inclusive_ms": 1580,
+        "same_thread_exclusive_ms": 1580,
+        "span_ids": [
+          48
+        ],
+        "calls": 1
+      }
+    },
+    {
+      "name": "surface prepare outer resource terrain",
+      "reference": {
+        "inclusive_ms": 2297,
+        "same_thread_exclusive_ms": 2297,
+        "span_ids": [
+          113
+        ],
+        "calls": 1
+      },
+      "61n136w": {
+        "inclusive_ms": 1852,
+        "same_thread_exclusive_ms": 1852,
+        "span_ids": [
+          111
+        ],
+        "calls": 1
+      }
+    },
+    {
+      "name": "capture transferred decor relief from temporary terrain",
+      "reference": {
+        "inclusive_ms": 2203,
+        "same_thread_exclusive_ms": 2203,
+        "span_ids": [
+          54
+        ],
+        "calls": 1
+      },
+      "61n136w": {
+        "inclusive_ms": 2859,
+        "same_thread_exclusive_ms": 2859,
+        "span_ids": [
+          53
+        ],
+        "calls": 1
+      }
+    },
+    {
+      "name": "surface resume combined pass edits",
+      "reference": {
+        "inclusive_ms": 5129,
+        "same_thread_exclusive_ms": 5129,
+        "span_ids": [
+          108
+        ],
+        "calls": 1
+      },
+      "61n136w": {
+        "inclusive_ms": 5711,
+        "same_thread_exclusive_ms": 5711,
+        "span_ids": [
+          106
+        ],
+        "calls": 1
+      }
+    },
+    {
+      "name": "native final RebuildPassability",
+      "reference": {
+        "inclusive_ms": 9792,
+        "same_thread_exclusive_ms": 9792,
+        "span_ids": [
+          127,
+          133
+        ],
+        "calls": 2
+      },
+      "61n136w": {
+        "inclusive_ms": 10633,
+        "same_thread_exclusive_ms": 10633,
+        "span_ids": [
+          125,
+          131
+        ],
+        "calls": 2
+      }
+    }
+  ],
+  "identities": {
+    "reference": [
+      45880,
+      134337657381447102
+    ],
+    "61n136w": [
+      45532,
+      134337659459296857
+    ]
+  },
+  "qualification": "Diagnostic wall time. Rows overlap/nest; no grand total, CPU attribution, or cold saving claim.",
+  "next_investigation": "Split unchanged bootstrap into phase-only timings, especially native clearance, bridge copy, passage selection, resumes, and common-hex planning; no operation removal."
+}
