@@ -213,3 +213,54 @@ rock_geometry_shadow_audit.py, querySBM_ROCK_GEOMETRY_SHADOW. These are correctn
 proofs only. Whole-work old/new/new/old timing including qualification/setup/guards
 is required before any integration; the guarded candidate may cost more than the
 native reads it avoids. No native speed evidence or START-to-T1 improvement yet.
+
+## Guarded scalar candidate native proofs CLOSED PASS
+
+Frozen b58331524b767e0717d686fff866a3c5928cbcd4, same private candidate_2
+SHA256a996db9fe0b56686b975b83b5c6d5d4ae5ad9c540d3d175cfe22f217a7edd24f:
+
+| Scope | Captures | Native geometry qualified | Ordered external events | Exact contact records |
+| --- | ---: | ---: | ---: | ---: |
+| 61N surface | 16249 | 12189 | 681209 | 1712 |
+| Reference surface | 16579 | 14447 | 325930 | 377 |
+
+61N v987_rock_scalar_shadow_61n: exec54644/PID57640,
+creation134337810416399458 CLOSED exit0. Reference
+v987_rock_scalar_shadow_reference: exec54691/PID47028,
+creation134337812328195326 CLOSED exit0. Both normally flushed/quit;
+rock_geometry_shadow_audit PASS issues[] on full predecessor/grids/individual
+rocks/fourprivatefields/native logs/process identity. Candidate drives actual
+external calls once; accepted replay matches1007139 ordered event records and
+every contact/sample/counter/return tuple. No noncanonical read or mismatch.
+Peak415 transient events per Capture, below1024 cap; all scratch/owned hooks
+cleared andconfig unchanged. Candidate joins3 original cells, oracle2; the other
+cells are the explicitly instrumented Global/Eligible and isolated oracle capture
+registry. Native qualification uses the actual supported mod environment.
+
+After both frozen runs, strengthened only the fixture: a qualified native box
+with custom sizey returning a nil-bearing tuple must retain the literal variadic
+math.max error, not silently scalarize it.595 actual-source candidate checks
+now PASS across five extents, plus13 qualifier/114 shadow/170 census checks =892.
+New rock_geometry_candidate_offline_2 all10 commands PASS; initial batch retained.
+Private candidate/helper/shadow sources and production did not change after the
+native checkpoint. Standard38-file deployment audit PASS; fresh game check clear.
+
+NEXT ACTION is the finite coarse performance test, not another alternatives or
+census turn. Measure the WHOLE AnnotateDecorRelief call through its actual shared
+upvalue in MapGeneration.RunSurfaceStretchIfEnabled (export13803, caller10691),
+not just the public TerrainCopy export. That captured cell also reaches the
+nested pipeline. Two coarse clocks per annotation, no per-object/replay counters.
+Original variant calls accepted Capture directly; candidate variant installs the
+proven private Capture with every original private cell joined and only its own
+NativeGeometry helper injected. Charge helper qualification/initialization once
+inside the first measured annotation; preserve the original annotation and every
+Capture invocation. Do not hide setup cost outside the measured work.
+
+Declare and freeze old/new/new/old61N, four fresh owned processes with full audits
+and unchanged payload throughout. If both orders fail to improve whole-work cost,
+reject this guarded implementation and prioritize mutation-maintained Filler
+eligibility; do not promote from eliminated-read counts. If promising, measure
+reference before production/cold consideration. All-source RNG review and eventual
+reference/five-site START-to-T1 gates remain separate. This turn PROGRESS: actual
+candidate,892 fixture checks andtwo complete native private-record proofs; not
+performance acceptance. Acceptedv98786.606/worst92.125,all<80/<85stillunmet.

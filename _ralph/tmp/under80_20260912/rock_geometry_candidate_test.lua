@@ -44,9 +44,13 @@ source=source:sub(1,a-1)..[[
 replace(' local obj={}',[[
  for _,name in ipairs({'maxz','minz','minx','miny','sizex','sizey'})do geometry['bounds_'..name]=bounds[name]end
  for _,name in ipairs({'x','y','z'})do geometry['visual_'..name]=visual[name]end
+ if mode=='nil_size_tuple'then geometry.bounds_sizey=false end
  local native_sizey=bounds.sizey
  local ray_count=0
  local obj={}
+]])
+replace("   if mode=='nil_tuple' and name=='miny'then return value,nil,'tail' end",[[
+   if (mode=='nil_tuple' and name=='miny') or (mode=='nil_size_tuple' and name=='sizey')then return value,nil,'tail' end
 ]])
 replace("  event('ray',a:x(),a:y(),a:z(),b:x(),b:y(),b:z())",[[
   event('ray',a:x(),a:y(),a:z(),b:x(),b:y(),b:z())
@@ -57,11 +61,12 @@ replace("  event('ray',a:x(),a:y(),a:z(),b:x(),b:y(),b:z())",[[
   end
 ]])
 replace("  if instrument then check(result.status=='fail' and result.restored,'getter failure cleanup')end",'')
+replace(" if mode=='getter_error'then\n  check(not values[1],'getter throws')", " if mode=='getter_error' or mode=='nil_size_tuple'then\n  check(not values[1],'getter/variadic error preserved')")
 a=source:find(' if instrument then\n  if mode==',1,true)
 b=source:find(' local stats=',a,true);assert(a and b)
 source=source:sub(1,a-1)..source:sub(b)
 replace('return serialize(events),serialize(record),serialize(stats)','return serialize(events),serialize(record),serialize(stats),geometry_calls')
-replace(" 'getter_error','final_error','final_false','rebound'})do"," 'getter_error','final_error','final_false','rebound','rebound_during_ray'})do")
+replace(" 'getter_error','final_error','final_false','rebound'})do"," 'getter_error','final_error','final_false','rebound','rebound_during_ray','nil_size_tuple'})do")
 replace('local a,b,c=run(mode,false)','local a,b,c,d=run(mode,false)')
 replace('local x,y,z=run(mode,true)','local x,y,z,w=run(mode,true)')
 replace(" check(c==z,mode..' exact capture counters')",[[

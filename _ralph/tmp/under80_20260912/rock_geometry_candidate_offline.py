@@ -2,8 +2,10 @@
 import json
 from pathlib import Path
 import subprocess
+import argparse
+parser=argparse.ArgumentParser();parser.add_argument('--name',default='rock_geometry_candidate_offline');args=parser.parse_args()
 root=Path(__file__).resolve().parents[3]
-out=root/'_ralph/runs/under80-20260912/artifacts/rock_geometry_candidate_offline'
+out=root/'_ralph/runs/under80-20260912/artifacts'/args.name
 out.mkdir(parents=True,exist_ok=False)
 base='_ralph/tmp/under80_20260912/'
 commands=[['luac','-p',base+n] for n in ('rock_geometry_native.lua','rock_geometry_shadow.lua')]

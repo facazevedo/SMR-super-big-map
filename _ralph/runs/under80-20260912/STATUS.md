@@ -1853,3 +1853,26 @@ whole-work cost before production/cold gates. Full findings, exact process
 identities, corrected capture-only ray counts and higher-upside alternatives
 are in capture_observation_research.md. Production stillaccepted56fbf44/v987;
 reference86.606/worst92.125,full<80/<85unmet. ThisturnPROGRESS,goalACTIVE.
+
+## Private rock scalar candidate native proofs PASS; measure whole cost next
+
+This turn implemented9 reversible edits/15 read sites with lazy local scalar
+reuse and current-method guards. Supported native point/box qualification only;
+custom methods and variadic size fallback preserve original calls/semantics.
+Production untouched.892 final fixture checks and10 offline commands PASS.
+
+Frozenb583315:61N54644/PID57640 andreference54691/PID47028 CLOSED exit0,
+normalflushedlogs,full rock_geometry_shadow_audit PASS issues[]. Actualcandidate
+drives game; accepted Capture independently replays1007139 complete ordered
+external-call records andmatchesall2089 contact records/samples/counters. Native
+qualified12189/14447,zero mismatches,peak415 bounded events. All private scratch,
+hooks/config restored,38-filedeploymentPASS,no livegame.
+
+Next implement/run frozenold/new/new/old61N whole-annotation timing, no intrusive
+per-Capture clocks/replay; charge helper initialization inside measured work.
+The actual AnnotateDecorRelief shared upvalue is reachable from exported
+MapGeneration.RunSurfaceStretchIfEnabled, not its publicTerrainCopyexport.
+Exact source/identity/evidence andtiming design in capture_observation_research.md.
+Candidate may be slower after guards; don'tinfer gain from828554 repeatedreads.
+Productionaccepted56fbf44/v987,reference86.606/worst92.125;full<80/<85unmet.
+ThisturnPROGRESS,goalACTIVE. No new production or cold performance claim.
