@@ -161,3 +161,55 @@ contemporaneous controls, not retroactive rescue of rejectedv984/v992 results.
 Current accepted production remains56fbf44/v987. Neither all-site<80 nor<85 is
 achieved. This turn PROGRESS: implemented/tested a new diagnostic and obtained
 two complete native censuses that qualify the next candidate's actual workload.
+
+## Private guarded scalar candidate and exact Capture replay ready
+
+rock_geometry_candidate.py creates nine reversible source edits/15 read sites;
+production stays acceptedv987. candidate_2 retains evaluation order, including
+math.floor lookup before extent evaluation, IntersectSegment method lookup
+before point arguments, hit Z before visual Z, and record-table lookup before
+record getters. Initial generator artefact retained; candidate_2 corrects floor
+lookup ordering before any native experiment. All arithmetic remains literal.
+
+Each native point/box role retains its first successful native scalar, lazily.
+Every later read resolves the CURRENT method once; only the canonical native
+method may reuse the saved value. Custom/rebound methods execute normally and
+do not poison the native slot. Reinstating the native method may reuse the fixed
+native value again. The count's variadic math.max expression stays literal for
+custom size methods so nil-bearing/multiple returns retain original semantics.
+No cross-Capture cache and no object observation reuse. All terrain probes,
+segment rays, point arguments, sample order, contacts, counters and Apply remain.
+
+rock_geometry_native.lua qualifies native box/point constructors, predicates
+and nine coordinate methods using supported string.dump with Lua/C controls.
+No debug API enters the candidate helper. Unavailable/custom protocol disables
+reuse. Qualify checks actual native value kinds plus live predicate/Engine.Global
+identities. Native value docs describe coordinate reads and operations returning
+new values; per-read method guards avoid assuming intervening calls cannot
+yield or rebound methods. Native game behavior still needs verification.
+
+Offline:560 actual-source candidate checks across five extents (sample counts
+3/4/6/9), including complete ordered external calls, exact private contact records,
+unchanged counters, custom fallback call counts and mid-ray rebound/restoration.
+13 native-protocol/fallback checks,114 actual-source shadow/lifecycle checks,
+and170 retained original census checks PASS. All10 prerequisite commands in
+rock_geometry_candidate_offline PASS, including syntax, exactproduction and
+38-file deployment audit. Model-native fixture identities are controlled doubles,
+not proof of actual engine types or a performance result.
+
+rock_geometry_shadow.lua lets the actual candidate drive the game. An independent
+accepted-source Capture replays every eligibility/object/terrain/point/ray/clock
+call against a copied private context/stats and its own current-object record.
+Native external calls execute once; oracle point/box getters read the same fixed
+native values again. All15 candidate getter sites are checked for canonical
+method identity; unexpected custom geometry refuses oracle execution rather than
+executing potentially impure getters twice. Compare complete event order/argument
+identities/numeric subtypes/return tuples, every sample record and all counters.
+Limit1024 transient events/currentCapture and4 aggregate environment rows; reject
+overlapping captures, clean contexts after every result, preserve rebound owners.
+
+Next frozen native61N thenreference through profile.py and full
+rock_geometry_shadow_audit.py, querySBM_ROCK_GEOMETRY_SHADOW. These are correctness
+proofs only. Whole-work old/new/new/old timing including qualification/setup/guards
+is required before any integration; the guarded candidate may cost more than the
+native reads it avoids. No native speed evidence or START-to-T1 improvement yet.
