@@ -182,3 +182,11 @@ sampling, not assumed prefab-preload reuse. See native_proc_research.md and
 v987_native_proc_comparison_2. Initial setup-identity guard failure retained;
 corrected203 fixture checks include legitimate registered lifecycle epochs.
 No optimization/cold gain claimed; both timing targets remain unmet.
+
+Primitive follow-through now PASS both native audits at48d23c8. Allocation is
+only7/2ms across selected stages: no grid pool. Actual common target is Filler
+GridMask870/1012ms (1524/1798 calls); intersections611/719ms remain separate.
+Private bounded mask cache now has34939 model checks, conditional on an immutable
+source/full-overwrite native mask. Actual source stability, key diversity, exact
+native outputs and copies/cleanup-inclusive timings still required. See
+prefab_primitive_research.md/filler_mask_research.md; no production promotion.

@@ -1603,3 +1603,38 @@ querySBM_NATIVE_PROC_DIAGNOSTIC and inherited full prefab_primitive_audit.py.
 Production still exact56fbf44/v987,38fileauditPASS. Need actual shipped-owner
 reachability, full outputs/private RNG/individual rocks and normally closed owned
 processes before using primitive timings. See prefab_primitive_research.md.
+
+## Primitive audits CLOSED PASS; allocation hypothesis rejected, private mask cache tested
+
+Frozen48d23c8: reference49148/PID52656 and61N93300/PID31848 CLOSED exit0.
+Full prefab_primitive_audit PASS issues[], exact predecessor/full-grid/individual
+rocks/privatefourfields, normal flushed logs/no engine errors.95/94 base spans,
+3selected UG scopes,25881/24525 aggregate calls, all primitive globals/rawslots
+and persistent hooks restored. Fresh-game check clear. No cold samples claimed.
+
+Playable scopes2151/1065ms: GridDistanceMars629calls1152ms/307calls563ms.
+Filler2137/2532ms: masks1524calls870ms/1798calls1012ms; And1525calls611ms/
+1799calls719ms; seeded selection1519calls500ms/1795calls611ms.
+Base959/890ms: seeded selection2457calls787ms/2344calls759ms.
+All allocation only7/2ms: DO NOT implement grid pooling from source TODOs.
+Full comparison in v987_prefab_primitive_comparison. Times include observer
+overhead and are WALL, not CPU/savings; scope/primitive rows overlap.
+
+Concrete private implementation: filler_mask_cache.lua bounded deterministic LRU
+for full (from,to,scale) masks over ONE caller-certified immutable source. Miss
+native-mask+clone, hit full copy; all destinations fully written, no deferred
+GridAnd or changed game results. Peak entry bound, ownership/free retry and
+failure latches.34939 offline model checks in filler_mask_offline_2PASS (initial
+34935 preserved), exact accepted production and38fileauditPASS. No native cache
+benchmark or production integration yet; these are NOT34939 real engine cases.
+
+Next: actual Filler request/source capture, exact full-source immutability
+certificate, every-request native mask/cache equality, real key diversity/byte
+bound and both-order timings incl copies/clones/eviction/cleanup. Original native
+game output always wins during shadow. Full process/private/rock audits mandatory.
+See filler_mask_research.md and prefab_primitive_research.md for actual-source
+anchors, conditional proof and failure gates. Cache copies may erase all benefit.
+
+This turn PROGRESS: completed native primitive evidence, rejected allocation lead,
+and implemented/tested a new private cache. Accepted production remainsv987,
+reference86.606/worst92.125s; full<80 and<85 unmet. Goal ACTIVE, not blocked.

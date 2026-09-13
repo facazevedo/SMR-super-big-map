@@ -1,0 +1,494 @@
+{
+  "inputs": [
+    "v987_prefab_primitive_reference",
+    "v987_prefab_primitive_61n"
+  ],
+  "identities": [
+    [
+      52656,
+      134337694799399345
+    ],
+    [
+      31848,
+      134337697066704037
+    ]
+  ],
+  "qualification": "Diagnostic wall times with aggregate primitive wrappers, not cold/CPU/savings. Use exclusive primitive times.",
+  "scopes": [
+    {
+      "name": "FindPrefabPos_Playable",
+      "reference": {
+        "open_primitives": 0,
+        "name": "FindPrefabPos_Playable",
+        "environment": "Underground",
+        "generation": 2,
+        "call_count": 5737,
+        "procedure_id": 53,
+        "primitives": {
+          "GridCircleSet": {
+            "inclusive_ms": 0,
+            "exclusive_ms": 0,
+            "count": 304
+          },
+          "GridNot": {
+            "inclusive_ms": 0,
+            "exclusive_ms": 0,
+            "count": 1
+          },
+          "GridMinMax": {
+            "inclusive_ms": 133,
+            "exclusive_ms": 133,
+            "count": 305
+          },
+          "GridDest": {
+            "inclusive_ms": 3,
+            "exclusive_ms": 3,
+            "count": 956
+          },
+          "GridAnd": {
+            "inclusive_ms": 131,
+            "exclusive_ms": 131,
+            "count": 327
+          },
+          "GridMulDivAdd": {
+            "inclusive_ms": 186,
+            "exclusive_ms": 186,
+            "count": 646
+          },
+          "GridMask": {
+            "inclusive_ms": 280,
+            "exclusive_ms": 280,
+            "count": 651
+          },
+          "GridOpFree": {
+            "inclusive_ms": 0,
+            "exclusive_ms": 0,
+            "count": 307
+          },
+          "NewComputeGrid": {
+            "inclusive_ms": 0,
+            "exclusive_ms": 0,
+            "count": 4
+          },
+          "table.weighted_rand": {
+            "inclusive_ms": 5,
+            "exclusive_ms": 5,
+            "count": 327
+          },
+          "GridDistanceMars": {
+            "inclusive_ms": 1152,
+            "exclusive_ms": 1152,
+            "count": 629
+          },
+          "GridStableRandomPosSimple": {
+            "inclusive_ms": 33,
+            "exclusive_ms": 33,
+            "count": 325
+          },
+          "GridMulAddScaled": {
+            "inclusive_ms": 49,
+            "exclusive_ms": 49,
+            "count": 324
+          },
+          "GridEquals": {
+            "inclusive_ms": 9,
+            "exclusive_ms": 9,
+            "count": 326
+          },
+          "GridOr": {
+            "inclusive_ms": 140,
+            "exclusive_ms": 140,
+            "count": 305
+          }
+        },
+        "globals_restored": true,
+        "duration_ms": 2151,
+        "primitive_ms": 2121,
+        "id": 1,
+        "completed": true,
+        "remainder_ms": 30
+      },
+      "slow_61n": {
+        "call_count": 2844,
+        "duration_ms": 1065,
+        "id": 1,
+        "completed": true,
+        "name": "FindPrefabPos_Playable",
+        "generation": 2,
+        "open_primitives": 0,
+        "globals_restored": true,
+        "remainder_ms": 17,
+        "environment": "Underground",
+        "procedure_id": 53,
+        "primitive_ms": 1048,
+        "primitives": {
+          "GridMulDivAdd": {
+            "inclusive_ms": 90,
+            "count": 324,
+            "exclusive_ms": 90
+          },
+          "NewComputeGrid": {
+            "inclusive_ms": 1,
+            "count": 4,
+            "exclusive_ms": 1
+          },
+          "GridDistanceMars": {
+            "inclusive_ms": 563,
+            "count": 307,
+            "exclusive_ms": 563
+          },
+          "GridAnd": {
+            "inclusive_ms": 58,
+            "count": 167,
+            "exclusive_ms": 58
+          },
+          "GridOr": {
+            "inclusive_ms": 65,
+            "count": 144,
+            "exclusive_ms": 65
+          },
+          "GridEquals": {
+            "inclusive_ms": 7,
+            "count": 166,
+            "exclusive_ms": 7
+          },
+          "GridDest": {
+            "inclusive_ms": 0,
+            "count": 474,
+            "exclusive_ms": 0
+          },
+          "GridMask": {
+            "inclusive_ms": 147,
+            "count": 330,
+            "exclusive_ms": 147
+          },
+          "GridCircleSet": {
+            "inclusive_ms": 1,
+            "count": 143,
+            "exclusive_ms": 1
+          },
+          "GridNot": {
+            "inclusive_ms": 0,
+            "count": 1,
+            "exclusive_ms": 0
+          },
+          "GridMinMax": {
+            "inclusive_ms": 63,
+            "count": 144,
+            "exclusive_ms": 63
+          },
+          "table.weighted_rand": {
+            "inclusive_ms": 3,
+            "count": 167,
+            "exclusive_ms": 3
+          },
+          "GridStableRandomPosSimple": {
+            "inclusive_ms": 23,
+            "count": 164,
+            "exclusive_ms": 23
+          },
+          "GridMulAddScaled": {
+            "inclusive_ms": 27,
+            "count": 163,
+            "exclusive_ms": 27
+          },
+          "GridOpFree": {
+            "inclusive_ms": 0,
+            "count": 146,
+            "exclusive_ms": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "FindPrefabPos_Filler",
+      "reference": {
+        "open_primitives": 0,
+        "name": "FindPrefabPos_Filler",
+        "environment": "Underground",
+        "generation": 2,
+        "call_count": 10957,
+        "procedure_id": 55,
+        "primitives": {
+          "GridCircleSet": {
+            "inclusive_ms": 1,
+            "exclusive_ms": 1,
+            "count": 1810
+          },
+          "GridNot": {
+            "inclusive_ms": 0,
+            "exclusive_ms": 0,
+            "count": 1
+          },
+          "GridMinMax": {
+            "inclusive_ms": 1,
+            "exclusive_ms": 1,
+            "count": 1
+          },
+          "GridDest": {
+            "inclusive_ms": 4,
+            "exclusive_ms": 4,
+            "count": 1525
+          },
+          "GridAnd": {
+            "inclusive_ms": 611,
+            "exclusive_ms": 611,
+            "count": 1525
+          },
+          "GridMask": {
+            "inclusive_ms": 870,
+            "exclusive_ms": 870,
+            "count": 1524
+          },
+          "GridOpFree": {
+            "inclusive_ms": 0,
+            "exclusive_ms": 0,
+            "count": 1
+          },
+          "table.weighted_rand": {
+            "inclusive_ms": 38,
+            "exclusive_ms": 38,
+            "count": 1525
+          },
+          "GridDistanceMars": {
+            "inclusive_ms": 2,
+            "exclusive_ms": 2,
+            "count": 1
+          },
+          "GridStableRandomPos": {
+            "inclusive_ms": 500,
+            "exclusive_ms": 500,
+            "count": 1519
+          },
+          "GridEquals": {
+            "inclusive_ms": 50,
+            "exclusive_ms": 50,
+            "count": 1524
+          },
+          "NewComputeGrid": {
+            "inclusive_ms": 0,
+            "exclusive_ms": 0,
+            "count": 1
+          }
+        },
+        "globals_restored": true,
+        "duration_ms": 2137,
+        "primitive_ms": 2077,
+        "id": 2,
+        "completed": true,
+        "remainder_ms": 60
+      },
+      "slow_61n": {
+        "call_count": 12718,
+        "duration_ms": 2532,
+        "id": 2,
+        "completed": true,
+        "name": "FindPrefabPos_Filler",
+        "generation": 2,
+        "open_primitives": 0,
+        "globals_restored": true,
+        "remainder_ms": 69,
+        "environment": "Underground",
+        "procedure_id": 55,
+        "primitive_ms": 2463,
+        "primitives": {
+          "NewComputeGrid": {
+            "inclusive_ms": 0,
+            "count": 1,
+            "exclusive_ms": 0
+          },
+          "GridDistanceMars": {
+            "inclusive_ms": 3,
+            "count": 1,
+            "exclusive_ms": 3
+          },
+          "GridMinMax": {
+            "inclusive_ms": 0,
+            "count": 1,
+            "exclusive_ms": 0
+          },
+          "GridEquals": {
+            "inclusive_ms": 43,
+            "count": 1798,
+            "exclusive_ms": 43
+          },
+          "GridDest": {
+            "inclusive_ms": 1,
+            "count": 1799,
+            "exclusive_ms": 1
+          },
+          "GridAnd": {
+            "inclusive_ms": 719,
+            "count": 1799,
+            "exclusive_ms": 719
+          },
+          "GridNot": {
+            "inclusive_ms": 1,
+            "count": 1,
+            "exclusive_ms": 1
+          },
+          "GridStableRandomPos": {
+            "inclusive_ms": 611,
+            "count": 1795,
+            "exclusive_ms": 611
+          },
+          "GridMask": {
+            "inclusive_ms": 1012,
+            "count": 1798,
+            "exclusive_ms": 1012
+          },
+          "GridCircleSet": {
+            "inclusive_ms": 4,
+            "count": 1925,
+            "exclusive_ms": 4
+          },
+          "table.weighted_rand": {
+            "inclusive_ms": 69,
+            "count": 1799,
+            "exclusive_ms": 69
+          },
+          "GridOpFree": {
+            "inclusive_ms": 0,
+            "count": 1,
+            "exclusive_ms": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "FindPrefabPos_Base",
+      "reference": {
+        "open_primitives": 0,
+        "name": "FindPrefabPos_Base",
+        "environment": "Underground",
+        "generation": 2,
+        "call_count": 9187,
+        "procedure_id": 56,
+        "primitives": {
+          "GridCircleSet": {
+            "inclusive_ms": 11,
+            "exclusive_ms": 11,
+            "count": 4251
+          },
+          "GridNot": {
+            "inclusive_ms": 1,
+            "exclusive_ms": 1,
+            "count": 1
+          },
+          "GridDest": {
+            "inclusive_ms": 0,
+            "exclusive_ms": 0,
+            "count": 1
+          },
+          "GridAnd": {
+            "inclusive_ms": 1,
+            "exclusive_ms": 1,
+            "count": 1
+          },
+          "GridMask": {
+            "inclusive_ms": 0,
+            "exclusive_ms": 0,
+            "count": 1
+          },
+          "GridOpFree": {
+            "inclusive_ms": 0,
+            "exclusive_ms": 0,
+            "count": 1
+          },
+          "table.weighted_rand": {
+            "inclusive_ms": 70,
+            "exclusive_ms": 70,
+            "count": 2457
+          },
+          "GridDistanceMars": {
+            "inclusive_ms": 1,
+            "exclusive_ms": 1,
+            "count": 1
+          },
+          "GridStableRandomPos": {
+            "inclusive_ms": 787,
+            "exclusive_ms": 787,
+            "count": 2457
+          },
+          "GridEquals": {
+            "inclusive_ms": 1,
+            "exclusive_ms": 1,
+            "count": 16
+          }
+        },
+        "globals_restored": true,
+        "duration_ms": 959,
+        "primitive_ms": 872,
+        "id": 3,
+        "completed": true,
+        "remainder_ms": 87
+      },
+      "slow_61n": {
+        "call_count": 8963,
+        "duration_ms": 890,
+        "id": 3,
+        "completed": true,
+        "name": "FindPrefabPos_Base",
+        "generation": 2,
+        "open_primitives": 0,
+        "globals_restored": true,
+        "remainder_ms": 71,
+        "environment": "Underground",
+        "procedure_id": 56,
+        "primitive_ms": 819,
+        "primitives": {
+          "GridStableRandomPos": {
+            "inclusive_ms": 759,
+            "count": 2344,
+            "exclusive_ms": 759
+          },
+          "GridDistanceMars": {
+            "inclusive_ms": 2,
+            "count": 1,
+            "exclusive_ms": 2
+          },
+          "GridAnd": {
+            "inclusive_ms": 1,
+            "count": 1,
+            "exclusive_ms": 1
+          },
+          "GridEquals": {
+            "inclusive_ms": 1,
+            "count": 16,
+            "exclusive_ms": 1
+          },
+          "GridDest": {
+            "inclusive_ms": 0,
+            "count": 1,
+            "exclusive_ms": 0
+          },
+          "GridMask": {
+            "inclusive_ms": 0,
+            "count": 1,
+            "exclusive_ms": 0
+          },
+          "GridNot": {
+            "inclusive_ms": 0,
+            "count": 1,
+            "exclusive_ms": 0
+          },
+          "GridCircleSet": {
+            "inclusive_ms": 7,
+            "count": 4253,
+            "exclusive_ms": 7
+          },
+          "table.weighted_rand": {
+            "inclusive_ms": 49,
+            "count": 2344,
+            "exclusive_ms": 49
+          },
+          "GridOpFree": {
+            "inclusive_ms": 0,
+            "count": 1,
+            "exclusive_ms": 0
+          }
+        }
+      }
+    }
+  ]
+}
