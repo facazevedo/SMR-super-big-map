@@ -1543,3 +1543,14 @@ production and38/38deploymentaudit. Next one reference and one61N fresh process,
 frozen checkpoint, normal full predecessor/private/rock/process audits via
 native_proc_audit.py. No actual optimization or cold acceptance yet. Full<80 and
 <85 targets unmet; accepted86.606/92.125s baseline unchanged, goal ACTIVE.
+
+Native-proc first reference23715/PID52376 CLOSED normal, profile exit1: full
+outputs/privatefields/rocks PASS but probe guard compared generation methods
+against pre-lifecycle setup identities.95 complete spans/zero open; all owned
+hooks restored. Failure evidence v987_native_proc_reference retained unchanged.
+Normal lifecycle reinstalls registered generator wrappers. Fix checks CURRENT
+State registration and exact per-native-call identity instead, never overwrites
+class generation methods.203 offline checks now include legitimate epoch changes
+and unregistered pre/during/post-call replacements rejected. Four-command replay
+native_proc_offline_2PASS. New reference_2 and61N required; do not relabel failed
+run or infer cold speed from diagnostics. See native_proc_research.md.

@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import subprocess
 root=Path(__file__).resolve().parents[3]
-out=root/'_ralph/runs/under80-20260912/artifacts/native_proc_offline'
+out=root/'_ralph/runs/under80-20260912/artifacts/native_proc_offline_2'
 out.mkdir(parents=True,exist_ok=False)
 commands=[['luac','-p','_ralph/tmp/under80_20260912/native_proc_profile.lua'],
  ['lua','_ralph/tmp/under80_20260912/native_proc_profile_test.lua'],

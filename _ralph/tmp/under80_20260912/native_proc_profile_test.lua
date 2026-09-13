@@ -18,7 +18,9 @@ local function fixture(mode)
   if mode=='end_error' then error('fixture end error')end
   return nil,tag,nil,...
  end
- local sbm={Config={DEBUG_LOGGING_ENABLED=false,DEBUG_LOADING_TIMINGS=false},
+ local sbm={State={generator_generate_wrapper=class.Generate,generator_do_generate_wrapper=class.DoGenerate,
+   generator_on_generate_logic_wrapper=class.OnGenerateLogic},
+  Config={DEBUG_LOGGING_ENABLED=false,DEBUG_LOADING_TIMINGS=false},
   Engine={Global=function(name)check(name=='RandomMapGenerator','unexpected global');return class end},
   GenerationGrids={RebuildFinal=function(m,stage,...)
    counts.final=counts.final+1
@@ -75,7 +77,7 @@ do
   values=table.pack(sbm.GenerationGrids.RebuildFinal(entry[1],entry[2],11,nil))
   check(values.n==5 and values[1]==nil and values[2]==entry[2] and values[4]==11 and values[5]==nil,'final tuple')
  end
- check(r.status=='pass' and r.restored and r.class_methods_unchanged and r.config_unchanged,'normal diagnostic status')
+ check(r.status=='pass' and r.restored and r.class_methods_validated and r.config_unchanged,'normal diagnostic status')
  check(r.span_count==5 and r.completed_spans==5 and r.active_generations==0 and r.hooks==2,'final census')
  check(counts.generate==1 and counts.start==5 and counts.finish==5 and counts.final==3,'native calls changed')
  restored();env.SBM_NATIVE_PROC_RESTORE('again');restored()
@@ -140,5 +142,40 @@ for _,missing in ipairs({'ProcEnd','DoGenerate','call','final'})do
  assert(loadfile(path,'t',env))()
  check(env.SBM_NATIVE_PROC_DIAGNOSTIC.status=='fail','missing prerequisite accepted')
  check(a==class.ProcStart and b==sbm.CallDoGenerateWithRockParityTrace and c==sbm.GenerationGrids.RebuildFinal,'partial setup')
+end
+-- Lifecycle may legitimately reinstall registered methods between native calls.
+do
+ local env,sbm,class,map,surface,generator,proc,restored=fixture()
+ assert(loadfile(path,'t',env))()
+ local keys={Generate='generator_generate_wrapper',DoGenerate='generator_do_generate_wrapper',
+  OnGenerateLogic='generator_on_generate_logic_wrapper'}
+ local initial={}
+ for name in pairs(keys)do initial[name]=class[name]end
+ for i=1,2 do
+  for name,key in pairs(keys)do class[name]=function()return i end;sbm.State[key]=class[name]end
+  sbm.CallDoGenerateWithRockParityTrace(function()proc('epoch'..i)end,generator,map)
+ end
+ sbm.GenerationGrids.RebuildFinal(surface,'post-pipeline scheduled revalidation')
+ local r=env.SBM_NATIVE_PROC_DIAGNOSTIC
+ check(r.status=='pass' and r.class_methods_validated,'legitimate lifecycle epoch rejected')
+ for _,row in ipairs(r.generations)do
+  check(row.generation_methods_registered and row.generation_methods_unchanged,'per-call generation identity')
+ end
+ for name,key in pairs(keys)do class[name]=initial[name];sbm.State[key]=initial[name]end
+ restored()
+end
+for _,when in ipairs({'before','during','final'})do
+ local env,sbm,class,map,surface,generator,proc,restored=fixture()
+ assert(loadfile(path,'t',env))()
+ local original=class.DoGenerate
+ if when=='before' then class.DoGenerate=function()end end
+ sbm.CallDoGenerateWithRockParityTrace(function()
+  proc('one')
+  if when=='during' then class.DoGenerate=function()end end
+ end,generator,map)
+ if when=='final' then class.DoGenerate=function()end end
+ sbm.GenerationGrids.RebuildFinal(surface,'post-pipeline scheduled revalidation')
+ check(env.SBM_NATIVE_PROC_DIAGNOSTIC.status=='fail','unregistered identity accepted '..when)
+ class.DoGenerate=original;restored()
 end
 print('PASS native procedure probe: '..checks..' tuple/nesting/projection/thread/failure/restoration checks')

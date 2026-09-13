@@ -64,3 +64,27 @@ No revival of unchanged v988-v991 or radius-expanded-bucket candidates.
 Accepted reference86.606s/worst92.125s remain authoritative. Full<80 objective and
 user's relaxed<85 target both unmet; all eager bootstrap and immediate/scheduled
 preT1 rebuilds remain required. Diagnostic durations are not cold-start samples.
+
+## First native reference retained as FAILED diagnostic
+
+Frozen dc519d7, v987_native_proc_reference exec23715/PID52376 CLOSED exit1 after
+normal game shutdown. Full predecessor/rock pair and all four private fields
+PASS,95 completed procedures in two generations, zero open. Probe status FAIL:
+setup-time Generate/DoGenerate/OnGenerateLogic identities differed at scheduled
+restoration. The two owned persistent hooks and all per-call ProcStart/ProcEnd
+hooks were restored; failure was the overly broad generation identity guard.
+
+Source inspection shows normal Lifecycle ClassesPostprocess/DataLoaded and other
+events reverify/reinstall these methods through PatchRandomMapGenerator. The
+probe never assigns those methods. Revised guard checks each actual method
+against the CURRENT registered SuperBigMap.State wrapper at native entry and
+scheduled restoration, and exact within-call stability independently. It does
+not overwrite unrelated methods or relax ownership checks for probe hooks.
+
+New native_proc_offline_2 four-command PASS,203 fixture checks, including legitimate
+registered lifecycle replacement between calls and unregistered replacement
+before/during/after a call rejected. Original151 checks retained. First native
+diagnostic and its failed audit remain unchanged; no timing is promoted from it.
+The inherited audit's normal_shutdown=false aggregates ANY issue and therefore
+does not contradict raw flushed logs proving that PID52376 shut down normally.
+Run new v987_native_proc_reference_2 and61N at the corrected frozen checkpoint.

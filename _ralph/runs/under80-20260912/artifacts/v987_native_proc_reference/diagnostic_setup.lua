@@ -12,7 +12,7 @@ for _,mod in ipairs(ModsLoaded or {})do
  if value and value.Config then sbm=value;break end
 end
 local class=sbm and sbm.Engine and sbm.Engine.Global('RandomMapGenerator')
-if not sbm or not sbm.State or not sbm.GenerationGrids or type(class)~='table'
+if not sbm or not sbm.GenerationGrids or type(class)~='table'
  or type(sbm.CallDoGenerateWithRockParityTrace)~='function'
  or type(sbm.GenerationGrids.RebuildFinal)~='function'then
  fail('native procedure prerequisites unavailable');return
@@ -27,20 +27,8 @@ local original_call=sbm.CallDoGenerateWithRockParityTrace
 local original_final=sbm.GenerationGrids.RebuildFinal
 local config_before={sbm.Config.DEBUG_LOGGING_ENABLED,sbm.Config.DEBUG_LOADING_TIMINGS}
 local methods_before={}
-for _,name in ipairs({'ProcStart','ProcEnd'})do
+for _,name in ipairs({'Generate','DoGenerate','OnGenerateLogic','ProcStart','ProcEnd'})do
  methods_before[name]=class[name]
-end
-local generation_keys={Generate='generator_generate_wrapper',DoGenerate='generator_do_generate_wrapper',
- OnGenerateLogic='generator_on_generate_logic_wrapper'}
-local function generation_methods()
- local snapshot={};local valid=true
- for name,state_key in pairs(generation_keys)do
-  snapshot[name]=class[name]
-  if type(class[name])~='function' or class[name]~=sbm.State[state_key] then
-   valid=false;fail('unregistered generator method: '..name)
-  end
- end
- return snapshot,valid
 end
 local restored=false
 local call_wrapper,final_wrapper,restore
@@ -72,10 +60,9 @@ restore=function(reason)
  else sbm.CallDoGenerateWithRockParityTrace=original_call end
  if sbm.GenerationGrids.RebuildFinal~=final_wrapper then fail('final hook rebound')
  else sbm.GenerationGrids.RebuildFinal=original_final end
- local _,registered=generation_methods()
- result.class_methods_validated=registered
+ result.class_methods_unchanged=true
  for name,fn in pairs(methods_before)do
-  if class[name]~=fn then result.class_methods_validated=false;fail('class boundary changed: '..name)end
+  if class[name]~=fn then result.class_methods_unchanged=false;fail('class method changed: '..name)end
  end
  result.config_unchanged=sbm.Config.DEBUG_LOGGING_ENABLED==config_before[1]
   and sbm.Config.DEBUG_LOADING_TIMINGS==config_before[2]
@@ -84,7 +71,7 @@ restore=function(reason)
  result.elapsed_ms=GetPreciseTicks()-result.started_at
  result.restore_reason=reason;restored=true
  result.restored=sbm.CallDoGenerateWithRockParityTrace==original_call
-  and sbm.GenerationGrids.RebuildFinal==original_final and result.class_methods_validated
+  and sbm.GenerationGrids.RebuildFinal==original_final and result.class_methods_unchanged
  result.status=#result.issues==0 and 'pass' or 'fail'
  print('[SBM native proc profile] '..result.status..' generations='..#result.generations
   ..' procedures='..#result.calls..' restored='..tostring(result.restored))
@@ -102,8 +89,6 @@ call_wrapper=function(original,generator,map,...)
   map=data and tostring(data.id or '?') or '?',start_ms=GetPreciseTicks()-result.started_at,
   procedure_ms=0,procedure_count=0}
  result.generations[#result.generations+1]=row
- local generation_before,registered=generation_methods()
- row.generation_methods_registered=registered
  local ctx={row=row,stack={},counts={}}
  context_stack[#context_stack+1]=ctx
  local saved_start,saved_end=class.ProcStart,class.ProcEnd
@@ -140,10 +125,6 @@ call_wrapper=function(original,generator,map,...)
  if class.ProcEnd~=end_wrapper then fail('ProcEnd rebound during native generation')
  else class.ProcEnd=saved_end end
  row.boundaries_restored=class.ProcStart==saved_start and class.ProcEnd==saved_end
- row.generation_methods_unchanged=true
- for name,fn in pairs(generation_before)do
-  if class[name]~=fn then row.generation_methods_unchanged=false;fail('generator method changed within native call: '..name)end
- end
  context_stack[#context_stack]=nil
  if not values[1]then
   fail('native generation error: '..tostring(values[2]));restore('generation error')
