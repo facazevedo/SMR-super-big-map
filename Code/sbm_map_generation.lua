@@ -6290,8 +6290,23 @@ local function BootstrapPassagesAndDeferWonders(env)
 		-- numbers).
 		local source_max_radius = math.max(source_world_w, source_world_h) / 2
 		if rawget(surface_map, "GetMapSize") ~= nil then
+			-- A leftover shadow here is not a concurrent nesting attempt, it is debris from a
+			-- PRIOR, ABANDONED call. The engine suspends and resumes random-map generation across
+			-- frames ("Lua Error during suspended pass edits, resuming: map 2, reason
+			-- RandomMapGenerate") and retries by starting a fresh call rather than resuming the
+			-- aborted one, so that dead call's restore_fallback_radius closure -- a plain local --
+			-- never ran and is gone, leaving the field installed on the shared map object.
+			--
+			-- Raising here killed the whole process rather than just the pass, and the cleanup it
+			-- did run could not help: restore_fallback_radius is still nil at this point on every
+			-- fresh call, so RestoreSurfaceBuildableBridge() was a no-op for this specific field.
+			-- Nothing outside this file ever writes surface_map.GetMapSize, so a leftover is always
+			-- ours and always safe to clear before installing a correct one.
 			RestoreSurfaceBuildableBridge()
-			error("surface map already shadows GetMapSize; refusing to nest the source extent view")
+			surface_map.GetMapSize = nil
+			LoadingStep("cleared stale surface passage fallback radius shadow (prior suspended pass never restored it)", {
+				source_width = source_world_w, source_height = source_world_h,
+			}, surface_map)
 		end
 		-- A counter, not just a flag: an installed-but-never-consulted shadow (calls == 0) means
 		-- the fallback radius came from somewhere else, which is a different defect from a wrong
