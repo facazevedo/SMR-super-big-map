@@ -1,0 +1,32 @@
+{
+  "baseline": "56fbf44",
+  "production_changed": false,
+  "candidate_sha256": "9e7a534f0d59600cf6d56ee0ba483cd0c5d0705bbdb0ff6504db576e1683782b",
+  "changes": [
+    {
+      "old": "\t    return polynomial\n",
+      "new": "\t    -- Private local certificate: reuse consumed cube; original weight is unchanged.\n\t    local c=policy.core_fraction\n\t    local d=math.floor(((0.0000056+0.0000018/(c+0.0))/(1.0-c))*W+6)+2\n\t    cube:copyrect(radius,api.box(0,0,w,h),api.point(0,0))\n\t    api.GridMulDivAdd(cube,-1,1,1)\n\t    api.GridMulDivAdd(cube,radius,1,0)\n\t    api.GridMulDivAdd(cube,W,1,d+2)\n\t    api.GridClamp(cube,0,W/4)\n\t    api.GridMulDivAdd(cube,cube,W,0)\n\t    api.GridMulDivAdd(cube,90*d,W,240)\n\t    return polynomial,nil,cube\n"
+    },
+    {
+      "old": "local native_mask,mask_error=NativeApronMask(",
+      "new": "local native_mask,mask_error,local_error=NativeApronMask("
+    },
+    {
+      "old": "if mask_error then return mask_error end",
+      "new": "if mask_error then return mask_error end\n\t\t\t\tif native_mask and not local_error then return \"native apron local error missing\" end"
+    },
+    {
+      "old": "api.GridMulDivAdd(sensitivity,1,1,error_numerator*256);api.GridClamp(sensitivity,0,W)",
+      "new": "if native_mask then api.GridAddMulDiv(sensitivity,local_error,1,3)\n\t\t\t\telse api.GridMulDivAdd(sensitivity,1,1,error_numerator*256) end\n\t\t\t\tapi.GridClamp(sensitivity,0,W)"
+    },
+    {
+      "old": "api.GridMulDivAdd(uncertainty,3*error_numerator,65536,0)",
+      "new": "if native_mask then api.GridMulDivAdd(uncertainty,local_error,W,0)\n\t\t\t\telse api.GridMulDivAdd(uncertainty,3*error_numerator,65536,0) end"
+    },
+    {
+      "old": "local margin=ceil((max(math.abs(relative_min),math.abs(relative_max))+magnitude)*H/524288)+4",
+      "new": "-- A separate H unit covers newly introduced tiny arithmetic terms.\n\t\t\t\tlocal margin=ceil((max(math.abs(relative_min),math.abs(relative_max))+magnitude)*H/524288)+4+(native_mask and 1 or 0)"
+    }
+  ],
+  "qualification": "Private conditional certificate; native and cold gates NOT run"
+}

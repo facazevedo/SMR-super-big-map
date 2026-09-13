@@ -1,0 +1,46 @@
+[
+  {
+    "command": [
+      "python",
+      "_ralph/tmp/under80_20260912/apron_local_bound_test.py"
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "luac",
+      "-p",
+      "_ralph/runs/under80-20260912/artifacts/apron_local_research/terrain_candidate.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "lua",
+      "_ralph/tmp/under80_20260912/apron_local_raster_test.lua",
+      "_ralph/runs/under80-20260912/artifacts/apron_local_research/terrain_candidate.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "lua",
+      "_ralph/tmp/under80_20260912/precision_coordinate_encoding_test.lua",
+      "_ralph/runs/under80-20260912/artifacts/apron_local_research/terrain_candidate.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "git",
+      "diff",
+      "--exit-code",
+      "56fbf44",
+      "--",
+      "Code",
+      "metadata.lua",
+      "items.lua"
+    ],
+    "exit": 0
+  }
+]
