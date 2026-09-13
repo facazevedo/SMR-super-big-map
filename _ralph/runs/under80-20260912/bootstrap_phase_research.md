@@ -41,3 +41,43 @@ bootstrap_phase_audit.py inherits the full sparse predecessor/private/rock/proce
 audit and requires one successful twelve-phase underground call, two passages,
 joined original cells/source reconstruction, unchanged config and restored hooks.
 Never drop bootstrap or a resume based on its measured cost.
+
+## Native results CLOSED PASS at d25dab1
+
+Reference v987_bootstrap_reference (exec2942/PID35908) and slow61N
+v987_bootstrap_61n (exec71541/PID38440) both completed normal flushed shutdowns.
+Their private_process_audit.json reports PASS: exact full predecessor snapshots,
+individual rock grounding, four private-stream fields, no engine errors. Each
+has one underground bootstrap, twelve ordered phases, two passages, sixteen
+joined original upvalue cells, exact source reversal and restored hooks/config.
+
+| Sequential phase | Reference ms | 61N136W ms |
+| --- | ---: | ---: |
+| Preflight | 0 | 0 |
+| Wonder assignment | 475 | 275 |
+| Native wonder clearance | 842 | 588 |
+| Native wonder resume | 0 | 0 |
+| Surface bridge setup | 0 | 0 |
+| Surface bridge copy | 136 | 141 |
+| Surface bridge bind | 0 | 0 |
+| Passage search/spawn/clearance | 2185 | 61 |
+| Passage resume | 0 | 0 |
+| Surface bridge restore | 317 | 311 |
+| Common-hex planning | 282 | 280 |
+| Verification | 0 | 0 |
+| Whole bootstrap | 4237 | 1656 |
+
+The sequential sums equal the measured whole bootstrap in both runs. Reference
+4237ms differs from the earlier sparse6404ms; do NOT call that difference an
+optimization or attribute the earlier total to a single newly measured phase.
+These are different instrumented runs with variation, not cold acceptance.
+
+Bridge copying and common-hex planning are small. The passage phase includes
+FindPassageSpawnPos, provisional landscape repair, underground spawn/link, and
+native clearance, not search alone. It is a reference-specific secondary lead;
+the entire1656ms slow-map bootstrap cannot close its7.125s sub85 deficit.
+
+Next priority from the fresh Astra xhigh review: capture native ProcStart/ProcEnd
+before OnGenerateLogic. The prior source-view remainder7620/7064ms includes the
+stock pre-logic placement/raster procedures currently missed by detailed timing.
+See native_proc_research.md. Accepted v987 and its cold baseline are unchanged.

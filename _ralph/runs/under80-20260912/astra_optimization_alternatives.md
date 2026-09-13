@@ -150,3 +150,25 @@ Next split bootstrap's native clearance, bridge copy, passage search, resumes an
 common-hex planning before selecting a new implementation. See
 sparse_pipeline_research.md and artifacts/v987_sparse_comparison. Productionv987
 and cold baseline are unchanged; no claimed target achievement.
+
+## Fresh explicit Astra xhigh review after bootstrap split
+
+User requested another Astra extra-high alternatives review. Read-only agent
+astra_fresh_alternatives completed, and parent independently checked native
+RandomMapGenerator.lua:2850-2866. The strongest new finding is missing pre-logic
+procedure timing, not another bridge-copy or cache micro-optimization. Native
+ProcStart/ProcEnd exposes eight coarse stages (two ApplyTerrain occurrences)
+plus nested prefab-placement phases before OnGenerateLogic. Their costs are
+currently hidden inside the source-view7620/7064ms WALL remainder.
+
+Ranked follow-through: (1) partition those phases, then consider exact immutable
+preparation reuse only if measured; (2) a distinct fused decor rejection dispatch,
+keeping all existing cursor/index/terrain/matcher/RNG behavior; (3) qualified
+callback-local reuse of object observations in relief capture. None is a proved
+saving. Passage loop splitting is secondary reference-specific work; new2185/61ms
+includes search, landscape repair, spawning and clearance. Bridge136/141ms is not
+a major lead. See bootstrap_phase_research.md and native_proc_research.md.
+
+All-site sub85 remains plausible to investigate, not established. Slowest92.125s
+needs more than7.125s; required native passability rebuilds cannot be skipped or
+narrowed. Production unchanged, no new implementation accepted by this review.

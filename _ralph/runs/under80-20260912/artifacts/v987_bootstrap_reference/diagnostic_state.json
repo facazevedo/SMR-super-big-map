@@ -1,0 +1,86 @@
+{
+  "expected_phases": [
+    "preflight",
+    "wonder_assignment",
+    "native_wonder_clearance",
+    "native_wonder_resume",
+    "surface_bridge_setup",
+    "surface_bridge_copy",
+    "surface_bridge_bind",
+    "passage_spawn_clearance",
+    "passage_resume",
+    "surface_bridge_restore",
+    "common_hex_planning",
+    "verification"
+  ],
+  "status": "pass",
+  "issues": [],
+  "restore_reason": "post-pipeline scheduled revalidation",
+  "calls": [
+    {
+      "phase_sum_ms": 4237,
+      "phases": [
+        {
+          "name": "preflight",
+          "duration_ms": 0
+        },
+        {
+          "name": "wonder_assignment",
+          "duration_ms": 475
+        },
+        {
+          "name": "native_wonder_clearance",
+          "duration_ms": 842
+        },
+        {
+          "name": "native_wonder_resume",
+          "duration_ms": 0
+        },
+        {
+          "name": "surface_bridge_setup",
+          "duration_ms": 0
+        },
+        {
+          "name": "surface_bridge_copy",
+          "duration_ms": 136
+        },
+        {
+          "name": "surface_bridge_bind",
+          "duration_ms": 0
+        },
+        {
+          "name": "passage_spawn_clearance",
+          "duration_ms": 2185
+        },
+        {
+          "name": "passage_resume",
+          "duration_ms": 0
+        },
+        {
+          "name": "surface_bridge_restore",
+          "duration_ms": 317
+        },
+        {
+          "name": "common_hex_planning",
+          "duration_ms": 282
+        },
+        {
+          "name": "verification",
+          "duration_ms": 0
+        }
+      ],
+      "ok": true,
+      "elapsed_ms": 4237,
+      "environment": "Underground",
+      "details": {
+        "passages": 2,
+        "wonders_deferred": 2,
+        "planned_pairs": 2
+      }
+    }
+  ],
+  "config_unchanged": true,
+  "restored": true,
+  "joined_upvalues": 16,
+  "source_reconstruction": true
+}

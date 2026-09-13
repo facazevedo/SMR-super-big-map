@@ -1514,3 +1514,32 @@ exact56fbf44/v987,38/38 deployment auditPASS. No cold sample or claimed startup 
 this turn. Accepted86.606s reference/worst92.125s remain authoritative. Full<80 and
 <85 targets unmet; goal ACTIVE, not blocked. Do not use old intrusive helper totals
 as fresh native cost or resume any unchanged rejected candidate for rescue timing.
+
+## Bootstrap audits preserved; native pre-logic procedure probe ready
+
+Previous explicit Astra review turn is PROGRESS: identified actual stock native
+procedures missing from detailed timing. Parent verified local engine source;
+this turn implements that next decisive probe, not a status-only repeat.
+
+Bootstrap reference2942/PID35908 and61N71541/PID38440 CLOSED normal atd25dab1;
+both full private_process_auditPASS. Twelve phases/16joined cells/source reversal,
+2passages, exact predecessor/RNG/individual rocks, hooks/config restored. Whole
+4237/1656ms; nativewonderclearance842/588, bridgecopy136/141, passageloop2185/61,
+bridgerestore317/311, commonhex282/280. Earlier reference sparse6404ms differs;
+not a speedup claim. See bootstrap_phase_research.md for all sequential phases.
+
+Native source pre-logic procedures before OnGenerateLogic: FindPrefabPos (with
+nested subprocedures), PlacePrefabs, PlaceDecors, ApplyTerrainMarkOnly, overlap
+removal and terrain application (both tagged ApplyTerrain), FixPadTerrain,
+AdjustObjects. Existing sparse ProcInvoke hook missed them. New temporary
+native_proc_profile.lua captures existing ProcStart/ProcEnd in the existing
+CallDoGenerateWithRockParityTrace seam, preserving class-generation identities,
+mark-grid wrappers, serial raster and native/RNG/object behavior. Two persistent
+hooks plus per-call procedure boundaries restore by identity; tuple/thread/
+ordinal/nesting/cap/error checks, unchanged Config, no per-cell timers.
+
+native_proc_offline four-command PASS includes151 fixture checks, exact accepted
+production and38/38deploymentaudit. Next one reference and one61N fresh process,
+frozen checkpoint, normal full predecessor/private/rock/process audits via
+native_proc_audit.py. No actual optimization or cold acceptance yet. Full<80 and
+<85 targets unmet; accepted86.606/92.125s baseline unchanged, goal ACTIVE.

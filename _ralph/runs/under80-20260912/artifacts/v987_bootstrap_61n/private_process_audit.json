@@ -1,0 +1,26 @@
+{
+  "status": "pass",
+  "issues": [],
+  "site": "61N136W",
+  "checkpoint": {
+    "commit": "d25dab1d98553f58431993756fd05f166dd3b09d",
+    "diagnostic_only": true
+  },
+  "identity": [
+    38440,
+    134337669506355919
+  ],
+  "predecessor": "_ralph\\runs\\under80-20260912\\artifacts\\v987_matrix\\61n136w_a",
+  "pair": {
+    "verdict": "pass",
+    "differences": [],
+    "note": "Runtime parity only; engine-RNG source audit is separate.",
+    "full_snapshot_differences": [],
+    "rock_grounding_differences": []
+  },
+  "private_fields_checked": 4,
+  "bootstrap_calls": 1,
+  "phases_per_call": 12,
+  "normal_shutdown": true,
+  "qualification": "Coarse sequential bootstrap wall phases, not CPU time or cold acceptance; every operation and original private cell preserved."
+}
