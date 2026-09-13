@@ -1,0 +1,18 @@
+local root='D:/PROJS/SMR/super-big-map/'
+local function module(path)
+ local err,source=AsyncFileToString(root..path)
+ if err or type(source)~='string'then error('eligibility source missing '..path);return end
+ local fn,why=load(source,'@'..path,'t',_G)
+ if not fn then error(why);return end
+ return fn
+end
+local observer=module('_ralph/runs/under80-20260912/artifacts/filler_eligibility_observer/observer.lua')
+local kernel=module('_ralph/tmp/under80_20260912/filler_eligibility_cache.lua')
+local base=module('_ralph/tmp/under80_20260912/native_proc_profile.lua')
+if not observer or not kernel or not base then return end
+if rawget(_G,'SBM_NATIVE_PROC_OBSERVER')~=nil then error('observer already occupied');return end
+rawset(_G,'SBM_NATIVE_PROC_OBSERVER',observer()(GetPreciseTicks,kernel()))
+local ok,value=pcall(base)
+rawset(_G,'SBM_NATIVE_PROC_OBSERVER',nil)
+if not ok then error(value);return end
+return value

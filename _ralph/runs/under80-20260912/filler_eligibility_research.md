@@ -53,3 +53,59 @@ projection, all pass-edit resumes andimmediate+scheduledpreT1 rebuilds. Eventual
 actual production qualification, all-source review andfull six-site cold gate
 remain required. Use prospectively declared contemporaneous baselines for any
 genuinely new candidate; never rewrite prior failed gates or rescue samples.
+
+## Mutation-aware private kernel and native observer implemented
+
+filler_eligibility_cache.lua now owns bounded LRU eligibility grids and applies
+every observed zero-circle clear to every live entry. Misses compute the complete
+mask AND current place grid; hits copy maintained eligibility. Entries are never
+used as the mutable trial destination. Integer-subtype mask admission, caller/
+owned-grid alias refusal, explicit mutation/source invalidation, failure latching
+and retryable owned cleanup are tested. The caller retains responsibility for
+certifying source stability and the complete mutation stream; this is NOT a
+production global wrapper or a native-return impersonation.
+
+8980 kernel checks PASS across capacities0/1/2/5/8 and three grid shapes, ordered
+interleaved clears/requests, clipping/fractional circle geometry, empty/full
+regions, later trial writes, eviction, invalidation, integer-vs-float keys,
+aliases, copy/mask/intersection/update/free failures and ownership cleanup.
+The circle fixture is a model; exact native rasterization remains to be proved.
+
+filler_eligibility_build.py reuses the reviewed ownership/unsigned-grid exact
+comparison helpers from filler_mask_observer.lua and appends the new observer
+tail. Generated observer/manifest live in artifacts/filler_eligibility_observer.
+The observer brackets actual UG Filler and temporarily owns four native names:
+GridDistanceMars identifies the private place/distance lineage; GridMask pairs
+with its immediate GridAnd; GridCircleSet witnesses every later place clear.
+Original native calls and return tuples always execute once. Each request compares
+full scratch eligibility against the actual mask+And output before subsequent
+zone/similarity/seeded selection. Live place guard receives each exact native
+clear and is compared after clears and before later requests; fixed source guards
+are checked too. Unexpected mutations/pairing fail the diagnostic.
+
+After scope exit, both old/new and new/old replays use a private clone of the
+initial place grid and the complete bounded request/clear journal. Timed work
+includes place clone/free, every original clear, all maintained-grid updates,
+masks/intersections/copies/owned clones/evictions/cleanup, plus an equal final
+place copy used for an out-of-timer verification. No per-operation clocks. Native
+source and final-place comparisons follow each replay. At most16384 journal
+events; only scalar request metadata and aggregate counts survive scope cleanup.
+Cache payload<=16MiB and8 entries; additional fixed scratch is bounded by source
+dimensions and reused native comparator buffers. Never read the freed caller
+place grid at ProcEnd (native Filler frees it before that boundary).
+
+3192 observer checks PASS: complete native-shaped results and nil tuples, source/
+mutation pairing, both-order replay work identity, missing And, unexpected writes,
+bad copies/partial masks/comparator/alias/allocation errors, inherited raw slots,
+foreign-coroutine pass-through, unfinished scope, rebound owners and full existing
+native-procedure-driver composition. Initial fixture concatenation lacked a
+newline (endfor syntax); fixed fixture only before any native run.203 retained
+native-procedure checks also PASS. All9 filler_eligibility_offline prerequisite
+commands pass, including exact56fbf44 production and38-file deployment audit.
+
+Next frozen native61N thenreference using profile.py, new artifact names,
+filler_eligibility_profile.lua and querySBM_NATIVE_PROC_DIAGNOSTIC. Require full
+filler_eligibility_audit (native lifecycle, predecessor/grids/individualrocks/four
+private-stream fields, mutation journal/full-grid comparator census, all replay
+work/ownership and normal flushed process shutdown). Native proof/timing still
+pending here. Private primitive replay gain would not establish startup savings.
