@@ -6,7 +6,7 @@ local function module(path)
  if not fn then error(why);return end
  return fn
 end
-local observer=module('_ralph/runs/under80-20260912/artifacts/playable_distance_observer/observer.lua')
+local observer=module('_ralph/runs/under80-20260912/artifacts/playable_distance_observer_v2/observer.lua')
 local base=module('_ralph/tmp/under80_20260912/native_proc_profile.lua')
 if not observer or not base then return end
 if rawget(_G,'SBM_NATIVE_PROC_OBSERVER')~=nil then error('observer already occupied');return end

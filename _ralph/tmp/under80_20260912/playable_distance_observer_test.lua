@@ -1,5 +1,5 @@
 -- Model validates observer protocol, not the native distance identity or speed.
-local make=assert(loadfile('_ralph/runs/under80-20260912/artifacts/playable_distance_observer/observer.lua'))()
+local make=assert(loadfile('_ralph/runs/under80-20260912/artifacts/playable_distance_observer_v2/observer.lua'))()
 local checks=0
 local function check(v,m)assert(v,m);checks=checks+1 end
 local hooks={'GridOr','GridDistanceMars','GridCircleSet','GridOpFree'}
@@ -73,7 +73,7 @@ local function fixture(mode)
  owner.GridAbs=function(g)for i=1,16 do g.v[i]=math.abs(g.v[i])end end
  owner.GridCount=function(g,lo,hi)
   if mode=='bad_comparator'then return 0 end
-  local n=0;for _,v in ipairs(g.v)do if lo<=v and v<=hi then n=n+1 end end;return n
+  local n=0;for _,v in ipairs(g.v)do if lo<v and v<hi then n=n+1 end end;return n
  end
  owner.GridMinMax=function(g)
   check(live[g],'minmax freed');local lo,hi=math.huge,-math.huge

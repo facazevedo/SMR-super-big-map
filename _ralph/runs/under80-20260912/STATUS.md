@@ -2018,3 +2018,12 @@ contractauditPASS issues[]. Empty and actual768x768 cases included. This is not
 generation parity or a speedup; next actual Playable primary/secondary-field
 shadow and complete old/new work replay. See playable_distance_research.md.
 Production/deployment remains exactacceptedv987; goalaverage<85 still unmet.
+
+Playable actual shadow80ae093 reference completed61592 with full predecessor/
+private4/rock parity and normal shutdown, but failed initial comparator self-test.
+Independent mapless scalar-oracle probefb45602 identified native GridCount's open
+lower bound: counting from1 misses difference1. New immutable observer_v2 counts
+above0; native-shaped model PASS120402. Historical rejected Filler private-field
+claims using the old comparator need this caveat; independent whole-map audits
+and acceptedv987 are separate. See playable_distance_research.md. No speed evidence
+yet; corrected frozen reference shadow is next. Goal reference average<85 active.

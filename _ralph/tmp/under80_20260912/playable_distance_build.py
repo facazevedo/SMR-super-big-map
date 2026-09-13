@@ -8,8 +8,13 @@ prefix=base[:base.index(' local function cache_api(scope)')]
 prefix=prefix.replace("kind='filler_mask_shadow'", "kind='playable_distance_shadow'")
 prefix=prefix.replace("or (active and grid==active.source)", "or (active and (grid==active.place or grid==active.bounds or grid==active.current_primary))")
 prefix=prefix.replace("kind=='live_mask' or kind=='sentinel_mask'", "kind=='raw_union' or kind=='primary' or kind=='secondary'")
+# Native contract: GridCount excludes its lower boundary; difference==1 matters.
+assert prefix.count('api.GridCount(delta,1,2147483647)')==1
+prefix=prefix.replace('api.GridCount(delta,1,2147483647)','api.GridCount(delta,0,2147483647)')
+prefix=prefix.replace('-- Private native shadow. Every real game write is still the original GridMask.',
+                      '-- Private Playable shadow; native originals remain unchanged.')
 tail=Path(__file__).with_name('playable_distance_observer_tail.lua').read_text()
-out=root/'_ralph/runs/under80-20260912/artifacts/playable_distance_observer'
+out=root/'_ralph/runs/under80-20260912/artifacts/playable_distance_observer_v2'
 out.mkdir(parents=True,exist_ok=False)
 source=prefix+'\n'+tail
 (out/'observer.lua').write_text(source)

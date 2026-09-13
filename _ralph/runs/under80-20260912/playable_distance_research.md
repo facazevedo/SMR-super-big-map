@@ -104,3 +104,28 @@ eight mapless U16 cases include 0-to-1, 1-to-0, adjacent positive values, maximu
 values and768x768. Record repacked/subtracted/absolute values plus native counts
 and independent full scalar differences. No weakening of comparison tolerance,
 production edits, or retry of unchanged shadow. Lua syntax/Python compile pass.
+
+## Comparator boundary diagnosis and correction
+
+Mapless probe atfb45602, session56676, PID46824/creation134337903443897452:
+eight cases completed,32 allocations/frees, scalar_bad_delta=0 throughout, native
+contract_audit PASS. Normal flushed shutdown occurred. Driver exit1 came only
+from the final fresh-game guard briefly seeing the exited PID; subsequent CIM
+and fresh-game guard confirm no live game. No restart or termination was used.
+
+Native GridCount(delta,1,max) returns0 for absolute difference1, whereas counting
+from0 returns1 and matches every independent scalar mismatch count. Equal grids
+count0. Adjacent positive values, forward/reverse,65535 and768x768 agree. Thus the
+inherited comparator's lower bound was wrong: it missed unit differences. Its
+earlier successful self-test with a larger sentinel did not establish sensitivity
+to every integer difference. Historical rejected Filler private full-grid proof
+claims using that comparator are consequently too strong; do not reuse them as
+exact-output evidence. Their independent full predecessor/rock audits and timing
+records remain separate evidence, and no such candidate is accepted production.
+
+Generated immutable playable_distance_observer_v2 now counts strictly above0,
+without tolerance or sampling. Original failed artifact/raw evidence unchanged.
+Model GridCount now uses native open bounds, still PASS120402 checks including
+unit-difference faults. Restore reporting distinguishes actual hook restoration
+from earlier comparison failures. Generated/profile syntax PASS. Next a materially
+corrected frozen reference shadow; no production change or speed claim.
