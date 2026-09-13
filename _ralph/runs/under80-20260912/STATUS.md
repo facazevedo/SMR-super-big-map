@@ -1,16 +1,18 @@
 # Under-80-second optimization, 2026-09-12
 
-CURRENT USER TARGET: revised to strictly UNDER85 SECONDS on2026-09-12, with the
-same reference/five-site scope and correctness requirements. Historical80-second
-headings and evidence below remain unchanged. The active goal-tool record cannot
-edit its objective while unfinished; the latest user instruction is authoritative.
-Do not mark the old80 objective complete to rename it. Current accepted production
-is f4d1da6/v983/sector76/generator298, deployed38/38. Historical acceptance reference
-median86.718s was NOT reproduced by fresh unchanged-code confirmation: current
-reference median90.244s (gap5.244s to85). Latest five-site worst remains94.342s;
-those sites were not remeasured in confirmation. All80 accepted offline commands
-and ten correctness rules pass. No owned game or benchmark remains. See v983
-acceptance, v984 rejection and baseline confirmation sections for unfiltered data.
+CURRENT USER TARGET: reference START-to-T1 arithmetic average strictly BELOW
+85 seconds across exactly three scheduled reference runs, retaining every sample.
+The other five sites require full correctness/regression verification, without a
+timing threshold. Median is historical/informational only, not an acceptance gate.
+Historical headings and evidence below remain unchanged. The active goal-tool
+record cannot edit its objective while unfinished; the latest user instruction is
+authoritative. Do not mark the old80 objective complete to rename it.
+
+Current accepted production is 56fbf44/v987/generator299, deployed38/38. Accepted
+reference samples 88.557 / 86.046 / 86.606s average 87.069667s, so the target is
+not yet met (more than 2.069667s reduction required). The native control is separate
+and excluded from this average. All existing correctness rules and terrain fixes
+remain required. Later sections record rejected candidates and ongoing research.
 
 User requested implementation after the feasibility assessment. Target: reference
 14N134W and five existing validation scenarios below 80 seconds, measured from START

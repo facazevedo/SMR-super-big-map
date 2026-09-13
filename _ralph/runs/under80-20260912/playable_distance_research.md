@@ -63,3 +63,30 @@ place writes, allocation and cleanup. Do not infer savings by adding overlapping
 wall spans or ignoring the candidate's extra minimum/copy work. Only positive
 full-work replay plus exact actual-field parity permits supported-owner integration
 and a new fixed cold confirmation under the current reference-average goal.
+
+## Actual-map shadow prepared (not yet native-qualified)
+
+The generated playable_distance_observer artifact uses the existing unsigned/f32
+full-grid comparator with a new Playable-only observer. Every real GridOr,
+GridDistanceMars, GridCircleSet and GridOpFree still executes once, with original
+return tuples. It compares raw union plus primary/secondary distance outputs,
+tracks every place write, and checks place/bounds guards before native frees.
+Private original APIs avoid recursive observation. Journal cap4096; both old/new
+replay orders charge allocations, fixed-field setup, raw unions, transforms,
+minimums, copies, place writes and cleanup. Unchanged downstream weighting is not
+included: these are complete primitive-sequence replays, not whole Playable or
+START-to-T1 timings.
+
+playable_distance_observer_test.lua PASS120402 model checks, including native-shaped
+nil tuples, repeated secondary calls, final-write epochs, changed inputs before
+free, alias allocations, broken comparison/min/copy, private/native exceptions,
+foreign coroutines, inherited owner slots, rebinding, unfinished scopes, journal
+overflow and integration with the unchanged native-procedure profile driver.
+native_proc_profile_test.lua PASS203. Observer/profile Lua syntax and Python audit
+compile PASS. Full production diff against56fbf44 is empty; deploy audit38/38 PASS;
+fresh-game guard finds no live game before freeze. Model distance is deliberately
+independent Manhattan arithmetic, not a substitute for native field evidence.
+
+Next frozen reference shadow, then inherited full predecessor/private4/rock/
+normal-process audit plus exact field/census checks. Native observations must
+justify any subsequent61N shadow or production work. No speedup claim yet.
