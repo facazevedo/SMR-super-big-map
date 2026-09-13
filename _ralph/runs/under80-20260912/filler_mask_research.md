@@ -153,3 +153,19 @@ or stack wrappers across lifecycle reinstallation. All actual-source tests and
 full native/cold reference+five-site gates remain required before promotion.
 
 Acceptedv98786.606s reference/worst92.125s unchanged. Both<80 and<85 still unmet.
+
+First mapless contract check36624/PID52624 CLOSED normal, auditFAILED engine/
+daemon errors. The deliberately varied1.5 lower-bound case logs
+HGE::lua_GridMask: Expected number and returns zero values; pcall did not throw,
+so the Lua probe itself said pass. Full log audit correctly rejects that result.
+Failure evidence filler_mask_native_contract retained unchanged. Five integer
+cases returned exactly destination, but require a clean supported-domain check
+before using that contract. Actual captured filler keys on BOTH maps are the
+integers3,4,5,7,12, upper bound2147483647,scale1. The offline model's fractional
+keys are generic-cache tests, not proof of native fractional-mask support.
+
+Revised contract tests the five actual lower bounds plus65536, requires exactly
+one destination return, and records whether production math.type distinguishes
+integer and float subtypes. New output contract_2; no relaxed log gate or erased
+failure. Production admission must not turn a native invalid-input error into
+a successful cache hit. The actual cache/native shadow proofs remain PASS.

@@ -8,7 +8,7 @@ root=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(root/'_ralph/tmp/historical_ports_20260909'))
 import measure_port
 suite=measure_port.suite
-out=root/'_ralph/runs/under80-20260912/artifacts/filler_mask_native_contract'
+out=root/'_ralph/runs/under80-20260912/artifacts/filler_mask_native_contract_2'
 if out.exists():raise RuntimeError('Preserve existing evidence')
 suite.run_cold_matrix.fresh_game_check()
 head=suite.command('git','rev-parse','HEAD')
@@ -31,6 +31,8 @@ probe=json.loads((out/'diagnostic_state.json').read_text())
 issues=[]
 if proc.returncode or probe.get('status')!='pass' or not probe.get('scratch_released') or probe.get('issues') or len(probe.get('calls',[]))!=6:
     issues.append('scratch contract')
+if any(c.get('return_count')!=1 or c.get('roles')!=['destination'] for c in probe.get('calls',[])):
+    issues.append('native destination-only return')
 for name in ('engine','daemon'):
     log=(out/(name+'_flushed.log')).read_text(errors='replace')
     if '*** Debug::Done()' not in log[-2000:]:issues.append(name+' shutdown')
@@ -41,7 +43,8 @@ if suite.command('git','rev-parse','HEAD')!=head:issues.append('checkpoint chang
 summary={'status':'pass' if not issues else 'fail','issues':issues,'checkpoint':head,
  'identity':[identity['pid'],identity['process_creation_filetime']],
  'qualification':'Mapless scratch API contract, not a generation parity or timing sample.',
- 'contracts':probe.get('calls',[])}
+ 'contracts':probe.get('calls',[]),'math_type_available':probe.get('math_type_available'),
+ 'integer_subtype':probe.get('integer_subtype'),'float_subtype':probe.get('float_subtype')}
 (out/'contract_audit.json').write_text(json.dumps(summary,indent=2))
 print(json.dumps(summary,indent=2),flush=True)
 if issues:raise RuntimeError('Native contract failed')

@@ -1,0 +1,67 @@
+{
+  "status": "fail",
+  "issues": [
+    "engine errors",
+    "daemon errors"
+  ],
+  "checkpoint": "7e49da8bda1dd6491595c950df88c70e44de01f6",
+  "identity": [
+    52624,
+    134337718248788543
+  ],
+  "qualification": "Mapless scratch API contract, not a generation parity or timing sample.",
+  "contracts": [
+    {
+      "return_count": 1,
+      "from": 0,
+      "to": 2147483647,
+      "roles": [
+        "destination"
+      ],
+      "scale": 1
+    },
+    {
+      "return_count": 1,
+      "from": 1,
+      "to": 2147483647,
+      "roles": [
+        "destination"
+      ],
+      "scale": 1
+    },
+    {
+      "return_count": 0,
+      "from": 1.5,
+      "to": 2147483647,
+      "roles": [],
+      "scale": 1
+    },
+    {
+      "return_count": 1,
+      "from": 5,
+      "to": 5,
+      "roles": [
+        "destination"
+      ],
+      "scale": 1
+    },
+    {
+      "return_count": 1,
+      "from": 65535,
+      "to": 2147483647,
+      "roles": [
+        "destination"
+      ],
+      "scale": 1
+    },
+    {
+      "return_count": 1,
+      "from": 65536,
+      "to": 2147483647,
+      "roles": [
+        "destination"
+      ],
+      "scale": 1
+    }
+  ]
+}

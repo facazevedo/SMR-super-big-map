@@ -1,0 +1,59 @@
+{
+  "status": "pass",
+  "scratch_released": true,
+  "calls": [
+    {
+      "return_count": 1,
+      "from": 0,
+      "to": 2147483647,
+      "roles": [
+        "destination"
+      ],
+      "scale": 1
+    },
+    {
+      "return_count": 1,
+      "from": 1,
+      "to": 2147483647,
+      "roles": [
+        "destination"
+      ],
+      "scale": 1
+    },
+    {
+      "return_count": 0,
+      "from": 1.5,
+      "to": 2147483647,
+      "roles": [],
+      "scale": 1
+    },
+    {
+      "return_count": 1,
+      "from": 5,
+      "to": 5,
+      "roles": [
+        "destination"
+      ],
+      "scale": 1
+    },
+    {
+      "return_count": 1,
+      "from": 65535,
+      "to": 2147483647,
+      "roles": [
+        "destination"
+      ],
+      "scale": 1
+    },
+    {
+      "return_count": 1,
+      "from": 65536,
+      "to": 2147483647,
+      "roles": [
+        "destination"
+      ],
+      "scale": 1
+    }
+  ],
+  "issues": []
+}
