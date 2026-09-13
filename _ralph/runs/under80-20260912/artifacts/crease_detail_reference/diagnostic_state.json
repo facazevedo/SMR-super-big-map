@@ -1,0 +1,176 @@
+{
+  "calls": [
+    {
+      "report": {
+        "edge": "right,right",
+        "reason": "vanilla outer-ring steps qualified for pre-resample repair",
+        "edge_margin": 614,
+        "qualified": 2,
+        "top_tracks": 83,
+        "max": 65535,
+        "repairs": 2,
+        "threshold": 128,
+        "bottom_tracks": 42,
+        "modified": 0,
+        "outer_guard": 6,
+        "left_tracks": 61,
+        "max_offset": 898,
+        "detected": 433,
+        "last_along": 5553,
+        "first_along": 5351,
+        "min_offset": 128,
+        "right_tracks": 41,
+        "axis": "x,x",
+        "rows": 200,
+        "min": 2129,
+        "edge_perp": 5927
+      },
+      "wide_ring_only": true,
+      "width": 6144,
+      "ok": true,
+      "helpers": {
+        "collect_axis": {
+          "calls": 2,
+          "inclusive_ms": 108,
+          "exclusive_ms": 7
+        },
+        "feather_join": {
+          "calls": 0,
+          "inclusive_ms": 0,
+          "exclusive_ms": 0
+        },
+        "refine_step": {
+          "calls": 3272,
+          "inclusive_ms": 119,
+          "exclusive_ms": 119
+        },
+        "scan_line_range": {
+          "calls": 287,
+          "inclusive_ms": 1,
+          "exclusive_ms": 1
+        },
+        "indexed_refinement": {
+          "calls": 0,
+          "inclusive_ms": 0,
+          "exclusive_ms": 0
+        },
+        "native_translation": {
+          "calls": 0,
+          "inclusive_ms": 0,
+          "exclusive_ms": 0
+        },
+        "native_discovery": {
+          "calls": 4,
+          "inclusive_ms": 100,
+          "exclusive_ms": 100
+        }
+      },
+      "index_census": {
+        "positions": 287,
+        "runs": 287,
+        "longest": 1
+      },
+      "total_ms": 267,
+      "height": 6144,
+      "stats": {
+        "enumerated": 287,
+        "cells": 1787904,
+        "sampled_rows": 3072,
+        "candidates": 287,
+        "copies": 3072
+      }
+    },
+    {
+      "report": {
+        "edge": "bottom,right,right,bottom,bottom,bottom,right,right,right,right,bottom,bottom,right,bottom",
+        "reason": "destination edge lower regions translated with slope-matched feathered joins",
+        "edge_margin": 42,
+        "qualified": 14,
+        "top_tracks": 112,
+        "max": 65535,
+        "repairs": 14,
+        "threshold": 317,
+        "bottom_tracks": 409,
+        "modified": 688775,
+        "outer_guard": 8,
+        "left_tracks": 167,
+        "max_offset": 2634,
+        "detected": 16671,
+        "last_along": 4365,
+        "first_along": 1348,
+        "min_offset": 317,
+        "right_tracks": 370,
+        "axis": "y,x,x,y,y,y,x,x,x,x,y,y,x,y",
+        "rows": 3018,
+        "min": 2148,
+        "edge_perp": 8171
+      },
+      "wide_ring_only": false,
+      "width": 8192,
+      "ok": true,
+      "helpers": {
+        "collect_axis": {
+          "calls": 2,
+          "inclusive_ms": 2462,
+          "exclusive_ms": 425
+        },
+        "feather_join": {
+          "calls": 16671,
+          "inclusive_ms": 341,
+          "exclusive_ms": 341
+        },
+        "guide_query": {
+          "calls": 16870,
+          "inclusive_ms": 135,
+          "exclusive_ms": 135
+        },
+        "refine_step": {
+          "calls": 16870,
+          "inclusive_ms": 784,
+          "exclusive_ms": 89
+        },
+        "scan_line_range": {
+          "calls": 171387,
+          "inclusive_ms": 1374,
+          "exclusive_ms": 1374
+        },
+        "indexed_refinement": {
+          "calls": 16105,
+          "inclusive_ms": 560,
+          "exclusive_ms": 560
+        },
+        "native_translation": {
+          "calls": 14,
+          "inclusive_ms": 101,
+          "exclusive_ms": 101
+        },
+        "native_discovery": {
+          "calls": 4,
+          "inclusive_ms": 663,
+          "exclusive_ms": 663
+        }
+      },
+      "index_census": {
+        "positions": 171387,
+        "runs": 35342,
+        "longest": 35
+      },
+      "total_ms": 3889,
+      "height": 8192,
+      "stats": {
+        "enumerated": 220059,
+        "cells": 3391488,
+        "sampled_rows": 32768,
+        "candidates": 171387,
+        "refinement": {
+          "indexed": 16105,
+          "live": 765,
+          "writes": 16671
+        },
+        "copies": 4
+      }
+    }
+  ],
+  "restored": true,
+  "status": "pass"
+}
