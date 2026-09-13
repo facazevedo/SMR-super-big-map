@@ -65,3 +65,36 @@ all actual Code/metadata/items files; no production change during either suite.
 The two native/private/process audits pass with distinct normally closed identities.
 No game is live. v990 is ready to commit/freeze for cold testing, NOT accepted.
 Deployment intentionally remainsv987 (only the three expected candidate mismatches).
+
+## Closed cold result: mixed cross-site timing, not promoted
+
+Frozen88ff956 completed reference81751 and five-site29557, all nine distinct owned
+processes CLOSED normally with fully captured logs. Reference85.048/87.287/84.806s,
+median85.048s versus86.606s (1.558s/1.799% faster); control28.759s versus29.156s.
+Full predecessor/repeat/private/grid/individual-rock checks PASS. The isolated
+native saving was smaller than the observed median difference; no exact causal
+attribution of all startup differences to this helper is claimed.
+
+| Site | v987 seconds | v990 seconds | Saving seconds | Old corrections | New corrections |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Reference median | 86.606 | 85.048 | 1.558 | 396398 | 298392 |
+| 15S67E | 88.653 | 89.314 | -0.661 | 422462 | 315421 |
+| 24S74W | 88.711 | 90.117 | -1.406 | 412083 | 305807 |
+| 45S120W | 82.053 | 82.044 | 0.009 | 370594 | 277585 |
+| 61N136W | 92.125 | 91.773 | 0.352 | 332731 | 252349 |
+| 17S11W | 86.546 | 86.390 | 0.156 | 521966 | 389348 |
+
+Every site reduced scalar corrections while preserving raster/mask coverage,
+patch counts, modified cells and full exact output. This establishes less scalar
+work, not uniformly faster cold startup. Final v990_all_ten_rules_review.json
+closes87 replay checks, nine unique processes, source/RNG/inherited visual review
+and audited38-file payload, but records all_scenarios_faster=false and both targets
+unmet. Two site regressions are retained; no rescue rerun or baseline relabel.
+
+Candidate NOT promoted as a broad startup improvement. Only the three owned
+production files restored via patch to exact56fbf44/v987; complete Code/metadata/
+items comparison exact. Standard sync38/38 auditPASS, no stale deletion, no game
+left running. All proofs/native/offline/cold artifacts and88ff956 preserved.
+Accepted timing remainsv987reference86.606s/worst61N92.125s. Restoration itself
+is not a new timing result. See apron_local_sensitivity_next.md for an unproven,
+genuinely different local-derivative investigation, not an unchanged v990 retry.

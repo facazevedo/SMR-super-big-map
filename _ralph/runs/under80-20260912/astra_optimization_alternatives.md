@@ -106,3 +106,20 @@ relevant next private investigation for61N; they are not implemented or proven.
 
 See `native_crease_offers_next.md`, `v976_source_review.md`, `v984_source_review.md`,
 `v985_source_review.md`, `v986_source_review.md`, and the retained diagnostic artifacts.
+
+## Latest adaptive-bound follow-through: v990 not promoted
+
+The first stronger global apron certificate passed 87 actual offline checks,
+both-order complete native raster comparisons, and nine cold correctness runs.
+Reference median was 85.048s versus accepted v987's 86.606s. Five-site times were
+89.314 / 90.117 / 82.044 / 91.773 / 86.390s: two regressions, despite fewer scalar
+corrections on every map. Candidate 88ff956 was not promoted; exact accepted
+56fbf44/v987 production was restored and its 38-file deployment audited.
+See `v990_source_review.md` for the full results, including retained failed tests.
+
+The next distinct lead is a per-cell quintic sensitivity certificate instead of
+another global constant reduction. `apron_local_sensitivity_next.md` records the
+unproven derivation and required rounding, ownership, native parity and cold gates.
+Extra native grid passes may erase the savings; neither this hypothesis nor the
+isolated diagnostic improvements establish the all-site <85s target. Current
+accepted reference remains 86.606s and worst validation site 92.125s.

@@ -65,3 +65,12 @@ Source reconstruction verifies every other byte of TerrainCopy equalsv987. Full8
 actual-production regression is required; deployed mod remains acceptedv987. The
 proof additionally checks the generous512u64 scalar reserve explicitly. See
 v990_source_review.md for acceptance gates and full scope qualifications.
+
+Cold v990 at88ff956 CLOSED: reference81751 median85.048s versus86.606s; five29557
+15S89.314 (+0.661slower),24S90.117 (+1.406slower),45S82.044 (-0.009),61N91.773
+(-0.352),17S86.390 (-0.156). All87 replay/nine-process/exact/private/rock/source
+reviews PASS. Every site reduced correction counts, but two startup regressions
+remain. Candidate NOT promoted; no rescue reruns/causal attribution/baseline relabel.
+Production and deployed payload restored to exact56fbf44/v987,38/38 auditPASS,
+no game live. Keep the valid conditional proof and work-reduction evidence, not
+an assertion of broad startup improvement. Full samples/censuses in v990_source_review.md.

@@ -1346,3 +1346,32 @@ committed candidate frozen, standard deploy sync/audit, reference3/control again
 v987_reference median86.606/control29.156. Only strict reference improvement/exact
 correctness permits five againstv987_matrix. Preserve all samples/regressions; no
 rescue repeats, baseline relabels or target claims. Goal ACTIVE and target unmet.
+
+## v990 cold batch CLOSED; mixed timing not promoted; v987 restored
+
+This turn is PROGRESS: frozen88ff956 completed nine cold processes and complete
+correctness/source/private/RNG/rock/process audit, yielding authoritative timing
+and correction censuses. Reference81751 CLOSED85.048/87.287/84.806s, median85.048s
+versus86.606, control28.759. Five29557 CLOSED15S89.314 (+0.661slower),24S90.117
+(+1.406slower),45S82.044 (-0.009),61N91.773 (-0.352),17S86.390 (-0.156).
+v990_all_ten_rules_review.json PASS preservation/87 replay/nine unique processes,
+but explicit all_scenarios_faster=false, under80/under85false. No rescue repeats.
+
+Every site reduces corrections: ref396398->298392,15S422462->315421,24S412083->
+305807,45S370594->277585,61N332731->252349,17S521966->389348. Coverage, modified
+cells, shaped/native/scalar patch counts and full outputs unchanged. Less scalar
+work is NOT evidence of uniformly faster cold startup. No causal attribution of
+all observed startup differences, no discarded regression or predecessor relabel.
+
+v990 NOT promoted. Only owned three production files restored via patch to exact
+56fbf44/v987/generator299/sector76. Entire Code/metadata/items comparison exact,
+standard deploy sync38/38 auditPASS, no stale deletion. Fresh game check clear;
+all test handles terminal, no active candidate/game. All proofs/native/offline/
+cold artifacts and88ff956 retained, including the first86/87 fixture-mismatch FAIL.
+Accepted timing remainsv987reference86.606s/worst61N92.125s. Goal ACTIVE, unmet.
+
+Next genuinely different hypothesis: apron_local_sensitivity_next.md describes a
+per-cell quintic derivative bound, potentially reusing consumed cube scratch. It
+is NOT proved or implemented: derive every rounding/ownership bound and measure
+additional native sweeps before any production action. Do not repeat unchanged
+v990 or advertise scalar-work reduction as the full all-site startup result.
