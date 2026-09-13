@@ -35,6 +35,7 @@ local function BeginCapture(map, source_map)
 	local native_width, native_height = (source_map or map):GetMapSize()
 	local stats = { eligible = 0, probes = 0, rays = 0, contacts = 0, lowered = 0,
 		unchanged = 0, max_lowering = 0, total_lowering = 0, failures = 0,
+		unsupported_candidates = 0, unsupported_rays = 0, unsupported_lowered = 0,
 		capture_ms = 0, apply_ms = 0 }
 	map.SuperBigMapRockGroundingStats = stats
 	captures[map] = { source_map = source_map or map, objects = {}, stats = stats,
@@ -67,6 +68,11 @@ local function Capture(map, obj, checked_skip, checked_important)
 	local source_z = obj:IsValidZ() and pos:z() or terrain_api.GetHeight(context.source_map, pos)
 	local bounds = obj:GetObjectBBox()
 	local tile = Global("const").HeightTileSize
+	-- Some cliff entities are authored with their complete mesh above the pivot. Their pivot is
+	-- terrain-snapped, but the visible mesh can consequently remain wholly airborne on flat final
+	-- terrain. Keep these rare objects for a bounded final-geometry support check even when the
+	-- native uphill-contact heuristic below finds no sample.
+	local unsupported_candidate = bounds:minz() > visual:z()
 	-- Bottom points at/below the pivot cannot lift away due to extra uniform Z scaling.
 	-- Avoid ray tests there; small, flat-ground stones usually have no uphill support to lose.
 	if bounds:maxz() <= visual:z() + tile then
@@ -100,12 +106,44 @@ local function Capture(map, obj, checked_skip, checked_important)
 			end
 		end
 	end
-	if #samples > 0 then
+	if #samples > 0 or unsupported_candidate then
 		context.objects[obj] = { scale = obj:GetScale(), angle = obj:GetAngle(),
-			axis = obj:GetAxis(), top = bounds:maxz() - visual:z(), samples = samples }
+			axis = obj:GetAxis(), top = bounds:maxz() - visual:z(), samples = samples,
+			unsupported_candidate = unsupported_candidate }
 		stats.contacts = stats.contacts + #samples
 	end
 	stats.capture_ms = stats.capture_ms + ticks() - started
+end
+
+-- Return the least final Z correction that gives a wholly airborne mesh one sampled terrain
+-- contact. This is intentionally independent of native-contact capture: the engine decor pass
+-- creates additional rocks only after the native population has already been transformed.
+local function FindUnsupportedLowering(map, obj, context, stats, point_fn, terrain_api, tile)
+	local bounds = obj:GetObjectBBox()
+	local visual = obj:GetVisualPos()
+	if bounds:minz() <= visual:z() + tile then return 0 end
+	stats.unsupported_candidates = stats.unsupported_candidates + 1
+	local count = math.min(17, math.max(5,
+		math.ceil(math.max(bounds:sizex(), bounds:sizey()) / (4.0 * tile))))
+	local min_clearance
+	for ix = 1, count do
+		local x = bounds:minx() + math.floor(bounds:sizex() * (ix + 0.0) / (count + 1) + 0.5)
+		for iy = 1, count do
+			local y = bounds:miny() + math.floor(bounds:sizey() * (iy + 0.0) / (count + 1) + 0.5)
+			if InBounds(x, y, context.width, context.height) then
+				local hit = obj:IntersectSegment(point_fn(x, y, bounds:minz() - tile),
+					point_fn(x, y, bounds:maxz() + tile))
+				stats.rays = stats.rays + 1
+				stats.unsupported_rays = stats.unsupported_rays + 1
+				if hit then
+					local clearance = hit:z() - terrain_api.GetHeight(map, point_fn(x, y))
+					if clearance <= tile then return 0 end
+					min_clearance = min_clearance and math.min(min_clearance, clearance) or clearance
+				end
+			end
+		end
+	end
+	return min_clearance and min_clearance > tile and min_clearance or 0
 end
 
 local function Apply(map, obj, terrain_z_scale, xy_scale)
@@ -116,9 +154,12 @@ local function Apply(map, obj, terrain_z_scale, xy_scale)
 	local stats = context.stats
 	local ticks, point_fn = Global("GetPreciseTicks"), Global("point")
 	local started = ticks()
+	local tile = Global("const").HeightTileSize
 	local ratio = (obj:GetScale() + 0.0) / record.scale
 	-- Mesh-scale quantization alone is not terrain-Z compression.
-	if (xy_scale and terrain_z_scale >= xy_scale - 0.000001) or ratio <= terrain_z_scale then
+	local support_can_be_lost = not (xy_scale and terrain_z_scale >= xy_scale - 0.000001)
+		and ratio > terrain_z_scale
+	if not support_can_be_lost and not record.unsupported_candidate then
 		stats.unchanged = stats.unchanged + 1
 		stats.apply_ms = stats.apply_ms + ticks() - started
 		return 0
@@ -130,26 +171,38 @@ local function Apply(map, obj, terrain_z_scale, xy_scale)
 	if not obj:IsValidZ() then return nil, "rock final position has invalid Z" end
 	local terrain_api = Global("terrain")
 	local lower = 0
-	for _, sample in ipairs(record.samples) do
-		local x = pos:x() + math.floor(sample.dx * ratio + 0.5)
-		local y = pos:y() + math.floor(sample.dy * ratio + 0.5)
-		local bottom = pos:z() + math.floor(sample.dz * ratio + 0.5)
-		if InBounds(x, y, context.width, context.height) then
-			lower = math.max(lower, bottom - terrain_api.GetHeight(map, point_fn(x, y)))
+	if support_can_be_lost then
+		for _, sample in ipairs(record.samples) do
+			local x = pos:x() + math.floor(sample.dx * ratio + 0.5)
+			local y = pos:y() + math.floor(sample.dy * ratio + 0.5)
+			local bottom = pos:z() + math.floor(sample.dz * ratio + 0.5)
+			if InBounds(x, y, context.width, context.height) then
+				lower = math.max(lower, bottom - terrain_api.GetHeight(map, point_fn(x, y)))
+			end
 		end
 	end
+	local support_lowering = lower
+	local unsupported_lowering = 0
+	-- Native-contact capture intentionally excludes authored overhangs. Independently guarantee
+	-- that a candidate whose WHOLE mesh begins above its pivot has at least one final terrain
+	-- contact. Stop as soon as any sampled underside is already supported; otherwise the minimum
+	-- clearance is the least lowering that seats the rock and preserves all possible overhang.
+	if lower <= tile and record.unsupported_candidate then
+		unsupported_lowering = FindUnsupportedLowering(
+			map, obj, context, stats, point_fn, terrain_api, tile)
+		if unsupported_lowering > tile then lower = unsupported_lowering end
+	end
 	-- Sub-tile gaps can be native resampling/mesh quantization. Leave those rocks untouched.
-	if lower > Global("const").HeightTileSize then
-		local support_lowering = lower
+	if lower > tile then
 		-- A tilted formation can regain one buried contact yet retain a conspicuously exposed
 		-- underside. Only AFTER proving support was lost, fit that underside too. Cap this extra
 		-- seating by the surplus height introduced by mesh-versus-terrain scaling, so an authored
 		-- overhang cannot demand an arbitrarily deep burial. This cap varies with each rock's
 		-- native geometry and actual scale; it is not a map-specific drop or a blanket offset.
-		local surplus = math.max(0, math.floor(record.top * (ratio - terrain_z_scale) + 0.5))
-		if surplus > lower then
+		local surplus = support_can_be_lost
+			and math.max(0, math.floor(record.top * (ratio - terrain_z_scale) + 0.5)) or 0
+		if support_lowering > tile and surplus > lower then
 			local bounds = obj:GetObjectBBox()
-			local tile = Global("const").HeightTileSize
 			local exposed = lower
 			for ix = 1, 9 do
 				local x = bounds:minx() + math.floor(bounds:sizex() * (ix + 0.0) / 10 + 0.5)
@@ -177,15 +230,57 @@ local function Apply(map, obj, terrain_z_scale, xy_scale)
 		obj.SuperBigMapRockGroundingBaseZ = pos:z()
 		obj.SuperBigMapRockGroundingNativeAxis = tostring(record.axis)
 		obj.SuperBigMapRockGroundingLostSupportLowering = support_lowering
+		obj.SuperBigMapRockGroundingUnsupportedLowering = unsupported_lowering
 		obj.SuperBigMapRockGroundingMeshZSurplus = surplus
 		obj.SuperBigMapRockGroundingContactCount = #record.samples
 		stats.lowered = stats.lowered + 1
+		if unsupported_lowering > 0 then
+			stats.unsupported_lowered = stats.unsupported_lowered + 1
+		end
 		stats.max_lowering = math.max(stats.max_lowering, lower)
 		stats.total_lowering = stats.total_lowering + lower
 	else
 		lower = 0
 		stats.unchanged = stats.unchanged + 1
 	end
+	stats.apply_ms = stats.apply_ms + ticks() - started
+	return lower
+end
+
+-- Ground a rock created after the native decoration transform (currently the density-restoring
+-- engine decor pass). Its final pose and scale are already authoritative, so no source record is
+-- necessary; only the wholly-unsupported final-geometry invariant applies.
+local function GroundFinal(map, obj)
+	local context = captures[map]
+	if not context or not Eligible(obj) then return 0 end
+	local stats = context.stats
+	local ticks, point_fn = Global("GetPreciseTicks"), Global("point")
+	local terrain_api, tile = Global("terrain"), Global("const").HeightTileSize
+	local started = ticks()
+	local lower = FindUnsupportedLowering(map, obj, context, stats, point_fn, terrain_api, tile)
+	if lower <= tile then
+		stats.apply_ms = stats.apply_ms + ticks() - started
+		return 0
+	end
+	local pos = obj:GetPos()
+	if not obj:IsValidZ() then return nil, "final rock position has invalid Z" end
+	obj:SetPos(point_fn(pos:x(), pos:y(), pos:z() - lower))
+	local actual = obj:GetPos()
+	if actual:x() ~= pos:x() or actual:y() ~= pos:y() or actual:z() ~= pos:z() - lower then
+		obj:SetPos(pos)
+		return nil, "final rock SetPos did not preserve XY and apply the calculated lowering"
+	end
+	obj.SuperBigMapRockGroundingLowering = lower
+	obj.SuperBigMapRockGroundingBaseZ = pos:z()
+	obj.SuperBigMapRockGroundingNativeAxis = tostring(obj:GetAxis())
+	obj.SuperBigMapRockGroundingLostSupportLowering = 0
+	obj.SuperBigMapRockGroundingUnsupportedLowering = lower
+	obj.SuperBigMapRockGroundingMeshZSurplus = 0
+	obj.SuperBigMapRockGroundingContactCount = 0
+	stats.lowered = stats.lowered + 1
+	stats.unsupported_lowered = stats.unsupported_lowered + 1
+	stats.max_lowering = math.max(stats.max_lowering, lower)
+	stats.total_lowering = stats.total_lowering + lower
 	stats.apply_ms = stats.apply_ms + ticks() - started
 	return lower
 end
@@ -200,6 +295,7 @@ end
 
 SBM.RockGrounding = {
 	BeginCapture = BeginCapture, Capture = Capture, Apply = Apply, Failure = Failure,
+	GroundFinal = GroundFinal,
 	Clear = function(map) captures[map] = nil end,
 	Eligible = Eligible,
 }

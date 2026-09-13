@@ -37,7 +37,8 @@ local function scene(options)
 	function o:GetObjectBBox()
 		local p=self:GetVisualPos()
 		return { minx=function() return p:x()-1000 end, miny=function() return p:y()-1000 end,
-			minz=function() return p:z()-500 end, maxz=function() return p:z()+4000 end,
+			minz=function() return p:z()+(self.bbox_bottom or -500) end,
+			maxz=function() return p:z()+4000 end,
 			sizex=function() return 2000 end, sizey=function() return 2000 end }
 	end
 	function o:IntersectSegment(low,high)
@@ -71,6 +72,33 @@ check(G.Apply(map,o,1)==0 and o.moves==0,'domes must be untouched')
 
 map,o=scene({bottom=11000});capture(map,o);o.scale=133
 check(G.Apply(map,o,1)==0 and o.moves==0,'intentional native overhang is not missing support')
+
+-- A cliff can be authored with its complete mesh above its terrain-snapped pivot. It has no
+-- native support sample, but the final invariant still requires one real terrain contact.
+map,o=scene({pos=pt(5000,6000,10000),bottom=11200,bbox_bottom=1200});capture(map,o);o.scale=133
+function o:IntersectSegment(low,high)
+	return pt(low:x(),low:y(),self:GetVisualPos():z()+1200*self.scale/100)
+end
+check(G.Apply(map,o,1)==1596,'wholly unsupported mesh must lower by its minimum final clearance')
+check(o.pos==pt(5000,6000,8404),'unsupported grounding may change only Z')
+check(o.SuperBigMapRockGroundingUnsupportedLowering==1596,'unsupported correction stamp')
+check(map.SuperBigMapRockGroundingStats.unsupported_candidates==1
+	and map.SuperBigMapRockGroundingStats.unsupported_lowered==1,'unsupported correction stats')
+
+map,o=scene({pos=pt(5000,6000,10000),bottom=11200,bbox_bottom=1200});G.BeginCapture(map);o.scale=133
+function o:IntersectSegment(low,high)
+	return pt(low:x(),low:y(),self:GetVisualPos():z()+1200*self.scale/100)
+end
+check(G.GroundFinal(map,o)==1596 and o.pos==pt(5000,6000,8404),
+	'post-transform decor rock must obey the same support invariant without a native record')
+
+-- Any actual underside contact makes the object grounded; exposed sides remain valid overhangs.
+map,o=scene({pos=pt(5000,6000,10000),bottom=11200,bbox_bottom=1200});capture(map,o);o.scale=133
+function o:IntersectSegment(low,high)
+	local z = low:x() < 4500 and 10050 or 11600
+	return pt(low:x(),low:y(),z)
+end
+check(G.Apply(map,o,1)==0 and o.moves==0,'one supported underside point preserves overhangs')
 map,o=scene({bottom=8000});capture(map,o);o.scale=133
 check(G.Apply(map,o,1)==0 and o.moves==0,'flat-ground rock must stay unchanged')
 map,o=scene({no_hits=true});capture(map,o);o.scale=133

@@ -507,6 +507,7 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 		--    weighted pick, jittered stamp inside the site, spacing circles recorded afterwards.
 		--    Returns "placed" (plus the prefab name) or the reason it did not place.
 		local dropped_non_cosmetic, dropped_out_of_band = 0, 0
+		local grounding = SuperBigMap.RockGrounding
 		local function try_stamp(marker, sx, sy, site_radius)
 			local prefabs = matches_cache[marker]
 			if prefabs == nil then
@@ -611,6 +612,12 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 							local sc = SafeCall(obj.GetScale, obj)
 							if type(sc) == "number" and sc > 0 then
 								pcall(obj.SetScale, obj, math.min(500, math.max(1, math.floor(sc * length_scale + 0.5))))
+							end
+						end
+						if grounding and type(grounding.GroundFinal) == "function" then
+							local ground_ok, lowered, ground_err = pcall(grounding.GroundFinal, map, obj)
+							if not ground_ok or lowered == nil then
+								grounding.Failure(map, ground_ok and ground_err or lowered)
 							end
 						end
 						if type(set_game_flags) == "function" and gof ~= 0 then pcall(set_game_flags, obj, gof) end
