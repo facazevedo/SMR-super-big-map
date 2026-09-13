@@ -1,0 +1,12 @@
+PASS repair follows the resource raster that creates the strip
+PASS flat terrain and ordinary uphill/downhill slopes unchanged
+PASS narrow raised strip: left
+PASS narrow raised strip: right
+PASS narrow raised strip: top
+PASS narrow raised strip: bottom
+PASS isolated edge peaks and downward skirts unchanged
+PASS a strip reaching a corner leaves no endpoint wall
+PASS rectangular maps derive their own edge bounds
+REAL FOOTPRINT right:180-506 cells=968 max_drop=847
+PASS captured 14N134W: only the small A0 terminal wall changes
+10 terminal-strip regression checks passed

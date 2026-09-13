@@ -1,0 +1,22 @@
+DIRECT_SEEDED_TOPUP_BEHAVIOR
+source=Code/sbm_deposits.lua
+production_function_executed=true
+same_seed_reproduces=true
+different_seed_changes_order=true
+exact_candidates_retained=14
+center_attempts=4
+candidate_attempts=14
+rejected_candidates=0
+static_validations=14
+static_cache_reuses=0
+dynamic_validations=14
+accepted_candidates=14
+rng_calls=12
+bounded_exhaustion=true
+cross_band_cache_guard=true
+clone_boundary_selector_behavior=true
+repeated_sector_anchor_sampling=true
+minimum_cluster_continuation=true
+violation_count=0
+verdict=GREEN
+PASS direct seeded top-up: bounded production behavior

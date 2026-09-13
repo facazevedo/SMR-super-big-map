@@ -781,3 +781,13 @@ unmet. Next: promote ONLY scan grouping as v986/gen299/sector76; adapt the new
 actual-source oracle and run all81 inherited+new commands; freeze then measure
 reference3/control against v983_confirmation_reference90.244. Positive reference
 gate required before five-site matrix against v983_matrix/all ten-rule review.
+
+## v986 production candidate: contiguous discovery scans
+
+Production TerrainCopy matches the native-shadowed scan grouping source exactly.
+Only generator299/runtime986/release text additionally change; sector76 and all
+other modules remain acceptedv983. No rejected experiments are folded in.
+Session73911 CLOSED exit0: all81 offline commands PASS, all80 inherited checks
+plus actual f4d1da6/production collect_axis full-track/failure oracle. Evidence in
+artifacts/v986_offline and v986_source_review.md. Freeze this code/HEAD/deployment
+for reference3/control against confirmedv98390.244s. No cold result yet.
