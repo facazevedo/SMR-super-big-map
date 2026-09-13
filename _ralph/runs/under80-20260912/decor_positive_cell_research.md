@@ -68,3 +68,9 @@ Require the same independent oracle and a new native result; do not rerun v1.
 Per-radius floor cache has a1024-entry memory cap; beyond it, recompute the same
 floor on demand. Descriptor storage is at most one record per already-owned circle.
 Expanded offline suite55681 comparisons also verifies the radius-cache cap.
+
+v2 forward session74170/PID5840 CLOSED normally ata1ebf55: all775867 queries exact,
+same584396 certified answers, full predecessor/private/final/rock parity PASS.
+Old2706ms/new1699ms, saving1007 diagnostic ms. This is not a cold startup result.
+Next reverse the old/new order with unchanged helper, then inspect the reference
+map before any production candidate. First v1 remains rejected, never relabeled.

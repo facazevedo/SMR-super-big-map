@@ -2,7 +2,7 @@
 -- join every original private cell except the private circle query wrapper.
 local result={status='setup',calls={}}
 rawset(_G,'SBM_DECOR_POSITIVE_CELL_DIAGNOSTIC',result)
-local reverse=true
+local reverse=false
 result.reverse=reverse
 result.variant='v2'
 local env,sbm
