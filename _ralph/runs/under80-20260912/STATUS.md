@@ -1554,3 +1554,34 @@ class generation methods.203 offline checks now include legitimate epoch changes
 and unregistered pre/during/post-call replacements rejected. Four-command replay
 native_proc_offline_2PASS. New reference_2 and61N required; do not relabel failed
 run or infer cold speed from diagnostics. See native_proc_research.md.
+
+## Corrected native procedure census CLOSED PASS; large common lead found
+
+Frozen cf1af4d: reference_2 exec40144/PID49800 and61N exec57157/PID45044 CLOSED
+exit0, full private_process_audit PASS issues[].95/94 completed procedure spans,
+two native calls each, no open contexts, hook restoration/registered method
+identity/Config checks PASS, exact predecessor/full grids/individual rocks and
+four private-stream fields, normally flushed logs without engine errors.
+
+Underground FindPrefabPos5348/4647ms ref/61N. Its six children: Playable2149/1062,
+Filler2116/2479,Base921/857,Unfilled153/241,Slope9/8,Border0/0. Children exactly
+sum to parent; do not add them again. PlacePrefabs913/991; raster mark573/589,
+overlapremove25/24,actualraster597/584; FixPad81/81,AdjustObjects96/104.
+The missing common cost is prefab-position selection, not bridgecopy or raster.
+Native surface total4579/6287; UG12223/9729, only8/10 and10/11ms outside recorded
+top-level procedures. Stock surface decor113/1881 is distinct from later expanded
+DecorTopUp419/9617 recorded previously. Different profiles are not subtractable
+as speedup claims. Comparison JSON/Markdown in v987_native_proc_comparison_2.
+
+Next: bounded primitive census INSIDE FindPrefabPos_Playable/Filler/Base, covering
+distance transforms, masks/grid arithmetic, allocation/reductions and seeded
+GridStableRandomPos calls. Preserve actual shipped owner/global identities,
+native args/tuples/errors and RNG; no per-cell timers, settings, module reload or
+generation method replacement. Determine whether exact scratch reuse or certified
+unchanged-input reuse has real headroom before implementing it. Source anchors,
+mutation hazards and gates in native_proc_research.md. No new cold candidate.
+
+All handles terminal, fresh-game check clear. Production remains exact56fbf44/v987
+and38-file deployment audited. Accepted reference86.606/worst92.125s unchanged.
+Full<80 and<85 unmet; goal ACTIVE, not blocked. This turn PROGRESS, not a repeat
+of the previous unexecuted plan. Preserve failed first-run guard evidence too.

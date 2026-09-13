@@ -172,3 +172,13 @@ a major lead. See bootstrap_phase_research.md and native_proc_research.md.
 All-site sub85 remains plausible to investigate, not established. Slowest92.125s
 needs more than7.125s; required native passability rebuilds cannot be skipped or
 narrowed. Production unchanged, no new implementation accepted by this review.
+
+Fresh review's first lead now measured: corrected native-proc reference/61N both
+PASS full native audits atcf1af4d. UG FindPrefabPos5348/4647ms, including
+Playable2149/1062,Filler2116/2479,Base921/857. Raster mark+actual1170/1173ms
+(excluding25/24ms overlap removal) is much smaller. Focus the next primitive
+census on prefab position selection's grid transforms/masks/allocation/seeded
+sampling, not assumed prefab-preload reuse. See native_proc_research.md and
+v987_native_proc_comparison_2. Initial setup-identity guard failure retained;
+corrected203 fixture checks include legitimate registered lifecycle epochs.
+No optimization/cold gain claimed; both timing targets remain unmet.
