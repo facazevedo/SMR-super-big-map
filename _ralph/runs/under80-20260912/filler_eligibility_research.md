@@ -109,3 +109,92 @@ filler_eligibility_audit (native lifecycle, predecessor/grids/individualrocks/fo
 private-stream fields, mutation journal/full-grid comparator census, all replay
 work/ownership and normal flushed process shutdown). Native proof/timing still
 pending here. Private primitive replay gain would not establish startup savings.
+
+## Native mutation proofs and both-order primitive replays CLOSED PASS
+
+Frozen c6c013211583f3710e2b5343d2c0fdef75fdd0d7.61N
+v987_filler_eligibility_61n exec51651/PID55280,
+creation134337834516465010 CLOSED exit0; reference
+v987_filler_eligibility_reference exec11117/PID45880,
+creation134337836943658027 CLOSED exit0. Both normallyflushed/quit;
+filler_eligibility_audit PASS issues[] full predecessor/grids/individualrocks/
+fourprivatefields/native lifecycle.94/95 native spans, two generations each,
+one UG Filler scope, all hooks and scratch restored; no native errors.
+
+| Scope | Requests | Live clears | Maintained-grid updates | Full-grid comparisons |
+| --- | ---: | ---: | ---: | ---: |
+| Reference | 1524 | 1506 | 7482 | 7610 |
+| 61N | 1798 | 1782 | 8891 | 8982 |
+
+Every actual mask+And result matched maintained eligibility, including each
+native circle rasterization and live-place guard. Both sites use768x768 unsigned
+grids, five radius keys, capacity7 (16515072byte cache bound), five masks/five
+intersections/five clones, zero evictions, all five freed. Hits1519/1793.
+All benchmark work counters exactly match the real mutation sequence. Journals
+3030/3580 events, below16384 cap. The inherited field immutable_comparisons
+counts non-output state certificates INCLUDING the mutable place guard; it does
+not mean place_grid is immutable. Only the distance source is fixed.
+
+| Scope/order | Original replay ms | Maintained eligibility ms | Difference ms |
+| --- | ---: | ---: | ---: |
+| Reference old/new | 1485 | 144 | 1341 |
+| Reference new/old | 1482 | 146 | 1336 |
+| 61N old/new | 1736 | 168 | 1568 |
+| 61N new/old | 1732 | 172 | 1560 |
+
+These include every journaled place clear andall7482/8891 cached-grid updates,
+all initialization/copies/allocations/frees, as declared. They are PRIVATE COMBINED
+mask+And replay times, not integrated native procedure or START-to-T1 savings.
+No production change or cold acceptance follows from these numbers alone.
+
+## API boundary qualification: extra work required before integration
+
+The one-copy private kernel directly produces the result AFTER mask+And. A
+production GridMask wrapper must still expose the complete raw mask BEFORE the
+subsequent GridAnd. Do not silently move intersection writes earlier, defer the
+mask write, or assume intermediate results are unobservable. Preserve each
+native return tuple, not only final eligibility and eventual game snapshots.
+
+Cheapest supported-owner implementation to test next: bounded PAIRED raw-mask
+and maintained-eligibility entries. The mask phase writes/copies the exact raw
+mask and returns its native destination; the matching And phase separately
+writes/copies maintained eligibility and returns its native destination. Keep
+all zone/similarity/style work andseeded selection after that exact boundary.
+Clear updates affect only eligibility entries, never raw masks. Both writes,
+extra clones/copies, pending-pair handling, misses/evictions/fallbacks/cleanup and
+source/mutation guards must be measured. This extra work is NOT included in the
+one-copy timings above. No production debug access or native engine file edits.
+
+At768x768, five raw+eligibility pairs use23592960bytes rather than11796480.
+A prospective32MiB pair-payload limit retains the five observed keys (capacity7)
+while remaining bounded; guards/comparator/scratch need separate accounting.
+This is a proposed experimental bound, not an already integrated cache. Test
+smaller capacities/evictions andunsupported domains explicitly; do not omit
+copies or guards to retain the earlier one-copy replay timing.
+
+Fresh mapless filler_and_native_contract at5ce2bba tests six valid two-grid U16
+4x2 cases. All return EXACTLY one value, destination, with source unchanged.
+Full native logs/identity/normal shutdown audit PASS. It also establishes that
+GridAnd is BOOLEAN conjunction producing0/1, NOT integer bitwise AND: e.g.
+65535 AND65535 yields1, and2 AND1 yields1. The kernel itself already calls the
+actual native operator, so both native mutation proofs remain valid. Updated
+the MODEL operators to boolean semantics andadded even-valued nonzero place
+cells; all8980kernel/3192observer/203driver checks still PASS. New
+filler_eligibility_offline_2 all9commandsPASS; earlier batch retained.
+
+Mapless exec89666 CLOSED exit1 only at its FINAL fresh-game check, after
+contract_audit.json PASS and normal flushed quit ofPID55272,
+creation134337840567352519. Windows briefly still listed that exited process.
+Authoritative PID recheck then found no process and fresh-game check clear;
+no contract rerun, forced close, replaced sample or relaxed audit. The capture
+helper's 'failure evidence' wording reflects mapless failed=True (skip map
+snapshot), not a native contract failure. This is not a map parity/timing run.
+
+Next actual implementation is the paired API-boundary-preserving private cache,
+then native before/after-boundary shadows and both-order full-work measurements.
+Only after those pass: supported-owner production integration, exact all-source/
+private/rock checks and prospectively declared full six-site cold comparison.
+Current production remains56fbf44/v987,accepted86.606/worst92.125; full<80/<85
+unmet. This turn PROGRESS: new kernel,12375modelchecks,two full native mutation
+proofs, measured primitive savings and a clean API-semantic discovery. No startup
+performance claim or production promotion.

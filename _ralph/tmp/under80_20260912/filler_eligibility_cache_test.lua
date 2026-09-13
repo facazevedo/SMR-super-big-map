@@ -10,7 +10,8 @@ local function equal(a,b)
 end
 local function copy(g)local c={};for k,v in pairs(g)do c[k]=v end;return c end
 local function mask(s,d,lo,hi,scale)for i=1,s.w*s.h do d[i]=s[i]>=lo and s[i]<=hi and scale or 0 end;return d end
-local function intersect(a,b)for i=1,a.w*a.h do a[i]=a[i]&b[i]end;return a end
+-- Native GridAnd is boolean conjunction, not integer bitwise AND (contract probe).
+local function intersect(a,b)for i=1,a.w*a.h do a[i]=a[i]~=0 and b[i]~=0 and 1 or 0 end;return a end
 local function circle(g,value,p,r)
  for y=0,g.h-1 do for x=0,g.w-1 do
   if (x-p.x)^2+(y-p.y)^2<=r*r then g[y*g.w+x+1]=value end
@@ -21,7 +22,7 @@ for _,capacity in ipairs({0,1,2,5,8})do
   local w,h=table.unpack(shape)
   local source=grid(w,h,function(x,y)return (x*13+y*7)%19 end)
   local source_guard=copy(source)
-  local place=grid(w,h,function(x,y)return (x+y)%5==0 and 0 or 65535 end)
+  local place=grid(w,h,function(x,y)return ({0,1,2,3,65534,65535})[(x+y)%6+1] end)
   local owned={};local live=0
   local api={mask=mask,intersect=intersect,clear=circle,copy=function(d,s)for i=1,s.w*s.h do d[i]=s[i]end end,
    clone=function(g)local c=copy(g);owned[c]=true;live=live+1;return c end,

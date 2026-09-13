@@ -2,8 +2,10 @@
 import json
 from pathlib import Path
 import subprocess
+import argparse
+parser=argparse.ArgumentParser();parser.add_argument('--name',default='filler_eligibility_offline');args=parser.parse_args()
 root=Path(__file__).resolve().parents[3]
-out=root/'_ralph/runs/under80-20260912/artifacts/filler_eligibility_offline'
+out=root/'_ralph/runs/under80-20260912/artifacts'/args.name
 out.mkdir(parents=True,exist_ok=False)
 base='_ralph/tmp/under80_20260912/'
 commands=[['luac','-p',base+n] for n in ('filler_eligibility_cache.lua','filler_eligibility_profile.lua')]

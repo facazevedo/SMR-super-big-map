@@ -1899,3 +1899,27 @@ rejectedv992immutable-mask-onlycache), withall updates/copies/cleanup charged.
 See filler_eligibility_research.md forsourceanchors/scaffolding/decisivegates.
 Production/deployment exactaccepted56fbf44/v987,38auditPASS,nolivegame.
 Reference86.606/worst92.125,full<80/<85unmet;goalACTIVE,thisturnPROGRESS.
+
+## Mutable Filler eligibility: exact native proof and promising private replay
+
+Implemented mutation-aware kernel/observer;8980kernel+3192observer+203native
+driver modelchecksPASS. Frozenc6c0132,61N51651/PID55280 andreference11117/
+PID45880 CLOSEDexit0,normalflushedlogs,fullfiller_eligibility_auditPASS issues[].
+All1524/1798 eligibility outputs exact against native mask+And,1506/1782 live
+clears and7482/8891 maintained-grid updates covered. Fivekeys,fiveownedgrids,
+allfreed,hooks restored,fullpredecessor/privatefourfields/individualrocks exact.
+
+Both-order PRIVATE combined-operation replays: reference1485->144/1482->146ms,
+61N1736->168/1732->172ms.1.336..1.568s diagnosticgain, NOTstartupimprovement.
+The one-copy kernel skips the intermediate raw-mask boundary; do NOT integrate
+it through a GridMask wrapper as-is. Next paired raw-mask/eligibility cache must
+preserve both native API outputs separately andcharge its extra write/copy/
+memory/guard costs. Proposed pairpayload32MiB at768x768; notproductionyet.
+
+Fresh maplessGridAnd contract6validcasesPASS: exactlydestinationreturn and
+BOOLEAN0/1 conjunction, notbitwiseAND. Updatedmodeloperator andevenvaluedplace
+inputs; all12375checks stillPASS,offline_2all9commandsPASS. Contract89666 ended
+exit1 onlyatfinalfresh-gameguardafterPASSaudit/normalquitPID55272; authoritative
+PIDrecheck confirmedgone,no rerun. Fullidentities/censuses/costs/prospectivepaired
+design in filler_eligibility_research.md. Acceptedproductionv987unchanged; full
+<80/<85unmet,goalACTIVE. ThisturnPROGRESS,newnativeevidenceandcandidatework.

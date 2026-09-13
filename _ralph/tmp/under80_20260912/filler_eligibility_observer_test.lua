@@ -16,7 +16,7 @@ replace(' owner.GridFill=function',[[
  end
  owner.GridAnd=function(a,b)
   check(live[a] and live[b],'and freed grid');tick=tick+3
-  for i=1,8 do a.v[i]=a.v[i]&b.v[i]end
+  for i=1,8 do a.v[i]=a.v[i]~=0 and b.v[i]~=0 and 1 or 0 end
   return nil,'and',nil,a,b
  end
  owner.GridCircleSet=function(g,value,p,r)
@@ -45,7 +45,7 @@ for _,mode in ipairs({'normal','bad_copy','source_mutation','partial_mask','clon
  for i,lo in ipairs(requests)do
   if mode=='unexpected_mutation' and i==2 then place.v[1]=0 end
   local expected={}
-  for j,v in ipairs(src.v)do expected[j]=(v>=lo and 1 or 0)&place.v[j]end
+  for j,v in ipairs(src.v)do expected[j]=v>=lo and place.v[j]~=0 and 1 or 0 end
   values=table.pack(owner.GridMask(src,dest,lo,2147483647,1))
   check(values.n==6 and values[2]=='mask' and values[4]==src and values[5]==dest,'mask nil tuple preserved')
   if mode~='missing_and' or i~=#requests then
