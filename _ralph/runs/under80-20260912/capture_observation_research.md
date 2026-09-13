@@ -264,3 +264,47 @@ reference before production/cold consideration. All-source RNG review and eventu
 reference/five-site START-to-T1 gates remain separate. This turn PROGRESS: actual
 candidate,892 fixture checks andtwo complete native private-record proofs; not
 performance acceptance. Acceptedv98786.606/worst92.125,all<80/<85stillunmet.
+
+## Whole-cost follow-through: guarded scalar implementation REJECTED
+
+171 coarse actual-Capture/scope/lifecycle/tuple/init-placement checks and all7
+rock_geometry_coarse_offline prerequisites PASS. The observer hooks the actual
+shared AnnotateDecorRelief cell, clocks the full annotation only twice, initializes
+the helper inside that interval, and installs/restores candidate Capture only
+around the annotation. No per-object clocks, getter counters or replay.
+
+Frozen b057cea72881e67ebc0feae8ee87001d31749979, old/new/new/old61N:
+
+| Run | Whole annotation ms | Existing capture counter ms | PID | Creation |
+| --- | ---: | ---: | ---: | --- |
+| old_a | 2942 | 1322 | 54644 | 134337817971155011 |
+| new_a | 3100 | 1447 | 54460 | 134337819750285462 |
+| new_b | 3123 | 1406 | 55724 | 134337821541224375 |
+| old_b | 2971 | 1279 | 49344 | 134337823520129741 |
+
+Candidate whole-work differences are158ms and152ms SLOWER. All four full
+rock_geometry_coarse_audit checks PASS exact predecessor/grids/individualrocks/
+fourprivatefields/normalflushedlogs/ownedhooks/config. Candidate5 privatecells
+joined; helper initialized exactlyonce within measured work. Existing capture_ms
+is a nested counter, not additional time to add to whole annotation.
+
+Driver80524 CLOSED exit1 AFTER three successful samples: fresh-game guard briefly
+still listed normally-closedPID55724 before startingold_b. Authoritative process
+recheck found no PID/no game;HEAD andevery frozen hash matched;old_bdirectory
+absent. Only unstartedold_b resumed in45216 and CLOSED exit0. No replacement,
+repeat, reused game or forced close. rock_geometry_coarse_complete validates all
+four original checkpoints/audits/identities/frozenhashes, retains the three-row
+results.json andwrites comparison.json with the interruption explanation.
+
+Decision: reject THIS guarded scalar implementation before reference timing or
+production/cold integration. Removed-read counts and exact native proofs did not
+translate into lower whole-work cost in either order. These four observations
+are not a significance/causal proof about every possible geometry optimization;
+they do satisfy the predeclared rejection gate for this candidate. No unchanged
+retry, removal of method guards, or claim of startup gain. All code/evidence kept.
+
+Production/deployment remain exact56fbf44/v987,38-file auditPASS and no live game.
+Next distinct larger lead: mutation-maintained Filler eligibility; see
+filler_eligibility_research.md. Current accepted86.606/worst92.125 and full<80/<85
+remain unmet. This turn PROGRESS: completed finite both-order measurement,
+established no gain for the proven candidate, and ruled it out without deployment.

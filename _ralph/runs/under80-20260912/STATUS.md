@@ -1876,3 +1876,26 @@ Exact source/identity/evidence andtiming design in capture_observation_research.
 Candidate may be slower after guards; don'tinfer gain from828554 repeatedreads.
 Productionaccepted56fbf44/v987,reference86.606/worst92.125;full<80/<85unmet.
 ThisturnPROGRESS,goalACTIVE. No new production or cold performance claim.
+
+## Rock scalar whole-cost test CLOSED: both orders slower, candidate rejected
+
+Previous turnPROGRESS built/proved privatecandidate. This turn171coarsefixture
+checks+7prerequisitesPASS, thenfrozenb057cea old/new/new/old61N. Wholeannotation
+2942/3100/3123/2971ms: candidate158/152ms SLOWER. Existingnestedcapturecounter
+1322/1447/1406/1279ms isnotadditive. AllfourfullauditsPASS exactpredecessor/
+grids/individualrocks/privatefourfields/normalflushedlogs/hooks/config. Native
+helperinitialization includedinside measuredannotation;no intrusivegetters/replay.
+
+Driver80524 CLOSEDexit1afterthree completedruns duebrieflylisted alreadyclosed
+PID55724. RecheckedactualPID/no game,frozenHEAD/hashes,unstartedold_bdirabsent;
+onlyold_b resumedin45216 CLOSEDexit0. Allfouruniqueownedprocessesterminal.
+Original3-rowjournalpreserved; rock_geometry_coarse_complete.py validated4-row
+comparison andrecordedinterruption. No repeated/replaced samples or forcedclose.
+
+REJECT guardedscalarimplementation before reference/cold/production. Preserve
+its exactsource/nativeproofs; don'tequate avoidedreads withspeed. Next actual
+privateimplementation ismutation-maintainedFillereligibility (differentfrom
+rejectedv992immutable-mask-onlycache), withall updates/copies/cleanup charged.
+See filler_eligibility_research.md forsourceanchors/scaffolding/decisivegates.
+Production/deployment exactaccepted56fbf44/v987,38auditPASS,nolivegame.
+Reference86.606/worst92.125,full<80/<85unmet;goalACTIVE,thisturnPROGRESS.
