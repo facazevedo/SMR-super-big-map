@@ -1,0 +1,751 @@
+[
+  {
+    "name": "parse_sbm_config",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\Code\\sbm_config.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_sbm_decor_topup",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\Code\\sbm_decor_topup.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_sbm_deposits",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\Code\\sbm_deposits.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_sbm_diagnostics",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\Code\\sbm_diagnostics.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_sbm_elevator_debug",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\Code\\sbm_elevator_debug.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_sbm_engine",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\Code\\sbm_engine.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_sbm_heat_safety",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\Code\\sbm_heat_safety.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_sbm_lifecycle",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\Code\\sbm_lifecycle.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_sbm_loading_ui",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\Code\\sbm_loading_ui.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_sbm_map_bounds",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\Code\\sbm_map_bounds.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_sbm_map_generation",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\Code\\sbm_map_generation.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_sbm_object_clone",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\Code\\sbm_object_clone.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_sbm_overview_camera",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\Code\\sbm_overview_camera.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_sbm_overview_curtains",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\Code\\sbm_overview_curtains.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_sbm_overview_render",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\Code\\sbm_overview_render.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_sbm_pass_border",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\Code\\sbm_pass_border.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_sbm_place_elevator_button",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\Code\\sbm_place_elevator_button.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_sbm_pregame_toggle",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\Code\\sbm_pregame_toggle.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_sbm_provenance",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\Code\\sbm_provenance.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_sbm_rocket_rules",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\Code\\sbm_rocket_rules.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_sbm_sector_exploration",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\Code\\sbm_sector_exploration.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_sbm_sector_grid",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\Code\\sbm_sector_grid.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_sbm_sector_highlight",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\Code\\sbm_sector_highlight.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_sbm_terrain_copy",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\Code\\sbm_terrain_copy.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_sbm_version",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\Code\\sbm_version.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_sbm_zoom_option",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\Code\\sbm_zoom_option.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_sbm_zoomplus_integration",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\Code\\sbm_zoomplus_integration.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_SuperBigMap",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\Code\\SuperBigMap.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_ZoomPlus",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\Code\\ZoomPlus.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_metadata",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\metadata.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_items",
+    "command": [
+      "luac",
+      "-p",
+      "D:\\PROJS\\SMR\\super-big-map\\items.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "provisional_passage_clearance_test",
+    "command": [
+      "lua",
+      "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\provisional_passage_clearance_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "decor_matching_cache_test",
+    "command": [
+      "lua",
+      "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\decor_matching_cache_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "decor_failure_report_test",
+    "command": [
+      "lua",
+      "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\decor_failure_report_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "decor_output_filter_test",
+    "command": [
+      "lua",
+      "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\decor_output_filter_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "decor_finite_sites_test",
+    "command": [
+      "lua",
+      "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\decor_finite_sites_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "start_anchor_selection_test",
+    "command": [
+      "lua",
+      "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\start_anchor_selection_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "direct_seeded_topup_test",
+    "command": [
+      "lua",
+      "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\direct_seeded_topup_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "surface_effect_demand_driven_test",
+    "command": [
+      "lua",
+      "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\surface_effect_demand_driven_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "apron_math_bindings_test",
+    "command": [
+      "lua",
+      "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\apron_math_bindings_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "hard_spacing_spatial_index_test",
+    "command": [
+      "lua",
+      "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\hard_spacing_spatial_index_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "crease_join_test",
+    "command": [
+      "lua",
+      "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\crease_join_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "crease_guard_join_test",
+    "command": [
+      "lua",
+      "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\crease_guard_join_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "resource_protection_blend_test",
+    "command": [
+      "lua",
+      "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\resource_protection_blend_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "outer_resource_dirty_rebuild_test",
+    "command": [
+      "lua",
+      "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\outer_resource_dirty_rebuild_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "surface_final_rebuild_lifecycle_test",
+    "command": [
+      "lua",
+      "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\surface_final_rebuild_lifecycle_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "terminal_strip",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/terminal_height_strip_test.lua",
+      "_ralph/tmp/a0_wall_baseline.raw"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "python_parity",
+    "command": [
+      "C:\\Users\\fazevedo\\AppData\\Local\\Programs\\Python\\Python314\\python.exe",
+      "-B",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "_ralph/tools/parity",
+      "-p",
+      "*_test.py"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "workflow",
+    "command": [
+      "C:\\Users\\fazevedo\\AppData\\Local\\Programs\\Python\\Python314\\python.exe",
+      "-B",
+      "_ralph/tools/test_strategy_sessions.py"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "cold_judge",
+    "command": [
+      "C:\\Users\\fazevedo\\AppData\\Local\\Programs\\Python\\Python314\\python.exe",
+      "-B",
+      "_ralph/tools/rules/test_judge_cold_matrix.py"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "outer_policy",
+    "command": [
+      "C:\\Users\\fazevedo\\AppData\\Local\\Programs\\Python\\Python314\\python.exe",
+      "-B",
+      "_ralph/tools/parity/outer_ring_policy_check.py"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "diff_hygiene",
+    "command": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "parse_sbm_rock_grounding",
+    "command": [
+      "luac",
+      "-p",
+      "Code/sbm_rock_grounding.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "rock_grounding",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/rock_grounding_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "rocket_sampling",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/rocket_sampling_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "native_apron",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/native_apron_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "crease_sampling",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/crease_sampling_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "rocket_pruning",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/rocket_pruning_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "crease_discovery",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/crease_discovery_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "apron_mask",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/apron_mask_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "outer_mask_shortcuts",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/outer_mask_shortcuts_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "crease_track_translation",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/crease_track_translation_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "crease_track_order",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/crease_track_order_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "crease_join_basis",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/crease_join_basis_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "rocket_clearance",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/rocket_clearance_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "bounded_rocket_search",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/bounded_rocket_search_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "bounded_rocket_seed",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/bounded_rocket_seed_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "rocket_blend_edge",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/rocket_blend_edge_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "refinement_guide",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/refinement_guide_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "indexed_refinement",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/indexed_refinement_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "decor_circle_index",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/decor_circle_index_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "terrain_stdlib_bindings",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/terrain_stdlib_bindings_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "native_apron_mask",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/native_apron_mask_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "native_apron_domain",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/native_apron_domain_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "engine_primitives",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/engine_primitives_test.lua"
+    ],
+    "exit": 1
+  },
+  {
+    "name": "outer_zero_harmonic",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/outer_zero_harmonic_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "classification_reuse",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/classification_reuse_test.lua"
+    ],
+    "exit": 1
+  },
+  {
+    "name": "precision_coordinate",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/precision_coordinate_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "precision_coordinate_encoding",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/precision_coordinate_encoding_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "precision_coordinate_bound",
+    "command": [
+      "python",
+      "_ralph/tools/parity/precision_coordinate_bound_test.py"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "native_outer_embedded",
+    "command": [
+      "lua",
+      "_ralph/tmp/under80_20260912/native_outer_integration_kernel_test.lua",
+      "Code/sbm_terrain_copy.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "native_outer_source",
+    "command": [
+      "lua",
+      "_ralph/tmp/under80_20260912/native_outer_source_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "native_outer_bounds",
+    "command": [
+      "python",
+      "_ralph/tmp/under80_20260912/native_outer_mask_bound_test.py"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "playable_distance_production_fixture",
+    "command": [
+      "lua",
+      "_ralph/tmp/under80_20260912/playable_distance_production_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "startup_bundle_source",
+    "command": [
+      "C:\\Users\\fazevedo\\AppData\\Local\\Programs\\Python\\Python314\\python.exe",
+      "_ralph/tools/parity/startup_bundle_source_test.py"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "startup_bundle_class",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/startup_bundle_class_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "startup_bundle_filler",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/startup_bundle_filler_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "startup_name_cache",
+    "command": [
+      "lua",
+      "_ralph/tools/parity/startup_name_cache_test.lua"
+    ],
+    "exit": 0
+  }
+]

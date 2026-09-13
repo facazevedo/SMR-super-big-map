@@ -14,7 +14,53 @@ local Global = Engine.Global
 local SafeCall = Engine.SafeCall
 local TryCall = Engine.TryCall
 local IsKindOfSafe = Engine.IsKindOf
+local FirstKindOfSafe = Engine.FirstKindOf
+-- Older/custom Engine tables retain the original ordered scalar behavior.
+if type(FirstKindOfSafe) ~= "function" then
+	FirstKindOfSafe = function(obj, classes, single_kind)
+		local last_value
+		for i = 1, #classes do
+			last_value = single_kind(obj, classes[i])
+			if last_value then return classes[i], last_value end
+		end
+		return nil, last_value
+	end
+end
 local ObjectPosition = Engine.ObjectPos
+
+-- Only immutable string matching is memoized, never an object's classification.
+-- Live class/parent/entity fields and every native kind predicate remain live.
+-- A replaced string.find keeps the original ordered calls, including side effects.
+local native_find = string.find
+local dump = string.dump
+local native_find_ok = false
+if type(dump) == "function" then
+	local lua_ok = pcall(dump, function() end)
+	local c_ok, c_error = pcall(dump, pcall)
+	local find_ok, find_error = pcall(dump, native_find)
+	native_find_ok = lua_ok and not c_ok and not find_ok and find_error == c_error
+end
+local function NameMatcher(patterns)
+	local cache, size = {}, 0
+	return function(value)
+		local library = string
+		if native_find_ok and library.find == native_find then
+			local matched = cache[value]
+			if matched ~= nil then return matched end
+			matched = false
+			for i = 1, #patterns do
+				if native_find(value, patterns[i], 1, true) then matched = patterns[i]; break end
+			end
+			if size >= 4096 then cache, size = {}, 0 end
+			cache[value], size = matched, size + 1
+			return matched
+		end
+		for i = 1, #patterns do
+			if string.find(value, patterns[i], 1, true) then return patterns[i] end
+		end
+		return false
+	end
+end
 
 -- Cached generation traversals can retain Lua wrappers after their native game objects have been
 -- destroyed (notably when underground enrichment markers are staged between decor annotation and
@@ -89,6 +135,8 @@ local underground_access_name_patterns = {
 -- stone" -- Marsgate, and any mystery-named class/controller) must never be
 -- cloned or repositioned: leave the player's mystery content completely alone.
 local mystery_name_patterns = { "BlackCube", "Marsgate", "Mystery" }
+local MatchMysteryName = NameMatcher(mystery_name_patterns)
+local MatchAccessName = NameMatcher(underground_access_name_patterns)
 local mystery_kinds = {
 	"MysteryBase",
 	"BlackCubeStockpileBase",
@@ -101,30 +149,17 @@ local function IsMysteryRelatedObject(obj)
 	end
 	local class = obj.class
 	if type(class) == "string" then
-		for i = 1, #mystery_name_patterns do
-			if string.find(class, mystery_name_patterns[i], 1, true) then
-				return true
-			end
-		end
+		if MatchMysteryName(class) then return true end
 	end
-	for i = 1, #mystery_kinds do
-		if IsKindOfSafe(obj, mystery_kinds[i]) then
-			return true
-		end
-	end
-	return false
+	return FirstKindOfSafe(obj, mystery_kinds, IsKindOfSafe) ~= nil
 end
 
 local function MatchUndergroundAccessName(field, value)
 	if type(value) ~= "string" then
 		return false
 	end
-	for i = 1, #underground_access_name_patterns do
-		local pattern = underground_access_name_patterns[i]
-		if string.find(value, pattern, 1, true) then
-			return true, field, pattern
-		end
-	end
+	local pattern = MatchAccessName(value)
+	if pattern then return true, field, pattern end
 	return false
 end
 
@@ -162,12 +197,8 @@ local function IsUndergroundAccessObject(obj)
 		return false
 	end
 
-	for i = 1, #underground_access_clone_kinds do
-		local kind = underground_access_clone_kinds[i]
-		if IsKindOfSafe(obj, kind) then
-			return true, "kind", kind
-		end
-	end
+	local kind = FirstKindOfSafe(obj, underground_access_clone_kinds, IsKindOfSafe)
+	if kind then return true, "kind", kind end
 
 	local matched, field, pattern = ObjectMatchesUndergroundAccessName(obj)
 	if matched then
@@ -177,12 +208,8 @@ local function IsUndergroundAccessObject(obj)
 	if type(obj.GetParent) == "function" then
 		local parent = SafeCall(obj.GetParent, obj)
 		if parent and parent ~= obj then
-			for i = 1, #underground_access_clone_kinds do
-				local kind = underground_access_clone_kinds[i]
-				if IsKindOfSafe(parent, kind) then
-					return true, "parent_kind", kind
-				end
-			end
+			local kind = FirstKindOfSafe(parent, underground_access_clone_kinds, IsKindOfSafe)
+			if kind then return true, "parent_kind", kind end
 
 			matched, field, pattern = ObjectMatchesUndergroundAccessName(parent)
 			if matched then
@@ -197,10 +224,11 @@ end
 -- Resource deposit MARKERS we copy: surface, subsurface (incl. deep), concrete/terrain.
 -- We copy the invisible MARKERS (which spawn the real deposit on scan), NOT spawned deposit
 -- objects -- and NO anomalies/effects (siblings under DepositMarker but not these classes).
+local resource_marker_kinds = { "SurfaceDepositMarker", "SubsurfaceDepositMarker", "TerrainDepositMarker" }
+local spawned_deposit_kinds = { "Deposit", "SubsurfaceAnomaly", "SubsurfaceAnomalyMarker", "EffectDepositMarker" }
 local function IsResourceDepositMarker(obj)
-	return IsKindOfSafe(obj, "SurfaceDepositMarker")
-		or IsKindOfSafe(obj, "SubsurfaceDepositMarker")
-		or IsKindOfSafe(obj, "TerrainDepositMarker")
+	local _, matched = FirstKindOfSafe(obj, resource_marker_kinds, IsKindOfSafe)
+	return matched
 end
 
 local function ShouldSkipObject(obj)
@@ -229,21 +257,12 @@ local function ShouldSkipObject(obj)
 	-- instead, which spawn on scan), and never copy anomalies or effect-deposit markers --
 	-- only resource deposit markers are wanted.
 	if not IsResourceDepositMarker(obj) then
-		if IsKindOfSafe(obj, "Deposit")
-			or IsKindOfSafe(obj, "SubsurfaceAnomaly")
-			or IsKindOfSafe(obj, "SubsurfaceAnomalyMarker")
-			or IsKindOfSafe(obj, "EffectDepositMarker") then
+		if FirstKindOfSafe(obj, spawned_deposit_kinds, IsKindOfSafe) then
 			return true
 		end
 	end
 
-	for i = 1, #skip_clone_kinds do
-		if IsKindOfSafe(obj, skip_clone_kinds[i]) then
-			return true
-		end
-	end
-
-	return false
+	return FirstKindOfSafe(obj, skip_clone_kinds, IsKindOfSafe) ~= nil
 end
 
 -- Resource deposit markers are ALWAYS cloned (never thinned by the decor skip-Nth cap,
@@ -366,6 +385,7 @@ local scale_stretch_allowlist = {
 	BottomlessPit = true,
 	JumboCave = true,
 }
+local MatchScaleKeepName = NameMatcher(scale_keep_kinds)
 
 -- True when this class name is expected to grow by the stretch ratio. Name-based, matching
 -- the parity gate `class-scale-expected`, so the mod and the gate cannot drift apart.
@@ -379,12 +399,7 @@ local function ClassScalesWithTerrain(cls)
 	if scale_keep_exact[cls] then
 		return false
 	end
-	for i = 1, #scale_keep_kinds do
-		if string.find(cls, scale_keep_kinds[i], 1, true) then
-			return false
-		end
-	end
-	return true
+	return not MatchScaleKeepName(cls)
 end
 
 local function ObjectScalesWithTerrain(obj)
