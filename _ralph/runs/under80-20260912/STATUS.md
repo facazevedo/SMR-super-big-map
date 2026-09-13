@@ -1985,3 +1985,11 @@ original rejection depended on other-site slowdowns, which are no longer timing
 criteria. Do not relabel those historical results or declare success from them.
 Require fresh fixed reference3/control confirmation before further acceptance,
 then full five-site correctness verification. See v992_revised_target_protocol.md.
+
+Raw-mask reassessment payload restored exactly to343bee6 (same production as
+b38f4c0), changing only the three previously owned candidate files. New offline
+67639 CLOSEDexit0: all85 unchanged raw-mask regression commands PASS with frozen
+source hashes, artifacts/v992_revised_target_offline. Source/RNG review is recorded
+in v992_revised_target_review.md; separate reviewer preserves the old v992 rejection.
+Next freeze/deploy and the declared reference3/control, not a success claim from
+historical timings. Current accepted baseline is stillv987average87.069667s.

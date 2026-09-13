@@ -1,0 +1,17 @@
+PASS protected terrain is exactly unchanged
+PASS distant deformation is exactly unchanged
+PASS transition is bounded and monotonic at multiple scales
+PASS both joins have zero slope and curvature
+PASS gap-limited protection cannot attenuate a required core
+PASS overlapping guards remain bounded and preserve either footprint
+PASS zero-width edge case is finite and exact
+PASS completed cores are protected without a hard restoration pass
+PASS sequential blends preserve earlier cores and satisfy later cores
+PASS surface repair grade is capped without flattening
+PASS surface repair keeps an already safe local grade
+PASS surface core follows the fitted production plane
+PASS building core remains an exact level target
+PASS native transition restores detail by one minus weight cubed
+PASS building feathers cannot extrapolate beyond original and target heights
+PASS level building neighbourhood stays level through every feather weight
+16 resource protection blend checks passed
