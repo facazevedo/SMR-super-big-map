@@ -1677,3 +1677,25 @@ production cache must preserve native return values, supported global owner/raw
 shadows, per-procedure source stability and lifecycle identities, with native
 fallback. No diagnostic-only debug APIs in production. Full real-source/cold
 reference+five-site verification required. See filler_mask_research.md.
+
+Native return-contract follow-through: first36624/PID52624 CLOSED normally but
+auditFAILED because fractional1.5 bound logs native Expected number and returns
+zero values without throwing. Lua status alone incorrectly saidpass; full logs
+caught it. Failed evidence filler_mask_native_contract retained. Actual filler
+keys are integers3/4/5/7/12 withupper2147483647,scale1 on BOTH captured maps.
+
+Clean supported contract_2 atf8706a9, exec3766/PID51932 CLOSED exit0,
+contract_auditPASS issues[]. Five real integer bounds+65536 all return exactly
+destination; source unchanged/scratch freed/no log errors. math.type AVAILABLE,
+distinguishesinteger3 fromfloat3.0. Production can restrict admission to integer
+subtypes, returning destination on valid hits and forwarding unsupported calls
+unchanged; don't turn native invalid-input errors into cache hits.
+
+Next actual production candidate: supported owner bridge (not diagnostic debug),
+per-generator UG Filler lifetime/source-stability proof, bounded masks, correct
+return values/fallback, complete error/resource/wrapper restoration. Then real-
+source offline and integratednative correctness, frozen reference+five-site cold
+gates. Private735..857ms improvement is not an accepted startup gain. This turn
+PROGRESS: real-engine exact source/output proofs, both-order private gains and
+native ABI discovery completed. All handles terminal; productionv987 unchanged,
+full<80 and<85 remain unmet, goal ACTIVE and not blocked.

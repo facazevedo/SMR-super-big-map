@@ -1,0 +1,7 @@
+{
+  "ok": true,
+  "exit": 0,
+  "data": {
+    "result": "FILLER_MASK_NATIVE_CONTRACT_pass {\n\tmetatable = table: 0000025670054780 [1]\n}"
+  }
+}

@@ -169,3 +169,28 @@ one destination return, and records whether production math.type distinguishes
 integer and float subtypes. New output contract_2; no relaxed log gate or erased
 failure. Production admission must not turn a native invalid-input error into
 a successful cache hit. The actual cache/native shadow proofs remain PASS.
+
+Clean contract_2 atf8706a9: exec3766/PID51932 creation134337719361006955 CLOSED
+exit0, normal flushed logs, contract_audit PASS issues[]. All five actual integer
+bounds plus65536 return EXACTLY one value, the destination grid. Source unchanged,
+scratch freed. Production math.type is available and distinguishes3 (integer)
+from3.0 (float). Production admission should require integer subtypes for native
+integer mask arguments; unsupported floats, including integer-valued floats, can
+simply fall through to the original native call rather than changing its behavior.
+Do not infer support for every float from numeric equality or model tests.
+
+Ready for actual production integration (new candidate, not accepted yet): keep
+the cache local to this generator's UG Filler procedure, admit only supported
+unsigned grids/arity/integer arguments and enforce byte/entry limits. Return the
+destination on valid hits and preserve native tuples on ordinary calls/fallback.
+The first-miss return can also verify the expected native contract. Source
+stability must be tied to the actual native filler distance-grid lifetime and
+known operations; do not merely key on dimensions or an arbitrary source pointer.
+Inspect/reuse supported owner bridging around mark-grid projection, not _ENV
+debug discovery used only by diagnostics. Restore every owned wrapper/resource
+on all success/error/unsupported paths, preserving other wrapper identities.
+
+Then actual-production offline tests and native integrated output/private/rock
+checks precede any frozen cold reference/control+five-site run. The private
+735..857ms improvement is a reason to test integration, not to skip these gates.
+No live game remains and acceptedv987 production/deployment is unchanged.

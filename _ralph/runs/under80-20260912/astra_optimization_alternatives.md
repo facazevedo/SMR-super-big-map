@@ -190,3 +190,16 @@ Private bounded mask cache now has34939 model checks, conditional on an immutabl
 source/full-overwrite native mask. Actual source stability, key diversity, exact
 native outputs and copies/cleanup-inclusive timings still required. See
 prefab_primitive_research.md/filler_mask_research.md; no production promotion.
+
+Private mask-cache native proof now PASS at1e2e07a on reference/61N: every1524/
+1798 real request exact against both cache and sentinel native oracle, real and
+private source grids unchanged. Five unique keys,5misses/clones,1519/1793hits,
+all scratch/hooks restored. Both-order replay867->132ms reference,1010->155 and
+1005->148ms61N, including cache creation/copy/cleanup. Not a cold startup result.
+
+Mapless native ABI check additionally proves supported integer calls return only
+destination; math.type distinguishes integer/float. Fractional1.5 rejected by
+native API, failed first check retained; clean supported checkPASS atf8706a9.
+Next actual production integration and full real-source/native/cold gates, not
+another allocation-pool or unchanged rejected-candidate retry. See
+filler_mask_research.md for source-lifetime, owner bridge and fallback obligations.

@@ -1,0 +1,69 @@
+{
+  "status": "pass",
+  "issues": [],
+  "checkpoint": "f8706a9a5b307dc8ff6e49d849092d5e8a1d3b7d",
+  "identity": [
+    51932,
+    134337719361006955
+  ],
+  "qualification": "Mapless scratch API contract, not a generation parity or timing sample.",
+  "contracts": [
+    {
+      "return_count": 1,
+      "to": 2147483647,
+      "roles": [
+        "destination"
+      ],
+      "scale": 1,
+      "from": 3
+    },
+    {
+      "return_count": 1,
+      "to": 2147483647,
+      "roles": [
+        "destination"
+      ],
+      "scale": 1,
+      "from": 4
+    },
+    {
+      "return_count": 1,
+      "to": 2147483647,
+      "roles": [
+        "destination"
+      ],
+      "scale": 1,
+      "from": 5
+    },
+    {
+      "return_count": 1,
+      "to": 2147483647,
+      "roles": [
+        "destination"
+      ],
+      "scale": 1,
+      "from": 7
+    },
+    {
+      "return_count": 1,
+      "to": 2147483647,
+      "roles": [
+        "destination"
+      ],
+      "scale": 1,
+      "from": 12
+    },
+    {
+      "return_count": 1,
+      "to": 2147483647,
+      "roles": [
+        "destination"
+      ],
+      "scale": 1,
+      "from": 65536
+    }
+  ],
+  "math_type_available": true,
+  "integer_subtype": "integer",
+  "float_subtype": "float"
+}

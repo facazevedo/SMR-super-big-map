@@ -1,0 +1,64 @@
+{
+  "status": "pass",
+  "scratch_released": true,
+  "issues": [],
+  "integer_subtype": "integer",
+  "float_subtype": "float",
+  "calls": [
+    {
+      "return_count": 1,
+      "to": 2147483647,
+      "roles": [
+        "destination"
+      ],
+      "scale": 1,
+      "from": 3
+    },
+    {
+      "return_count": 1,
+      "to": 2147483647,
+      "roles": [
+        "destination"
+      ],
+      "scale": 1,
+      "from": 4
+    },
+    {
+      "return_count": 1,
+      "to": 2147483647,
+      "roles": [
+        "destination"
+      ],
+      "scale": 1,
+      "from": 5
+    },
+    {
+      "return_count": 1,
+      "to": 2147483647,
+      "roles": [
+        "destination"
+      ],
+      "scale": 1,
+      "from": 7
+    },
+    {
+      "return_count": 1,
+      "to": 2147483647,
+      "roles": [
+        "destination"
+      ],
+      "scale": 1,
+      "from": 12
+    },
+    {
+      "return_count": 1,
+      "to": 2147483647,
+      "roles": [
+        "destination"
+      ],
+      "scale": 1,
+      "from": 65536
+    }
+  ],
+  "math_type_available": true
+}
