@@ -49,3 +49,37 @@ source/primitive proof obligations below are not discharged by these guards.
 
 Native residual perturbation/cleanup tests now pass, but they do not alone prove
 all native arithmetic primitives conform to the model used by the rational bounds.
+
+## Additional audit and native fixtures
+
+The rational script now explicitly propagates binary64 scalar axes, width,
+denominator cancellation and protection ramps. Bounds: source width<100*u64,
+base weight<1000*u64; each soft-guard result plus source product rounding<u/32.
+It assigns endpoint addition<=u, allowance summation/division<u/32, and a generous
+underflow reserve within base4u/per-guard1u. Native encoded B/C/reciprocal constants
+use relative2u, not u: the adaptive mantissa can sit just below2^23 before rounding.
+The native base bound is now245.876u, still below its320u allocation.
+
+The guard allowance itself now uses6.0*r/T. Integer6*r/T could truncate when both
+inputs are integral: r213/T12 needs ceil(512.5/256)=3, not ceil(512/256)=2.
+Actual engine regression passes derived numerator3 and nine no-allocation refusals.
+
+Native primitive exports cover12288 operation checks across signed products,
+multiply-add, ratio scaling, addition, dyadic encoded constants, clamp, absolute
+value, roots, inverses and rounding. Root/inverse precision still has per-cell
+runtime checks. This is implementation conformance evidence, not exhaustive proof.
+
+IMPORTANT: the initial half-up rounding model FAILED on2 fixtures. Native
+GridRound uses nearest-even. Preserve arithmetic_audit_ties_up.json alongside
+the passing ties-even audit. The interval argument is valid because the reserved
+margin puts every interior scalar weight STRICTLY between its endpoints. An exact
+half-way scalar code then straddles the common nearest-rounding discontinuity and
+must be corrected; clipped weights0/1 map to exact integer codes0/4096. Rational
+tests cover12288 strict straddles. A native test injects all4096 half-way weights
+before the ACTUAL kernel interval tail: all4096 are corrected, including2048
+whose native nearest-even result differed from scalar half-up.
+
+These bounds remain conditional on the ordinary f32/binary64 arithmetic model,
+monotone native rounding/clamps and scalar sqrt semantics documented here and
+used by the accepted native apron implementation. Do not equate fixture coverage
+with proof of arbitrary engine implementations or a cold performance result.

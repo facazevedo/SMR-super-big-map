@@ -1,0 +1,7 @@
+{
+  "ok": true,
+  "exit": 0,
+  "data": {
+    "result": "NATIVE_OUTER_PRIMITIVES_CAPTURED {\n\tmetatable = table: 000001CAE40A4780 [1]\n}"
+  }
+}

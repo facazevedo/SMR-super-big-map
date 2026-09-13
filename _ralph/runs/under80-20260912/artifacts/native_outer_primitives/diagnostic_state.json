@@ -1,0 +1,65 @@
+{
+  "status": "pass",
+  "calls": [
+    {
+      "name": "x",
+      "cells": 1024
+    },
+    {
+      "name": "y",
+      "cells": 1024
+    },
+    {
+      "name": "square",
+      "cells": 1024
+    },
+    {
+      "name": "mul_grid",
+      "cells": 1024
+    },
+    {
+      "name": "fma_grid",
+      "cells": 1024
+    },
+    {
+      "name": "scale_ratio",
+      "cells": 1024
+    },
+    {
+      "name": "polynomial_a",
+      "cells": 1024
+    },
+    {
+      "name": "add_grid",
+      "cells": 1024
+    },
+    {
+      "name": "add_scaled_grid",
+      "cells": 1024
+    },
+    {
+      "name": "encoded_add",
+      "cells": 1024
+    },
+    {
+      "name": "clamp",
+      "cells": 1024
+    },
+    {
+      "name": "abs",
+      "cells": 1024
+    },
+    {
+      "name": "round_positive",
+      "cells": 1024
+    },
+    {
+      "name": "root",
+      "cells": 1024
+    },
+    {
+      "name": "inverse",
+      "cells": 1024
+    }
+  ]
+}

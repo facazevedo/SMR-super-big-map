@@ -50,7 +50,7 @@ return function(api, row, scalar, epsilon_numerator)
             or (g.transition>0 and (g.transition<0.25 or g.transition>128)) then
             return nil,stats,'unsupported protection domain'
         end
-        if g.transition>0 then allowance_units=allowance_units+82+6*g.radius/g.transition end
+        if g.transition>0 then allowance_units=allowance_units+82+6.0*g.radius/g.transition end
     end
     local derived_numerator=math.ceil(allowance_units/256.0)
     if derived_numerator>16 then return nil,stats,'research error budget exceeds supported range' end

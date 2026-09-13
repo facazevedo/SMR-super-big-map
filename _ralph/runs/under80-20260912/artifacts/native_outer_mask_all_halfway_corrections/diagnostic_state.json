@@ -1,0 +1,20 @@
+{
+  "status": "pass",
+  "calls": [
+    {
+      "checked": 4096,
+      "injected": 1,
+      "stats": {
+        "changed_by_correction": 2048,
+        "reciprocal_checks": 2,
+        "certificate_proved": false,
+        "corrected": 4096,
+        "allocations": 17,
+        "root_checks": 1,
+        "experimental_epsilon_numerator": 2,
+        "derived_numerator": 2,
+        "samples": 4096
+      }
+    }
+  ]
+}

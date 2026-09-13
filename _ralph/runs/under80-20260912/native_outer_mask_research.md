@@ -211,3 +211,25 @@ cells exact,128803 corrections,1033ms kernel-only; no Lua errors. Artifact:
 native_outer_mask_qualified_scratch. The qualified revision is newer than the
 both-order full-map checkpoint, so those full-map results are not mislabeled as
 tests of its new refusal guards. No engine remains; production/deployment unchanged.
+
+### Slower-site shadow and arithmetic-model checks
+
+At81e63ed, qualified61N shadow60209/PID8660 CLOSED normally:50 patches/740771 cells
+exact,104476 corrections, native849ms/scalar2006ms, full predecessor/snapshot/rock
+parityPASS. This predates the following explicit-float allowance correction.
+
+Changed guard allowance6*r/T to6.0*r/T to avoid engine integer division. Native
+domain86990/PID49924 CLOSED PASS: r213,T12 gives derivedN3 at the512.5-unit boundary;
+nine unsupported cases refuse before allocation. Conditional rational audit now
+covers source-double, interval, allowance arithmetic and encoded-constant margins.
+
+Primitive99602/PID49824 CLOSED with15 exported1024-cell f32 grids. Exact rational
+audit checks12288 results: half-up modelFAIL2 rounding ties; nearest-even modelPASS
+all. This changes the documented rounding premise, not the native algorithm.
+Strict interval margins force exact half-way cases into correction. Native actual-
+tail injection39227/PID49196 CLOSED PASS all4096 ties,2048 changed by correction.
+Both passing and failing model evidence are retained in native_outer_primitives.
+
+Next freeze the new revision for a sequential reference-plus-five shadow batch.
+Full final parity and exhaustive coarse-mask comparisons remain required on each
+site before a production/cold decision. No end-to-end improvement is claimed.

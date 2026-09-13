@@ -1,0 +1,74 @@
+{
+  "status": "fail",
+  "checks": 12288,
+  "operations": {
+    "mul_grid": {
+      "checked": 1024,
+      "max_fraction_of_bound": 0.9845934795257598
+    },
+    "fma_grid": {
+      "checked": 1024,
+      "max_fraction_of_bound": 0.9800473322716448
+    },
+    "scale_ratio": {
+      "checked": 1024,
+      "max_fraction_of_bound": 0.6707256643031086
+    },
+    "polynomial_a": {
+      "checked": 1024,
+      "max_fraction_of_bound": 0.9383825540091203
+    },
+    "add_grid": {
+      "checked": 1024,
+      "max_fraction_of_bound": 0.0
+    },
+    "add_scaled_grid": {
+      "checked": 1024,
+      "max_fraction_of_bound": 0.9544587399023337
+    },
+    "encoded_add": {
+      "checked": 1024,
+      "max_fraction_of_bound": 0.0
+    },
+    "clamp": {
+      "checked": 1024,
+      "max_fraction_of_bound": 0.0
+    },
+    "abs": {
+      "checked": 1024,
+      "max_fraction_of_bound": 0.0
+    },
+    "round_positive": {
+      "checked": 1024,
+      "max_fraction_of_bound": 0.0
+    },
+    "root": {
+      "checked": 1024,
+      "max_fraction_of_bound": 0.0
+    },
+    "inverse": {
+      "checked": 1024,
+      "max_fraction_of_bound": 0.16162236531575522
+    }
+  },
+  "failures": [
+    {
+      "operation": "round_positive",
+      "index": 3,
+      "actual": 0.0,
+      "expected": 1.0,
+      "error": 1.0,
+      "bound": 0.0
+    },
+    {
+      "operation": "round_positive",
+      "index": 5,
+      "actual": 2048.0,
+      "expected": 2049.0,
+      "error": 1.0,
+      "bound": 0.0
+    }
+  ],
+  "rounding_model": "ties_up",
+  "scope": "fixture conformance, not exhaustive proof"
+}

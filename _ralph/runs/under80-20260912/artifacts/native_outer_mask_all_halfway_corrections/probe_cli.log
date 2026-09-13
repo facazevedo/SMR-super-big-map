@@ -1,0 +1,7 @@
+{
+  "ok": true,
+  "exit": 0,
+  "data": {
+    "result": "NATIVE_OUTER_HALF_WAY_CORRECTION_PASS {\n\tmetatable = table: 000001E163DA4780 [1]\n}"
+  }
+}

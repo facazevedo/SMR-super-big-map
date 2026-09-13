@@ -1,0 +1,75 @@
+{
+  "status": "pass",
+  "calls": [
+    {
+      "derived": 3,
+      "mode": "allowance",
+      "allocations": 4,
+      "accepted": true,
+      "pass": true
+    },
+    {
+      "mode": "huge_coordinates",
+      "allocations": 0,
+      "reason": "unsupported research domain",
+      "accepted": false,
+      "pass": true
+    },
+    {
+      "mode": "wrong_radius",
+      "allocations": 0,
+      "reason": "outer radius does not match scalar bound",
+      "accepted": false,
+      "pass": true
+    },
+    {
+      "mode": "small_budget",
+      "allocations": 0,
+      "reason": "manual error budget below derived allowance",
+      "accepted": false,
+      "pass": true
+    },
+    {
+      "mode": "wrong_harmonic",
+      "allocations": 0,
+      "reason": "native outer harmonic domain/cache",
+      "accepted": false,
+      "pass": true
+    },
+    {
+      "mode": "fractional_center",
+      "allocations": 0,
+      "reason": "coordinate square domain",
+      "accepted": false,
+      "pass": true
+    },
+    {
+      "mode": "atan2",
+      "allocations": 0,
+      "reason": "unsupported research domain",
+      "accepted": false,
+      "pass": true
+    },
+    {
+      "mode": "square_overflow",
+      "allocations": 0,
+      "reason": "coordinate square domain",
+      "accepted": false,
+      "pass": true
+    },
+    {
+      "mode": "small_transition",
+      "allocations": 0,
+      "reason": "unsupported protection domain",
+      "accepted": false,
+      "pass": true
+    },
+    {
+      "mode": "large_transition",
+      "allocations": 0,
+      "reason": "unsupported protection domain",
+      "accepted": false,
+      "pass": true
+    }
+  ]
+}

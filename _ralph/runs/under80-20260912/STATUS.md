@@ -978,3 +978,28 @@ then validate the qualified candidate across additional scenarios before a
 production/cold decision. See native_outer_mask_research.md and the private
 native_outer_mask_source_audit.md. Under85 across all six remains unproven; the
 goal stays active and no production optimization was promoted this turn.
+
+## Slower-map shadow and numerical audit; six-site batch prepared
+
+This turn is PROGRESS. Qualified61N shadow60209/PID8660 CLOSED PASS all740771
+coarse cells/50 patches and full predecessor/snapshot/rock parity. Kernel849ms
+versus scalar2006ms is instrumented, not a cold START-to-T1 improvement.
+
+Fixed engine integer division in guard allowance with6.0*r/T. Native domain test
+86990/PID49924 CLOSED PASS the r213/T12 threshold(N3) and nine preallocation refusals.
+Conditional rational bounds now explicitly cover source-double, endpoint,
+allowance-roundoff, encoded-constant and underflow reserves. Native base bound
+245.876u remains below320u; no production certificate claim from fixtures alone.
+
+Native primitive99602/PID49824 CLOSED:12288 numerical checks PASS under nearest-
+even rounding. The initial half-up assumption FAILED2 ties; both audits preserved.
+Strict interval margins force half-way scalar results into exact correction.
+Native actual-kernel-tail test39227/PID49196 CLOSED:4096 ties checked/corrected,
+2048 native nearest-even values changed to literal scalar half-up. No Lua errors.
+
+Prepared outer_mask_matrix_shadow.py: one frozen, sequential six-scenario batch,
+no retries, full coarse/final parity, SHA256 source freeze and per-site artifacts.
+Its authoritative live/completed state will be artifacts/native_outer_mask_qualified_matrix/batch.json
+plus the running process handle, not this preparation note. Do not change HEAD,
+production, kernel or setup source while it runs. Production/deployment remains
+accepted v983,38/38 auditPASS. The startup target remains unmet; goal active.
