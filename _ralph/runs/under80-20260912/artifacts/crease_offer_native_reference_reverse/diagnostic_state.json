@@ -1,0 +1,135 @@
+{
+  "native_oracle": {
+    "issues": [],
+    "checks": 2572,
+    "primitive": [
+      {
+        "divisor": 1,
+        "x": 0,
+        "y": 0,
+        "biased_copy": 1,
+        "copy_readback": 4294901761,
+        "source_readback": 4294901761
+      },
+      {
+        "divisor": 1,
+        "x": 1,
+        "y": 0,
+        "biased_copy": 2,
+        "copy_readback": 4294901762,
+        "source_readback": 4294901762
+      },
+      {
+        "divisor": 1,
+        "x": 2,
+        "y": 0,
+        "biased_copy": 3,
+        "copy_readback": 4294901763,
+        "source_readback": 4294901763
+      },
+      {
+        "divisor": 1,
+        "x": 0,
+        "y": 1,
+        "biased_copy": 2,
+        "copy_readback": 4294901762,
+        "source_readback": 4294901762
+      },
+      {
+        "divisor": 1,
+        "x": 1,
+        "y": 1,
+        "biased_copy": 3,
+        "copy_readback": 4294901763,
+        "source_readback": 4294901763
+      },
+      {
+        "divisor": 1,
+        "x": 2,
+        "y": 1,
+        "biased_copy": 4,
+        "copy_readback": 4294901764,
+        "source_readback": 4294901764
+      },
+      {
+        "divisor": 8,
+        "x": 0,
+        "y": 0,
+        "biased_copy": 1,
+        "copy_readback": 4294959105,
+        "source_readback": 4294959105
+      },
+      {
+        "divisor": 8,
+        "x": 1,
+        "y": 0,
+        "biased_copy": 2,
+        "copy_readback": 4294959105,
+        "source_readback": 4294959105
+      },
+      {
+        "divisor": 8,
+        "x": 2,
+        "y": 0,
+        "biased_copy": 3,
+        "copy_readback": 4294959105,
+        "source_readback": 4294959105
+      },
+      {
+        "divisor": 8,
+        "x": 0,
+        "y": 1,
+        "biased_copy": 2,
+        "copy_readback": 4294959105,
+        "source_readback": 4294959105
+      },
+      {
+        "divisor": 8,
+        "x": 1,
+        "y": 1,
+        "biased_copy": 3,
+        "copy_readback": 4294959105,
+        "source_readback": 4294959105
+      },
+      {
+        "divisor": 8,
+        "x": 2,
+        "y": 1,
+        "biased_copy": 4,
+        "copy_readback": 4294959105,
+        "source_readback": 4294959105
+      }
+    ]
+  },
+  "restored": true,
+  "calls": [
+    {
+      "new_ms": 244,
+      "difference_max": 0,
+      "old_ms": 216,
+      "wide_ring_only": true,
+      "returns_equal": true,
+      "width": 6144,
+      "cells": 37748736,
+      "cleanup_ok": true,
+      "difference_min": 0,
+      "height": 6144,
+      "grids_equal": true
+    },
+    {
+      "new_ms": 3172,
+      "difference_max": 0,
+      "old_ms": 4130,
+      "wide_ring_only": false,
+      "returns_equal": true,
+      "width": 8192,
+      "cells": 67108864,
+      "cleanup_ok": true,
+      "difference_min": 0,
+      "height": 8192,
+      "grids_equal": true
+    }
+  ],
+  "status": "pass",
+  "reverse": true
+}

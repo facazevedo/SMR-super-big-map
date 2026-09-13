@@ -1,0 +1,3 @@
+atan2 false: sine calls 62892 -> 648
+atan2 true: sine calls 62892 -> 61002
+zero harmonic: 86905 exact coarse/domain/lifetime checks passed

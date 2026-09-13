@@ -1,0 +1,23 @@
+{
+  "status": "pass",
+  "issues": [],
+  "checkpoint": {
+    "commit": "22a868ab59b5b55ceb693eb40a63950cef68203e",
+    "diagnostic_only": true
+  },
+  "identity": [
+    34972,
+    134337524164333980
+  ],
+  "pair": {
+    "verdict": "pass",
+    "differences": [],
+    "note": "Runtime parity only; engine-RNG source audit is separate.",
+    "full_snapshot_differences": [],
+    "rock_grounding_differences": []
+  },
+  "private_fields_checked": 4,
+  "full_grid_cells": 104857600,
+  "native_oracle_checks": 2572,
+  "qualification": "Diagnostic correctness/process only; no cold speedup or target achievement claimed."
+}

@@ -2,7 +2,9 @@
 -- domains and counters. No refinement certificate consumption is permitted.
 local path=arg[1] or '_ralph/runs/under80-20260912/artifacts/crease_offer_research_2/sbm_terrain_copy.lua'
 local function read(path)local f=assert(io.open(path,'r'));local s=f:read('*a');f:close();return s end
-local sources={read('Code/sbm_terrain_copy.lua'),read(path)}
+local pipe=assert(io.popen('git show 56fbf44:Code/sbm_terrain_copy.lua','r'))
+local previous=pipe:read('*a');assert(pipe:close())
+local sources={previous,read(path)}
 local function compile(s)
  local a=assert(s:find('\tlocal function offer_candidate(',1,true))
  local b=assert(s:find('\tlocal function refine_step(',a,true))

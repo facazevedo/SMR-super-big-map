@@ -1161,3 +1161,48 @@ collection-only native crease offers; the slow-map certificate lead needs generi
 workload/reuse admission to reduce unused learning before any production test.
 Do not discard the reference counterevidence or cold-benchmark unchanged v2 hoping
 that noise hides it. See decor_positive_cell_research.md for proof/domain limits.
+
+## Collection-only crease offer candidate v988 staged
+
+This turn is PROGRESS. Native discovery now retains simple per-width signed deltas
+only for immutable collect_axis; refinement/guide/write paths remain literal v987.
+Reuse consumed scratch operand a, with no extra grid allocations. Original scalar
+scanner remains at wider-width boundary positions. No decor prototype combined.
+
+Private tests: grid/packet2572 checks per boundary convention after fractional-copy
+coverage;3725 full track/order/domain/census/boundary/failure checks;150 ownership
+cases, all49 original allocation positions and new scratch-copy throw. The initial
+generated nil-width-selection bug was found before native execution and retained.
+
+Initial native37775/PID50392 at9ab4a4b CLOSED FAIL in setup: six negative get()
+assertions failed, while all2560 signed packet fixtures passed; no candidate wrapper
+installed. Follow-up56002/PID17572 at413956a CLOSED PASS: unsigned source/copy get
+readbacks, positive native bias proves signed storage intact. All104857600 source+
+destination cells and full reports match, cleanup/restoration/full final/rock PASS.
+Forward source274/229ms,destination4217/3275ms. Original failed setup preserved.
+
+Reverse40059/PID34972 at22a868a CLOSED PASS2572 native checks including fractional
+copy; full104857600 cells/returns/final/rock/private/process parity. Source216/244ms
+(no source speedup claim),destination4130/3172ms. Destination savings942/958ms are
+diagnostic only. Explicit private_process_audit.json PASS in both successful runs.
+
+Corrected shared OFFLINE f32 copy model after native evidence; no harness/engine
+change or relaxed assertion. All83 accepted-v987 commands passed in68533, artifacts
+v987_signed_copy_model_offline. A separate12-value signed/fractional model test passes.
+
+Production worktree is now staged candidate v988/generator300/sector76, EXACT draft2
+TerrainCopy source. Deployment remains acceptedv987; no game is live. Full88-command
+actual production suite84074 is RUNNING at this note; resume its handle before any
+source changes. HEAD22a868a until that gate closes. No cold sample has started.
+After PASS: commit/freeze and standard deploy sync/audit, then reference3/control
+versusv987_reference median86.606/control29.156. Only strict reference improvement
+permits allfive againstv987_matrix. Source review:v988_source_review.md. Goal active,
+target unmet; do not treat native timing or partial tests as release acceptance.
+
+Offline84074 CLOSED: its expired process handle was reconciled against all88
+zero-exit results, final source_hashes.json matching every actual production file,
+and fresh process inventory with no suite/Lua/game process. New tests pass2572
+packet/storage checks per boundary convention,3725 collection checks,150 ownership
+cases, exact native-shadow source and12 signed-copy model values. No source changed
+during the suite. Candidate may now be committed and frozen for its declared cold
+reference3/control; no performance acceptance yet.

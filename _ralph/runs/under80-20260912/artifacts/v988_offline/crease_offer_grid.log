@@ -1,0 +1,3 @@
+PASS collection offer grid oracle:	2572	checks; inclusive=false
+PASS collection offer grid oracle:	2572	checks; inclusive=true
+PASS 7 signed-packet/enumeration failure cases

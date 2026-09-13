@@ -89,3 +89,24 @@ matched regression and all83 accepted-v987 commands must pass before integration
 Other formats retain the old model. Public negative get() semantics are not modeled
 by this internal arithmetic double; oracles must use native bias for such checks.
 Next reverse full native order with unchanged candidate source.
+
+Reverse40059/PID34972 CLOSED normally at22a868a. Expanded native oracle2572 PASS,
+including six additional fractional signed-copy/bias checks. All104857600 height
+cells and complete returns again match, with cleanup/restoration and full final
+predecessor/rock parity. Source old216ms/new244ms (28ms slower), destination
+old4130ms/new3172ms (958ms faster). Do not claim a source-pass improvement.
+Explicit private/process audits PASS both successful full shadows, including four
+private-stream fields and fully flushed error-free normal shutdowns.
+
+Accepted-v987 baseline with corrected shared copy model passes all83 inherited
+commands. Actual native signed/fractional copy evidence validates the model fix;
+crease_offer_test no longer uses any private model override. The original native
+negative-readback and missing-mock-API failures remain archived/documented.
+
+Stage v988/generator300/sector76 from exact native-shadowed draft2, with no other
+production candidate combined. Actual Code must equal the tested artifact. The
+full v988 suite requires all83 inherited commands plus five actual source/offer/
+ownership/copy checks (88 total). Deployment remains v987 until this gate passes.
+Then freeze a committed candidate for reference3/control versus v987_reference
+(median86.606s, control29.156s), and only after strict reference improvement the
+five sites versus v987_matrix. Native milliseconds are not cold startup gains.

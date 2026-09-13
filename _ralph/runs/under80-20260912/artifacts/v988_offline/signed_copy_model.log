@@ -1,0 +1,1 @@
+PASS 12 signed/fractional f32 copy/bias values; fractional native check accompanies reverse shadow

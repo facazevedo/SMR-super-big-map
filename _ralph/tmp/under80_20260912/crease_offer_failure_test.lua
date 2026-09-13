@@ -1,12 +1,14 @@
 -- Every native allocation position plus the new scratch copy. This does not
 -- model engine logging-only errors; real normal-path parity remains mandatory.
 local function read(path)local f=assert(io.open(path,'r'));local s=f:read('*a');f:close();return s end
-local function compile(path)
- local body=assert(read(path):match('(local function BuildHeightStepDiscoveryIndex.-)\nend'))..'\nend'
+local function compile(source)
+ local body=assert(source:match('(local function BuildHeightStepDiscoveryIndex.-)\nend'))..'\nend'
  return assert(load(body..'\nreturn BuildHeightStepDiscoveryIndex'))()
 end
-local old=compile('Code/sbm_terrain_copy.lua')
-local new=compile('_ralph/runs/under80-20260912/artifacts/crease_offer_research_2/sbm_terrain_copy.lua')
+local pipe=assert(io.popen('git show 56fbf44:Code/sbm_terrain_copy.lua','r'))
+local previous=pipe:read('*a');assert(pipe:close())
+local old=compile(previous)
+local new=compile(read(arg[1] or '_ralph/runs/under80-20260912/artifacts/crease_offer_research_2/sbm_terrain_copy.lua'))
 local api=dofile('_ralph/tools/parity/native_grid_double.lua')
 api.GridMask=function(input,output,lo,hi)
  local w,h=input:size()
