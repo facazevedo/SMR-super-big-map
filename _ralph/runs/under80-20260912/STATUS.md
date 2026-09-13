@@ -1231,3 +1231,43 @@ or a genuinely stronger apron error certificate retaining all scalar corrections
 when inconclusive. Collection-only crease offers are exact but now have mixed
 cold counterevidence; do not repeat unchanged v988 or treat it as accepted.
 Goal stays active; neither the requested85s all-site threshold nor stored80s reached.
+
+## v989 staged and full87 offline PASS; cold testing not started
+
+This turn is PROGRESS: genuinely new workload admission variant of positive-cell
+obstruction certificates, four exact native shadows, actual production integration
+and all87 regressions passed. No new agent was spawned. v988 remains rejected.
+
+v3 uses existing full-query serial>=4096, allocating no certificate/descriptor/radius
+tables before admission. Afterward numeric algorithm equals priorv2 except two
+omitted explanatory comment lines.15198 actual admission/append/lifetime/negative
+checks and55681 admitted geometry/exhaustive checks pass, plus originalv2 and bounds.
+Initial source-equality runner FAILED solely on those two comment lines and shell
+continued to native launch; preserved failure and correction, not relabeled PASS.
+New exact comparison removes ONLY those explicitly asserted comments; all5 pass.
+
+Referenceforward79434/PID40324 at5c78882 CLOSED1806 exact/no cache, old16/new9ms.
+61Nforward52684/PID47328 ated0fa1b CLOSED775867 exact/578315 certified,2625/1862ms.
+61Nreverse80976/PID49748 ated0fa1b CLOSEDsame exactcounts,2534/1818ms.
+Referencereverse28492/PID15088 ated0fa1b CLOSED1806 exact/no cache,13/12ms.
+All four private_process_audit.json PASS, unique normally closed owned processes,
+full predecessor/grid/rock/private streams, query census and wrapper restoration.
+716..763ms slow-map saving is diagnostic; tiny reference differences are not a gain
+claim. Fresh game check clear. All previous v1/v2/cold-v988 counterevidence retained.
+
+Actual production worktree now v989/generator301/sector76/DecorTopUp.VERSION11.
+Only Code/sbm_decor_topup.lua, Code/sbm_version.lua and metadata.lua differ from
+accepted56fbf44/v987. Exact v3 factory wraps unchanged indexed predicate; complete
+Run/candidates/stamping/RNG source literalbaseline. TerrainCopy remains acceptedv987.
+Actual integrated-block source/15198 admission/55681 geometry checks pass. All83
+accepted commands plus4 actual/proof checks (87 total) CLOSED PASS in39125; final
+source hashes match. See v989_source_review.md and artifacts/v989_offline.
+
+NO running test/game and NO cold v989 sample. Deployed mod remains acceptedv987,
+38files with only the three expected candidate mismatches and no stale files.
+Next: keep committed candidate frozen; standard deploy sync/audit; reference3/control via
+measure_port.py againstv987_reference median86.606/control29.156. Only strict
+reference improvement and exact correctness permit five viaverify_port.py against
+v987_matrix. review_v974.py supports989/87tests/three production files. No rescue
+reruns, rejectedcandidatecombination, baseline relabel or new timing claims.
+Goal active; both requested85 and stored80 all-site thresholds remain unmet.

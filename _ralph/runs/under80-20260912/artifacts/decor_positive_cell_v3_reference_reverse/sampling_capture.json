@@ -1,0 +1,74 @@
+{
+  "payload": {
+    "value": {
+      "apron": {
+        "modified": 1910302,
+        "considered": 9216,
+        "shaped": 50,
+        "reason": "reserved",
+        "relief_rejections": 190,
+        "created": 73,
+        "unchanged": 23,
+        "error": "",
+        "ring_sectors": 2,
+        "slope_rejections": 6401,
+        "candidates": 116
+      },
+      "native_apron": {
+        "modified": 1910302,
+        "raster_cells": 5039674,
+        "shaped": 50,
+        "mask_fast_zero": 0,
+        "mask_cells_skipped": 0,
+        "scalar_mask_patches": 0,
+        "mask_samples": 0,
+        "native_mask_patches": 50,
+        "exact_samples": 396398,
+        "mask_fast_one": 11663,
+        "native_mask_cells": 5039674
+      },
+      "surface_found": true,
+      "crease": {
+        "source": {
+          "cells": 1787904,
+          "enumerated": 287,
+          "candidates": 287,
+          "sampled_rows": 3072,
+          "copies": 3072
+        },
+        "destination": {
+          "refinement": {
+            "writes": 16671,
+            "indexed": 16105,
+            "live": 765
+          },
+          "cells": 3391488,
+          "enumerated": 220059,
+          "candidates": 171387,
+          "sampled_rows": 32768,
+          "copies": 4
+        }
+      },
+      "rocket_sampling": {
+        "relief_reads": 108,
+        "pruned_range": 1164,
+        "edge_rejected": 1125,
+        "viable_candidates": 66,
+        "pruned_score": 0,
+        "selected_groups": 12,
+        "height_hits": 15530,
+        "height_misses": 13339,
+        "bounded": {
+          "universe": 5941,
+          "attempts": 3072,
+          "seed": 933144333,
+          "groups": 12,
+          "exhausted_groups": 0,
+          "continued_groups": 0
+        }
+      }
+    }
+  },
+  "stdout": "{\n  \"ok\": true,\n  \"exit\": 0,\n  \"data\": {\n    \"value\": {\n      \"apron\": {\n        \"modified\": 1910302,\n        \"considered\": 9216,\n        \"shaped\": 50,\n        \"reason\": \"reserved\",\n        \"relief_rejections\": 190,\n        \"created\": 73,\n        \"unchanged\": 23,\n        \"error\": \"\",\n        \"ring_sectors\": 2,\n        \"slope_rejections\": 6401,\n        \"candidates\": 116\n      },\n      \"native_apron\": {\n        \"modified\": 1910302,\n        \"raster_cells\": 5039674,\n        \"shaped\": 50,\n        \"mask_fast_zero\": 0,\n        \"mask_cells_skipped\": 0,\n        \"scalar_mask_patches\": 0,\n        \"mask_samples\": 0,\n        \"native_mask_patches\": 50,\n        \"exact_samples\": 396398,\n        \"mask_fast_one\": 11663,\n        \"native_mask_cells\": 5039674\n      },\n      \"surface_found\": true,\n      \"crease\": {\n        \"source\": {\n          \"cells\": 1787904,\n          \"enumerated\": 287,\n          \"candidates\": 287,\n          \"sampled_rows\": 3072,\n          \"copies\": 3072\n        },\n        \"destination\": {\n          \"refinement\": {\n            \"writes\": 16671,\n            \"indexed\": 16105,\n            \"live\": 765\n          },\n          \"cells\": 3391488,\n          \"enumerated\": 220059,\n          \"candidates\": 171387,\n          \"sampled_rows\": 32768,\n          \"copies\": 4\n        }\n      },\n      \"rocket_sampling\": {\n        \"relief_reads\": 108,\n        \"pruned_range\": 1164,\n        \"edge_rejected\": 1125,\n        \"viable_candidates\": 66,\n        \"pruned_score\": 0,\n        \"selected_groups\": 12,\n        \"height_hits\": 15530,\n        \"height_misses\": 13339,\n        \"bounded\": {\n          \"universe\": 5941,\n          \"attempts\": 3072,\n          \"seed\": 933144333,\n          \"groups\": 12,\n          \"exhausted_groups\": 0,\n          \"continued_groups\": 0\n        }\n      }\n    }\n  }\n}\n",
+  "stderr": ""
+}

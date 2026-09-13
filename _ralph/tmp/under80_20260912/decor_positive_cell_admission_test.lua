@@ -1,9 +1,11 @@
 local function read(path)local f=assert(io.open(path,'rb'));local s=f:read('*a'):gsub('\r\n','\n');f:close();return s end
-local body=assert(read('Code/sbm_decor_topup.lua'):match('(local function circle_hits%(.-)\nend'))..'\nend'
+local pipe=assert(io.popen('git show 56fbf44:Code/sbm_decor_topup.lua','r'))
+local source=pipe:read('*a'):gsub('\r\n','\n');assert(pipe:close())
+local body=assert(source:match('(local function circle_hits%(.-)\nend'))..'\nend'
 local old=assert(load(body..'\nreturn circle_hits'))()
 local indexed_body,n=body:gsub('then return true end','then return true, c end');assert(n==1)
 local indexed=assert(load(indexed_body..'\nreturn circle_hits'))()
-local actual=dofile('_ralph/tmp/under80_20260912/decor_positive_cell_v3.lua')(indexed)
+local actual=dofile(arg[1] or '_ralph/tmp/under80_20260912/decor_positive_cell_v3.lua')(indexed)
 local tests=0
 local function check(a,b,x,y,r)
     assert(old(a,x,y,r)==actual(b,x,y,r),'query mismatch')

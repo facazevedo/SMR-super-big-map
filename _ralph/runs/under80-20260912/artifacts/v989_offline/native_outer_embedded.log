@@ -1,0 +1,2 @@
+PASS private native outer mask: 6383 exact/failure checks; 26 allocation failure points
+PASS embedded integration helper: 46 calls; 40 qualified; 6 domain refusals

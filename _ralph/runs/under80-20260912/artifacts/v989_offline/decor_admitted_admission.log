@@ -1,0 +1,1 @@
+PASS workload admission:	15198	exact queries; no cache first4096, actual admission, append/lifetime, no negative cache

@@ -133,3 +133,16 @@ all1806 queries exact, no certificates or cache tables admitted (full1589+217),
 old16ms/new9ms. This tiny diagnostic difference is not a claimed speedup; the
 useful evidence is absence of v2's unused learning. Full predecessor/private/rock/
 process audit PASS. Next inspect slow61N and reverse order before any integration.
+
+v3 slow61N forward52684/PID47328 ated0fa1b CLOSED exact775867 queries,578315
+certified, old2625/new1862ms. Reverse80976/PID49748 atsameHEAD CLOSED exactsame
+counts, old2534/new1818ms. Both private/full/rock/process audits PASS. Reference
+reverse28492/PID15088 CLOSED1806 exact, no cache admitted, old13/new12ms; all audits
+PASS. Four native owned processes closed normally and no game remains.716..763ms
+slow-map saving is diagnostic only; tiny reference differences are not a speedup.
+
+v989 now stages the exact v3 factory as a local wrapper around the unchanged index,
+with only the private winning-circle second return. No v988 terrain changes combined.
+Full actual integration source/geometry/admission checks pass; comparators pinned
+to git56fbf44 so the new Code is never its own baseline. Deployment staysv987 until
+all87 commands pass. See v989_source_review.md for contract, bounds and cold gates.
