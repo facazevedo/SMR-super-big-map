@@ -60,6 +60,23 @@ The inspected `FunctionProfiler.txt` was a 0.353-second snapshot reporting 96.5%
 slowdown, dominated by asset/hex initialization. Its absolute times cannot estimate
 current full-map expansion savings.
 
+## Latest follow-through: collection-only offers tested as v988, not promoted
+
+The second alternative passed88 offline checks and full forward/reverse native
+repair shadows with exact104857600 cells each. Immutable dc88950 then passed full
+reference/five-site correctness in nine normally closed owned processes.
+Reference median84.919s improved onv98786.606s, but three of five sites regressed:
+15S+0.474s,24S+0.276s,17S+0.050s.45S improved0.814s and61N0.417s; worst91.708s.
+Candidate not promoted; acceptedv987 restored and38-file deployment audited.
+See v988_source_review.md for every sample and preserved counterevidence.
+
+Third alternative positive-cell certificates remains private: revised prototype
+saves719..1007 diagnostic ms on61N but adds15ms on the reference's small workload.
+Generic workload/reuse admission needs independent proof and measurement before
+any integration. Do not combine or cold-repeat unchanged rejected candidates.
+The all-site sub85 target is still unmet; neither diagnostic gains nor a reference
+median below85 imply consistent startup below85 across the validation matrix.
+
 ## Follow-through: first alternative accepted as v987
 
 The native outer-mask alternative passed all83 offline checks, six-site exact

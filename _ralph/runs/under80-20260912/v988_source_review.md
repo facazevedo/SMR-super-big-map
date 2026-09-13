@@ -62,3 +62,33 @@ control29.156s. Only strict reference improvement plus correctness permits five
 sites against v987_matrix:15S88.653,24S88.711,45S82.053,61N92.125,17S86.546s.
 Retain every sample and all site regressions; no rescue-repeat or baseline relabel.
 The full startup goal remains unmet until independently verified across all sites.
+
+## Closed cold result: correctness passes, not promoted
+
+Immutable candidate dc88950 ran reference session62220 and five-site session25948.
+Both CLOSED normally; all nine distinct owned processes exited with flushed logs.
+Reference samples84.381/84.919/86.222s, median84.919s versus86.606s: saving1.687s
+(1.948%). Control28.553s versus29.156s. All reference predecessor/repeat/private/
+full-grid/individual-rock gates pass. One reference sample remains above85s.
+
+| Site | v987 seconds | v988 seconds | Saving seconds |
+| --- | ---: | ---: | ---: |
+| 15S67E | 88.653 | 89.127 | -0.474 |
+| 24S74W | 88.711 | 88.987 | -0.276 |
+| 45S120W | 82.053 | 81.239 | 0.814 |
+| 61N136W | 92.125 | 91.708 | 0.417 |
+| 17S11W | 86.546 | 86.596 | -0.050 |
+
+All five exact predecessor/private-stream/full-grid/rock and native-control gates
+pass. Combined v988_all_ten_rules_review.json closes88 offline commands, all nine
+process identities, source/RNG/inherited visual review and audited38-file payload.
+It explicitly records all_scenarios_faster=false and under_target_reached=false.
+Correctness does not imply performance promotion. No failed or slow sample omitted,
+no rescue rerun, no retrospective baseline change or diagnostic-to-cold attribution.
+
+Despite the positive reference median, three site regressions and the remaining
+91.708s worst site do not qualify this as the next broad optimization. Candidate
+is NOT promoted. Restore only the three owned production files to exact56fbf44/v987;
+preserve dc88950, all tests/native shadows/cold artifacts and offline model correction.
+Fresh game check is clear; standard sync restoredv987 with38/38 audited files and
+no stale deletion. This exact restoration does not assert a new timing result.

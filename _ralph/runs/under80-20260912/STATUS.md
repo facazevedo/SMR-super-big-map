@@ -1206,3 +1206,28 @@ packet/storage checks per boundary convention,3725 collection checks,150 ownersh
 cases, exact native-shadow source and12 signed-copy model values. No source changed
 during the suite. Candidate may now be committed and frozen for its declared cold
 reference3/control; no performance acceptance yet.
+
+## v988 cold batch closed; not promoted, accepted v987 restored
+
+This turn is PROGRESS: all88 actual production checks passed, then immutable
+dc88950 completed reference62220 and five-site25948, nine unique normally closed
+owned processes, all exact full/private/rock/source/RNG/process reviews PASS.
+Reference84.381/84.919/86.222 median84.919s (v98786.606), control28.553s.
+Five15S89.127 (+0.474slower),24S88.987 (+0.276slower),45S81.239 (-0.814),
+61N91.708 (-0.417),17S86.596 (+0.050slower). Three site regressions retained.
+Review artifactv988_all_ten_rules_review.json explicitly says target unmet and
+all_scenarios_faster=false. No rescue repeat or predecessor relabel performed.
+
+Candidate NOT promoted despite improved reference median. Only three owned Code/
+metadata files restored via patch to exact56fbf44/v987/generator299/sector76.
+Standard sync38/38 auditPASS, no stale deletion, fresh check confirms no game.
+All source, tests and native/cold results preserved; signed f32 offline model
+correction remains. Accepted timing is stillv987reference86.606, worst61N92.125.
+No currently running test or game, no staged unvalidated production candidate.
+
+Next safe research: generic workload/reuse admission for positive-cell obstruction
+certificates (do not cold-test unchanged v2 hoping to hide its reference overhead),
+or a genuinely stronger apron error certificate retaining all scalar corrections
+when inconclusive. Collection-only crease offers are exact but now have mixed
+cold counterevidence; do not repeat unchanged v988 or treat it as accepted.
+Goal stays active; neither the requested85s all-site threshold nor stored80s reached.

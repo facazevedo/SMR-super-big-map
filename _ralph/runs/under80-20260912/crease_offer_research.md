@@ -110,3 +110,16 @@ ownership/copy checks (88 total). Deployment remains v987 until this gate passes
 Then freeze a committed candidate for reference3/control versus v987_reference
 (median86.606s, control29.156s), and only after strict reference improvement the
 five sites versus v987_matrix. Native milliseconds are not cold startup gains.
+
+## Cold experiment closed: exact but mixed timing, not promoted
+
+All88 actual production commands passed. Frozen candidate dc88950/v988 completed
+reference62220 and five-site25948, nine unique normally exited processes and all
+full predecessor/private/grid/rock/source/process checks PASS. Reference median
+84.919s versus86.606s improved, but15S89.127,24S88.987 and17S86.596 regressed
+by0.474/0.276/0.050s;45S81.239 and61N91.708 improved0.814/0.417s. Complete
+samples and qualifications are in v988_source_review.md and the cold artifacts.
+No rescue rerun or dropped sample. Sub85 all-site goal not reached. Candidate
+NOT promoted; production and deployed payload restored to exact56fbf44/v987,
+38/38 auditPASS, no game left. Keep native evidence, corrected offline model and
+dc88950 for research; do not cold-repeat unchanged v988 hoping for acceptance.
