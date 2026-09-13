@@ -1,0 +1,45 @@
+[
+  {
+    "command": [
+      "luac",
+      "-p",
+      "_ralph/tmp/under80_20260912/bootstrap_phase_profile.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "lua",
+      "_ralph/tmp/under80_20260912/bootstrap_phase_source_test.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "lua",
+      "_ralph/tmp/under80_20260912/bootstrap_phase_profile_test.lua"
+    ],
+    "exit": 1
+  },
+  {
+    "command": [
+      "git",
+      "diff",
+      "--exit-code",
+      "56fbf44",
+      "--",
+      "Code",
+      "metadata.lua",
+      "items.lua"
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "python",
+      "_ralph/tools/deploy.py",
+      "audit"
+    ],
+    "exit": 0
+  }
+]

@@ -1,0 +1,6 @@
+lua: bootstrap-phase-instrument:26: attempt to call a nil value (global 'ipairs')
+stack traceback:
+	bootstrap-phase-instrument:26: in local 'instrument'
+	_ralph/tmp/under80_20260912/bootstrap_phase_profile.lua:40: in main chunk
+	...ph/tmp/under80_20260912/bootstrap_phase_profile_test.lua:59: in main chunk
+	[C]: in ?
