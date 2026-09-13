@@ -1,0 +1,27 @@
+{
+  "status": "pass",
+  "issues": [],
+  "site": "61N136W",
+  "checkpoint": {
+    "commit": "c6b273b8930af00dcdea2d2d285b005baf1fe5ea",
+    "diagnostic_only": true
+  },
+  "predecessor": "_ralph\\runs\\under80-20260912\\artifacts\\v987_matrix\\61n136w_a",
+  "identity": [
+    53592,
+    134337780792366623
+  ],
+  "pair": {
+    "verdict": "pass",
+    "differences": [],
+    "note": "Runtime parity only; engine-RNG source audit is separate.",
+    "full_snapshot_differences": [],
+    "rock_grounding_differences": []
+  },
+  "private_fields_checked": 4,
+  "whole_decor_census_checked": true,
+  "variant": "accepted",
+  "decor_ms": 9635,
+  "normal_shutdown": true,
+  "qualification": "Correctness/process audit only; whole-decor diagnostic wall timing is not cold startup acceptance."
+}

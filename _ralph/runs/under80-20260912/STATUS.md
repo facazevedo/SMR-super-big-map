@@ -1807,3 +1807,24 @@ Production remains exact56fbf44/v987,38filedeploymentauditPASS,no livegame.
 Acceptedreference86.606/worst92.125s; all-site<80 and<85unmet. GoalACTIVE,
 notblocked. ThisturnPROGRESS: genuinelynewprivatecandidate,complete model/native
 decisionproofs, repairednative-specificdiagnosticissue andtestedcoarseexperiment.
+
+## Decor coarse experiment complete:204/264ms site-specific differences, keep private
+
+Previous turn PROGRESS provedprivatecandidate nativeprefix/outputequivalence.
+This turn ran declaredfrozenc6b273b old/new/new/old61NwholeRun experiment. Four
+fullcoarseauditsPASS exactpredecessor/grids/individualrocks/privatefourfields/
+normalflushedlogs/hooks/config. Wholedecor old_a9820/new_a9616/new_b9371/old_b
+9635ms:204/264ms differences. Notstartupacceptance, significance or all-sitegain.
+
+Driver23225 endedexit1after3successes whenfreshgameguard brieflyretainedalready
+normallyclosedPID55444. Recheckfoundno process/no livegame;old_bdirabsent;HEAD
+andallpayloadhashesmatched. Only unstartedold_b completedin12667exit0. Original
+3rowjournalpreserved,comparison.jsoncontainsvalidated4rowcompletion;no sample
+replacement/reuse/forcedtermination. Allfourgameprocessesterminal; no livegame.
+
+Smallprivatecandidate retained, notdeployed/coldpromoted; referencehas0finite
+prefixes andno demonstratedbenefit. Currentproduction/deploymentexactv987,
+accepted86.606/worst92.125s,all<80/<85unmet. Next independent callback-local
+objectobservationcensus per capture_observation_research.md. Actualsurface rock
+capture537/1212ms isonlypartof2203/2859ms parent; preserveallprobes/rays/contacts,
+don'tcountpost-first-accessUGcaptureaspreT1saving. ThisturnPROGRESS,goalACTIVE.

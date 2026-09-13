@@ -1,0 +1,532 @@
+{
+  "optimization_failures": [],
+  "maps": {
+    "Surface": {
+      "sites": [
+        {
+          "kind": "surface",
+          "verified": true,
+          "modified": true,
+          "r": 633,
+          "resource": "Metals",
+          "q": -279
+        },
+        {
+          "kind": "surface",
+          "verified": true,
+          "modified": true,
+          "r": 636,
+          "resource": "Metals",
+          "q": -279
+        },
+        {
+          "kind": "extractor",
+          "verified": true,
+          "modified": true,
+          "r": 639,
+          "resource": "Metals",
+          "q": -279
+        },
+        {
+          "kind": "extractor",
+          "verified": true,
+          "modified": true,
+          "r": 890,
+          "resource": "Concrete",
+          "q": -273
+        },
+        {
+          "kind": "surface",
+          "verified": true,
+          "modified": true,
+          "r": 417,
+          "resource": "Metals",
+          "q": -183
+        },
+        {
+          "kind": "surface",
+          "verified": true,
+          "modified": true,
+          "r": 416,
+          "resource": "Metals",
+          "q": -180
+        },
+        {
+          "kind": "surface",
+          "verified": true,
+          "modified": true,
+          "r": 419,
+          "resource": "Metals",
+          "q": -180
+        },
+        {
+          "kind": "extractor",
+          "verified": true,
+          "modified": true,
+          "r": 416,
+          "resource": "Metals",
+          "q": -177
+        },
+        {
+          "kind": "extractor",
+          "verified": true,
+          "modified": true,
+          "r": 95,
+          "resource": "Metals",
+          "q": 28
+        },
+        {
+          "kind": "surface",
+          "verified": true,
+          "modified": true,
+          "r": 96,
+          "resource": "Metals",
+          "q": 30
+        },
+        {
+          "kind": "surface",
+          "verified": true,
+          "modified": true,
+          "r": 92,
+          "resource": "Metals",
+          "q": 31
+        },
+        {
+          "kind": "extractor",
+          "verified": true,
+          "modified": true,
+          "r": 860,
+          "resource": "Concrete",
+          "q": 88
+        },
+        {
+          "kind": "surface",
+          "verified": true,
+          "modified": false,
+          "r": 9,
+          "resource": "Metals",
+          "q": 214
+        },
+        {
+          "kind": "surface",
+          "verified": true,
+          "modified": true,
+          "r": 883,
+          "resource": "Metals",
+          "q": 358
+        },
+        {
+          "kind": "surface",
+          "verified": true,
+          "modified": true,
+          "r": 880,
+          "resource": "Metals",
+          "q": 359
+        },
+        {
+          "kind": "extractor",
+          "verified": true,
+          "modified": true,
+          "r": 884,
+          "resource": "Metals",
+          "q": 360
+        },
+        {
+          "kind": "extractor",
+          "verified": true,
+          "modified": true,
+          "r": 881,
+          "resource": "Metals",
+          "q": 361
+        },
+        {
+          "kind": "surface",
+          "verified": true,
+          "modified": true,
+          "r": 24,
+          "resource": "Metals",
+          "q": 377
+        },
+        {
+          "kind": "extractor",
+          "verified": true,
+          "modified": true,
+          "r": 25,
+          "resource": "Metals",
+          "q": 379
+        },
+        {
+          "kind": "surface",
+          "verified": true,
+          "modified": true,
+          "r": 22,
+          "resource": "Metals",
+          "q": 381
+        },
+        {
+          "kind": "extractor",
+          "verified": true,
+          "modified": true,
+          "r": 30,
+          "resource": "Metals",
+          "q": 427
+        },
+        {
+          "kind": "extractor",
+          "verified": true,
+          "modified": true,
+          "r": 32,
+          "resource": "Metals",
+          "q": 428
+        },
+        {
+          "kind": "surface",
+          "verified": true,
+          "modified": true,
+          "r": 34,
+          "resource": "Metals",
+          "q": 429
+        },
+        {
+          "kind": "surface",
+          "verified": true,
+          "modified": true,
+          "r": 29,
+          "resource": "Metals",
+          "q": 430
+        },
+        {
+          "kind": "surface",
+          "verified": true,
+          "modified": true,
+          "r": 86,
+          "resource": "Metals",
+          "q": 462
+        },
+        {
+          "kind": "surface",
+          "verified": true,
+          "modified": true,
+          "r": 83,
+          "resource": "Metals",
+          "q": 463
+        },
+        {
+          "kind": "surface",
+          "verified": true,
+          "modified": true,
+          "r": 80,
+          "resource": "Metals",
+          "q": 465
+        },
+        {
+          "kind": "extractor",
+          "verified": true,
+          "modified": true,
+          "r": 79,
+          "resource": "Metals",
+          "q": 468
+        },
+        {
+          "kind": "extractor",
+          "verified": true,
+          "modified": true,
+          "r": 573,
+          "resource": "Metals",
+          "q": 515
+        },
+        {
+          "kind": "surface",
+          "verified": true,
+          "modified": true,
+          "r": 570,
+          "resource": "Metals",
+          "q": 516
+        },
+        {
+          "kind": "extractor",
+          "verified": true,
+          "modified": true,
+          "r": 567,
+          "resource": "Metals",
+          "q": 518
+        },
+        {
+          "kind": "surface",
+          "verified": true,
+          "modified": true,
+          "r": 572,
+          "resource": "Polymers",
+          "q": 518
+        },
+        {
+          "kind": "surface",
+          "verified": true,
+          "modified": true,
+          "r": 569,
+          "resource": "Metals",
+          "q": 519
+        },
+        {
+          "kind": "surface",
+          "verified": true,
+          "modified": true,
+          "r": 302,
+          "resource": "Metals",
+          "q": 600
+        },
+        {
+          "kind": "surface",
+          "verified": true,
+          "modified": true,
+          "r": 298,
+          "resource": "Metals",
+          "q": 602
+        },
+        {
+          "kind": "extractor",
+          "verified": true,
+          "modified": true,
+          "r": 300,
+          "resource": "Metals",
+          "q": 603
+        },
+        {
+          "kind": "surface",
+          "verified": true,
+          "modified": true,
+          "r": 284,
+          "resource": "Metals",
+          "q": 605
+        },
+        {
+          "kind": "surface",
+          "verified": true,
+          "modified": true,
+          "r": 285,
+          "resource": "Metals",
+          "q": 607
+        },
+        {
+          "kind": "extractor",
+          "verified": true,
+          "modified": true,
+          "r": 285,
+          "resource": "Metals",
+          "q": 610
+        },
+        {
+          "kind": "surface",
+          "verified": true,
+          "modified": true,
+          "r": 282,
+          "resource": "Metals",
+          "q": 613
+        },
+        {
+          "kind": "surface",
+          "verified": true,
+          "modified": false,
+          "r": 94,
+          "resource": "Metals",
+          "q": 644
+        },
+        {
+          "kind": "surface",
+          "verified": true,
+          "modified": false,
+          "r": 89,
+          "resource": "Polymers",
+          "q": 645
+        },
+        {
+          "kind": "extractor",
+          "verified": true,
+          "modified": false,
+          "r": 91,
+          "resource": "Metals",
+          "q": 646
+        }
+      ],
+      "audit": {
+        "passability_clears": 0,
+        "cluster_maximum": 12,
+        "verified_modified_mountain_rocket_pads": 11,
+        "cluster_resource_maximum": 5,
+        "first_rocket_failure": "",
+        "reason": "all outer resource terrain contracts verified",
+        "cluster_premium_excess": 0,
+        "rocket_failures": 0,
+        "extractor_buildable": 16,
+        "surface_passable": 27,
+        "resources": 43,
+        "resource_failures": 0,
+        "resource_clusters": 11,
+        "cluster_resource_excess": 0,
+        "resource_failure_breakdown": [],
+        "cluster_minimum": 8,
+        "minimum_cluster_resources": 3,
+        "first_resource_failure": "",
+        "cluster_extractor_excess": 0,
+        "rocket_failure_breakdown": [],
+        "cluster_anchor_failures": 0,
+        "cluster_weighted_composition_failures": 0,
+        "maximum_cluster_resources": 5,
+        "cluster_resource_minimum": 1,
+        "cluster_shortfall": 0,
+        "cluster_extractor_shortfall": 0,
+        "minimum_cluster_extractors": 1,
+        "cluster_extractor_maximum": 3,
+        "cluster_extractor_minimum": 1,
+        "cluster_resource_shortfall": 0,
+        "maximum_cluster_extractors": 2,
+        "rocket_pads": 11,
+        "cluster_excess": 0
+      },
+      "rock_grounding_stats": {
+        "apply_ms": 0,
+        "probes": 138844,
+        "unchanged": 1712,
+        "failures": 0,
+        "rays": 97361,
+        "max_lowering": 0,
+        "capture_ms": 1275,
+        "contacts": 18847,
+        "lowered": 0,
+        "eligible": 12189,
+        "total_lowering": 0
+      },
+      "aprons": {
+        "shaped": 41,
+        "slope_rejections": 6555,
+        "unchanged": 23,
+        "candidates": 108,
+        "modified": 1572499,
+        "considered": 9216,
+        "ring_sectors": 2,
+        "error": "",
+        "created": 64,
+        "reason": "reserved",
+        "relief_rejections": 145
+      },
+      "pads": [
+        {
+          "r": 62,
+          "q": 367,
+          "members": 3
+        },
+        {
+          "r": 573,
+          "q": 474,
+          "members": 5
+        },
+        {
+          "r": 602,
+          "q": -244,
+          "members": 3
+        },
+        {
+          "r": 905,
+          "q": 323,
+          "members": 4
+        },
+        {
+          "r": 69,
+          "q": 419,
+          "members": 4
+        },
+        {
+          "r": 441,
+          "q": -163,
+          "members": 4
+        },
+        {
+          "r": 294,
+          "q": 633,
+          "members": 3
+        },
+        {
+          "r": 94,
+          "q": 480,
+          "members": 4
+        },
+        {
+          "r": 129,
+          "q": 14,
+          "members": 3
+        },
+        {
+          "r": 90,
+          "q": 604,
+          "members": 3
+        },
+        {
+          "r": 255,
+          "q": 622,
+          "members": 4
+        }
+      ],
+      "height": {
+        "w": 8192,
+        "hash": "-9085980981232816858",
+        "bytes": 112972498,
+        "h": 8192
+      },
+      "name": "BlankTerraceBig_05",
+      "rocks_lowered": [],
+      "pass_grids": [
+        {
+          "w": 16384,
+          "hash": "5528589471290764588",
+          "bytes": 3287615,
+          "h": 16384
+        },
+        {
+          "w": 16384,
+          "hash": "5528589471290764588",
+          "bytes": 3287615,
+          "h": 16384
+        }
+      ]
+    },
+    "Underground": {
+      "sites": [],
+      "height": {
+        "w": 8192,
+        "hash": "8657195769887261703",
+        "bytes": 36184697,
+        "h": 8192
+      },
+      "rocks_lowered": [],
+      "pass_grids": [
+        {
+          "w": 16384,
+          "hash": "4512048170277667384",
+          "bytes": 589686,
+          "h": 16384
+        },
+        {
+          "w": 16384,
+          "hash": "4512048170277667384",
+          "bytes": 589686,
+          "h": 16384
+        }
+      ],
+      "name": "BlankUnderground_03",
+      "rock_grounding_stats": {
+        "apply_ms": 0,
+        "probes": 28327,
+        "unchanged": 298,
+        "failures": 0,
+        "rays": 15979,
+        "max_lowering": 0,
+        "capture_ms": 207,
+        "contacts": 1780,
+        "lowered": 0,
+        "eligible": 558,
+        "total_lowering": 0
+      },
+      "pads": []
+    }
+  }
+}

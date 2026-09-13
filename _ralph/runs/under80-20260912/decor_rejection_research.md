@@ -149,3 +149,46 @@ No code edits/heavy work during measurements. If no material whole-pass benefit
 appears, do not promote a helper-only/model win or proceed on an unmeasured promise.
 Reference lacks this finite workload, so this alone cannot solve either all-site
 threshold. Acceptedreference86.606/worst92.125s remain unchanged; goalACTIVE.
+
+## Whole-pass result: small diagnostic improvement; keep private
+
+Frozenc6b273b8930af00dcdea2d2d285b005baf1fe5ea, original declared61N order:
+
+| Run | Variant | Whole decor ms | PID | Creation FILETIME |
+| --- | --- | ---: | ---: | ---: |
+| old_a | accepted | 9820 | 46844 | 134337774870586219 |
+| new_a | candidate | 9616 | 40908 | 134337776672876202 |
+| new_b | candidate | 9371 | 55444 | 134337778450246102 |
+| old_b | accepted | 9635 | 53592 | 134337780792366623 |
+
+Full decor_rejection_coarse_audit PASS issues[] for all four, exact predecessor/
+full-grid/individual-rock/four-private-field outputs, normal flushed engine/daemon
+shutdowns, no engine errors, correct joined cells and hook/config restoration.
+Both-order differences204ms and264ms (roughly2-3% of this decor span). Separate
+fresh runs do not establish statistical significance or causal startup savings.
+There is no cold candidate, all-site improvement claim or target achievement.
+
+Driver23225 completed and journaled three successful samples, then STOPPED exit1
+before old_b because the fresh-game guard briefly still saw normally-closed
+PID55444. Authoritative recheck found no process and no live game; old_b output
+directory did not exist. Verified original HEAD and every declared payload hash,
+then ran ONLY the unstarted old_b via original profile.py in session12667, CLOSED
+exit0. No completed sample was rerun/replaced, no process was terminated/reused,
+and no frozen code was modified. decor_rejection_coarse_complete.py verifies
+all four audits/identities/checkpoint/hashes; results.json keeps the original
+three-row journal while comparison.json records the completed four-row sequence
+and interruption. This is not a claim that the original driver exited successfully.
+
+Decision: retain this qualified small private optimization for future justified
+work, but do not deploy it or launch a cold promotion based on a204..264ms
+site-specific effect. Reference never enters this finite loop, and its accepted
+86.606s remains above both thresholds. The slow map still needs more than7.125s
+for<85 and12.125s for<80. Do not present this as the large missing optimization.
+
+Next independent lead: measure callback-local object observation reuse in
+AnnotateDecorRelief and RockGrounding.Capture. The enclosing fresh surface spans
+2203/2859ms are NOT wholly repeated metadata. Accepted surface grounding stats
+attribute only537/1212ms,69640/138844 terrain probes,29309/97361 rays and6342/
+18847 contacts on reference/61N. Underground capture216/211ms in post-first-access
+snapshots must not be counted as pre-T1 savings. Count actual duplicate getter
+calls and stable same-callback values first; preserve every terrain/ray/contact.

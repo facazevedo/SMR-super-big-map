@@ -1,0 +1,50 @@
+{
+  "samples": [
+    {
+      "name": "v987_decor_rejection_coarse_old_61n_a",
+      "variant": "old",
+      "order": "a",
+      "decor_ms": 9820,
+      "identity": [
+        46844,
+        134337774870586219
+      ]
+    },
+    {
+      "name": "v987_decor_rejection_coarse_new_61n_a",
+      "variant": "new",
+      "order": "a",
+      "decor_ms": 9616,
+      "identity": [
+        40908,
+        134337776672876202
+      ]
+    },
+    {
+      "name": "v987_decor_rejection_coarse_new_61n_b",
+      "variant": "new",
+      "order": "b",
+      "decor_ms": 9371,
+      "identity": [
+        55444,
+        134337778450246102
+      ]
+    },
+    {
+      "name": "v987_decor_rejection_coarse_old_61n_b",
+      "variant": "old",
+      "order": "b",
+      "decor_ms": 9635,
+      "identity": [
+        53592,
+        134337780792366623
+      ]
+    }
+  ],
+  "old_new_saving_ms": 204,
+  "new_old_saving_ms": 264,
+  "completion": "Original driver23225 ended after three; only unstarted old_b resumed in12667 after authoritative fresh-game/hash checks.",
+  "original_journal_preserved": true,
+  "replacement_samples": 0,
+  "qualification": "Separate fresh runs; wall-time differences do not establish causation, significance or cold-start acceptance."
+}
