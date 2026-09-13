@@ -42,15 +42,28 @@ scenarios += [(site, 'v983_matrix_confirmation/' + site + '_a')
     for site in ('15s67e', '24s74w', '45s120w', '61n136w', '17s11w')]
 if args.remaining_from:
     previous = root / args.remaining_from
-    prior_batch = json.loads((previous / 'batch.json').read_text())
-    assert prior_batch['status'] == 'fail' and prior_batch['hashes'] == frozen
-    completed = {entry['site'] for entry in prior_batch['results']}
-    for site in completed:
-        assert json.loads((previous / site / 'predecessor_parity.json').read_text())['verdict'] == 'pass'
+    completed, retained, visited = set(), [], set()
+    while previous:
+        assert previous not in visited, 'Cyclic retention chain'
+        visited.add(previous)
+        prior_batch = json.loads((previous / 'batch.json').read_text())
+        assert prior_batch['status'] == 'fail' and prior_batch['hashes'] == frozen
+        for site, _ in scenarios:
+            directory = previous / site
+            if not directory.exists():
+                continue
+            # A post-profile exit observation can fail after full parity passed.
+            # Retain that verified run rather than rerunning it or rewriting its
+            # batch status. Any incomplete/failed site artifact refuses continuation.
+            assert json.loads((directory / 'predecessor_parity.json').read_text())['verdict'] == 'pass'
+            assert json.loads((directory / 'diagnostic_state.json').read_text())['status'] == 'pass'
+            assert 'Debug::Done()' in (directory / 'engine_flushed.log').read_text(errors='replace')
+            completed.add(site)
+        retained.append(str(previous))
+        previous = Path(prior_batch['retained_prior_batch']) if prior_batch.get('retained_prior_batch') else None
     scenarios = [(site, prior) for site, prior in scenarios if site not in completed]
-    # Only previously UNLAUNCHED scenarios can continue in a new artifact set.
-    assert all(not (previous / site).exists() for site, _ in scenarios)
-    state['retained_prior_batch'] = str(previous)
+    state['retained_prior_batch'] = str(root / args.remaining_from)
+    state['retained_batches'] = retained
     state['retained_completed_sites'] = sorted(completed)
     record()
 
@@ -59,7 +72,9 @@ def wait_owned_exit(directory):
     assert 'Debug::Done()' in (directory / 'engine_flushed.log').read_text(errors='replace')
     deadline = time.monotonic()+10
     observations = 0
-    query = ("Get-Process -Name MarsDebug -ErrorAction SilentlyContinue | "
+    # Get-Process -Name <absent> sets PowerShell's exit status1 even with
+    # SilentlyContinue. Enumerating then filtering makes an empty result success.
+    query = ("Get-Process | Where-Object { $_.ProcessName -eq 'MarsDebug' } | "
         "Select-Object @{Name='ProcessId';Expression={$_.Id}},"
         "@{Name='CreationFileTime';Expression={"
         "$_.StartTime.ToUniversalTime().ToFileTimeUtc()}} | ConvertTo-Json -Compress")

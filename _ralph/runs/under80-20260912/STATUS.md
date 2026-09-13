@@ -1023,3 +1023,20 @@ Also generated a PRIVATE integration draft in native_outer_integration_research.
 It parses, but is not deployed or fully tested. It keeps the original scalar
 domain branch and stages native failures before terrain installation. Integration
 review, regression/failure tests, and cold acceptance remain separate gates.
+
+The separate remaining-five batch27367 is also TERMINAL(exit1), after15S67E
+PID42012 completed normally:43 patches/687618 cells exact, kernel687ms/scalar1730ms,
+full predecessor/snapshot/rock parityPASS. Its post-profile process query returned
+PowerShell status1 for an absent named process, before recording the summary or
+launching24S. This is a runner observation bug, not a map parity failure. Artifacts
+and the batch error remain unchanged; OS/fresh checks confirm no game remains.
+
+Fixed the read-only query to enumerate then filter processes; extracted actual
+wait_owned_exit passes the absent-process test. Continuation now verifies completed
+site artifacts across retained batch ancestry, refuses incomplete/failed artifacts,
+and runs ONLY untouched sites. Reference and15S are retained, never rerun.
+
+Private integration embedded-helper suitePASS6382 checks/45 calls(40 qualified,
+5 domain refusals). It remains undeployed. Preparing the untouched four-site
+continuation under the same production/kernel/setup hashes and a new runner
+checkpoint. No harness changes and no cold performance claim.
