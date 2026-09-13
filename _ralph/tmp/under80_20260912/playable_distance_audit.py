@@ -15,11 +15,12 @@ for scope in scopes:
     if parent.get('environment')!='Underground' or parent.get('name')!='FindPrefabPos_Playable' or parent.get('generation')!=scope['generation']:issues.append('procedure identity')
     if not scope.get('completed') or not scope.get('hook_restored') or not scope.get('scratch_released') or not scope.get('comparator_self_test'):issues.append('completion/self-test')
     if scope['unions']!=p or scope['primary_frees']!=p or scope['place_frees']!=1 or scope['bounds_frees']!=1:issues.append('native lineage/free census')
-    if (scope['width'],scope['height'])!=(768,768) or scope['journal_events']!=2*p+n+w or scope['journal_events']>4096:issues.append('dimensions/journal')
+    if (scope.get('width'),scope.get('height'))!=(768,768) or scope.get('journal_events')!=2*p+n+w or scope.get('journal_events',0)>4096:issues.append('dimensions/journal')
     total=6*p+3*n+w+11;outputs=2*p+n
-    if scope['comparisons']!=total or scope['compared_cells']!=cells*total or scope['output_comparisons']!=outputs or scope['immutable_comparisons']!=total-outputs or scope['self_test_cells']!=3*cells:issues.append('full-grid comparison census')
+    if scope['comparisons']!=total or scope['compared_cells']!=cells*total or scope['output_comparisons']!=outputs or scope['immutable_comparisons']!=total-outputs or scope.get('self_test_cells')!=3*cells:issues.append('full-grid comparison census')
     for kind,count in [('primary',p),('secondary',n)]:
-        if sum(scope['return_shapes'][kind].values())!=count:issues.append('native tuple census')
+        shapes=scope['return_shapes'][kind]
+        if not isinstance(shapes,dict) or sum(shapes.values())!=count:issues.append('native tuple census')
     benchmarks=scope['benchmarks']
     if [b['order'] for b in benchmarks]!=['old_new','new_old'] or any(b['old_ms']<0 or b['new_ms']<0 for b in benchmarks):issues.append('both-order replay')
     for b in benchmarks:

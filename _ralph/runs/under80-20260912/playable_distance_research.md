@@ -90,3 +90,17 @@ independent Manhattan arithmetic, not a substitute for native field evidence.
 Next frozen reference shadow, then inherited full predecessor/private4/rock/
 normal-process audit plus exact field/census checks. Native observations must
 justify any subsequent61N shadow or production work. No speedup claim yet.
+
+First reference shadow at80ae093 completed session61592 with profile exit1:
+game PID52716/creation134337900369618355 closed normally, full predecessor and
+private4/individual-rock outputs preserved,95 spans/2 generations. Observer failed
+its initial comparator self-test before any field/journal/replay qualification.
+The inherited audit correctly fails; its normal_shutdown=false is a combined
+all-issues flag, while both flushed logs contain normal shutdown with no errors.
+All raw evidence retained in playable_distance_reference. No speed evidence.
+
+Diagnose the comparator separately with distance_comparator_contract.lua/.py:
+eight mapless U16 cases include 0-to-1, 1-to-0, adjacent positive values, maximum
+values and768x768. Record repacked/subtracted/absolute values plus native counts
+and independent full scalar differences. No weakening of comparison tolerance,
+production edits, or retry of unchanged shadow. Lua syntax/Python compile pass.

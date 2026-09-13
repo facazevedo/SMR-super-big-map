@@ -1,0 +1,37 @@
+{
+  "status": "fail",
+  "issues": [
+    "probe status/restoration/config",
+    "distance observer status/cleanup",
+    "actual distance/write census",
+    "completion/self-test",
+    "native lineage/free census",
+    "dimensions/journal",
+    "full-grid comparison census",
+    "native tuple census",
+    "native tuple census",
+    "both-order replay"
+  ],
+  "site": "14N134W",
+  "checkpoint": {
+    "commit": "80ae0937d4110e2c79f568a3bea4274169c854b0",
+    "diagnostic_only": true
+  },
+  "identity": [
+    52716,
+    134337900369618355
+  ],
+  "predecessor": "_ralph\\runs\\under80-20260912\\artifacts\\v987_reference\\14n134w_a",
+  "pair": {
+    "verdict": "pass",
+    "differences": [],
+    "note": "Runtime parity only; engine-RNG source audit is separate.",
+    "full_snapshot_differences": [],
+    "rock_grounding_differences": []
+  },
+  "private_fields_checked": 4,
+  "spans": 95,
+  "generations": 2,
+  "normal_shutdown": false,
+  "qualification": "Native procedure wall spans, including pre-logic stages. Not CPU time or cold acceptance; nested spans are not additive."
+}
