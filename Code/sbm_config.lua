@@ -16,6 +16,8 @@ local config = {}
 -- disabled in published builds.
 config.DebugLoggingEnabled = false
 config.DebugLoadingTimings = false
+-- Temporary 1.1 compatibility investigation; enable only for diagnostic sessions.
+config.DebugCompatibility = false
 config.DebugEnrichmentAudit = false
 config.DebugElevatorTraversal = false
 config.DebugElevatorSupply = false
@@ -861,6 +863,7 @@ C.ENABLE_MOD = true
 local debug_logging_enabled = as_bool(config.DebugLoggingEnabled)
 C.DEBUG_LOGGING_ENABLED = debug_logging_enabled
 C.DEBUG_LOADING_TIMINGS = debug_logging_enabled and as_bool(config.DebugLoadingTimings)
+C.DEBUG_COMPATIBILITY = debug_logging_enabled and as_bool(config.DebugCompatibility)
 C.DEBUG_ENRICHMENT_AUDIT = debug_logging_enabled and as_bool(config.DebugEnrichmentAudit)
 C.DEBUG_ELEVATOR_TRAVERSAL = debug_logging_enabled and as_bool(config.DebugElevatorTraversal)
 C.DEBUG_ELEVATOR_SUPPLY = debug_logging_enabled and as_bool(config.DebugElevatorSupply)

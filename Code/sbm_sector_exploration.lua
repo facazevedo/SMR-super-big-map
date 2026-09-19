@@ -31,7 +31,7 @@ local function UndergroundExplorationUiOn(city)
 	if (SuperBigMap.Config or {}).UNDERGROUND_EXPLORATION_UI ~= true or not city then return false end
 	local ok, map, env = pcall(function()
 		local current_map = city:GetMap()
-		return current_map, current_map and current_map.mapdata and current_map.mapdata.Environment
+		return current_map, current_map and current_map.mapdata and Engine.MapDataEnvironment(current_map.mapdata)
 	end)
 	-- IsExplorationAvailable_Queue is also consulted by vanilla InitSectors. Advertising the
 	-- informational underground UI before the atomic stretch is complete makes vanilla run
@@ -1527,7 +1527,7 @@ local function PatchInitialExplore()
 		local desired = map and map.SuperBigMapDesiredWidthTiles
 		local gen_t = map and map.SuperBigMapGeneratorWidthTiles
 		local expanded = type(desired) == "number" and type(gen_t) == "number" and desired > gen_t
-		local env = map and map.mapdata and map.mapdata.Environment
+		local env = map and map.mapdata and Engine.MapDataEnvironment(map.mapdata)
 		if not (expanded and env == "Surface"
 			and (SuperBigMap.Config or {}).STRETCH_VANILLA_START_SECTOR == true) then
 			-- Exact vanilla path with no reconstruction or extra random stream.
@@ -1618,14 +1618,15 @@ end
 -- Vanilla's RevealDeposits tail for one placed deposit: sector resource bookkeeping, the sector's
 -- revealed list, and the revealed flag its class uses. PlaceDeposit itself already registered the
 -- marker with the sector that owns the spawn position.
-local function RegisterStagedDeposit(city, record, marker, deposit, x, y)
+local function RegisterStagedDeposit(map, city, record, marker, deposit, x, y)
 	local get_sector = Global("GetMapSectorXY")
 	local is_kind = Global("IsKindOf")
+	local discovered = SuperBigMap.DepositRules.InitializeSurfaceDepositDiscovery(map, deposit)
 	if type(is_kind) == "function" then
 		if is_kind(deposit, "CrystalsBuilding") and type(deposit.SetRevealed) == "function" then
 			pcall(deposit.SetRevealed, deposit, true)
 		elseif is_kind(deposit, "ExplorableObject") then
-			deposit.revealed = true
+			deposit.revealed = discovered
 		end
 	end
 	if type(get_sector) ~= "function" then return end
@@ -1669,6 +1670,7 @@ local function ReplayStagedStartSpawns(map, city, staged, geom)
 				staged_markers[marker] = true
 				if marker.is_placed then
 					stats.already_placed = stats.already_placed + 1
+					SuperBigMap.DepositRules.InitializeSurfaceDepositDiscovery(map, marker.placed_obj)
 				else
 					local spawn = StagedDestinationSpawnPoint(record, marker, geom)
 					local deposit
@@ -1678,16 +1680,12 @@ local function ReplayStagedStartSpawns(map, city, staged, geom)
 					end
 					if deposit then
 						stats.placed = stats.placed + 1
-						-- Vanilla revealed this object during ITS start reveal, and the free
-						-- "Revealed"/moment-"true" FX carrier is played by the engine's own
-						-- ExplorableObject:GameInit from that reveal state. Any destination-side
-						-- pass that un-reveals the object before its GameInit runs deletes the
-						-- carrier from the map (b2-07: artifacts/b207_parsystem_verdict.md), so mark
-						-- it as vanilla's own and let those passes leave its reveal state alone.
+						-- Preserve placement provenance, not a discovery exemption. The final
+						-- destination sector controls visibility, including staged start spawns.
 						deposit.SuperBigMapStagedStartSpawn = true
 						if record.depth == "block" then stats.blockers = stats.blockers + 1 end
 						local sx, sy = spawn:xy()
-						RegisterStagedDeposit(city, record, marker, deposit, sx, sy)
+						RegisterStagedDeposit(map, city, record, marker, deposit, sx, sy)
 						placed_records[#placed_records + 1] = { record = record, marker = marker, deposit = deposit }
 					else
 						stats.failed = stats.failed + 1
@@ -1967,7 +1965,8 @@ local function RevealVanillaStartSectors(map)
 		-- for OnDepositsSpawned.
 		for i = 1, #placed_records do
 			local entry = placed_records[i]
-			if entry.record.depth == "subsurface" and entry.deposit.rare then
+			if entry.record.depth == "subsurface" and entry.deposit.rare
+				and entry.deposit.revealed == true then
 				local play_fx = Global("PlayFX")
 				local delayed = Global("DelayedCall")
 				if type(play_fx) == "function" and type(delayed) == "function" then
@@ -1987,8 +1986,8 @@ local function RevealVanillaStartSectors(map)
 			end)
 		end
 		-- The scan gate (DepositRules.EnforceScanGateAfterStretch) despawns deposits in unscanned
-		-- sectors. Part of vanilla's own start footprint necessarily lands in one, so the stretched
-		-- winner rect travels with the map exactly as the footprint path published it.
+		-- sectors. Preserve physical start deposits in the transformed footprint; their
+		-- discovery was initialized at placement to wait for the actual sector scan.
 		map.SuperBigMapStartFootprintX0 = x0
 		map.SuperBigMapStartFootprintY0 = y0
 		map.SuperBigMapStartFootprintX1 = x1
@@ -2059,7 +2058,10 @@ local function RevealVanillaStartSectors(map)
 			local sweep_valid = Global("IsValid")
 			pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
 				if not rawget(marker, "is_placed") then return end
-				if source_membership(marker) ~= false then return end
+				if source_membership(marker) ~= false then
+					SuperBigMap.DepositRules.InitializeSurfaceDepositDiscovery(map, marker.placed_obj)
+					return
+				end
 				local obj = rawget(marker, "placed_obj")
 				if obj and type(sweep_done) == "function"
 					and (type(sweep_valid) ~= "function" or sweep_valid(obj)) then
@@ -2132,6 +2134,9 @@ local function RevealVanillaStartSectors(map)
 					error("stretched start footprint " .. depth .. " placement failed: " .. tostring(count))
 				end
 				placed_extra = placed_extra + (tonumber(count) or 0)
+				for i = 1, #list do
+					SuperBigMap.DepositRules.InitializeSurfaceDepositDiscovery(map, list[i].placed_obj)
+				end
 			end
 		end
 		-- Vanilla's rare-anomaly "Revealed" FX (a persistent ParSystem carrier) fires from
@@ -2142,7 +2147,7 @@ local function RevealVanillaStartSectors(map)
 		for i = 1, #pending.subsurface do
 			local marker = pending.subsurface[i].marker
 			local obj = rawget(marker, "placed_obj")
-			if obj and rawget(obj, "rare") then
+			if obj and rawget(obj, "rare") and obj.revealed == true then
 				local play_fx = Global("PlayFX")
 				local delayed = Global("DelayedCall")
 				if type(play_fx) == "function" and type(delayed) == "function" then
@@ -2164,7 +2169,7 @@ local function RevealVanillaStartSectors(map)
 		end
 		-- The scan gate (DepositRules.EnforceScanGateAfterStretch, step 5) despawns deposits that
 		-- sit in unscanned sectors. Part of vanilla's own start footprint necessarily does, so the
-		-- box travels with the map and that pass exempts it.
+		-- box travels with the map to preserve physical placement, not badge visibility.
 		map.SuperBigMapStartFootprintX0 = x0
 		map.SuperBigMapStartFootprintY0 = y0
 		map.SuperBigMapStartFootprintX1 = x1
@@ -2210,7 +2215,8 @@ local function RevealVanillaStartSectors(map)
 					end)
 				if marker then
 					marker.revealed = true
-					marker:PlaceDeposit()
+					local placed = marker:PlaceDeposit()
+					SuperBigMap.DepositRules.InitializeSurfaceDepositDiscovery(map, placed)
 				end
 			end
 		end)

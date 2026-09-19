@@ -349,7 +349,7 @@ local function InitialBuildableDeferralInfo(map, self)
 	-- generator is guaranteed to run ResolveBuildable next. Never infer eligibility from
 	-- persistent mapdata size markers: save loads and underground maps must fail open to
 	-- the native Build path.
-	if type(mapdata) ~= "table" or mapdata.Environment ~= "Surface"
+	if type(mapdata) ~= "table" or Engine.MapDataEnvironment(mapdata) ~= "Surface"
 		or map.SuperBigMapExpansionPending ~= true then
 		return nil
 	end

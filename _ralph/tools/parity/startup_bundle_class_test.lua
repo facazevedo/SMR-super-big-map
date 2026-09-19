@@ -33,7 +33,8 @@ local function world(engine,clone,mode)
   if mode=='native_nil' then return nil end
   return false
  end
- local function batch(obj,list)
+ local function batch(obj,list,...)
+  if type(list)~='table' then list={list,...} end
   counts.batch=counts.batch+1
   if mode=='batch_error' then error('batch failure',0) end
   for _,kind in ipairs(list)do if obj.kinds[kind] then return true end end

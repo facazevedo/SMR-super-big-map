@@ -32,6 +32,9 @@ local function LoadingLifecycle(event, map, data)
 		or map.SuperBigMapExpanded == true or map.SuperBigMapDesiredWidthTiles ~= nil
 		or map.SuperBigMapVanillaSourceMigration == true)
 	if not expansion_related and SuperBigMap.State.vanilla_source_migration_active ~= true then return end
+	if type(diagnostics.CompatibilityMap) == "function" then
+		diagnostics.CompatibilityMap("lifecycle: " .. tostring(event), map)
+	end
 	if event == "ChangingMap after expansion allocation plan"
 		and type(diagnostics.LoadingStart) == "function" then
 		diagnostics.LoadingStart("expanded map allocation", map, data)
@@ -109,7 +112,7 @@ local function ApplyUndergroundDarknessState(map)
 	local hr = Global("hr")
 	if type(hr) ~= "table" then return false end
 	local State = SuperBigMap.State
-	local environment = map and map.mapdata and map.mapdata.Environment
+	local environment = map and map.mapdata and Engine.MapDataEnvironment(map.mapdata)
 	local should_reveal = State.expansion_session_active == true and IsModMap(map)
 		and environment == "Underground"
 		and ((SuperBigMap.Config or {}).UNDERGROUND_REVEAL_ALL_DARKNESS == true
@@ -455,7 +458,7 @@ function Lifecycle.Apply(map, rebuild, skip_buildable_rebuild)
 		SafeCall(elevator_button.Show)
 	end
 	ApplyUndergroundDarknessState(map)
-	if map.mapdata and map.mapdata.Environment == "Underground"
+	if map.mapdata and Engine.MapDataEnvironment(map.mapdata) == "Underground"
 		and map.SuperBigMapUndergroundStretchDone == true
 		and (SuperBigMap.Config or {}).UNDERGROUND_REVEAL_ALL_ENRICHMENTS_FOR_TESTING == true then
 		local deposits = SuperBigMap.DepositRules
@@ -468,7 +471,7 @@ end
 
 local function StretchEligibleForDeferredBounds(map)
 	local config = SuperBigMap.Config or {}
-	local env = map and map.mapdata and map.mapdata.Environment
+	local env = map and map.mapdata and Engine.MapDataEnvironment(map.mapdata)
 	local desired = map and map.SuperBigMapDesiredWidthTiles
 	local generator = map and map.SuperBigMapGeneratorWidthTiles
 	return IsModMap(map)
@@ -478,7 +481,7 @@ end
 
 local function ShouldSkipNewMapBuildableRebuild(map)
 	local config = SuperBigMap.Config or {}
-	local env = map and map.mapdata and map.mapdata.Environment
+	local env = map and map.mapdata and Engine.MapDataEnvironment(map.mapdata)
 	local buildable = map and map.buildable
 	return config.OPTIMIZE_POSTLOAD_DEFERRED_BOUNDS == true
 		and config.OPTIMIZE_STRETCH_DEFERRED_REBUILDS == true
@@ -491,6 +494,7 @@ end
 
 -- Install order (dependencies first); restore is the exact reverse.
 local APPLY_ORDER = {
+	"LegacyPathfinder",
 	"PregameToggle",
 	"LoadingUI",
 	"MapGeneration",
@@ -526,6 +530,7 @@ local RESTORE_ORDER = {
 	"MapGeneration",
 	"LoadingUI",
 	"PregameToggle",
+	"LegacyPathfinder",
 }
 
 local function run_phase(order, method, skip_module)
@@ -750,7 +755,7 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 	if HandleModEditorMap() then return end
 	LoadingLifecycle("PostNewMapLoaded", map, { mapdata = tostring(mapdata) })
 	local gen = SuperBigMap.MapGeneration
-	local env = map and map.mapdata and map.mapdata.Environment
+	local env = map and map.mapdata and Engine.MapDataEnvironment(map.mapdata)
 	if IsModMap(map) and gen and type(gen.PatchDeferredUndergroundAccess) == "function" then
 		gen.PatchDeferredUndergroundAccess("PostNewMapLoaded:" .. tostring(env or "?"))
 	end
@@ -945,6 +950,16 @@ RegisterOnce("LoadGame", function()
 	if gen and type(gen.RecoverLoadedUndergroundReadiness) == "function" then
 		gen.RecoverLoadedUndergroundReadiness("LoadGame")
 	end
+	-- Presets are freshly loaded, not saved with terrain. Normalize BOTH maps:
+	-- loading an underground save otherwise leaves the offscreen surface with
+	-- vanilla dimensions/border even though its native saved pass grid is full size.
+	for _, loaded in ipairs(Global("LoadedMaps") or {}) do
+		if IsModMap(loaded) then
+			if gen and type(gen.SyncMapDataToGrids) == "function" then gen.SyncMapDataToGrids(loaded) end
+			local bounds = SuperBigMap.MapBounds
+			if bounds and type(bounds.ResetMapDataBounds) == "function" then bounds.ResetMapDataBounds(loaded) end
+		end
+	end
 	if gen and type(gen.PatchDeferredUndergroundAccess) == "function" then
 		gen.PatchDeferredUndergroundAccess("LoadGame")
 	end
@@ -980,6 +995,12 @@ RegisterOnce("LoadGame", function()
 	local sectors = SuperBigMap.SectorExploration
 	if sectors and type(sectors.EnsureSectorsBuilt) == "function" and current then
 		sectors.EnsureSectorsBuilt(current, "LoadGame")
+	end
+	local deposits = SuperBigMap.DepositRules
+	if deposits and type(deposits.RestorePendingSurfaceDiscovery) == "function" then
+		for _, loaded in ipairs(Global("LoadedMaps") or {}) do
+			deposits.RestorePendingSurfaceDiscovery(loaded)
+		end
 	end
 	-- Re-invalidate so the expanded terrain gets textures painted on. The save preserves the
 	-- type/height grid data but the renderer may not stream textures into the expanded area
@@ -1029,7 +1050,7 @@ RegisterOnce("CurrentMapChange", function(map_slot, map)
 		State.overview_switch_source_environment = nil
 		return
 	end
-	local environment = map and map.mapdata and map.mapdata.Environment
+	local environment = map and map.mapdata and Engine.MapDataEnvironment(map.mapdata)
 	if IsModMap(map) and (environment == "Surface" or environment == "Underground") then
 		State.overview_switch_source_map = map
 		State.overview_switch_source_environment = environment
@@ -1072,7 +1093,7 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 	-- restores a local blocked bit. The audit uses terrain.SetPassability only on a failed live
 	-- footprint; it neither changes heights nor opens unrelated mountain terrain.
 	local terrain_copy = SuperBigMap.TerrainCopy
-	if IsModMap(map) and map and map.mapdata and map.mapdata.Environment == "Surface"
+	if IsModMap(map) and map and map.mapdata and Engine.MapDataEnvironment(map.mapdata) == "Surface"
 		and type(map.SuperBigMapOuterResourceTerrainSites) == "table"
 		and terrain_copy and type(terrain_copy.AuditOuterResourceTerrain) == "function" then
 		local call_ok, audit_ok, audit_stats = pcall(
@@ -1148,7 +1169,7 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 		local source_environment = State.overview_switch_source_environment
 		State.overview_switch_source_map = nil
 		State.overview_switch_source_environment = nil
-		local target_environment = map and map.mapdata and map.mapdata.Environment
+		local target_environment = map and map.mapdata and Engine.MapDataEnvironment(map.mapdata)
 		local surface_underground_switch = source_map and source_map ~= map
 			and ((source_environment == "Surface" and target_environment == "Underground")
 				or (source_environment == "Underground" and target_environment == "Surface"))
@@ -1398,6 +1419,8 @@ local function ReinstallTerrainCriticalPatches(reason)
 		return false
 	end
 	-- The session gate above is intentional even though the hooks are internally map-gated.
+	local legacy = SuperBigMap.LegacyPathfinder
+	if legacy then legacy.ApplyModBehavior() end
 	local bounds = SuperBigMap.MapBounds
 	local bounds_fn = bounds and (bounds.ReinstallGlobalHooks or bounds.ApplyModBehavior)
 	local bounds_ok, bounds_result = false, "module/function unavailable"

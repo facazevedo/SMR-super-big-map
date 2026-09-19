@@ -241,7 +241,7 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 		-- zero-deficit run is still readable per map instead of collapsing into one shared slot.
 		map.SuperBigMapDecorEnginePassReport = stats
 		local mapdata = map.mapdata
-		local environment = type(mapdata) == "table" and tostring(mapdata.Environment or "") or ""
+		local environment = type(mapdata) == "table" and tostring(Engine.MapDataEnvironment(mapdata) or "") or ""
 		stats.environment = environment
 		if environment == "Underground" then
 			if not cfg_bool("STRETCH_DECOR_ENGINE_PASS_UNDERGROUND", false) then

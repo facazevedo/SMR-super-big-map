@@ -39,7 +39,7 @@ local function MapData(map)
 	if type(map) ~= "table" and type(map) ~= "userdata" then return data end
 	local mapdata = map.mapdata
 	data.map = tostring(type(mapdata) == "table" and mapdata.id or map.name or "?")
-	data.environment = tostring(type(mapdata) == "table" and mapdata.Environment or "?")
+	data.environment = tostring(type(mapdata) == "table" and Engine.MapDataEnvironment(mapdata) or "?")
 	data.slot = tostring(map.slot)
 	data.map_ref = tostring(map)
 	data.mapdata_size = tostring(type(mapdata) == "table" and mapdata.Width or nil)
@@ -86,6 +86,42 @@ local function Print(channel, event, data)
 end
 
 local Diagnostics = {}
+
+-- Temporary, observational breadcrumbs. No native connectivity queries are made:
+-- the failing constructor can leave its internal structure uninitialized.
+function Diagnostics.CompatibilityEnabled()
+	return Enabled() and Config().DEBUG_COMPATIBILITY == true
+end
+
+function Diagnostics.Compatibility(event, data, map)
+	if not Diagnostics.CompatibilityEnabled() then return false end
+	local out = CopyData(data, map)
+	out.ticks = Now()
+	return Print("Compatibility", event, out)
+end
+
+function Diagnostics.CompatibilityMap(event, map)
+	if not Diagnostics.CompatibilityEnabled() then return false end
+	local constants = Global("const") or {}
+	local md = map and map.mapdata or {}
+	local tile, pass_tile = constants.HeightTileSize, constants.PassTileSize
+	local patch = constants.ConnectivityPatchSize
+	local data = { width_tiles = md.Width, height_tiles = md.Height,
+		pass_border = md.PassBorder, height_tile = tile, pass_tile = pass_tile,
+		connectivity_patch_cells = patch, lua_revision = Global("LuaRevision") }
+	if type(md.Width) == "number" and type(md.Height) == "number"
+		and type(tile) == "number" and type(pass_tile) == "number" and pass_tile > 0
+		and type(patch) == "number" and patch > 0 then
+		local columns = math.ceil(md.Width * tile / pass_tile / patch)
+		local rows = math.ceil(md.Height * tile / pass_tile / patch)
+		local stride = 1
+		while stride < columns do stride = stride * 2 end
+		-- Full backing estimate, not a claim about native allocation/pass-border treatment.
+		data.full_backing_patch_columns, data.full_backing_patch_rows = columns, rows
+		data.full_backing_layer_slots = stride * rows
+	end
+	return Diagnostics.Compatibility(event, data, map)
+end
 
 function Diagnostics.LoadingEnabled()
 	return Enabled() and Config().DEBUG_LOADING_TIMINGS == true

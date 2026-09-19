@@ -39,6 +39,24 @@ end
 do
 	local register = Global("MapVar")
 	local registry = Global("MapVarValues")
+	if type(register) == "function" and (type(registry) ~= "table" or registry.SuperBigMapScanHiddenDeposits == nil) then
+		register("SuperBigMapScanHiddenDeposits", false)
+	end
+	if type(register) == "function" and (type(registry) ~= "table" or registry.SuperBigMapForcedImpassSource == nil) then
+		-- 1.1's generator adds a forced-impassability raster. Persist its original
+		-- compact grid bytes until deferred underground stretching consumes it.
+		register("SuperBigMapForcedImpassSource", false)
+	end
+	-- First access may occur in a different process. These are scalar/value-only
+	-- generator records, not generator instances, closures or scratch grids.
+	for _, name in ipairs({
+		"SuperBigMapPlacementSeed", "SuperBigMapDeferredUndergroundWonderRecords",
+		"SuperBigMapDeferredUndergroundWondersPending", "SuperBigMapDeferredUndergroundWonderCount",
+	}) do
+		if type(register) == "function" and (type(registry) ~= "table" or registry[name] == nil) then
+			register(name, false)
+		end
+	end
 	if type(register) == "function" and (type(registry) ~= "table" or registry["SuperBigMapExpanded"] == nil) then
 		register("SuperBigMapExpanded", false)
 	end
@@ -196,13 +214,13 @@ local function CustomSectorStatus(map)
 	end
 
 	local mapdata = MapData(map)
-	if mapdata and mapdata.Environment ~= "Surface" then
+	if mapdata and Engine.MapDataEnvironment(mapdata) ~= "Surface" then
 		-- Expanded UNDERGROUND maps get the 20x20 custom grid too when the underground stretch is
 		-- enabled (config STRETCH_UNDERGROUND): same layout math, driven by the same mapdata
 		-- markers (SuperBigMapOriginalWidthTiles set by the prepare step). Without this exemption
 		-- the underground otherwise keeps vanilla 10x10 sectors over the 8192 allocation.
 		local underground_ok = cfg_bool("STRETCH_UNDERGROUND", false)
-			and mapdata.Environment == "Underground"
+			and Engine.MapDataEnvironment(mapdata) == "Underground"
 		if not underground_ok then
 			return false, "not surface"
 		end
@@ -369,7 +387,7 @@ local function DescribeMap(map)
 	return string.format(
 		"map=%s env=%s terrain=%s x %s mapdata=%s x %s sourceTiles=%s desiredTiles=%s custom=%s reason=%s count=%s const=%s",
 		MapName(map),
-		tostring(mapdata and mapdata.Environment),
+		tostring(mapdata and Engine.MapDataEnvironment(mapdata)),
 		tostring(width),
 		tostring(height),
 		tostring(mapdata and mapdata.Width),

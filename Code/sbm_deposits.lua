@@ -204,7 +204,7 @@ end
 -- (Declared early: RegisterClonedMarkers and both top-ups below use it.)
 local function IsUndergroundMap(map)
 	local mapdata = map and map.mapdata
-	return type(mapdata) == "table" and mapdata.Environment == "Underground"
+	return type(mapdata) == "table" and Engine.MapDataEnvironment(mapdata) == "Underground"
 end
 
 local function SetRevealedState(obj, revealed)
@@ -569,7 +569,8 @@ local function IsReachableFromUndergroundEntrance(map, pt, known_q, known_r)
 			and type(pf_api.HasPosPath) == "function" then
 			ok, result = pcall(pf_api.HasPosPath, map, seed, target, 1)
 		end
-		if ok and result == true then
+		-- 1.1 ConnectivityCheck returns a distance (including zero), not true.
+		if ok and (result == true or type(result) == "number" and result >= 0) then
 			reachable = true
 			break
 		elseif not ok then
@@ -9331,9 +9332,12 @@ function DepositRules.SchedulePostDeferredSurfaceResourceTopUpCensus(map, reason
 	end
 	map.SuperBigMapOuterResourceCensusScheduled = true
 	local function run()
-		local sleep = Global("Sleep")
-		if type(sleep) == "function" then sleep(100) end
-		local ok, stats = DepositRules.CensusFinalOuterResourceTopUps(map,
+		-- Game-time threads can be saved while paused. Resolve the module AFTER
+		-- sleeping: capturing DepositRules/Global serializes the whole transient
+		-- mod graph (native functions, UI and scratch grids) into the save.
+		Sleep(100)
+		local live = rawget(_G, "SuperBigMap")
+		local ok, stats = live.DepositRules.CensusFinalOuterResourceTopUps(map,
 			"post-deferred-GameInit " .. tostring(reason or "surface final"), false)
 		map.SuperBigMapOuterResourceCensusPostGameInit = stats
 		map.SuperBigMapOuterResourceCensusPostGameInitOK = ok == true
@@ -11147,18 +11151,68 @@ end
 
 DepositRules.IsResourceDepositMarker = IsResourceDepositMarker
 
--- Reveal the clones inside a scanned sector's area (called from the SectorScanned handler).
+-- Placement parity does not grant discovery in a different destination sector.
+-- Called in the existing start-placement loop, before deferred GameInit/FX.
+-- Return false only when discovery must wait for the actual destination scan.
+function DepositRules.InitializeSurfaceDepositDiscovery(map, obj)
+	local grid = SuperBigMap.SectorGrid
+	if not map or not obj or not grid or not grid.IsModMap(map) or IsUndergroundMap(map)
+		or not map.City or cfg().STRETCH_ENFORCE_SCAN_GATE ~= true then return true end
+	if not IsScanGatedDeposit(obj) and not IsKindOfSafe(obj, "TerrainDeposit") then return true end
+	local pos = ObjectPos(obj)
+	if not pos then return true end
+	local x, y = pos:xy()
+	local sector = SectorAtPoint(map, x, y)
+	if sector and (sector.status == "scanned" or sector.status == "deep scanned") then return true end
+	local pending = map.SuperBigMapScanHiddenDeposits
+	if type(pending) ~= "table" then pending = {}; map.SuperBigMapScanHiddenDeposits = pending end
+	pending[obj] = true
+	obj.revealed = false
+	obj:SetVisible(false)
+	return false
+end
+
+-- Only the small set of start objects awaiting discovery is visited, never the
+-- whole map. The MapVar survives saves; TerrainDeposit's default-true flag does
+-- not, so restore that flag from the pending set on load before UI display.
+function DepositRules.RestorePendingSurfaceDiscovery(map, scanned_sector)
+	local grid = SuperBigMap.SectorGrid
+	local pending = map and map.SuperBigMapScanHiddenDeposits
+	if type(pending) ~= "table" or not grid or not grid.IsModMap(map) or IsUndergroundMap(map)
+		or not map.City or cfg().STRETCH_ENFORCE_SCAN_GATE ~= true then return end
+	local valid, restored = Global("IsValid"), 0
+	for obj in pairs(pending) do
+		if type(valid) == "function" and not valid(obj) then
+			pending[obj] = nil
+		else
+			local pos = ObjectPos(obj)
+			local x, y
+			if pos then x, y = pos:xy() end
+			local sector = pos and SectorAtPoint(map, x, y)
+			if not scanned_sector or sector == scanned_sector then
+				if sector and (sector.status == "scanned" or sector.status == "deep scanned") then
+					pending[obj] = nil
+					SetRevealedState(obj, true)
+					if type(obj.PickVisibilityState) ~= "function" then
+						local show_icons = Global("ShouldShowResourceIcons")
+						obj:SetVisible(Global("g_SignsVisible") == true
+							and type(show_icons) == "function" and show_icons())
+					end
+					restored = restored + 1
+				elseif not scanned_sector then
+					obj.revealed = false
+					obj:SetVisible(false)
+				end
+			end
+		end
+	end
+	return restored
+end
+
 -- STRETCH scan-gate enforcement (config STRETCH_ENFORCE_SCAN_GATE). The stretch moves every
--- generated marker AND every already-spawned deposit/anomaly to position * (full/source). The
--- start sector's enrichments were REVEALED at generation; after the move they land in OTHER,
--- unscanned sectors -- still visible (the "enrichments visible in G15/H15 while only K11 is
--- scanned" report). Conversely, markers that moved INTO the already-scanned start sector never
--- got their scan-time placement. Fix both:
---   A) any revealed scan-gated deposit/anomaly now sitting in an UNSCANNED sector is hidden and
---      flagged SuperBigMapEnrichmentClone, so the existing OnSectorScanned reveal shows it when its
---      sector is actually scanned;
---   B) every SCANNED sector gets vanilla's own RevealDeposits over its markers (places/reveals
---      what moved in), plus a reveal of any hidden scan-gated objects inside it.
+-- generated marker to position * (full/source). Start replay initializes discovery at placement;
+-- this existing pass keeps physical surface-spawn parity and fills the scanned destination.
+-- It does not add a whole-map badge-visibility sweep.
 function DepositRules.EnforceScanGateAfterStretch(map)
 	if not ExpansionStepEnabled(2) or not ExpansionStepEnabled(20) then return end
 	if cfg().STRETCH_ENFORCE_SCAN_GATE ~= true then return end
@@ -11168,38 +11222,7 @@ function DepositRules.EnforceScanGateAfterStretch(map)
 	if not map or not city or type(map.MapForEach) ~= "function" or type(get_sector) ~= "function" then
 		return
 	end
-	-- A) hide revealed scan-gated objects that now sit in unscanned sectors.
-	-- EXCEPT the staged start spawns: those ARE vanilla's own initial reveal, replayed by source
-	-- identity, so their reveal state is not a stretch leak to be corrected. Un-revealing one here
-	-- also runs BEFORE the engine's deferred ExplorableObject:GameInit, which is what plays the
-	-- free "Revealed"/moment-"true" FX carrier (Particles_1LtXWp8i) from the object's reveal state;
-	-- the carrier is then never created and the map is short exactly that ParSystem (b2-07,
-	-- artifacts/b207_parsystem_verdict.md). A later un-reveal would not have destroyed it - the
-	-- "Revealed" ActionFXRemove rules key on FxId "Revealed", which that preset does not set.
-	local hidden, staged_reveal_kept = 0, 0
-	local function hide_leaks(class_name)
-		pcall(map.MapForEach, map, "map", class_name, function(obj)
-			if not (obj and IsScanGatedDeposit(obj)) then return end
-			if obj.revealed ~= true then return end
-			if rawget(obj, "SuperBigMapStagedStartSpawn") == true then
-				staged_reveal_kept = staged_reveal_kept + 1
-				return
-			end
-			local pos = ObjectPos(obj)
-			if not pos or type(pos.xy) ~= "function" then return end
-			local px, py = pos:xy()
-			if px == nil then return end
-			local ok_s, sector = pcall(get_sector, city, px, py)
-			if ok_s and sector and not SectorIsScanned(sector) then
-				SetRevealedState(obj, false)
-				-- Flag so the existing OnSectorScanned reveal path shows it on a real scan.
-				obj.SuperBigMapEnrichmentClone = true
-				hidden = hidden + 1
-			end
-		end)
-	end
-	hide_leaks("SubsurfaceDeposit")
-	hide_leaks("SubsurfaceAnomaly")
+	-- Start objects already have their destination-based discovery state at placement.
 	-- A2) spawned SURFACE / CONCRETE deposits: these spawn at scan time, so the only pre-spawned
 	-- ones are the start sector's -- which the stretch moved into unscanned sectors (visible
 	-- deposit icons + painted regolith, the "concrete still visible" report). Despawn the spawned
@@ -11320,7 +11343,7 @@ function DepositRules.EnforceScanGateAfterStretch(map)
 	map.SuperBigMapScanGateFootprintKept = footprint_kept
 	map.SuperBigMapScanGateDespawned = despawned
 	map.SuperBigMapScanGateStagedSkipped = staged_skipped
-	map.SuperBigMapScanGateStagedRevealKept = staged_reveal_kept
+	map.SuperBigMapScanGateStagedRevealKept = 0
 end
 
 function DepositRules.OnSectorScanned(status, sector)
@@ -11355,12 +11378,13 @@ function DepositRules.OnSectorScanned(status, sector)
 			SetRevealedState(obj, true)
 		end
 	end)
-	-- SubsurfaceAnomaly is not a SubsurfaceDeposit subclass; sweep it too.
+	-- Keep the explicit anomaly path for older game versions too.
 	pcall(map.MapForEach, map, area, "SubsurfaceAnomaly", function(obj)
 		if obj and obj.SuperBigMapEnrichmentClone and IsScanGatedDeposit(obj) then
 			SetRevealedState(obj, true)
 		end
 	end)
+	DepositRules.RestorePendingSurfaceDiscovery(map, sector)
 end
 
 DepositRules.ClearTopUpPlacementPool = ClearTopUpPlacementPool

@@ -38,89 +38,6 @@ local function SectorInteractionAudit(event, data, map)
 	end
 end
 
--- The stretched image of vanilla's initial reveal is wider than one final 20x20
--- sector.  The parity pipeline deliberately keeps those spawned objects alive, but
--- that must not make their overview badges disclose resources in final sectors that
--- are still unexplored.  Gate only resource/anomaly/effect badges here; underground
--- entrance signs are a separate class and intentionally remain visible.
-local function ApplyOverviewResourceScanGate(map, overview_active, reason)
-	map = map or Engine.Global("CurrentMap")
-	if not map or type(map.MapForEach) ~= "function" or not IsModMap(map) then
-		return false, { reason = "map unavailable or not expanded" }
-	end
-	if type(map.mapdata) == "table" and map.mapdata.Environment == "Underground" then
-		return false, { reason = "underground uses proximity reveal" }
-	end
-	if overview_active == nil then
-		local is_overview = Engine.Global("IsOverviewMode")
-		overview_active = type(is_overview) == "function"
-			and Engine.SafeCall(is_overview) == true
-	end
-
-	local city = map.City
-	local get_sector = Engine.Global("GetMapSectorXY")
-	local is_valid = Engine.Global("IsValid")
-	if not city or type(get_sector) ~= "function" then
-		return false, { reason = "sector lookup unavailable" }
-	end
-
-	local signs_visible = Engine.Global("g_SignsVisible") ~= false
-	local icons_visible = Engine.Global("g_ResourceIconsVisible") ~= false
-	local stats = { hidden = 0, shown = 0, restored = 0, unresolved = 0 }
-	local function valid(obj)
-		return obj and (type(is_valid) ~= "function" or Engine.SafeCall(is_valid, obj) == true)
-	end
-	local function set_visible(obj, visible)
-		if type(obj.SetVisible) ~= "function" then return false end
-		return pcall(obj.SetVisible, obj, visible) == true
-	end
-	local function restore_normal_visibility(obj)
-		if rawget(obj, "SuperBigMapOverviewHiddenUntilScan") ~= true then return end
-		obj.SuperBigMapOverviewHiddenUntilScan = nil
-		if type(obj.PickVisibilityState) == "function" then
-			pcall(obj.PickVisibilityState, obj)
-		else
-			set_visible(obj, obj.revealed ~= false and signs_visible and icons_visible)
-		end
-		stats.restored = stats.restored + 1
-	end
-	local function gate_badge(obj)
-		if not valid(obj) then return end
-		if overview_active ~= true then
-			restore_normal_visibility(obj)
-			return
-		end
-		local pos = Engine.ObjectPos(obj)
-		if not pos or type(pos.xy) ~= "function" then
-			stats.unresolved = stats.unresolved + 1
-			return
-		end
-		local x, y = pos:xy()
-		local ok, sector = pcall(get_sector, city, x, y)
-		if not ok or type(sector) ~= "table" then
-			stats.unresolved = stats.unresolved + 1
-			return
-		end
-		if sector.status == "unexplored" then
-			obj.SuperBigMapOverviewHiddenUntilScan = true
-			if set_visible(obj, false) then stats.hidden = stats.hidden + 1 end
-			return
-		end
-		obj.SuperBigMapOverviewHiddenUntilScan = nil
-		if set_visible(obj, obj.revealed ~= false and signs_visible) then
-			stats.shown = stats.shown + 1
-		end
-	end
-
-	pcall(map.MapForEach, map, "map", "SubsurfaceDeposit", gate_badge)
-	pcall(map.MapForEach, map, "map", "TerrainDeposit", gate_badge)
-	if stats.hidden > 0 or stats.restored > 0 or stats.unresolved > 0 then
-		stats.overview = tostring(overview_active == true)
-		stats.reason = tostring(reason or "unspecified")
-		SectorInteractionAudit("OVERVIEW_RESOURCE_SCAN_GATE", stats, map)
-	end
-	return true, stats
-end
 
 local function SectorDiagnosticData(sector, data)
 	data = type(data) == "table" and data or {}
@@ -274,7 +191,6 @@ local function EnsureEntranceVisualsReady(map, overview_active, reason)
 		Engine.SafeCall(terrain_copy.RestoreEntranceBadgePositions, map,
 			"entrance visual readiness: " .. tostring(reason or "unspecified"))
 	end
-	ApplyOverviewResourceScanGate(map, overview_active, reason)
 	return stats.failed_calls == 0, stats
 end
 
@@ -302,7 +218,7 @@ local function Install()
 		local uicity = Engine.Global("UICity")
 		if not uicity then return false end
 		local ok, map = pcall(function() return uicity:GetMap() end)
-		return ok and IsModMap(map) and map.mapdata and map.mapdata.Environment == "Underground"
+		return ok and IsModMap(map) and map.mapdata and Engine.MapDataEnvironment(map.mapdata) == "Underground"
 	end
 
 	-- Underground sectors remain as an INVISIBLE data grid so cursor lookup, sector names, and
@@ -419,7 +335,7 @@ local function Install()
 			local underground = false
 			if (SuperBigMap.Config or {}).UNDERGROUND_EXPLORATION_UI == true then
 				underground = ok_map and IsModMap(map)
-					and map.mapdata and map.mapdata.Environment == "Underground"
+					and map.mapdata and Engine.MapDataEnvironment(map.mapdata) == "Underground"
 			end
 			-- UNDERGROUND: the shipped underground UI draws no sector grid, but the decal
 			-- population must still exist one-per-sector exactly as vanilla creates it, so the
@@ -465,15 +381,9 @@ local function Install()
 			return r1, r2
 		end
 	end
-	-- Resource badges appear only after their sector is revealed: ApplyOverviewResourceScanGate
-	-- hides them while the sector is unexplored, and the only path that clears that hide is
-	-- OnDepositsSpawned -> ScaleSmallObjects("up"), which MapSector:Scan defers ONLY when the scan
-	-- actually placed a deposit (Lua/Exploration.lua:264).  On the expanded map the stretch already
-	-- placed the sector's markers, so a scan there spawns nothing and the badge stays hidden for the
-	-- rest of the session.  Re-run the gate the moment the sector's own status leaves "unexplored".
-	-- Synchronous on purpose: Msg("SectorScanned") is raised from a game-time notification thread
-	-- (Lua/Exploration.lua:88-104), so it is not a reliable trigger for a visual the player sees the
-	-- instant the scan completes.
+	-- Discover only start objects waiting in this sector. Keep this synchronous:
+	-- SectorScanned notifications run on game time and can be delayed while paused.
+	-- No whole-map visibility pass is needed now that discovery starts correctly.
 	if map_sector_class and type(map_sector_class.Scan) == "function" then
 		local original_sector_scan = State.original_map_sector_scan or map_sector_class.Scan
 		State.original_map_sector_scan = original_sector_scan
@@ -484,7 +394,7 @@ local function Install()
 				local ok_map, map = pcall(function() return self:GetMap() end)
 				map = ok_map and map or Engine.Global("CurrentMap")
 				if IsModMap(map) then
-					ApplyOverviewResourceScanGate(map, nil, "MapSector:Scan")
+					SuperBigMap.DepositRules.RestorePendingSurfaceDiscovery(map, self)
 				end
 			end
 			return r1, r2
@@ -500,7 +410,7 @@ local function Install()
 			local queue = self.city and self.city.ExplorationQueue
 			local before_count = type(queue) == "table" and #queue or nil
 			if (SuperBigMap.Config or {}).UNDERGROUND_EXPLORATION_UI == true then
-				if ok_map and IsModMap(map) and map.mapdata and map.mapdata.Environment == "Underground" then
+				if ok_map and IsModMap(map) and map.mapdata and Engine.MapDataEnvironment(map.mapdata) == "Underground" then
 					if debug_enabled then
 						SectorInteractionAudit("QUEUE_BLOCKED_UNDERGROUND", SectorDiagnosticData(self, {
 							queue_before = tostring(before_count),
@@ -672,21 +582,6 @@ local function Install()
 				local map = Engine.Global("CurrentMap")
 				EnsureEntranceVisualsReady(map, true,
 					"OverviewModeDialog.ScaleSmallObjects(up)")
-				-- Vanilla performs ScaleSmallObjects in its own real-time thread.  Run once
-				-- after that thread has applied visibility so time=0 deposit spawns cannot
-				-- re-show an unexplored resource badge after the synchronous gate above.
-				if map and type(map.CreateRealTimeThread) == "function" then
-					pcall(map.CreateRealTimeThread, map, function()
-						local sleep = Engine.Global("Sleep")
-						local delay = math.max(1, tonumber(time) or 0) + 33
-						if type(sleep) == "function" then pcall(sleep, delay) end
-						local is_overview = Engine.Global("IsOverviewMode")
-						if type(is_overview) == "function" and Engine.SafeCall(is_overview) == true then
-							EnsureEntranceVisualsReady(map, true,
-								"OverviewModeDialog.ScaleSmallObjects(up) deferred")
-						end
-					end)
-				end
 			end
 			return r
 		end
@@ -702,7 +597,6 @@ local SectorHighlight = {}
 
 SectorHighlight.Install = Install
 SectorHighlight.EnsureEntranceVisualsReady = EnsureEntranceVisualsReady
-SectorHighlight.ApplyOverviewResourceScanGate = ApplyOverviewResourceScanGate
 
 function SectorHighlight.ApplyModBehavior()
 	Install()

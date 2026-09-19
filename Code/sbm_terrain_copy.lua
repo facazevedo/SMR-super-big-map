@@ -143,7 +143,7 @@ end
 
 local function UndergroundDecorationAuditEnabled(map)
 	local mapdata = map and map.mapdata
-	if type(mapdata) ~= "table" or mapdata.Environment ~= "Underground" then return false end
+	if type(mapdata) ~= "table" or Engine.MapDataEnvironment(mapdata) ~= "Underground" then return false end
 	local diagnostics = SuperBigMap.Diagnostics
 	return diagnostics and type(diagnostics.UndergroundDecorationEnabled) == "function"
 		and diagnostics.UndergroundDecorationEnabled() == true
@@ -2339,7 +2339,7 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 		return false, { reason = "disabled", created = 0, modified = 0 }
 	end
 	local mapdata = map and map.mapdata
-	if type(mapdata) ~= "table" or mapdata.Environment == "Underground"
+	if type(mapdata) ~= "table" or Engine.MapDataEnvironment(mapdata) == "Underground"
 		or not grid or type(grid.size) ~= "function"
 		or type(grid.get) ~= "function" or type(grid.set) ~= "function" then
 		return false, { reason = "surface height grid unavailable", created = 0, modified = 0 }
@@ -2806,7 +2806,7 @@ local function PrepareOuterResourceTerrain(map)
 		return false, { reason = "disabled", resources = 0, patches = 0 }
 	end
 	local mapdata = map and map.mapdata
-	if type(mapdata) ~= "table" or mapdata.Environment == "Underground"
+	if type(mapdata) ~= "table" or Engine.MapDataEnvironment(mapdata) == "Underground"
 		or type(map.MapForEach) ~= "function" then
 		return false, { reason = "surface map unavailable", resources = 0, patches = 0 }
 	end
@@ -4792,7 +4792,7 @@ local function ZDumpHeightGrid(map, stage, grid)
 	local save = Global("GridSaveRaw")
 	if type(save) ~= "function" then return end
 	local environment = (type(map.mapdata) == "table"
-		and map.mapdata.Environment == "Underground") and "underground" or "surface"
+		and Engine.MapDataEnvironment(map.mapdata) == "Underground") and "underground" or "surface"
 	local path = prefix .. "-" .. environment .. "-" .. stage .. ".raw"
 	local ok, err = pcall(save, path, grid)
 	LoadingStep("terrain height grid test dump", {
@@ -5103,7 +5103,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 				free_grid(native_sub)
 				native_sub = nil
 			end
-			local environment = type(map.mapdata) == "table" and map.mapdata.Environment or nil
+			local environment = type(map.mapdata) == "table" and Engine.MapDataEnvironment(map.mapdata) or nil
 			-- Detect and repair coherent perimeter defects while the grid is still at vanilla
 			-- resolution.  The engine's interpolation then carries the C2 surface into the expanded
 			-- destination without fitting the already-repaired track a second time.
@@ -5196,7 +5196,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 						cap = math.floor(const_tbl.MaxTerrainHeight / const_tbl.TerrainHeightScale)
 					end
 					local environment = type(map.mapdata) == "table"
-						and map.mapdata.Environment or nil
+						and Engine.MapDataEnvironment(map.mapdata) or nil
 					local uniform_underground = environment == "Underground"
 					local zmul, zdiv, zadd = full_tw, sw_tiles, 0
 					local normalized = false
@@ -5318,6 +5318,36 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 		terrain_api.SetTypeGrid, terrain_api.InvalidateType, false) then
 		done = done + 1
 	end
+	-- 1.1 introduced a separate forced-impassability raster. It is not rebuilt
+	-- from height/type and must follow the SAME XY transform as cave terrain and
+	-- entrances. Leaving the source-sized mask in place seals the moved entrances.
+	local forced_source = (source_map or map).SuperBigMapForcedImpassSource
+	if type(forced_source) == "string" then
+		local source, stretched
+		local forced_token = LoadingBegin("terrain forced impassability stretch", map)
+		local forced_ok, forced_error = pcall(function()
+			local read_error
+			source, read_error = Global("GridReadStr")(forced_source)
+			if not source then error("forced impassability decode: " .. tostring(read_error)) end
+			local w, h = source:size()
+			local fw, fh = w * full_tw / sw_tiles, h * full_th / sh_tiles
+			if fw % 1 ~= 0 or fh % 1 ~= 0 then error("non-integral forced impassability size") end
+			stretched = GridResample(source, fw, fh, false)
+			-- SetForcedImpassFromMask only ADDS set bits; zeros do not clear the
+			-- previous source mask. Replace the generation-owned terrain mask as a
+			-- whole before applying its transformed version. Object obstacles and
+			-- terrain slope passability are rebuilt separately and remain intact.
+			local tile = (Global("const") or {}).HeightTileSize or 100
+			terrain_api.SetForcedImpassableBox(map, box_fn(0, 0, full_tw * tile, full_th * tile), false)
+			local err = terrain_api.SetForcedImpassFromMask(map, stretched)
+			if err then error("forced impassability write: " .. tostring(err)) end
+		end)
+		if stretched and stretched ~= source then free_grid(stretched) end
+		free_grid(source)
+		LoadingEnd(forced_token, {error=forced_ok and "" or tostring(forced_error)}, forced_ok)
+		if not forced_ok then error(forced_error) end
+		(source_map or map).SuperBigMapForcedImpassSource = false
+	end
 	local clutter_ok, clutter_changed = stretch_clutter()
 	if terrain_only == true then
 		LoadingStep("direct source terrain grid suite complete", {
@@ -5362,7 +5392,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 	local mapdata = map and map.mapdata
 	local defer_intermediate_rebuild = cfg_bool("OPTIMIZE_STRETCH_DEFERRED_REBUILDS", true)
 		and cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true)
-		and type(mapdata) == "table" and mapdata.Environment == "Underground"
+		and type(mapdata) == "table" and Engine.MapDataEnvironment(mapdata) == "Underground"
 		and map.SuperBigMapUndergroundStretchPending == true
 		and map.SuperBigMapStretchPipelinePending == true
 	local invalidate_token = LoadingBegin("invalidate expanded terrain", map)
@@ -5907,10 +5937,22 @@ local function AnnotateDecorRelief(map, terrain_source_map)
 	local cave_capture = {
 		list = {},
 	}
+	local diagnostics = SuperBigMap.Diagnostics
+	local compat = diagnostics and diagnostics.CompatibilityEnabled
+		and diagnostics.CompatibilityEnabled() and diagnostics.Compatibility or nil
+	local function capture_trace(stage, obj, index)
+		if compat then compat("decor capture " .. stage, {
+			index = index, class = obj and obj.class,
+			source_slot = relief_terrain_map.slot,
+		}, map) end
+	end
+	if compat then capture_trace("begin", nil, 0) end
 	local capture_traversal_ok, capture_traversal_err = pcall(
 		map.MapForEach, map, src_box, "CObject", function(obj)
 		if not obj then return end
 		objects[#objects + 1] = obj
+		local trace_object = compat and (#objects <= 16 or #objects % 512 == 0)
+		if trace_object then capture_trace("object begin", obj, #objects) end
 		-- Persist the immutable vanilla transform before any parent, attachment, transfer, or
 		-- destination operation can change it. Attached children follow their parent during the
 		-- parent's move; deriving their transform later from that already-moved position applies the
@@ -5948,17 +5990,21 @@ local function AnnotateDecorRelief(map, terrain_source_map)
 		end
 		obj.SuperBigMapNativeSourceClass = obj.SuperBigMapNativeSourceClass
 			or tostring(obj.class or "?")
+		if trace_object then capture_trace("classification begin", obj, #objects) end
 		local skip_object = ShouldSkipObject(obj)
 		local important_object = IsImportantSectorObject(obj)
+		if trace_object then capture_trace("classification end", obj, #objects) end
 		if cache_eligible_objects and not skip_object and not important_object then
 			eligible_objects[#eligible_objects + 1] = obj
 		end
 		if grounding and not skip_object and not important_object then
+			if trace_object then capture_trace("grounding begin", obj, #objects) end
 			-- Both shared exclusion predicates just returned false; only
 			-- a private-list append intervened. Do not carry this fact past a yield.
 			local ground_ok, ground_err = pcall(grounding.Capture, map, obj,
 				ShouldSkipObject, IsImportantSectorObject)
 			if not ground_ok then grounding.Failure(map, ground_err) end
+			if trace_object then capture_trace("grounding end", obj, #objects) end
 		end
 		if IsCaveInObject(obj) then
 			local pos = ObjectPosition(obj)
@@ -6029,6 +6075,10 @@ local function AnnotateDecorRelief(map, terrain_source_map)
 		annotated = annotated + 1
 	end)
 	cave_capture.capture_ok = capture_traversal_ok == true
+	if compat then compat("decor capture traversal end", {
+		objects = #objects, ok = capture_traversal_ok,
+		error = capture_traversal_ok and "" or tostring(capture_traversal_err),
+	}, map) end
 	cave_capture.capture_error = capture_traversal_ok ~= true
 		and tostring(capture_traversal_err) or nil
 	-- Native generation places a few objects (prefab markers) just BEYOND the source rect, so the
@@ -6727,7 +6777,7 @@ local function ScaleMarkersToFull(map, _, pass_edits_already_suspended)
 	local source_origin_x = tonumber(map.SuperBigMapSourceX) or 0
 	local source_origin_y = tonumber(map.SuperBigMapSourceY) or 0
 	local mapdata = map.mapdata
-	local surface_map = type(mapdata) ~= "table" or mapdata.Environment ~= "Underground"
+	local surface_map = type(mapdata) ~= "table" or Engine.MapDataEnvironment(mapdata) ~= "Underground"
 	local hex_size = type(const_tbl) == "table" and tonumber(const_tbl.HexSize) or 1000
 	hex_size = type(hex_size) == "number" and hex_size > 0 and hex_size or 1000
 	local extractor_safe_margin = 10 * hex_size
@@ -6948,7 +6998,7 @@ end
 
 local function BeginDeferredElevatorMigration(map)
 	local records = {}
-	if not map or not map.mapdata or map.mapdata.Environment ~= "Underground"
+	if not map or not map.mapdata or Engine.MapDataEnvironment(map.mapdata) ~= "Underground"
 		or type(map.MapForEach) ~= "function" or type(map.MapFindNearest) ~= "function" then
 		return records
 	end
@@ -7179,7 +7229,7 @@ end
 local function IsUndergroundExitMarker(marker, sign)
 	if not marker or not IsKindOfSafe(marker, "SurfaceTunnelMarker") then return false end
 	local map = EntranceBadgeMap(marker, sign)
-	return map and map.mapdata and map.mapdata.Environment == "Underground"
+	return map and map.mapdata and Engine.MapDataEnvironment(map.mapdata) == "Underground"
 end
 
 local function EntranceBadgeTerrainZ(marker, sign, x, y)
@@ -7411,7 +7461,7 @@ local function MoveEntranceVisualsToScale(map)
 		if IsKindOfSafe(obj, "SurfaceUndergroundTunnelMarker") then return end
 		-- A naturally revealed underground SurfaceTunnelMarker may already own its vanilla
 		-- SignUnderground visual. It is not a surface badge and must bypass this transform too.
-		if map.mapdata and map.mapdata.Environment == "Underground"
+		if map.mapdata and Engine.MapDataEnvironment(map.mapdata) == "Underground"
 			and IsKindOfSafe(obj, "SurfaceUndergroundTunnelSign")
 			and IsKindOfSafe(obj.tunnel_marker, "SurfaceTunnelMarker") then
 			return
@@ -7457,7 +7507,7 @@ local function MoveEntranceVisualsToScale(map)
 		local ny = committed and committed_y or math.floor(oy * scale + 0.5)
 		local elevator_kind = is_elevator_or_site(obj)
 		if elevator_kind then
-			local underground = map.mapdata and map.mapdata.Environment == "Underground"
+			local underground = map.mapdata and Engine.MapDataEnvironment(map.mapdata) == "Underground"
 			local anchor
 			if underground then
 				-- On the underground map, vanilla's passage/imprint is authoritative. The linked
@@ -7739,7 +7789,7 @@ local function MoveEntranceVisualsToScale(map)
 	pcall(map.MapForEach, map, "map", "SurfaceUndergroundTunnelSign", function(sign)
 		local marker = sign and sign.tunnel_marker
 		local passage = marker and marker.spawner
-		local is_underground_exit = map.mapdata and map.mapdata.Environment == "Underground"
+		local is_underground_exit = map.mapdata and Engine.MapDataEnvironment(map.mapdata) == "Underground"
 			and IsKindOfSafe(marker, "SurfaceTunnelMarker")
 		local passage_pos = IsLiveGameObject(passage) and ObjectPosition(passage) or nil
 		local px, py = PointXY(passage_pos)

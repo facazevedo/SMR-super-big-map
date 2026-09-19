@@ -55,7 +55,7 @@ local function IsGameplayMap(map)
 	if type(mapdata) ~= "table" then return false end
 	local map_name = tostring(map.name or mapdata.id or "")
 	if map_name == "PreGame" then return false end
-	return mapdata.Environment == "Surface" or mapdata.Environment == "Underground"
+	return Engine.MapDataEnvironment(mapdata) == "Surface" or Engine.MapDataEnvironment(mapdata) == "Underground"
 end
 
 local function IsExpandedSessionMap(map)
@@ -150,7 +150,7 @@ end
 local function RevealAllSurfaceSectors()
 	if State.reveal_surface_sectors_running == true then return false end
 	local map = Global("MainMap")
-	if not CanUseOnMap(map) or map.mapdata.Environment ~= "Surface" then
+	if not CanUseOnMap(map) or Engine.MapDataEnvironment(map.mapdata) ~= "Surface" then
 		return ReportFailure("expanded surface map is unavailable", {}, map)
 	end
 	local city = map.City

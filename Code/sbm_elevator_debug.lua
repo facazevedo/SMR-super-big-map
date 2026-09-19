@@ -360,12 +360,15 @@ function ElevatorDebug.ScheduleAudit(map, reason)
 	if State.elevator_diagnostic_audit_pending == map then return true end
 	State.elevator_diagnostic_audit_pending = map
 	local function run()
-		local audit_reason = State.elevator_diagnostic_audits[map]
-		State.elevator_diagnostic_audits[map] = nil
-		if State.elevator_diagnostic_audit_pending == map then
-			State.elevator_diagnostic_audit_pending = nil
+		local live = rawget(_G, "SuperBigMap")
+		local live_state = live.State
+		local audit_reason = live_state.elevator_diagnostic_audits
+			and live_state.elevator_diagnostic_audits[map] or reason
+		if live_state.elevator_diagnostic_audits then live_state.elevator_diagnostic_audits[map] = nil end
+		if live_state.elevator_diagnostic_audit_pending == map then
+			live_state.elevator_diagnostic_audit_pending = nil
 		end
-		if IsExpandedMap(map) then ElevatorDebug.AuditMap(map, audit_reason) end
+		live.ElevatorDebug.AuditMap(map, audit_reason)
 	end
 	if type(map.CreateGameTimeThread) == "function" then
 		map:CreateGameTimeThread(run)

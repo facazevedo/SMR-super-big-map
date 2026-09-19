@@ -695,7 +695,7 @@ end
 -- owned. Correctness depends on the observed renderer value, never a delay or frame count.
 function SuperBigMap.EnsureVanillaDarknessReady(map)
 	if not map or not map.mapdata then return false, "map data unavailable" end
-	local environment = map.mapdata.Environment
+	local environment = Engine.MapDataEnvironment(map.mapdata)
 	if environment ~= "Surface" and environment ~= "Underground" then
 		return true, "environment does not use underground darkness"
 	end
@@ -1527,7 +1527,7 @@ function SuperBigMap.RockParityTraceEnabled(map)
 	local config = SuperBigMap.Config or {}
 	return config.TRACE_UNDERGROUND_ROCK_PARITY == true
 		and type(map) == "table" and type(map.mapdata) == "table"
-		and map.mapdata.Environment == "Underground"
+		and Engine.MapDataEnvironment(map.mapdata) == "Underground"
 end
 
 function SuperBigMap.RockParityDescribeValues(values, first)
@@ -1702,7 +1702,7 @@ function SuperBigMap.RockParityTraceContext(trace, map, generator, procedure, or
   trace_schema = tostring(trace and trace.schema_version or 5),
 		trace_invocation = tostring(trace and trace.invocation or 0),
 		mode = tostring(trace and trace.mode or SuperBigMap.RockParityTraceMode(map)),
-		environment = tostring(type(mapdata) == "table" and mapdata.Environment or "?"),
+		environment = tostring(type(mapdata) == "table" and Engine.MapDataEnvironment(mapdata) or "?"),
 		procedure = tostring(procedure or "?"),
 		procedure_ordinal = tostring(ordinal or 0),
 		holder_seed = SuperBigMap.RockParityTraceScalar(
@@ -2950,7 +2950,7 @@ local function IsEligibleMapData(map_slot, mapdata, map_instance)
 	-- main-slot-only and surface-only gates, so it gets the same 8192 allocation + native-capped
 	-- generator as the surface (its stretch then applies the identical transform).
 	local underground_ok = cfg_bool("STRETCH_UNDERGROUND", false)
-		and type(mapdata) == "table" and mapdata.Environment == "Underground"
+		and type(mapdata) == "table" and Engine.MapDataEnvironment(mapdata) == "Underground"
 
 	if map_slot ~= 1 and not underground_ok then
 		return false, "not the main map slot"
@@ -2964,7 +2964,7 @@ local function IsEligibleMapData(map_slot, mapdata, map_instance)
 		return false, "missing terrain mapdata"
 	end
 
-	if mapdata.Environment ~= "Surface" and not underground_ok then
+	if Engine.MapDataEnvironment(mapdata) ~= "Surface" and not underground_ok then
 		return false, "not a surface map"
 	end
 
@@ -3294,6 +3294,61 @@ local function CopyMigratedTerrain(source, destination)
 	FreeMigrationGrid(source_type, source_type_raw)
 	FreeMigrationGrid(destination_type, destination_type_raw)
 	if not ok then error(err) end
+end
+
+-- 1.1's ApplyForcedImpass writes a source-sized type grid while underground
+-- generation is viewing an expanded backing through native-sized dimensions.
+-- Preserve cell pitch: pad/copy the source rectangle, never rescale it. The
+-- native setter must receive the physical backing size, even in source view.
+function SuperBigMap.InstallSourceTerrainWriteBridge(map, source_w, source_h, backing_w, backing_h)
+	local api = Global("terrain")
+	local set_type, set_impass = api.SetTypeGrid, api.SetForcedImpassFromMask
+	local stats = { type_writes = 0, mask_writes = 0 }
+	local function write(original, target, grid, mask, ...)
+		if target ~= map then return original(target, grid, ...) end
+		if mask then
+			local bytes, encode_error = Global("GridWriteStr")(grid)
+			if type(bytes) ~= "string" then error("forced impassability capture: " .. tostring(encode_error)) end
+			map.SuperBigMapForcedImpassSource = bytes
+		end
+		local w, h = grid:size()
+		local expected_w = w * backing_w / source_w
+		local expected_h = h * backing_h / source_h
+		if expected_w % 1 ~= 0 or expected_h % 1 ~= 0 then
+			error("source terrain write has non-integral backing dimensions")
+			return nil
+		end
+		local raw, padded
+		if mask then
+			padded = Global("NewComputeGrid")(expected_w, expected_h, "U", 8)
+			Global("GridFill")(padded, 0)
+		else
+			raw = api.GetTypeGrid(target)
+			local rw, rh = raw:size()
+			if rw ~= expected_w or rh ~= expected_h then
+				error("source terrain write does not match physical type-grid dimensions")
+				return nil
+			end
+			padded = Global("GridToCompute")(raw)
+		end
+		local args = PackValues(...)
+		local results = PackValues(pcall(function()
+			padded:copyrect(grid, Global("box")(0, 0, w, h), Global("point")(0, 0))
+			return original(target, padded, Unpack(args, 1, args.n))
+		end))
+		FreeMigrationGrid(padded, raw)
+		if not results[1] then error(results[2]); return nil end
+		stats[mask and "mask_writes" or "type_writes"] = stats[mask and "mask_writes" or "type_writes"] + 1
+		return Unpack(results, 2, results.n)
+	end
+	local type_wrapper = function(target, grid, ...) return write(set_type, target, grid, false, ...) end
+	local mask_wrapper = function(target, grid, ...) return write(set_impass, target, grid, true, ...) end
+	api.SetTypeGrid = type_wrapper
+	if type(set_impass) == "function" then api.SetForcedImpassFromMask = mask_wrapper end
+	return function()
+		if api.SetTypeGrid == type_wrapper then api.SetTypeGrid = set_type end
+		if api.SetForcedImpassFromMask == mask_wrapper then api.SetForcedImpassFromMask = set_impass end
+	end, stats
 end
 
 local function MapObjects(map)
@@ -4959,18 +5014,14 @@ function ElevatorSupplyRepair.Schedule(map, reason)
 	end
 	State.elevator_supply_repair_scheduled[map] = tostring(reason)
 	local function run()
-		local scheduled_reason = State.elevator_supply_repair_scheduled[map]
-		State.elevator_supply_repair_scheduled[map] = nil
-		if Global("CurrentMap") ~= map or not IsExpandedSupplyContext(map) then
-			ExpansionAudit("ELEVATOR_SUPPLY_REPAIR_SKIPPED", {
-				reason = tostring(scheduled_reason), current_map = tostring(Global("CurrentMap")),
-			}, map)
-			return
-		end
-		ElevatorSupplyRepair.Networks(map,
-			"scheduled after supply connection: " .. tostring(scheduled_reason))
-		ElevatorSupplyRepair.CargoNetworks(map,
-			"scheduled after local connection: " .. tostring(scheduled_reason))
+		-- The suspended thread may be saved. Do not capture transient module/state
+		-- tables; the mod environment itself has a stable engine persistence ID.
+		local live = rawget(_G, "SuperBigMap")
+		local live_state = live.State
+		local scheduled_reason = live_state.elevator_supply_repair_scheduled
+			and live_state.elevator_supply_repair_scheduled[map] or reason
+		if live_state.elevator_supply_repair_scheduled then live_state.elevator_supply_repair_scheduled[map] = nil end
+		live.ElevatorSupplyRepair.RunScheduled(map, scheduled_reason)
 	end
 	if type(map.CreateGameTimeThread) == "function" then
 		map:CreateGameTimeThread(run)
@@ -4986,6 +5037,19 @@ function ElevatorSupplyRepair.Schedule(map, reason)
 	end
 	create(run)
 	return true
+end
+
+function ElevatorSupplyRepair.RunScheduled(map, scheduled_reason)
+		if Global("CurrentMap") ~= map or not IsExpandedSupplyContext(map) then
+			ExpansionAudit("ELEVATOR_SUPPLY_REPAIR_SKIPPED", {
+				reason = tostring(scheduled_reason), current_map = tostring(Global("CurrentMap")),
+			}, map)
+			return
+		end
+		ElevatorSupplyRepair.Networks(map,
+			"scheduled after supply connection: " .. tostring(scheduled_reason))
+		ElevatorSupplyRepair.CargoNetworks(map,
+			"scheduled after local connection: " .. tostring(scheduled_reason))
 end
 end
 
@@ -5247,7 +5311,7 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 	if not destination or not destination.mapdata then
 		return false, "expanded destination map data is unavailable"
 	end
-	if destination.mapdata.Environment ~= "Surface" then
+	if Engine.MapDataEnvironment(destination.mapdata) ~= "Surface" then
 		return false, "destination is not a surface map"
 	end
 
@@ -5949,7 +6013,7 @@ function SuperBigMap.PrepareProvisionalSurfacePassageBuildable(object, shape)
 	-- transaction, but leave every surface object in place. Final commitment still uses
 	-- AlignPassagePairsToSharedHex's full candidate and footprint checks.
 	local map, pos = object:GetMap(), object:GetPos()
-	Global("LandscapeMarkCancel")()
+	Global("LandscapeMarkCancel")(map)
 	local landscape = Global("LandscapeMarkStart")(map, pos)
 	if not landscape then error("provisional passage landscape is unavailable"); return false end
 	local ok, err = pcall(function()
@@ -5962,7 +6026,7 @@ function SuperBigMap.PrepareProvisionalSurfacePassageBuildable(object, shape)
 			Global("buildUnbuildableZ")(), Global("guim") / 3)
 		return true
 	end)
-	local finish_ok, finish_err = pcall(Global("LandscapeFinish"), landscape.mark)
+	local finish_ok, finish_err = pcall(Engine.FinishLandscape, map, landscape.mark)
 	if not ok or err ~= true or not finish_ok then
 		error("provisional passage buildable repair failed: " .. tostring(
 			not ok and err or not finish_ok and finish_err or "shape marking failed"))
@@ -5976,7 +6040,7 @@ local function DeferredArtefactPreflight(map)
 		"PlaceBuildingIn", "SpawnUndergroundPassage", "ClearObstructions",
 		"LandscapeMarkCancel", "LandscapeMarkStart", "Landscape_MarkShape",
 		"Landscape_FixBuildable", "LandscapeFinish", "Extend", "GetExtendedSpawnShape",
-		"GetEnclosedShape", "GetEntityOutlineShape", "ShrinkShape", "FlattenTerrainInBuildShape",
+		"GetEntityOutlineShape", "ShrinkShape", "FlattenTerrainInBuildShape",
 		"HexShapeForEach", "HexToWorld", "WorldToHex", "buildUnbuildableZ", "DoneObject",
 		"point", "RGB",
 	}
@@ -6140,7 +6204,7 @@ local function CaptureDeferredWonderSourceFlattenTarget(map, marker, wonder_clas
 	if type(entity) ~= "string" or entity == "" then
 		return false, "building template entity unavailable"
 	end
-	local shape = Global("GetEnclosedShape")(entity)
+	local shape = Engine.WonderFlattenShape(entity)
 	if type(shape) ~= "table" then
 		return false, "vanilla enclosed shape unavailable"
 	end
@@ -6273,7 +6337,7 @@ local function BootstrapPassagesAndDeferWonders(env)
 	if not ready then return false, reason end
 	local surface_map = Global("MainMap")
 	if type(surface_map) ~= "table" or surface_map == map
-		or type(surface_map.mapdata) ~= "table" or surface_map.mapdata.Environment ~= "Surface" then
+		or type(surface_map.mapdata) ~= "table" or Engine.MapDataEnvironment(surface_map.mapdata) ~= "Surface" then
 		return false, "surface map is unavailable"
 	end
 	local rhelpers = env.rhelpers
@@ -6818,7 +6882,7 @@ function WonderVerticalDiagnostics.ReserveDeferredUndergroundWonderFootprints(ma
 	local ratios, ratio_error = DeferredWonderScaleRatios(map)
 	if not ratios then return false, { error = tostring(ratio_error) } end
 	local templates = Global("BuildingTemplates")
-	local get_enclosed = Global("GetEnclosedShape")
+	local get_enclosed = Engine.WonderFlattenShape
 	local get_outline = Global("GetEntityOutlineShape")
 	local point_fn = Global("point")
 	local world_to_hex = Global("WorldToHex")
@@ -7018,7 +7082,7 @@ function WonderVerticalDiagnostics.Snapshot(wonder, marker, map, ratios, flatten
 		end
 	end
 	local shape
-	local get_enclosed = Global("GetEnclosedShape")
+	local get_enclosed = Engine.WonderFlattenShape
 	local get_outline = Global("GetEntityOutlineShape")
 	local shrink = Global("ShrinkShape")
 	if type(entity) == "string" and type(get_enclosed) == "function" then
@@ -7418,7 +7482,7 @@ end
 
 function WonderVerticalDiagnostics.FlattenDeferredWonder(
 	wonder, marker, ratios, preserve_stock_invalid_z)
-	local get_enclosed = Global("GetEnclosedShape")
+	local get_enclosed = Engine.WonderFlattenShape
 	local shrink = Global("ShrinkShape")
 	local get_outline = Global("GetEntityOutlineShape")
 	local for_each_hex = Global("HexShapeForEach")
@@ -7471,7 +7535,7 @@ function WonderVerticalDiagnostics.FlattenDeferredWonder(
 	end
 	if buildable_z then
 		flatten(shape, wonder, map.buildable.z_grid, map.object_hex_grid,
-			Global("g_NCF_FlatInner"), Global("g_NCF_FlatOuter"), -1, buildable_z)
+			Global("g_NCF_FlatInner"), Engine.WonderFlattenOuter(), -1, buildable_z)
 		-- SpawnMarkerBuilding deliberately copied the vanilla marker's InvalidZ. Vanilla resolves it
 		-- immediately against this floor because the generated underground is already current; SBM's
 		-- destination is still off-screen here. Resolve it explicitly now so the later map activation
@@ -7516,7 +7580,7 @@ end
 -- the already-verified terrain footprint remains unchanged.
 function WonderVerticalDiagnostics.RestoreExpectedPositionsBeforeAnomalySpawn(map, reason)
 	if type(map) ~= "table" or type(map.mapdata) ~= "table"
-		or map.mapdata.Environment ~= "Underground" then
+		or Engine.MapDataEnvironment(map.mapdata) ~= "Underground" then
 		return false, { error = "target is not an underground map" }
 	end
 	local ratios, ratio_error = DeferredWonderScaleRatios(map)
@@ -7629,7 +7693,7 @@ end
 -- only the stored vanilla-derived footprint once the map is current, and make floor Z explicit.
 function WonderVerticalDiagnostics.ReseatAll(map, reason)
 	if type(map) ~= "table" or type(map.mapdata) ~= "table"
-		or map.mapdata.Environment ~= "Underground"
+		or Engine.MapDataEnvironment(map.mapdata) ~= "Underground"
 		or map.SuperBigMapUndergroundStretchDone ~= true then
 		return true, { skipped = true, reason = "not a completed expanded underground" }
 	end
@@ -7638,7 +7702,7 @@ function WonderVerticalDiagnostics.ReseatAll(map, reason)
 	end
 	local ratios, ratio_error = DeferredWonderScaleRatios(map)
 	if type(ratios) ~= "table" then return false, tostring(ratio_error) end
-	local get_enclosed = Global("GetEnclosedShape")
+	local get_enclosed = Engine.WonderFlattenShape
 	local get_outline = Global("GetEntityOutlineShape")
 	local shrink = Global("ShrinkShape")
 	local flatten = Global("FlattenTerrainInShape")
@@ -7694,7 +7758,7 @@ function WonderVerticalDiagnostics.ReseatAll(map, reason)
 
 	local correction_reason = "SuperBigMap_CurrentUndergroundWonderReseat"
 	local geometry_diagnostics_enabled = WonderGeometryDiagnosticsEnabled()
-	local flat_inner, flat_outer = Global("g_NCF_FlatInner"), Global("g_NCF_FlatOuter")
+	local flat_inner, flat_outer = Global("g_NCF_FlatInner"), Engine.WonderFlattenOuter()
 	local suspended = false
 	local corrected_terrain, corrected_xy, corrected_z = 0, 0, 0
 	local ok, err = pcall(function()
@@ -8083,7 +8147,7 @@ function WonderVerticalDiagnostics.MaterializeDeferredUndergroundWondersOnSource
 		return false, "deferred wonder plan is pending but no assigned BuriedWonderMarker survives"
 	end
 	local required = {
-		Global("PlaceBuildingIn"), Global("GetEnclosedShape"), Global("ShrinkShape"),
+		Global("PlaceBuildingIn"), Engine.WonderFlattenShape, Global("ShrinkShape"),
 		Global("GetEntityOutlineShape"), Global("HexShapeForEach"),
 		Global("FlattenTerrainInShape"), Global("buildUnbuildableZ"),
 	}
@@ -8553,7 +8617,7 @@ local function IsDeferredUndergroundTunnelSpawn(spawner)
 	if not spawner or type(spawner.GetMap) ~= "function" then return false end
 	local ok_map, map = pcall(spawner.GetMap, spawner)
 	if not ok_map or type(map) ~= "table" or type(map.mapdata) ~= "table"
-		or map.mapdata.Environment ~= "Underground" then
+		or Engine.MapDataEnvironment(map.mapdata) ~= "Underground" then
 		return false
 	end
 	local desired = map.SuperBigMapDesiredWidthTiles
@@ -9320,7 +9384,7 @@ local function PatchAdditionalMapSeedReservation()
 
 	local additional_wrapper = function(...)
 		local map = Global("CurrentMap")
-		local environment = map and map.mapdata and map.mapdata.Environment
+		local environment = map and map.mapdata and Engine.MapDataEnvironment(map.mapdata)
 		local grid = SuperBigMap.SectorGrid
 		local expanded = map and type(grid) == "table" and type(grid.IsModMap) == "function"
 			and grid.IsModMap(map) == true
@@ -9390,7 +9454,7 @@ local function PatchAdditionalMapSeedReservation()
 		local pending = State.pending_vanilla_underground_seed
 		local map_data_table = Global("MapData")
 		local map_data = type(map_data_table) == "table" and map_data_table[map_name] or nil
-		local environment = map_data and map_data.Environment
+		local environment = map_data and Engine.MapDataEnvironment(map_data)
 		if environment ~= "Underground" then
 			return original_fill(gen, map_name, params)
 		end
@@ -9552,7 +9616,7 @@ function SuperBigMap.PatchDeferredBreakthroughAnomalyInitialization()
 		local desired = map and tonumber(map.SuperBigMapDesiredWidthTiles)
 		local source = map and (tonumber(map.SuperBigMapSourceWidthTiles)
 			or tonumber(map.SuperBigMapGeneratorWidthTiles))
-		local expanded_surface = mapdata and mapdata.Environment == "Surface"
+		local expanded_surface = mapdata and Engine.MapDataEnvironment(mapdata) == "Surface"
 			and desired and source and desired > source
 		local deposits = SuperBigMap.DepositRules
 		local has_staged = false
@@ -9758,7 +9822,7 @@ local function PatchRandomMapGenerator()
 			end
 			local map = env.map
 			local environment = type(map) == "table" and type(map.mapdata) == "table"
-				and map.mapdata.Environment or nil
+				and Engine.MapDataEnvironment(map.mapdata) or nil
 			-- Normal generations enter the original method unchanged.
 			if State.rmg_placement_active_map ~= map then
 				return CallOnGenerateLogicTimed(original_on_generate_logic, self, env, map, ...)
@@ -10494,6 +10558,9 @@ local function PatchRandomMapGenerator()
 				return call_original_do_generate(self, map, ...)
 			end
 			if map and map.SuperBigMapVanillaSourceMigration ~= true then
+				-- The generator object is not saved. Keep its exact seed before any
+				-- deferred pass or save can outlive it; never invent a replacement RNG.
+				map.SuperBigMapPlacementSeed = tonumber(self.Seed) or map.SuperBigMapPlacementSeed
 				-- Persisted provenance distinguishes freshly generated strict-correspondence maps
 				-- from older saves whose underground was intentionally left deferred.
 				map.SuperBigMapOneToOneGenerationVersion = 1
@@ -10506,7 +10573,7 @@ local function PatchRandomMapGenerator()
 				and type(loading_diagnostics.LoadingActive) == "function"
 				and loading_diagnostics.LoadingActive() == true
 			LoadingStart("RandomMapGenerator.DoGenerate", map, {
-				environment = tostring(mapdata and mapdata.Environment),
+				environment = tostring(mapdata and Engine.MapDataEnvironment(mapdata)),
 				vanilla_source_migration = tostring(map and map.SuperBigMapVanillaSourceMigration == true),
 				expansion_pending = tostring(map and map.SuperBigMapExpansionPending == true),
 			})
@@ -10588,8 +10655,8 @@ local function PatchRandomMapGenerator()
 				return Unpack(migrated_results, 1, migrated_results.n)
 			end
 
-			local backing_environment = (type(mapdata) == "table" and mapdata.Environment)
-				or (type(template) == "table" and template.Environment)
+			local backing_environment = (type(mapdata) == "table" and Engine.MapDataEnvironment(mapdata))
+				or (type(template) == "table" and Engine.MapDataEnvironment(template))
 			if backing_environment ~= "Underground" then
 				error("expanded surface generation requires the exact temporary vanilla backing transaction: "
 					.. tostring(migrated_results))
@@ -10749,15 +10816,15 @@ local function PatchRandomMapGenerator()
 			-- the plan is checked again and vanilla's normal passage-pad preparation is applied only
 			-- to that already-valid committed footprint.
 			if cfg_bool("PAIRING_SURFACE_BUILDABLE_REBUILD", true) then
-				local env = (type(mapdata) == "table" and mapdata.Environment)
-					or (template and template.Environment)
+				local env = (type(mapdata) == "table" and Engine.MapDataEnvironment(mapdata))
+					or (template and Engine.MapDataEnvironment(template))
 				if env == "Underground" then
 					local published_main_map = Global("MainMap")
 					local maps = Global("Maps")
 					local slot_one_map = type(maps) == "table" and maps[1] or nil
 					local slot_one_is_surface = slot_one_map and slot_one_map ~= map
 						and type(slot_one_map.mapdata) == "table"
-						and slot_one_map.mapdata.Environment == "Surface"
+						and Engine.MapDataEnvironment(slot_one_map.mapdata) == "Surface"
 					local main_map = slot_one_is_surface and slot_one_map or published_main_map
 					if main_map ~= published_main_map then
 						rawset(_G, "MainMap", main_map)
@@ -10945,8 +11012,22 @@ local function PatchRandomMapGenerator()
 					self, mark_grid_class, mark_grid_bridge_read, mark_grid_bridge_write)
 				map.SuperBigMapNativeFillerMaskStats = filler_stats
 			end
+			local terrain_write_close, terrain_write_stats = SuperBigMap.InstallSourceTerrainWriteBridge(
+				map, gen_world_w, gen_world_h, saved_map_width, saved_map_height)
+			local compat = SuperBigMap.Diagnostics and SuperBigMap.Diagnostics.Compatibility
+			if compat then compat("source DoGenerate begin", {
+				source_world_w = gen_world_w, source_world_h = gen_world_h,
+				backing_world_w = saved_map_width, backing_world_h = saved_map_height,
+			}, map) end
 			local results = { pcall(CallWithClutterCapture, map,
 				call_original_do_generate, self, map, ...) }
+			terrain_write_close()
+			if compat then compat("source DoGenerate end", {
+				ok = results[1], error = results[1] and "" or tostring(results[2]),
+				type_writes = terrain_write_stats.type_writes,
+				mask_writes = terrain_write_stats.mask_writes,
+			}, map) end
+			map.SuperBigMapSourceTerrainWriteStats = terrain_write_stats
 			if filler_close then
 				local close_ok, good, why = pcall(filler_close)
 				if not close_ok or not good then
@@ -11005,7 +11086,7 @@ local function PatchRandomMapGenerator()
 			}, map)
 			local seed_trace = State.underground_seed_reservation_trace
 			if type(seed_trace) == "table" and seed_trace.generator == self
-				and type(mapdata) == "table" and mapdata.Environment == "Underground" then
+				and type(mapdata) == "table" and Engine.MapDataEnvironment(mapdata) == "Underground" then
 				local get_holder = Global("GetRandomMapGeneratorHolder")
 				local holder = type(get_holder) == "function" and SafeCall(get_holder, map) or nil
 				SuperBigMap.TraceUndergroundSeedReservation("HOLDER", {
@@ -11197,7 +11278,7 @@ end
 SuperBigMap.GenerationGrids = SuperBigMap.GenerationGrids or {}
 function SuperBigMap.GenerationGrids.RebuildFinal(map, stage)
 	stage = tostring(stage or "final")
-	local environment = map and map.mapdata and map.mapdata.Environment
+	local environment = map and map.mapdata and Engine.MapDataEnvironment(map.mapdata)
 	local label = type(environment) == "string" and string.lower(environment) or "map"
 	local terrain_api = Global("terrain")
 	if not (type(terrain_api) == "table"
@@ -12014,7 +12095,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						local seen_underground = {}
 						for slot, underground_map in pairs(maps) do
 							local underground_environment = underground_map and underground_map.mapdata
-								and underground_map.mapdata.Environment
+								and Engine.MapDataEnvironment(underground_map.mapdata)
 							if slot ~= 1 and underground_environment == "Underground"
 								and not seen_underground[underground_map]
 								and underground_map.SuperBigMapPassageBootstrapComplete == true
@@ -12265,7 +12346,7 @@ function SuperBigMap.GenerationReadiness.LegacyUndergroundEvidence(map)
 		return false, "underground map object is unavailable"
 	end
 	local mapdata = map.mapdata
-	if type(mapdata) ~= "table" or mapdata.Environment ~= "Underground" then
+	if type(mapdata) ~= "table" or Engine.MapDataEnvironment(mapdata) ~= "Underground" then
 		return false, "map is not underground"
 	end
 	if map.SuperBigMapUndergroundPreparationFailed == true then
@@ -12372,7 +12453,7 @@ function SuperBigMap.GenerationReadiness.RecoverLoadedUnderground(source)
 		if type(map) ~= "table" or seen[map] then return end
 		seen[map] = true
 		local mapdata = map.mapdata
-		if type(mapdata) ~= "table" or mapdata.Environment ~= "Underground" then return end
+		if type(mapdata) ~= "table" or Engine.MapDataEnvironment(mapdata) ~= "Underground" then return end
 		inspected = inspected + 1
 		if SuperBigMap.GenerationReadiness.RecoverPersistedUnderground(map, source) == true then
 			recovered = recovered + 1
@@ -13255,7 +13336,7 @@ local function NotifyGenerationMilestone(map, milestone, source)
 	map.SuperBigMapGenerationReadinessVersion = SuperBigMap.GenerationReadiness.VERSION
 	SignalExpansionReadinessChanged(map, tostring(milestone) .. ": " .. tostring(source or milestone))
 
-	local env = map.mapdata and map.mapdata.Environment
+	local env = map.mapdata and Engine.MapDataEnvironment(map.mapdata)
 	if env == "Surface" then
 		if is_mod_map and map.SuperBigMapVanillaSourceMigration ~= true then
 			return RunSurfaceStretchIfEnabled(map, source)
@@ -13269,7 +13350,7 @@ local function NotifyGenerationMilestone(map, milestone, source)
 end
 
 local function NeedsDeferredUndergroundPreparation(map)
-	if not map or not map.mapdata or map.mapdata.Environment ~= "Underground" then
+	if not map or not map.mapdata or Engine.MapDataEnvironment(map.mapdata) ~= "Underground" then
 		return false, "target is not an underground map"
 	end
 	if not cfg_bool("STRETCH_UNDERGROUND", false) then
@@ -13298,7 +13379,7 @@ local deferred_elevator_access_by_unit = setmetatable({}, { __mode = "k" })
 local function DeferredUndergroundTargetForElevator(elevator)
 	local other = elevator and elevator.other or nil
 	local target = TraversalObjectMap(other)
-	if target and target.mapdata and target.mapdata.Environment == "Underground" then
+	if target and target.mapdata and Engine.MapDataEnvironment(target.mapdata) == "Underground" then
 		return target
 	end
 	return nil
@@ -14117,7 +14198,7 @@ local function PatchDeferredUndergroundAccess(source)
 		local maps = Global("Maps")
 		local target = type(maps) == "table" and maps[map_slot] or nil
 		RestoreDeferredUndergroundGeometry(target)
-		local env = target and target.mapdata and target.mapdata.Environment
+		local env = target and target.mapdata and Engine.MapDataEnvironment(target.mapdata)
 		local needs_prepare, decision = NeedsDeferredUndergroundPreparation(target)
 		if not needs_prepare then
 			return original(map_slot, loading_screen, loading_screen_id)

@@ -25,6 +25,46 @@ function Engine.Global(name)
 	return rawget(_G, name)
 end
 
+-- 1.1 stores map environments in GameStates and exposes GetEnvironment on
+-- MapDataPreset. Ask that accessor first; legacy/custom mapdata can still carry
+-- Environment. Do not write the removed property or cache mutable map metadata.
+function Engine.MapDataEnvironment(mapdata)
+	if type(mapdata) ~= "table" then return nil end
+	if type(mapdata.GetEnvironment) == "function" then
+		return mapdata:GetEnvironment()
+	end
+	return mapdata.Environment
+end
+
+-- Follow the installed game's wonder footprint API. 1.1 removed
+-- GetEnclosedShape; RandomMapGenerator_Picard now uses the outline shrunk by 2.
+-- The legacy empty-shape fallback remains at the existing consumers.
+function Engine.WonderFlattenShape(entity)
+	local enclosed = Engine.Global("GetEnclosedShape")
+	if type(enclosed) == "function" then return enclosed(entity) end
+	local outline = Engine.Global("GetEntityOutlineShape")
+	local shrink = Engine.Global("ShrinkShape")
+	if type(outline) ~= "function" or type(shrink) ~= "function" then return nil end
+	return shrink(outline(entity), 2)
+end
+
+function Engine.WonderFlattenOuter()
+	if type(Engine.Global("GetEnclosedShape")) == "function" then
+		return Engine.Global("g_NCF_FlatOuter")
+	end
+	local constants = Engine.Global("const")
+	local hex = constants and constants.HexSize
+	return type(hex) == "number" and hex + hex / 2 or nil
+end
+
+-- Landscaping ownership moved from GameVar to MapVar in 1.1. Do not finish
+-- a provisional passage on CurrentMap: its explicit owning map may be offscreen.
+function Engine.FinishLandscape(map, mark)
+	local finish = Engine.Global("LandscapeFinish")
+	if map and type(map.Landscapes) == "table" then return finish(map, mark) end
+	return finish(mark)
+end
+
 -- pcall wrapper that returns the result(s) on success, nil on failure. Returns up to
 -- three results (enough for every call site in the mod).
 function Engine.SafeCall(fn, ...)
@@ -127,6 +167,7 @@ local function IsNativeClassPrimitive(fn)
 end
 local native_kind_pair = IsNativeClassPrimitive(native_single_kind)
 	and IsNativeClassPrimitive(native_many_kinds)
+local unpack_kind_list = table.unpack or unpack
 
 -- Return the first matching list entry and the scalar predicate's value.
 -- A negative native result is final only while every qualified identity is live.
@@ -139,8 +180,13 @@ function Engine.FirstKindOf(obj, classes, single_kind)
 		and Engine.IsKindOf == canonical_single_kind
 		and Engine.SafeCall == canonical_safe_call
 		and rawget(_G, "IsKindOf") == native_single_kind
-		and rawget(_G, "IsKindOfClasses") == native_many_kinds then
-		local ok, value = pcall(native_many_kinds, obj, classes)
+		and rawget(_G, "IsKindOfClasses") == native_many_kinds
+		and type(unpack_kind_list) == "function" and #classes <= 64 then
+		-- 1.1's table overload pushes each list entry inside the C function without
+		-- reserving enough Lua stack space. Its documented varargs overload lets
+		-- Lua reserve the argument stack before entering C. Keep large/custom lists
+		-- on the ordered scalar path instead of risking an unpack limit.
+		local ok, value = pcall(native_many_kinds, obj, unpack_kind_list(classes))
 		if ok and (value == false or value == nil) then return nil, false end
 	end
 	local last_value

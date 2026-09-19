@@ -537,7 +537,7 @@ end
 -- recreate only missing decals, then run the patched vanilla show helper.
 local function EnsureSurfaceSectorGridVisible(map, source)
 	map = ResolveLiveMap(map)
-	if not IsModMap(map) or not map.mapdata or map.mapdata.Environment ~= "Surface" then
+	if not IsModMap(map) or not map.mapdata or Engine.MapDataEnvironment(map.mapdata) ~= "Surface" then
 		return false
 	end
 	local city = map.City
@@ -700,7 +700,7 @@ function OverviewCamera.EnterAfterSurfaceUndergroundSwitch(map, source)
 	map = ResolveLiveMap(map)
 	local ready = CameraDestinationStatus(map, true)
 	if not ready then return false end
-	local environment = map and map.mapdata and map.mapdata.Environment
+	local environment = map and map.mapdata and Engine.MapDataEnvironment(map.mapdata)
 	if environment ~= "Surface" and environment ~= "Underground" then return false end
 	if environment == "Underground"
 		and map.mapdata.IsAllowedToEnterOverview ~= true then return false end
