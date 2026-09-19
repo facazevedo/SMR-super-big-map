@@ -444,8 +444,15 @@ local function InstallLandingDialogAction(dialog)
 	-- which drops our action but leaves SuperBigMapExpandActionInstalled set -- that was the
 	-- "EXPAND MAP button disappeared" case. Re-add whenever it is missing; skip only when it
 	-- is genuinely still present.
-	local action_present = ActionById(dialog, "super_big_map_expand") ~= nil
-	if action_present then
+	local existing_action = ActionById(dialog, "super_big_map_expand")
+	if existing_action then
+		-- Reused dialogs may still carry an action from before controller support.
+		-- Use the engine setter so its shortcut index is updated as well.
+		if existing_action.ActionGamepad ~= "ButtonA" then
+			existing_action:SetActionShortcuts(
+				existing_action.ActionShortcut, existing_action.ActionShortcut2, "ButtonA")
+		end
+		existing_action.IgnoreRepeated = true
 		ReorderLandingActions(dialog)
 		RefreshActions(dialog)
 		dialog.SuperBigMapExpandActionInstalled = true
@@ -496,6 +503,11 @@ local function InstallLandingDialogAction(dialog)
 		ActionTranslate = false,
 		ActionToolbar = "ActionBar",
 		ActionSortKey = "045",
+		-- Engine-normalized confirm: Xbox A / PlayStation Cross. The native
+		-- action bar supplies the platform glyph and modal input routing.
+		-- START remains on ButtonX (Xbox X / PlayStation Square).
+		ActionGamepad = "ButtonA",
+		IgnoreRepeated = true,
 		OnAction = function(action, host)
 			SetSelected(not IsSelected(), "toggle")
 			UpdateExpandActionLabel(action)

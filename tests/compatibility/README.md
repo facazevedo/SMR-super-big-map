@@ -14,7 +14,10 @@ cover allocation isolation, native delegation, real-path query semantics,
 environment and footprint API changes, terrain write ownership/padding, forced
 mask replacement, bounded class-query varargs, and discovery at initial placement
 (including a prohibition on whole-map discovery sweeps, save-state defaults,
-pending-only scans, and underground/vanilla isolation). They do not replace live
+pending-only scans, and underground/vanilla isolation), plus the EXPAND MAP
+controller action's selection/arming, repeat filtering and dialog lifecycle.
+The controller fixture uses platform protocol doubles, not console hardware.
+They do not replace live
 engine generation, movement, obstacle, save/load, or first-underground-access
 tests. Live evidence and limitations are recorded in `COMPATIBILITY_1_1.md`.
 
