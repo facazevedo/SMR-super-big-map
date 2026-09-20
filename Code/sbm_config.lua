@@ -28,6 +28,9 @@ config.DebugOverviewCamera = false
 config.DebugSectorInteraction = false
 config.DebugOverviewGridVisuals = false
 config.DebugUndergroundDecorationPositions = false
+-- Provisional diagnostic-only geometry/support validation. It reports uncertainty
+-- explicitly and never changes placement. Timings are measured before release.
+config.DecorationValidation = true
 -- Focused temporary parity trace: scalar-only and independent from the broad release-debug gate.
 -- Keep enabled until the fresh vanilla/expanded twin isolates reservation versus consumer drift.
 config.TraceUndergroundSeedReservation = true
@@ -1105,6 +1108,7 @@ C.STRETCH_MOVE_ENTRANCE_VISUALS = expansion_step_08
 C.STRETCH_SCALE_HEIGHTS = as_bool(config.StretchScaleHeights)
 C.STRETCH_RELIEF_AWARE_DECOR = as_bool(config.StretchReliefAwareDecor)
 C.STRETCH_GROUND_UNSUPPORTED_ROCKS = as_bool(config.StretchGroundUnsupportedRocks)
+C.DECORATION_VALIDATION_ENABLED = as_bool(config.DecorationValidation)
 C.STRETCH_STAMP_OUT_OF_BOX_SOURCES = as_bool(config.StretchStampOutOfBoxSources)
 C.STRETCH_DESPAWN_OUT_OF_BOX_CONTENT = as_bool(config.StretchDespawnOutOfBoxContent)
 C.STRETCH_DECOR_TOPUP = as_bool(config.StretchDecorTopUp)

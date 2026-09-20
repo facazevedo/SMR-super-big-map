@@ -556,6 +556,8 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 			end
 			local perr, objs = place_prefab(map, name, center, angle, nil, params)
 			if perr or type(objs) ~= "table" or #objs == 0 then return "failed" end
+			local validation=SuperBigMap.DecorationValidation
+			if validation then validation.Run("CaptureGroup",map,objs) end
 			local first_new_object, cosmetic_objects = #placed_list + 1, 0
 			-- The group arrived at native offsets and native size.  Give it the stretch's
 			-- similarity about its centre so it matches its neighbours, and reseat each object on

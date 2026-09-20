@@ -12333,6 +12333,15 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					SafeCall(pause_ild, "SuperBigMapSurfacePostPipelineRevalidation")
 				end
 				local revalidation_ok, revalidation_err = yield_protected_call(function()
+					-- Inspect final terrain/poses before the authoritative grid rebuild.
+					-- The validator only reports; the separate, guarded seating service
+					-- corrects proven loose cosmetic stones, never gameplay objects.
+					local validation=SuperBigMap.DecorationValidation
+					if validation then
+						validation.Run("Validate",map,"surface final placement")
+						local seating=SuperBigMap.DecorationSeating
+						if seating then seating.Run(map) end
+					end
 					SuperBigMap.GenerationGrids.RebuildFinal(
 						map, "post-pipeline scheduled revalidation")
 					local seen = {}
@@ -13416,6 +13425,8 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				end
 			end
 			map.SuperBigMapUndergroundStretchDone = true
+			local validation=SuperBigMap.DecorationValidation
+			if validation then validation.Run("Validate",map,"underground final placement") end
 			map.SuperBigMapUndergroundPrepared = true
 			map.SuperBigMapExpanded = true
 			-- The final passability/buildable grids were synchronously rebuilt before the

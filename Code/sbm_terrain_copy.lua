@@ -5916,6 +5916,8 @@ local function AnnotateDecorRelief(map, terrain_source_map)
 	local relief_terrain_map = terrain_source_map or map
 	local grounding = SuperBigMap.RockGrounding
 	if grounding then grounding.BeginCapture(map, relief_terrain_map) end
+	local validation = SuperBigMap.DecorationValidation
+	if validation then validation.Run("BeginCapture", map, relief_terrain_map) end
 	if type(box_fn) ~= "function" then return 0 end
 	local const_tbl = Global("const")
 	local hts = (type(const_tbl) == "table" and type(const_tbl.HeightTileSize) == "number") and const_tbl.HeightTileSize or 1
@@ -5997,6 +5999,7 @@ local function AnnotateDecorRelief(map, terrain_source_map)
 		if trace_object then capture_trace("classification begin", obj, #objects) end
 		local skip_object = ShouldSkipObject(obj)
 		local important_object = IsImportantSectorObject(obj)
+		if validation then validation.Run("Capture", map, obj, skip_object, important_object) end
 		if trace_object then capture_trace("classification end", obj, #objects) end
 		if cache_eligible_objects and not skip_object and not important_object then
 			eligible_objects[#eligible_objects + 1] = obj
@@ -6085,6 +6088,10 @@ local function AnnotateDecorRelief(map, terrain_source_map)
 	}, map) end
 	cave_capture.capture_error = capture_traversal_ok ~= true
 		and tostring(capture_traversal_err) or nil
+	if validation then
+		if not capture_traversal_ok then validation.Failure(map, "source traversal", capture_traversal_err) end
+		validation.Run("FinishCapture", map)
+	end
 	-- Native generation places a few objects (prefab markers) just BEYOND the source rect, so the
 	-- src_box traversal above never sees them and they keep no source stamp. The surface survives
 	-- that because TransferGeneratedObjects stamps through an unbounded MapGet before transfer -- it
@@ -6255,18 +6262,21 @@ local function CaveInTerrainGluedPoint(x, y, raw_z, explicit_z)
 	return pos
 end
 
-local cave_in_ground_mesh_lods
-local function CaveInGroundMeshLods()
-	if cave_in_ground_mesh_lods then return cave_in_ground_mesh_lods end
+local cave_in_clip_plane
+local cave_in_clip_owners = setmetatable({}, { __mode = "k" })
+local cave_in_clip_threads = setmetatable({}, { __mode = "k" })
+local function CaveInGroundClipPlane()
+	if cave_in_clip_plane ~= nil then return cave_in_clip_plane or nil end
 	local mesh_data = Global("GetStateLODMeshData")
 	local mesh_properties = Global("GetRenderMeshProperties")
 	local state_idx = Global("GetStateIdx")
 	local lod_count = Global("GetStateLODCount")
 	local resources = Global("ResourceManager")
-	local make_lods = Global("GetMeshLodsData")
+	local encode, point_fn, unit = Global("EncodePlane"), Global("point"), Global("guim")
 	if type(mesh_data) ~= "function" or type(mesh_properties) ~= "function"
 		or type(state_idx) ~= "function" or type(lod_count) ~= "function"
-		or not resources or type(make_lods) ~= "function" then return nil end
+		or not resources or type(encode) ~= "function" or type(point_fn) ~= "function"
+		or type(unit) ~= "number" then return nil end
 	local entity = "CaveIn_Buildings"
 	local idle = state_idx("idle")
 	if lod_count(entity, idle) ~= 1 then return nil end
@@ -6288,25 +6298,63 @@ local function CaveInGroundMeshLods()
 	for i = 1, 2 do
 		if falling[i].mesh ~= parts[i].mesh or falling[i].material ~= parts[i].material then return nil end
 	end
-	cave_in_ground_mesh_lods = make_lods(
-		resources.GetResource(resources.GetResourceID(parts[2].mesh), true),
-		resources.GetResource(resources.GetResourceID(parts[2].material), true))
-	return cave_in_ground_mesh_lods
+	-- Keep the ORIGINAL two-part descriptor and skinning offsets. Removing the
+	-- unskinned slot caused intermittent giant triangles in the skinned slot.
+	-- Local clipping removes only the proven airborne fragment in the settled pose.
+	cave_in_clip_plane = encode(point_fn(0, 0, -4096), point_fn(0, 0, 490 * unit), true)
+	return cave_in_clip_plane
 end
 
-local function InitializeCaveInRendering(obj)
+local InitializeCaveInRendering
+local function CaveInStillFalling(obj)
+	local state_idx = Global("GetStateIdx")
+	if obj:GetState() ~= state_idx("falling") then return false end
+	-- Phase uses the unmodified asset duration (unlike object:GetAnimDuration).
+	-- Native non-looping animations stop on duration-1, not on duration.
+	local duration = Global("GetAnimDuration")(obj:GetEntity(), obj:GetState())
+	return duration > 0 and obj:GetAnimPhase(1) < duration - 1
+end
+
+InitializeCaveInRendering = function(obj)
 	if not obj or obj.class ~= "CaveInRubble" or obj:GetEntity() ~= "CaveIn_Buildings" then return false end
 	local map = obj:GetMap()
 	if not map or not map.mapdata or Engine.MapDataEnvironment(map.mapdata) ~= "Underground" then return false end
 	local mul, div = tonumber(obj.SuperBigMapCaveInShapeScaleXMul), tonumber(obj.SuperBigMapCaveInShapeScaleXDiv)
 	if map.SuperBigMapUndergroundPrepared ~= true and not (mul and div and div > 0 and mul > div) then return false end
-	local set_lods = Global("SetRenderingMeshLods")
-	if type(set_lods) ~= "function" then return false end
-	local lods = CaveInGroundMeshLods()
+	local set_lods, native_lods = Global("SetRenderingMeshLods"), Global("GetStateMeshLodsData")
+	if type(set_lods) ~= "function" or type(native_lods) ~= "function"
+		or type(Global("GetAnimDuration")) ~= "function"
+		or type(obj.GetClipPlane) ~= "function" or type(obj.SetClipPlane) ~= "function" then return false end
+	local plane = CaveInGroundClipPlane()
+	if not plane then return false end
+	local previous = obj:GetClipPlane()
+	-- Do not replace a clip installed by another mod/system.
+	if previous ~= 0 and previous ~= plane and previous ~= cave_in_clip_owners[obj] then return false end
+	local lods = native_lods(obj:GetEntity(), obj:GetState())
 	if not lods then return false end
 	-- Per-object rendering only: retain the original entity, animation, collision,
 	-- footprint, clearing work and transforms. No shared asset/resource is edited.
 	set_lods(obj, lods)
+	if CaveInStillFalling(obj) then
+		if previous == plane then obj:SetClipPlane(0) end
+		cave_in_clip_owners[obj] = nil
+		if not cave_in_clip_threads[obj] and type(obj.CreateGameTimeThread) == "function" then
+			cave_in_clip_threads[obj] = obj:CreateGameTimeThread(function()
+				local valid, sleep = Global("IsValid"), Global("Sleep")
+				while valid(obj) and CaveInStillFalling(obj) do
+					-- Respect pause and animation speed; never alter the damage thread.
+					sleep(math.max(1, math.min(500, obj:TimeToAnimEnd())))
+				end
+				cave_in_clip_threads[obj] = nil
+				if valid(obj) then InitializeCaveInRendering(obj) end
+			end)
+		end
+		return true
+	end
+	obj:SetClipPlane(plane)
+	cave_in_clip_owners[obj] = plane
+	local validation=SuperBigMap.DecorationValidation
+	if previous~=plane and validation then validation.Schedule(map,"cave-in settled") end
 	return true
 end
 

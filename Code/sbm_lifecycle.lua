@@ -995,6 +995,13 @@ RegisterOnce("LoadGame", function()
 	if terrain_copy and type(terrain_copy.InitializeUndergroundRubbleRendering) == "function" then
 		terrain_copy.InitializeUndergroundRubbleRendering(current)
 	end
+	local validation=SuperBigMap.DecorationValidation
+	if validation then
+		for _,loaded in ipairs(Global("LoadedMaps") or {}) do
+			if IsModMap(loaded) then validation.Loaded(loaded) end
+		end
+		if IsModMap(current) then validation.Schedule(current,"save load") end
+	end
 	-- Save load preserves the city's MapSectors from save data; if its grid
 	-- size doesn't match what our layout expects (e.g. saved at 10x10 vanilla,
 	-- now expecting 20x20), rebuild here -- now that mapdata is synced to the real size.
@@ -1199,6 +1206,8 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 	-- process-global renderer value to 90. The player-facing map is current again now, so derive
 	-- the final value from it exactly as vanilla does: Surface=0 and Underground=90.
 	ApplyUndergroundDarknessState(ResolveLiveMap(Global("CurrentMap")) or map)
+	local validation=SuperBigMap.DecorationValidation
+	if validation and IsModMap(map) then validation.Schedule(map,"map switch") end
 	local elevator_debug = SuperBigMap.ElevatorDebug
 	if IsModMap(map) and elevator_debug and type(elevator_debug.ScheduleAudit) == "function" then
 		elevator_debug.ScheduleAudit(map, "CurrentMapChangeDone final boundary")
@@ -1264,10 +1273,22 @@ end)
 
 RegisterOnce("BuildingInit", function(obj)
 	if not active() or not obj or obj.class ~= "CaveInRubble" then return end
-	local terrain_copy = SuperBigMap.TerrainCopy
-	if terrain_copy and type(terrain_copy.InitializeCaveInRendering) == "function" then
-		terrain_copy.InitializeCaveInRendering(obj)
-	end
+	-- AddAreaRubble selects 'falling' and places the object AFTER BuildingInit.
+	-- Inspect its completed initialization, including while the game is paused.
+	CreateRealTimeThread(function()
+		Sleep(1)
+		if not active() or not IsValid(obj) then return end
+		local validation=SuperBigMap.DecorationValidation
+		local map=obj:GetMap()
+		if validation and IsModMap(map) and map.SuperBigMapUndergroundPrepared==true then
+			validation.Run("CaptureGroup",map,{obj})
+		end
+		local terrain_copy = SuperBigMap.TerrainCopy
+		if terrain_copy and type(terrain_copy.InitializeCaveInRendering) == "function" then
+			terrain_copy.InitializeCaveInRendering(obj)
+		end
+		if validation then validation.Schedule(obj:GetMap(),"new cave-in") end
+	end)
 end)
 
 RegisterOnce("RocketLanded", function(rocket)
