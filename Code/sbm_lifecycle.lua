@@ -44,16 +44,18 @@ local function LoadingLifecycle(event, map, data)
 	diagnostics.LoadingStep("lifecycle: " .. tostring(event), data, map)
 end
 
--- Register an OnMsg handler at most ONCE per message per session, even across mod
--- hot-reloads. Engine.ChainOnMsg CHAINS (wraps the previous handler), so a mid-game
--- reload -- which re-executes this module -- would otherwise STACK our handlers and run
--- each event 2x, 3x, ... That double-ran the map-change handlers and tripped the engine's
--- re-entrancy assert (not IsChangingMap()) in DoneGame during pre-game generation. The
--- guard flag lives in State, which persists across reloads, so re-execution is a no-op.
--- (Handlers delegate to SuperBigMap.<module> functions read at call time, so reloaded
--- domain logic still applies even though the handler itself is registered only once.)
+-- Register once per engine message registry, not once per process. A full Lua reload
+-- recreates cthreads.lua's private registry, but the mod environment/State survives.
+-- Its OnMsg/Msg sandbox proxies also survive, so neither proxy identifies the registry.
+-- GetStaticMsgNames is recreated alongside that registry and is its public epoch token.
+-- Re-executing just this module keeps the same token and must not stack callbacks.
 local function RegisterOnce(message_name, handler)
 	local State = SuperBigMap.State
+	local registry = Global("GetStaticMsgNames") or Global("OnMsg")
+	if State.registered_msg_registry ~= registry then
+		State.registered_msgs = {}
+		State.registered_msg_registry = registry
+	end
 	State.registered_msgs = State.registered_msgs or {}
 	State.msg_handlers = State.msg_handlers or {}
 	-- Always replace the delegated body, even when the engine-facing wrapper was already
@@ -989,6 +991,10 @@ RegisterOnce("LoadGame", function()
 			current.SuperBigMapUndergroundStretchFailed = tostring(reseat_result)
 		end
 	end
+	local terrain_copy = SuperBigMap.TerrainCopy
+	if terrain_copy and type(terrain_copy.InitializeUndergroundRubbleRendering) == "function" then
+		terrain_copy.InitializeUndergroundRubbleRendering(current)
+	end
 	-- Save load preserves the city's MapSectors from save data; if its grid
 	-- size doesn't match what our layout expects (e.g. saved at 10x10 vanilla,
 	-- now expecting 20x20), rebuild here -- now that mapdata is synced to the real size.
@@ -1093,6 +1099,10 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 	-- restores a local blocked bit. The audit uses terrain.SetPassability only on a failed live
 	-- footprint; it neither changes heights nor opens unrelated mountain terrain.
 	local terrain_copy = SuperBigMap.TerrainCopy
+	if IsModMap(map) and terrain_copy
+		and type(terrain_copy.InitializeUndergroundRubbleRendering) == "function" then
+		terrain_copy.InitializeUndergroundRubbleRendering(map)
+	end
 	if IsModMap(map) and map and map.mapdata and Engine.MapDataEnvironment(map.mapdata) == "Surface"
 		and type(map.SuperBigMapOuterResourceTerrainSites) == "table"
 		and terrain_copy and type(terrain_copy.AuditOuterResourceTerrain) == "function" then
@@ -1249,6 +1259,14 @@ RegisterOnce("RocketLandAttempt", function(rocket)
 	local rockets = SuperBigMap.RocketRules
 	if rockets and type(rockets.OnRocketLandAttempt) == "function" then
 		SafeCall(rockets.OnRocketLandAttempt, rocket)
+	end
+end)
+
+RegisterOnce("BuildingInit", function(obj)
+	if not active() or not obj or obj.class ~= "CaveInRubble" then return end
+	local terrain_copy = SuperBigMap.TerrainCopy
+	if terrain_copy and type(terrain_copy.InitializeCaveInRendering) == "function" then
+		terrain_copy.InitializeCaveInRendering(obj)
 	end
 end)
 

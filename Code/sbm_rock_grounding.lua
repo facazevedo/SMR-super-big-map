@@ -65,14 +65,21 @@ local function Capture(map, obj, checked_skip, checked_important)
 	local terrain_api = Global("terrain")
 	local pos = obj:GetPos()
 	local visual = obj:GetVisualPos()
-	local source_z = obj:IsValidZ() and pos:z() or terrain_api.GetHeight(context.source_map, pos)
+	local source_ground = terrain_api.GetHeight(context.source_map, pos)
+	local source_z = obj:IsValidZ() and pos:z() or source_ground
 	local bounds = obj:GetObjectBBox()
 	local tile = Global("const").HeightTileSize
 	-- Some cliff entities are authored with their complete mesh above the pivot. Their pivot is
 	-- terrain-snapped, but the visible mesh can consequently remain wholly airborne on flat final
 	-- terrain. Keep these rare objects for a bounded final-geometry support check even when the
 	-- native uphill-contact heuristic below finds no sample.
+	-- An explicitly elevated pivot can belong to an authored stack/column/arch.
+	-- Its support is another object, not the terrain. Independently seating such a
+	-- piece destroys the stack even under an exact uniform XYZ stretch. Only the
+	-- terrain-level pivot case qualifies for this terrain-only fallback; proven
+	-- native uphill contacts below still handle actual lost terrain support.
 	local unsupported_candidate = bounds:minz() > visual:z()
+		and source_z <= source_ground + tile
 	-- Bottom points at/below the pivot cannot lift away due to extra uniform Z scaling.
 	-- Avoid ray tests there; small, flat-ground stones usually have no uphill support to lose.
 	if bounds:maxz() <= visual:z() + tile then

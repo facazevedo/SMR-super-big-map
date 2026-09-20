@@ -52,6 +52,7 @@ do
 	for _, name in ipairs({
 		"SuperBigMapPlacementSeed", "SuperBigMapDeferredUndergroundWonderRecords",
 		"SuperBigMapDeferredUndergroundWondersPending", "SuperBigMapDeferredUndergroundWonderCount",
+		"SuperBigMapSurfaceStretchFailed", "SuperBigMapUndergroundStretchFailed",
 	}) do
 		if type(register) == "function" and (type(registry) ~= "table" or registry[name] == nil) then
 			register(name, false)

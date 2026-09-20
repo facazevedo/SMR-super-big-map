@@ -2708,6 +2708,7 @@ local function ClearPreparedMapInstance(map)
 	map.SuperBigMapCityInitializationComplete = nil
 	map.SuperBigMapGenerationReadinessVersion = nil
 	map.SuperBigMapSurfaceStretchDone = nil
+	map.SuperBigMapSurfaceStretchFailed = nil
 	map.SuperBigMapSurfaceStretchScheduled = nil
 	map.SuperBigMapSurfaceStretchAwaitingReadiness = nil
 	map.SuperBigMapSourceWidth = nil
@@ -7626,11 +7627,13 @@ function WonderVerticalDiagnostics.RestoreExpectedPositionsBeforeAnomalySpawn(ma
 	local correction_reason = "SuperBigMap_PreWonderAnomalyReseat"
 	local suspended = false
 	local ok, correction_error = pcall(function()
-		map:SuspendPassEdits(correction_reason)
-		suspended = true
 		for _, candidate in ipairs(candidates) do
 			local wonder = candidate.wonder
 			if candidate.wrong then
+				if not suspended then
+					map:SuspendPassEdits(correction_reason)
+					suspended = true
+				end
 				local had_grids = wonder.grids_applied == true
 				if had_grids then
 					if type(wonder.RemoveFromGrids) ~= "function"
@@ -7688,9 +7691,53 @@ end
 -- Vanilla leaves a newly spawned buried wonder at InvalidZ and flattens its terrain immediately.
 -- That is safe while vanilla generates the current underground map: the object resolves against
 -- the freshly flattened floor. SBM materializes the wonders while the underground is off-screen.
--- EngineSetCurrentMapSlot can then discard that off-screen flatten before resolving InvalidZ,
--- raising a wonder onto restored relief and allowing the relief to intersect its entity. Reapply
--- only the stored vanilla-derived footprint once the map is current, and make floor Z explicit.
+-- Legacy saves can lose that off-screen flatten before resolving InvalidZ. Fresh maps instead
+-- preserve vanilla clearance in the source height field before resampling; do not flatten again.
+-- The native terrain-hole raster is separate from both the height grid and the
+-- passability grid. Surfaces transformed on a non-current expanded map can retain
+-- a partial source imprint even after a full gameplay-grid rebuild. Publish their
+-- final registration on the current map before releasing the loading cover. No
+-- pose/scale/height writes, extra terrain scan, sleeps or additional rebuilds.
+function WonderVerticalDiagnostics.FinalizeTerrainSurfaces(map, reason, force)
+	if not map or map.SuperBigMapUndergroundStretchDone ~= true
+		or not map.mapdata or Engine.MapDataEnvironment(map.mapdata) ~= "Underground" then
+		return true, { skipped = true }
+	end
+	if Global("CurrentMap") ~= map then return false, "wonder surface publication requires the current map" end
+	local constants, surfaces = Global("const"), Global("EntitySurfaces")
+	local has_surfaces = Global("HasAnySurfaces")
+	if not constants or not constants.efApplyToGrids or not surfaces
+		or not surfaces.TerrainHole or not surfaces.Height or type(has_surfaces) ~= "function" then
+		return false, "native wonder surface helpers are unavailable"
+	end
+	local ready = WonderVerticalDiagnostics.TerrainSurfacesReady
+	if not ready then
+		ready = setmetatable({}, { __mode = "k" })
+		WonderVerticalDiagnostics.TerrainSurfacesReady = ready
+	end
+	local refreshed = 0
+	for _, wonder in ipairs(ArtefactMapGet(map, "UndergroundWonder")) do
+		if (force or not ready[wonder]) and wonder.SuperBigMapWonderFlattenZ ~= nil
+			and has_surfaces(wonder, surfaces.TerrainHole + surfaces.Height, true)
+			and wonder:GetEnumFlags(constants.efApplyToGrids) ~= 0 then
+			local ok, err = pcall(function()
+				wonder:ClearEnumFlags(constants.efApplyToGrids)
+				wonder:SetEnumFlags(constants.efApplyToGrids)
+			end)
+			if not ok then
+				pcall(wonder.SetEnumFlags, wonder, constants.efApplyToGrids)
+				return false, tostring(err)
+			end
+			ready[wonder] = true
+			refreshed = refreshed + 1
+		end
+	end
+	LoadingStep("underground wonder native surfaces published", {
+		reason = tostring(reason), refreshed = refreshed,
+	}, map)
+	return true, { refreshed = refreshed }
+end
+
 function WonderVerticalDiagnostics.ReseatAll(map, reason)
 	if type(map) ~= "table" or type(map.mapdata) ~= "table"
 		or Engine.MapDataEnvironment(map.mapdata) ~= "Underground"
@@ -7700,6 +7747,35 @@ function WonderVerticalDiagnostics.ReseatAll(map, reason)
 	if Global("CurrentMap") ~= map then
 		return false, "expanded underground wonder reseat requires the current map"
 	end
+	-- The native-source pipeline already performed vanilla's complete flatten/clear
+	-- transaction BEFORE resampling the terrain. Replaying a rounded expanded hex
+	-- footprint here is not the same transform: it shaves neighbouring cliffs and
+	-- creates shelves. Preserve the copied height field; only restore exact object
+	-- anchors and publish their native cutting surfaces on map activation.
+	if map.SuperBigMapDeferredUndergroundWondersSourceCleared == true then
+		local positions_ok, result =
+			WonderVerticalDiagnostics.RestoreExpectedPositionsBeforeAnomalySpawn(map, reason)
+		if not positions_ok and result and result.checked == 0 then
+			-- A wonder can be removed by later gameplay; no surviving stamped
+			-- objects is not a terrain failure (same behaviour as the legacy path).
+			return true, { skipped = true, reason = "no stretched underground wonders" }
+		end
+		if positions_ok then
+			local surfaces_ok, surfaces_result = WonderVerticalDiagnostics.FinalizeTerrainSurfaces(map, reason)
+			if not surfaces_ok then positions_ok, result = false, { error = tostring(surfaces_result) } end
+		end
+		if not positions_ok then
+			map.SuperBigMapWonderLifecycleReseatFailed = tostring(result and result.error)
+			return false, result
+		end
+		map.SuperBigMapWonderLifecycleReseatFailed = nil
+		map.SuperBigMapWonderLifecycleReseatDone = true
+		result.terrain_preserved = true
+		LoadingStep("underground source-cleared wonder lifecycle finalized", result, map)
+		return true, result
+	end
+	-- Legacy expanded saves without native-source clearance still need the older
+	-- footprint migration below. Never apply it to source-cleared generated maps.
 	local ratios, ratio_error = DeferredWonderScaleRatios(map)
 	if type(ratios) ~= "table" then return false, tostring(ratio_error) end
 	local get_enclosed = Engine.WonderFlattenShape
@@ -7899,6 +7975,11 @@ function WonderVerticalDiagnostics.ReseatAll(map, reason)
 		end
 		verified = verified + 1
 	end
+	local surfaces_ok, surfaces_result = WonderVerticalDiagnostics.FinalizeTerrainSurfaces(map, reason)
+	if not surfaces_ok then
+		map.SuperBigMapWonderLifecycleReseatFailed = tostring(surfaces_result)
+		return false, surfaces_result
+	end
 	map.SuperBigMapWonderLifecycleReseatFailed = nil
 	map.SuperBigMapWonderLifecycleReseatDone = true
 	LoadingStep("underground buried wonder lifecycle reseat", {
@@ -7994,13 +8075,17 @@ end
 
 local function SettleUndergroundSceneResources(map, reason)
 	local settled, result = WaitForUndergroundResourceRequests(map, reason, 15000)
-	if settled then return true, result end
+	if settled then
+		local surfaces_ok, surfaces_result = WonderVerticalDiagnostics.FinalizeTerrainSurfaces(map, reason, true)
+		return surfaces_ok, surfaces_ok and result or surfaces_result
+	end
 	-- A large texture can still be completing disk IO at the first timeout. Keep the existing
 	-- loading screen in front for one bounded retry instead of exposing a half-streamed scene.
 	local retry_settled, retry_result = WaitForUndergroundResourceRequests(
 		map, tostring(reason or "underground scene") .. " retry", 15000)
-	return retry_settled, retry_settled and retry_result
-		or (tostring(result) .. "; retry: " .. tostring(retry_result))
+	if not retry_settled then return false, tostring(result) .. "; retry: " .. tostring(retry_result) end
+	local surfaces_ok, surfaces_result = WonderVerticalDiagnostics.FinalizeTerrainSurfaces(map, reason, true)
+	return surfaces_ok, surfaces_ok and retry_result or surfaces_result
 end
 
 local function ReleaseSharedBuriedWonderTexturePins()
@@ -11385,6 +11470,24 @@ local function SurfaceExpansionReadiness(map)
 	return true, "native generation and destination finalization complete"
 end
 
+function SuperBigMap.GenerationReadiness.RecordSurfaceExpansionFailure(map, reason)
+	local message = tostring(reason or "unknown surface expansion failure")
+	local first_failure = not map.SuperBigMapSurfaceStretchFailed
+	map.SuperBigMapSurfaceStretchFailed = map.SuperBigMapSurfaceStretchFailed or message
+	map.SuperBigMapSurfaceStretchDone = false
+	map.SuperBigMapExpanded = false
+	map.SuperBigMapSurfacePostPipelineRevalidationComplete = nil
+	map.SuperBigMapSurfaceStretchAwaitingReadiness = false
+	map.SuperBigMapSurfaceStretchScheduled = false
+	if first_failure then
+		local print_fn = Global("print")
+		if type(print_fn) == "function" then
+			print_fn("[Super Big Map] Surface expansion failed: " .. message)
+		end
+	end
+	SignalExpansionReadinessChanged(map, "surface expansion failed")
+end
+
 local function RunSurfaceStretchIfEnabled(map, readiness_source)
 	map = map or Global("CurrentMap")
 	if not cfg_bool("SURFACE_STRETCH_AT_START", false) then
@@ -11393,6 +11496,12 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 	end
 	if not map then
 		return false
+	end
+	-- Expansion is not replayable after a partial terrain/object transform. Persist the first
+	-- error, keep dependent underground work closed, and never reinterpret failure as completion.
+	if map.SuperBigMapSurfaceStretchFailed then
+		EndSurfaceExpansionLoading(map)
+		return false, map.SuperBigMapSurfaceStretchFailed
 	end
 	-- SuperBigMapExpanded is persisted per map. A loaded save has no new MapGenerated or
 	-- CityInitialized transaction to wait for, and its expansion must never be repeated.
@@ -11430,7 +11539,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 	end
 	map.SuperBigMapSurfaceStretchAwaitingReadiness = false
 	map.SuperBigMapSurfaceStretchScheduled = true
-	local schedule_ok = pcall(create_thread, function()
+	local schedule_ok, schedule_err = pcall(create_thread, function()
 		-- Protect the entire asynchronous pipeline, not only its central stretch block, so
 		-- readiness/setup errors take the normal full-rebuild fallback.
 		local thread_ok, thread_err = yield_protected_call(function()
@@ -11471,7 +11580,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 		end
 		local map_w, map_h = TerrainSize(map)
 		if type(map_w) ~= "number" or map_w <= 0 or type(map_h) ~= "number" or map_h <= 0 then
-			map.SuperBigMapSurfaceStretchDone = true
+			SuperBigMap.GenerationReadiness.RecordSurfaceExpansionFailure(map, "surface map dimensions unavailable")
 			end_loading()
 			return
 		end
@@ -11483,8 +11592,8 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 		do
 			-- Run the whole stretch + finalize inside pcall so an error cannot strand the loading UI.
 			-- the expansion thread does not die before end_loading() -- that is what leaves the
-			-- loading box stuck on screen forever. Whatever happens, we mark the map done and close
-			-- the loading box below.
+			-- loading box stuck on screen forever. Close it on either result, but publish completion
+			-- only after the entire transaction succeeds.
 			-- The stretch passes iterate the full-map grids + EVERY object in one uninterrupted go;
 			-- without the old per-step yields the engine's infinite-loop detector trips ("Infinite
 			-- loop detected!"). Pause it for the duration -- these are BOUNDED passes (finite grid
@@ -12098,10 +12207,12 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								and Engine.MapDataEnvironment(underground_map.mapdata)
 							if slot ~= 1 and underground_environment == "Underground"
 								and not seen_underground[underground_map]
-								and underground_map.SuperBigMapPassageBootstrapComplete == true
-								and underground_map.SuperBigMapPassageSurfaceFinalCommitted ~= true
+								and underground_map.SuperBigMapDesiredWidthTiles
 								and underground_map.SuperBigMapUndergroundStretchDone ~= true then
 								seen_underground[underground_map] = true
+								if underground_map.SuperBigMapPassageBootstrapComplete ~= true then
+									error("final surface passage commitment has no completed underground bootstrap")
+								end
 								local plan_ok, plan_stats = AlignPassagePairsToSharedHex(underground_map, {
 									source_bootstrap = true,
 									prepare_surface_pad = true,
@@ -12111,6 +12222,11 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 										.. tostring(plan_stats and plan_stats.error or "unknown error")
 										.. (plan_stats and plan_stats.reason
 											and (": " .. tostring(plan_stats.reason)) or ""))
+								end
+								local committed, commitment_reason =
+									TerrainCopy.ValidateSurfacePassageCommitment(underground_map)
+								if not committed then
+									error("final surface passage commitment incomplete: " .. tostring(commitment_reason))
 								end
 								underground_map.SuperBigMapPassageSurfaceFinalCommitted = true
 							end
@@ -12182,12 +12298,15 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					SafeCall(provenance.Propagate, map, "surface stretch complete")
 				end
 			end
-			-- ALWAYS mark done + expanded and close the loading box, even on error, so the game
-			-- never hangs on the loading screen.
-			map.SuperBigMapSurfaceStretchDone = true
-			map.SuperBigMapExpanded = true
+			-- Closing the loading UI must not advertise a failed branch as a usable final map.
+			if ok_branch then
+				map.SuperBigMapSurfaceStretchDone = true
+				map.SuperBigMapExpanded = true
+			else
+				SuperBigMap.GenerationReadiness.RecordSurfaceExpansionFailure(map, branch_err)
+			end
 			end_loading()
-			SignalExpansionReadinessChanged(map, "surface stretch complete")
+			SignalExpansionReadinessChanged(map, ok_branch and "surface stretch complete" or "surface stretch failed")
 			LoadingFinish("surface expansion complete", map, {
 				terrain_grids = n_grids, error = ok_branch and "" or tostring(branch_err),
 			}, ok_branch)
@@ -12200,7 +12319,8 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 		-- real-time-thread entry after this protected pipeline is the earliest stable boundary, and
 		-- one ordinary RebuildFinal there is sufficient. Keep the immediate call above for ordering
 		-- and queue this surface-only revalidation exactly once after a successful pipeline return.
-		if thread_ok
+		if thread_ok and map.SuperBigMapSurfaceStretchDone == true
+			and not map.SuperBigMapSurfaceStretchFailed
 			and cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true)
 			and map.SuperBigMapSurfacePostPipelineRevalidationScheduled ~= true then
 			map.SuperBigMapSurfacePostPipelineRevalidationScheduled = true
@@ -12215,14 +12335,25 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				local revalidation_ok, revalidation_err = yield_protected_call(function()
 					SuperBigMap.GenerationGrids.RebuildFinal(
 						map, "post-pipeline scheduled revalidation")
+					local seen = {}
+					for _, underground in pairs(Global("Maps") or {}) do
+						if type(underground) == "table" and not seen[underground]
+							and underground.SuperBigMapPassageSurfaceFinalCommitted == true then
+							seen[underground] = true
+							local valid, reason = TerrainCopy.ValidateSurfacePassageCommitment(underground, true)
+							if not valid then error("final surface entrance validation failed: " .. tostring(reason)) end
+						end
+					end
 				end)
 				if type(resume_ild) == "function" then
 					SafeCall(resume_ild, "SuperBigMapSurfacePostPipelineRevalidation")
 				end
 				if revalidation_ok then
 					map.SuperBigMapSurfacePostPipelineRevalidationComplete = true
+					SignalExpansionReadinessChanged(map, "surface final entrance validation complete")
 				else
 					map.SuperBigMapSurfacePostPipelineRevalidationError = tostring(revalidation_err)
+					SuperBigMap.GenerationReadiness.RecordSurfaceExpansionFailure(map, revalidation_err)
 					LoadingFinish("surface post-pipeline revalidation failed", map, {
 						error = tostring(revalidation_err),
 					}, false)
@@ -12236,6 +12367,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 			end
 		end
 		if not thread_ok then
+			SuperBigMap.GenerationReadiness.RecordSurfaceExpansionFailure(map, thread_err)
 			if map.SuperBigMapStretchPipelinePending == true then
 				local lifecycle = SuperBigMap.Lifecycle
 				if lifecycle and type(lifecycle.Apply) == "function" then
@@ -12250,6 +12382,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 		end
 	end)
 	if not schedule_ok then
+		SuperBigMap.GenerationReadiness.RecordSurfaceExpansionFailure(map, schedule_err)
 		map.SuperBigMapStretchPipelinePending = false
 		map.SuperBigMapSurfaceStretchScheduled = false
 		EndSurfaceExpansionLoading(map)
@@ -12484,6 +12617,14 @@ local function UndergroundExpansionReadiness(map)
 	if type(surface) ~= "table" or surface == map then
 		return true, "native generation complete; no surface dependency"
 	end
+	if surface.SuperBigMapSurfaceStretchFailed then
+		return false, "surface expansion failed: " .. tostring(surface.SuperBigMapSurfaceStretchFailed), true
+	end
+	if surface.SuperBigMapSurfaceStretchScheduled == true
+		and cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true)
+		and surface.SuperBigMapSurfacePostPipelineRevalidationComplete ~= true then
+		return false, "surface final entrance validation has not completed"
+	end
 	if not cfg_bool("SURFACE_STRETCH_AT_START", false) then
 		return true, "native generation complete; surface expansion disabled"
 	end
@@ -12496,6 +12637,10 @@ local function UndergroundExpansionReadiness(map)
 		or (surface.SuperBigMapExpanded == true
 			and surface.SuperBigMapExpansionPending ~= true
 			and surface.SuperBigMapStretchPipelinePending ~= true) then
+		local committed, reason = TerrainCopy.ValidateSurfacePassageCommitment(map)
+		if not committed then
+			return false, "surface entrance preparation incomplete: " .. tostring(reason), true
+		end
 		return true, "native generation and surface expansion complete"
 	end
 	return false, "surface expansion transaction has not completed"
@@ -12576,10 +12721,23 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 		LoadingStart("underground expansion first access", map, {
 			force_now = tostring(force_now == true),
 		})
-		local ready, readiness = UndergroundExpansionReadiness(map)
+		local ready, readiness, failed = UndergroundExpansionReadiness(map)
 		while not ready do
+			if failed then
+				map.SuperBigMapUndergroundStretchRunning = false
+				map.SuperBigMapUndergroundStretchPending = false
+				map.SuperBigMapStretchPipelinePending = false
+				map.SuperBigMapUndergroundPreparationFailed = true
+				map.SuperBigMapUndergroundStretchFailed = readiness
+				local msg = Global("Msg")
+				if type(msg) == "function" then
+					pcall(msg, "SuperBigMapUndergroundExpansionDone", map, false, readiness)
+				end
+				LoadingFinish("underground dependency failed", map, { error = readiness }, false)
+				return false, readiness
+			end
 			wait_msg("SuperBigMapExpansionReadinessChanged")
-			ready, readiness = UndergroundExpansionReadiness(map)
+			ready, readiness, failed = UndergroundExpansionReadiness(map)
 		end
 		-- LOADING PHASE starts only after dependencies are ready; waiting for engine events must
 		-- never hold the player behind a timing-dependent loading screen.
@@ -13282,9 +13440,11 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 		if type(msg) == "function" then
 			local restore_token = ok_branch and Global("CurrentMap") == map
 				and CurrentElevatorRestoreToken(map) or nil
-			if restore_token then
+			-- An already-current map gets no subsequent CurrentMapChangeDone, even
+			-- when it has no player-built Elevator. Finalize wonders in that case too.
+			if ok_branch and Global("CurrentMap") == map then
 				pcall(msg, "SuperBigMapUndergroundSupplyReady", map,
-					restore_token.token_id, "already-current pipeline complete")
+					restore_token and restore_token.token_id, "already-current pipeline complete")
 			end
 			pcall(msg, "SuperBigMapUndergroundExpansionDone", map, ok_branch, branch_err)
 		end
@@ -14340,8 +14500,9 @@ local function PatchDeferredUndergroundAccess(source)
 		local lifecycle_failed = after_token and after_token.status == "failed"
 		local lifecycle_missed = after_token and after_token.status == "queued"
 		local wonder_reseat_failure = target.SuperBigMapWonderLifecycleReseatFailed
-		if lifecycle_failed or lifecycle_missed or wonder_reseat_failure then
+		if lifecycle_failed or lifecycle_missed or wonder_reseat_failure or renderer_settled ~= true then
 			local restored_result = wonder_reseat_failure
+				or (renderer_settled ~= true and tostring(renderer_result))
 				or after_token and after_token.failure or
 				"CurrentMapChangeDone did not consume Elevator restore token "
 				.. tostring(switch_restore_token_id)
@@ -14413,6 +14574,11 @@ local function HandleDeferredUndergroundMapChange(map_slot, map)
 			else
 				renderer_settled, renderer_result = SettleUndergroundSceneResources(
 					map, "already-current underground recovery completed")
+				if renderer_settled ~= true or map.SuperBigMapWonderLifecycleReseatFailed then
+					ok, err = false, tostring(map.SuperBigMapWonderLifecycleReseatFailed or renderer_result)
+					map.SuperBigMapUndergroundPreparationFailed = true
+					map.SuperBigMapUndergroundStretchFailed = err
+				end
 			end
 		end
 		if screen_open and type(close_screen) == "function" then

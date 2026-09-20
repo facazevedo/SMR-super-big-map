@@ -5203,7 +5203,11 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 					local projected_max
 					if type(min0) == "number" and type(max0) == "number" and max0 > min0 and cap then
 						local shift = cfg_bool("STRETCH_SHIFT_HEIGHTS_DOWN", true)
-						local span_at_full_scale = (max0 - min0) * zmul / zdiv + Z_FLOOR_WU
+						-- Underground stretching is anchored to its original floor. The surface's
+						-- low-datum normalization buys headroom for tall mountains; applying it
+						-- underground needlessly lowered every cave and its decoration by 90 m.
+						local floor_z = uniform_underground and min0 or Z_FLOOR_WU
+						local span_at_full_scale = (max0 - min0) * zmul / zdiv + floor_z
 						projected_max = math.floor(span_at_full_scale)
 						if not uniform_underground and shift
 							and cfg_bool("STRETCH_ADAPTIVE_Z_SCALE", true)
@@ -5215,7 +5219,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 							error("uniform underground height stretch exceeds the terrain height budget")
 						end
 						if shift then
-							zadd = Z_FLOOR_WU - math.floor((min0 * zmul + 0.0) / zdiv)
+							zadd = floor_z - math.floor((min0 * zmul + 0.0) / zdiv)
 						end
 					end
 					pcall(grid_muldivadd, stretched, zmul, zdiv, zadd)
@@ -6251,6 +6255,72 @@ local function CaveInTerrainGluedPoint(x, y, raw_z, explicit_z)
 	return pos
 end
 
+local cave_in_ground_mesh_lods
+local function CaveInGroundMeshLods()
+	if cave_in_ground_mesh_lods then return cave_in_ground_mesh_lods end
+	local mesh_data = Global("GetStateLODMeshData")
+	local mesh_properties = Global("GetRenderMeshProperties")
+	local state_idx = Global("GetStateIdx")
+	local lod_count = Global("GetStateLODCount")
+	local resources = Global("ResourceManager")
+	local make_lods = Global("GetMeshLodsData")
+	if type(mesh_data) ~= "function" or type(mesh_properties) ~= "function"
+		or type(state_idx) ~= "function" or type(lod_count) ~= "function"
+		or not resources or type(make_lods) ~= "function" then return nil end
+	local entity = "CaveIn_Buildings"
+	local idle = state_idx("idle")
+	if lod_count(entity, idle) ~= 1 then return nil end
+	local parts = mesh_data(entity, idle, 0)
+	if type(parts) ~= "table" or #parts ~= 2
+		or parts[1].mesh ~= "Meshes/CaveIn_Buildings_mesh.sub_0.hgrm"
+		or parts[2].mesh ~= "Meshes/CaveIn_Buildings_mesh.sub_1.hgrm" then return nil end
+	local stray = mesh_properties(resources.GetResourceID(parts[1].mesh))
+	local ground = mesh_properties(resources.GetResourceID(parts[2].mesh))
+	-- 1.1.0.403908 ships an unskinned 144-vertex fragment at Z493..499m.
+	-- Unlike the main skinned rubble it never descends with the falling/idle rig.
+	-- Match that defect, not merely a mesh index; leave changed/fixed assets alone.
+	if not stray or not ground or stray.MaxBonesPerVertex ~= 0
+		or stray.NumVertices ~= 144 or stray.NumIndices ~= 516
+		or not stray.Box or stray.Box:min():z() < 490 or stray.Box:max():z() > 500
+		or (ground.MaxBonesPerVertex or 0) < 1 then return nil end
+	local falling = mesh_data(entity, state_idx("falling"), 0)
+	if type(falling) ~= "table" or #falling ~= 2 then return nil end
+	for i = 1, 2 do
+		if falling[i].mesh ~= parts[i].mesh or falling[i].material ~= parts[i].material then return nil end
+	end
+	cave_in_ground_mesh_lods = make_lods(
+		resources.GetResource(resources.GetResourceID(parts[2].mesh), true),
+		resources.GetResource(resources.GetResourceID(parts[2].material), true))
+	return cave_in_ground_mesh_lods
+end
+
+local function InitializeCaveInRendering(obj)
+	if not obj or obj.class ~= "CaveInRubble" or obj:GetEntity() ~= "CaveIn_Buildings" then return false end
+	local map = obj:GetMap()
+	if not map or not map.mapdata or Engine.MapDataEnvironment(map.mapdata) ~= "Underground" then return false end
+	local mul, div = tonumber(obj.SuperBigMapCaveInShapeScaleXMul), tonumber(obj.SuperBigMapCaveInShapeScaleXDiv)
+	if map.SuperBigMapUndergroundPrepared ~= true and not (mul and div and div > 0 and mul > div) then return false end
+	local set_lods = Global("SetRenderingMeshLods")
+	if type(set_lods) ~= "function" then return false end
+	local lods = CaveInGroundMeshLods()
+	if not lods then return false end
+	-- Per-object rendering only: retain the original entity, animation, collision,
+	-- footprint, clearing work and transforms. No shared asset/resource is edited.
+	set_lods(obj, lods)
+	return true
+end
+
+local function InitializeUndergroundRubbleRendering(map)
+	if not map or map ~= Global("CurrentMap") or not map.mapdata
+		or Engine.MapDataEnvironment(map.mapdata) ~= "Underground"
+		or map.SuperBigMapUndergroundPrepared ~= true then return 0 end
+	local count = 0
+	map:MapForEach("map", "CaveInRubble", function(obj)
+		if InitializeCaveInRendering(obj) then count = count + 1 end
+	end)
+	return count
+end
+
 -- CaveInRubble and TunnelBlockerRubble are Buildings and are intentionally excluded from the
 -- cosmetic-decoration loop. Transform them explicitly while their vanilla source coordinates are
 -- still captured, updating GridObject registration around each move so every expanded visual wall
@@ -6344,6 +6414,7 @@ local function ScaleCapturedCaveInsToFull(map, scale_x, scale_y, full_tw, full_t
 						math.min(MAX_SCALE, math.floor(old_scale * scale_x + 0.5)))
 					obj:SetScale(target_scale)
 				end
+				InitializeCaveInRendering(obj)
 				record.expanded_shape_hexes = CaveInShapePointCount(obj)
 				if type(record.expanded_shape_hexes) ~= "number"
 					or record.expanded_shape_hexes <= 0 then error("expanded shape unavailable") end
@@ -7840,6 +7911,56 @@ local function MoveEntranceVisualsToScale(map)
 	return moved
 end
 
+-- A bootstrap lock records a provisional coordinate, NOT a validated final surface pad.
+-- Check every pair before deferred work can clear/move/flatten anything. Object fields survive
+-- saves, unlike the original transient map-level completion flag, so this also covers old saves.
+local function ValidateSurfacePassageCommitment(underground_map, validate_terrain)
+	local surface = Global("MainMap")
+	if not underground_map or not surface or type(underground_map.MapForEach) ~= "function" then
+		return false, "passage maps unavailable"
+	end
+	local count, failure = 0, nil
+	local ok, err = pcall(underground_map.MapForEach, underground_map, "map", "ElevatorPassage", function(anchor)
+		if not IsLiveGameObject(anchor) then return end
+		local other = anchor.other
+		if not IsLiveGameObject(other) or other.other ~= anchor
+			or type(other.GetMap) ~= "function" or other:GetMap() ~= surface then
+			failure = failure or "linked surface passage unavailable"
+			return
+		end
+		count = count + 1
+		if anchor.SuperBigMapCommittedPassageLocked ~= true
+			or other.SuperBigMapCommittedPassageLocked ~= true
+			or other.SuperBigMapPassagePadPrepared ~= true then
+			failure = failure or "final surface passage pad was not committed"
+			return
+		end
+		local x, y = PointXY(ObjectPosition(other))
+		if type(x) ~= "number" or type(y) ~= "number"
+			or x ~= other.SuperBigMapCommittedPassageX or y ~= other.SuperBigMapCommittedPassageY then
+			failure = failure or "surface passage moved from its final commitment"
+		end
+		-- Only generation's last grid boundary uses this terrain check. A later player-built
+		-- Elevator legitimately occupies this footprint, so access/load checks use its commitment.
+		if validate_terrain then
+			local templates = Global("BuildingTemplates")
+			local elevator = type(templates) == "table" and templates.Elevator
+			local flat = Global("IsTerrainFlatForPlacement")
+			local outline = Global("GetEntityOutlineShape")
+			if not elevator or type(elevator.GetBuildShape) ~= "function"
+				or type(flat) ~= "function" or type(outline) ~= "function"
+				or not flat(surface.buildable, elevator:GetBuildShape(), ObjectPosition(other), other:GetAngle())
+				or not flat(surface.buildable, outline(other.entity), ObjectPosition(other), other:GetAngle()) then
+				failure = failure or "surface Elevator footprint invalid after final grid rebuild"
+			end
+		end
+	end)
+	if not ok then return false, "passage commitment query failed: " .. tostring(err) end
+	if failure then return false, failure end
+	if count == 0 then return false, "no linked ElevatorPassage pairs found" end
+	return true, count
+end
+
 -- Passage correspondence has three phases. The lightweight underground bootstrap records the
 -- vanilla underground anchor as the authoritative source coordinate. After the surface stretch,
 -- its proportional underground destination is projected onto the surface: the exact hex is used
@@ -7853,6 +7974,10 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 	local surface_map = Global("MainMap")
 	if not underground_map or not surface_map or underground_map == surface_map then
 		return false, { error = "surface/underground maps unavailable", pairs = 0 }
+	end
+	if not source_bootstrap then
+		local ready, reason = ValidateSurfacePassageCommitment(underground_map)
+		if not ready then return false, { error = reason, pairs = 0 } end
 	end
 	local point_fn = Global("point")
 	local world_to_hex = Global("WorldToHex")
@@ -7877,6 +8002,21 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 		local ok_shape, value = pcall(get_shape, "Elevator")
 		if ok_shape and type(value) == "table" then elevator_shape = value end
 	end
+	-- The native spawn shape adds THREE clearance rings to the building. Those rings are useful
+	-- for authored underground cleanup, but are not an Elevator construction requirement. Using
+	-- them to choose the surface position can reject a perfectly buildable, closer entrance.
+	local templates = Global("BuildingTemplates")
+	local elevator = type(templates) == "table" and templates.Elevator
+	local elevator_build_shape = elevator and type(elevator.GetBuildShape) == "function"
+		and SafeCall(elevator.GetBuildShape, elevator)
+	local surface_pad_shape = elevator and type(elevator.GetFlattenShape) == "function"
+		and SafeCall(elevator.GetFlattenShape, elevator)
+	if not elevator_shape or #elevator_shape == 0 or type(validate_shape) ~= "function"
+		or type(get_outline) ~= "function" or type(is_terrain_flat) ~= "function"
+		or type(elevator_build_shape) ~= "table" or #elevator_build_shape == 0
+		or type(surface_pad_shape) ~= "table" or #surface_pad_shape == 0 then
+		return false, { error = "complete Elevator placement APIs unavailable", pairs = 0 }
+	end
 	local surface_w, surface_h = TerrainSize(surface_map)
 	local underground_w, underground_h = TerrainSize(underground_map)
 
@@ -7899,7 +8039,7 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 	-- fit (uneven or unbuildable Z, impassable, obstructed), which is what the checks below and
 	-- vanilla's own IsTerrainFlatForPlacement decide. Borrowing the top-up slope threshold pushed a
 	-- pair 8 rings off a footprint vanilla accepts (see the glue report of iter 003).
-	local function footprint_buildable(map, q, r, angle, anchor)
+	local function footprint_buildable(map, q, r, angle, anchor, requested_shape)
 		local buildable = map and map.buildable
 		if not buildable or type(buildable.GetZ) ~= "function" then
 			return false, "buildable grid unavailable"
@@ -7916,7 +8056,7 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 			anchor_at_candidate = ok_anchor_hex and anchor_q == q and anchor_r == r
 		end
 		-- SurfacePassageBase:IsValidPlacement uses this exact vanilla predicate. Check it at
-		-- every candidate before considering the larger Elevator spawn footprint.
+		-- every candidate before considering the Elevator's own construction footprint.
 		if type(is_terrain_flat) == "function" and type(get_outline) == "function"
 			and anchor and anchor.entity then
 			local ok_outline, outline = pcall(get_outline, anchor.entity)
@@ -7981,8 +8121,10 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 			end
 			return true
 		end
-		if elevator_shape and type(validate_shape) == "function" then
-			local ok, valid = pcall(validate_shape, elevator_shape, center, angle or 0, valid_hex)
+		local placement_shape = requested_shape
+			or (map == surface_map and elevator_build_shape or elevator_shape)
+		if placement_shape and type(validate_shape) == "function" then
+			local ok, valid = pcall(validate_shape, placement_shape, center, angle or 0, valid_hex)
 			if not ok then return false, "Elevator shape validation failed" end
 			if valid ~= true then return false, failure_reason or "invalid Elevator footprint" end
 			return true
@@ -8053,8 +8195,9 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 				.. (first_blocker and ("(" .. first_blocker .. ")") or "")
 			return true
 		end
-		if elevator_shape and type(validate_shape) == "function" then
-			pcall(validate_shape, elevator_shape, point_fn(x, y), angle or 0, describe_hex)
+		local placement_shape = map == surface_map and elevator_build_shape or elevator_shape
+		if placement_shape and type(validate_shape) == "function" then
+			pcall(validate_shape, placement_shape, point_fn(x, y), angle or 0, describe_hex)
 		else
 			describe_hex(q, r)
 		end
@@ -8216,18 +8359,31 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 		return remove_ok and ok_set and add_ok
 	end
 
-	-- Vanilla prepares the surface passage with this exact Elevator shape after it has selected a
-	-- naturally valid footprint. Our two-phase planner can move that passage after vanilla's call,
-	-- so the preparation must follow the committed move instead of remaining at the discarded hex.
+	-- Reserve a naturally valid surface footprint without rewriting its terrain. Re-flattening an
+	-- already buildable site can change its surrounding buildable-zone boundaries on the final
+	-- native rebuild (notably at cliff edges). Actual Elevator construction owns its flattening.
+	-- Underground still needs the native spawn-pad preparation at its authoritative destination.
 	-- This is deliberately not a placement fallback: footprint_buildable must accept the untouched
 	-- terrain first, and a failed native preparation aborts the transaction.
 	local function prepare_passage_pad(anchor, map, x, y)
-		if not elevator_shape or type(flatten_build_shape) ~= "function" then
+		local pad_shape = map == surface_map and surface_pad_shape or elevator_shape
+		if not pad_shape or type(flatten_build_shape) ~= "function" then
 			return false, "vanilla passage-pad preparation unavailable"
 		end
 		if map_of(anchor) ~= map then return false, "passage anchor belongs to another map" end
+		local ok_hex, q, r = pcall(world_to_hex, point_fn(x, y))
+		if not ok_hex then return false, "passage pad hex unavailable" end
+		local angle = type(anchor.GetAngle) == "function" and SafeCall(anchor.GetAngle, anchor) or 0
+		local valid, reason = footprint_buildable(map, q, r, angle, anchor, pad_shape)
+		if not valid then
+			return false, "refusing to flatten invalid Elevator footprint: " .. tostring(reason)
+		end
+		if map == surface_map then
+			anchor.SuperBigMapPassagePadPrepared = true
+			return true
+		end
 		local ok_flatten, flatten_result = pcall(
-			flatten_build_shape, elevator_shape, anchor, "flatten unbuildable")
+			flatten_build_shape, pad_shape, anchor, "flatten unbuildable")
 		if not ok_flatten then
 			return false, "vanilla passage-pad preparation failed: " .. tostring(flatten_result)
 		end
@@ -8767,6 +8923,9 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 				return false, { error = "committed surface endpoint unavailable", pairs = stats.pairs }
 			end
 			search_algorithm = "immutable surface commitment and true underground hex"
+			surface_radius = math.max(math.abs(surface_q - plan.final_q),
+				math.abs(surface_r - plan.final_r),
+				math.abs(surface_q + surface_r - plan.final_q - plan.final_r))
 		end
 
 		local expected_ux, expected_uy
@@ -8889,10 +9048,9 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 		-- Initial bootstrap runs before the surface stretch, so its provisional surface coordinate
 		-- must not sculpt terrain that is about to be replaced. A second source-view planning pass
 		-- after the final surface buildable-grid rebuild opts in here. Deferred underground final
-		-- alignment always prepares the underground endpoint; it also prepares the surface endpoint
-		-- when a final-grid incompatibility forced that endpoint to move.
+		-- alignment prepares only the underground endpoint. A provisional/unprepared surface must
+		-- never be treated as final or repaired here, after it may already be visible to the player.
 		local prepare_surface = surface_final_commit
-			or (not source_bootstrap and surface_anchor.SuperBigMapPassagePadPrepared ~= true)
 		local prepare_underground = not source_bootstrap
 			and options.prepare_underground_pad ~= false
 		if prepare_surface then
@@ -9079,11 +9237,14 @@ local TerrainCopy = {
 	StretchRelocateStartSector = StretchRelocateStartSector,
 	MoveEntranceVisualsToScale = MoveEntranceVisualsToScale,
 	AlignPassagePairsToSharedHex = AlignPassagePairsToSharedHex,
+	ValidateSurfacePassageCommitment = ValidateSurfacePassageCommitment,
 	PatchEntranceBadgePosition = PatchEntranceBadgePosition,
 	RestoreEntranceBadgePositionPatch = RestoreEntranceBadgePositionPatch,
 	RestoreEntranceBadgePositions = RestoreEntranceBadgePositions,
 	PatchCaveInShapePoints = PatchCaveInShapePoints,
 	RestoreCaveInShapePointsPatch = RestoreCaveInShapePointsPatch,
+	InitializeCaveInRendering = InitializeCaveInRendering,
+	InitializeUndergroundRubbleRendering = InitializeUndergroundRubbleRendering,
 	PatchUndergroundWonderShapePoints = PatchUndergroundWonderShapePoints,
 	RestoreUndergroundWonderShapePointsPatch = RestoreUndergroundWonderShapePointsPatch,
 	ScaleHexShapeForExpansion = ScaleCaveInHexShape,
