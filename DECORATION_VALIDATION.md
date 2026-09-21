@@ -6,6 +6,47 @@ the diagnostic pass. It is disabled on both layers in the current release-mode
 timing candidate, at the user's explicit request. Production placement rules,
 narrow correction safeguards and rollback remain enabled.
 
+## Release logging cleanup - 2026-09-21
+
+Guard **344**, based on `dbf61dc`, keeps all production placement, repair,
+passability, compatibility and rollback checks. Release configuration disables
+all debug/trace channels, exhaustive decoration audits, native manifests, test
+controls, reveal cheats and terrain dumps. Errors that invalidate a map are still
+reported; they must never be silently hidden.
+
+The remaining normal terrain/census summaries now require opt-in diagnostics.
+Release generation omits report-only duplicate wonder terrain/obstruction and
+entrance-connectivity queries, verbose entrance-footprint descriptions, per-object
+disabled validator dispatch, and the deferred surface census that only recorded
+statistics. The authoritative census/terrain checks that drive placement failure
+or repair remain. Diagnostic code is retained for explicit troubleshooting and
+does not count an unmeasured result as a pass.
+
+All **45** host fixture files pass. The new release-quiet fixture is red against
+`dbf61dc` and green against this candidate; it compares placement acceptance,
+rejections, nearest-valid repair and RNG consumption with observation on/off,
+checks print gates and verifies that release mode schedules no report-only
+deferred census. Live generation and lifecycle results are recorded separately.
+
+The final 15S67E run measured **97.468 s START -> T1** and **60.037 s underground
+preparation**, at unchanged 3840 x 2160 and 8192 x 8192 on both layers. These are
+single measurements, not an average or proof of a speedup; the underground result
+is still 0.037 s over 60 s. Exact final-build save/load, both map switches, both
+entrance pairs, seven commanded rover moves, new cave-in settling and all 17
+blockers' five native clearing phases pass. Decoration/rubble snapshots match
+dbf61dc: surface 19290 / `7048055723638285559`, underground 644 /
+`-2892925381871930933`. No report-only deferred census or wonder ledger appears
+after load/switch. Local payload audit is 43/43 exact. These measurements preceded
+the commit/push handoff; they do not imply a public Workshop release.
+
+This remains scoped to 15S67E, not all scenarios/hardware. The debug executable's
+vanilla initial-sector/performance messages were investigated, not suppressed:
+the final map has 395 surface and 132 underground resource markers, and all 13
+recorded starting deposits were placed. Two later Invalid Area Lua errors came
+from a malformed inline diagnostic query (Windows stripped its string quotes),
+not the mod. Its corrected file-based probe and final lifecycle driver pass.
+Evidence: `_ralph/tools/compatibility/release_344_cleanup.md` and associated JSON.
+
 ## Surface-only optimization measurements — 2026-09-21
 
 The active scope is now **surface only**. Two cold-process runs of the unmodified

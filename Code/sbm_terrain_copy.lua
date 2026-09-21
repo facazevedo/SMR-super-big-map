@@ -4350,7 +4350,8 @@ local dx, dy = x - patch.cx, y - patch.cy
 	end
 	map.SuperBigMapOuterResourceTerrainReport = report
 	LoadingStep("outer resource access and cluster landing terrain", report, map)
-	local print_fn = Global("print")
+	local print_fn = cfg_bool("DEBUG_LOGGING_ENABLED", false)
+		and cfg_bool("DEBUG_LOADING_TIMINGS", false) and Global("print") or nil
 	if type(print_fn) == "function" then
 		print_fn("[Super Big Map][OuterResourceTerrain] resources=" .. tostring(report.resources)
 			.. " surface=" .. tostring(report.surface_resources)
@@ -4751,7 +4752,8 @@ local function AuditOuterResourceTerrain(map)
 	}
 	map.SuperBigMapOuterResourceTerrainAudit = report
 	LoadingStep("outer resource terrain final audit", report, map)
-	local print_fn = Global("print")
+	local print_fn = cfg_bool("DEBUG_LOGGING_ENABLED", false)
+		and cfg_bool("DEBUG_LOADING_TIMINGS", false) and Global("print") or nil
 	if type(print_fn) == "function" then
 		print_fn("[Super Big Map][OuterResourceTerrainAudit] resources=" .. tostring(report.resources)
 			.. " surface_passable=" .. tostring(report.surface_passable)
@@ -5923,6 +5925,9 @@ local function AnnotateDecorRelief(map, terrain_source_map)
 	local grounding = SuperBigMap.RockGrounding
 	if grounding then grounding.BeginCapture(map, relief_terrain_map) end
 	local validation = SuperBigMap.DecorationValidation
+	-- Avoid dispatching a disabled diagnostic for every source decoration. The
+	-- separate grounding/correction services still run in the release build.
+	if not cfg_bool("DECORATION_VALIDATION_ENABLED", true) then validation = nil end
 	if validation then validation.Run("BeginCapture", map, relief_terrain_map) end
 	if type(box_fn) ~= "function" then return 0 end
 	local const_tbl = Global("const")
@@ -8988,10 +8993,10 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 				drift_wu = math.floor(math.sqrt(drift_x * drift_x + drift_y * drift_y) + 0.5),
 				candidates_checked = stats.checked,
 				candidates_rejected = rejection_histogram(),
-				twin_image_footprint = anchor_surface_reason
+				twin_image_footprint = EntranceAuditEnabled() and anchor_surface_reason
 					and describe_footprint(surface_map, anchor_q, anchor_r,
 						surface_angle, surface_anchor) or nil,
-				committed_footprint = anchor_surface_reason
+				committed_footprint = EntranceAuditEnabled() and anchor_surface_reason
 					and describe_footprint(surface_map, surface_q, surface_r,
 						surface_angle, surface_anchor) or nil,
 			}

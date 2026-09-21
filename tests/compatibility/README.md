@@ -1,6 +1,6 @@
 # 1.1 compatibility regression fixtures
 
-The candidate now has 44 host fixture files. The new native-composition fixtures
+The candidate now has 45 host fixture files. The new native-composition fixtures
 keep physical support status separate from source-equivalence evidence: complete
 geometry identity, every fragment frame and a preserved rooted contact path are
 required. Alternative contacts are tested against the captured source triangles,
@@ -66,6 +66,13 @@ engine generation, movement, obstacle, save/load, or first-underground-access
 tests. Live evidence and limitations are recorded in `COMPATIBILITY_1_1.md`.
 
 The fixtures are not mod payload and do not alter the installed game.
+
+`release_quiet_test.lua` checks that normal terrain/census summaries require
+opt-in logging, that release wonder placement makes no report-only native queries,
+and that disabling observation preserves placement verdicts, nearest-valid repairs
+and RNG consumption. The deferred report-only surface census must not schedule in
+release mode, including an opt-in job disabled before execution. Configuration
+coverage also rejects test controls, reveal cheats and terrain-dump paths.
 
 Surface optimization fixtures compare exact placement/rejection results against
 the previous full-vertex formula, bound invariant-matrix reads, prove one-time

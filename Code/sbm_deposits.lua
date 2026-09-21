@@ -24,6 +24,10 @@ local function AuditEnabled()
 		and diagnostics.EnrichmentEnabled() == true
 end
 
+local function LoadingDiagnosticsEnabled()
+	return cfg().DEBUG_LOGGING_ENABLED == true and cfg().DEBUG_LOADING_TIMINGS == true
+end
+
 local function AuditEmit(event, data, map)
 	local diagnostics = SuperBigMap.Diagnostics
 	if diagnostics and type(diagnostics.Audit) == "function" then
@@ -3794,7 +3798,7 @@ local function BuildUndergroundTopUpSectorCache(map)
 	state.buildable_sectors = buildable_count
 	state.empty_sectors = empty_count
 	state.unknown_sectors = unknown_count
-	local print_fn = cfg().DEBUG_LOADING_TIMINGS == true and Global("print") or nil
+	local print_fn = LoadingDiagnosticsEnabled() and Global("print") or nil
 	if type(print_fn) == "function" then
 		print_fn("[Super Big Map][UndergroundTopUpCandidateCache] sectors="
 			.. tostring(state.sectors and #state.sectors or 0)
@@ -3879,7 +3883,7 @@ local function SetEnrichmentTopUpStatus(map, kind, complete, remaining_shortfall
 		AuditEmit("TOPUP_STATUS", audit, map)
 	end
 	local fallback_added = tonumber(entry.underground_density_fallback_added) or 0
-	local print_fn = (AuditEnabled() or cfg().DEBUG_LOADING_TIMINGS == true)
+	local print_fn = (AuditEnabled() or LoadingDiagnosticsEnabled())
 		and Global("print") or nil
 	if fallback_added > 0 and type(print_fn) == "function" then
 		print_fn("[Super Big Map][UndergroundTopUpFallback] kind=" .. tostring(kind)
@@ -6040,7 +6044,7 @@ function DepositRules.TopUpDeposits(map)
 		wall_aware_shared_candidates = rubble_token
 			and rubble_token.wall_aware_shared_candidates or 0,
 	})
-	if cfg().DEBUG_LOADING_TIMINGS == true then
+	if LoadingDiagnosticsEnabled() then
 		local print_fn = Global("print")
 		if type(print_fn) == "function" then
 			print_fn("[Super Big Map][TopUpCandidatePool] kind=resources"
@@ -7128,7 +7132,7 @@ function DepositRules.TopUpAnomalies(map)
 		remaining_shortfall = remaining_shortfall
 			+ math.max(0, (target_by_kind[kind] or 0) - final_count)
 	end
-	local print_fn = (AuditEnabled() or cfg().DEBUG_LOADING_TIMINGS == true)
+	local print_fn = (AuditEnabled() or LoadingDiagnosticsEnabled())
 		and Global("print") or nil
 	if type(print_fn) == "function" then
 		print_fn("[Super Big Map][AnomalyTopUp] source=" .. CountMapString(source_by_kind)
@@ -7408,7 +7412,7 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 	-- the verbose formatter performed this sort as a side effect only while logging was active.
 	table.sort(moving, function(a, b) return a.id < b.id end)
 	local include_positions = AuditEnabled()
-	local print_fn = (AuditEnabled() or cfg().DEBUG_LOADING_TIMINGS == true)
+	local print_fn = (AuditEnabled() or LoadingDiagnosticsEnabled())
 		and Global("print") or nil
 	if type(print_fn) == "function" then
 		print_fn("[Super Big Map][OuterRingTopUpAnomalies] BEFORE count=" .. tostring(#moving)
@@ -8616,7 +8620,7 @@ function DepositRules.TopUpEffectDeposits(map)
 		surface_exclusion_cached_rejected = surface_ring_cached_rejected,
 		surface_exclusion_sample_rejected = surface_ring_sample_rejected,
 	})
-	if cfg().DEBUG_LOADING_TIMINGS == true then
+	if LoadingDiagnosticsEnabled() then
 		local print_fn = Global("print")
 		if type(print_fn) == "function" then
 			local shared_state = underground and UndergroundTopUpSamplingState(map) or nil
@@ -9271,7 +9275,7 @@ function DepositRules.CensusFinalOuterResourceTopUps(map, phase, require_placed)
 		+ stats.anomaly_resource_cluster_overflow
 		+ stats.cluster_total_member_overflow
 		+ stats.unverified_outer_effect_topups
-	local print_fn = Global("print")
+	local print_fn = (AuditEnabled() or LoadingDiagnosticsEnabled()) and Global("print") or nil
 	if type(print_fn) == "function" then
 		print_fn("[Super Big Map][OuterResourceTopUpCensus] phase=" .. tostring(phase or "unspecified")
 			.. " ordinary_resource_topups=" .. tostring(stats.ordinary_resource_topups)
@@ -9326,6 +9330,9 @@ end
 -- A marker can survive the generation transaction yet be consumed or moved by a deferred init;
 -- recording both points makes that lifecycle loss visible without changing any placement rules.
 function DepositRules.SchedulePostDeferredSurfaceResourceTopUpCensus(map, reason)
+	local diagnostics = SuperBigMap.Diagnostics
+	if not (diagnostics and diagnostics.GenerationAuditEnabled
+		and diagnostics.GenerationAuditEnabled()) then return false end
 	map = map or Global("CurrentMap")
 	if not map or IsUndergroundMap(map) or map.SuperBigMapOuterResourceCensusScheduled == true then
 		return false
@@ -9337,6 +9344,9 @@ function DepositRules.SchedulePostDeferredSurfaceResourceTopUpCensus(map, reason
 		-- mod graph (native functions, UI and scratch grids) into the save.
 		Sleep(100)
 		local live = rawget(_G, "SuperBigMap")
+		local diagnostics = live and live.Diagnostics
+		if not (diagnostics and diagnostics.GenerationAuditEnabled
+			and diagnostics.GenerationAuditEnabled()) then return end
 		local ok, stats = live.DepositRules.CensusFinalOuterResourceTopUps(map,
 			"post-deferred-GameInit " .. tostring(reason or "surface final"), false)
 		map.SuperBigMapOuterResourceCensusPostGameInit = stats
@@ -9717,6 +9727,9 @@ end
 function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, repair_invalid)
 	map = map or Global("CurrentMap")
 	SeedDeterministicPlacement(map, "wonder_reachability")
+	local diagnostics = SuperBigMap.Diagnostics
+	local observe = diagnostics and type(diagnostics.GenerationAuditEnabled) == "function"
+		and diagnostics.GenerationAuditEnabled() == true
 	local point_fn = Global("point")
 	local world_to_hex = Global("WorldToHex")
 	local hex_to_world = Global("HexToWorld")
@@ -9741,7 +9754,7 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 		markers = #markers, checked = 0, valid = 0, invalid = 0, moved = 0,
 		unresolved = 0, unreachable = 0, terrain_invalid = 0, too_far = 0,
 		overlaps = 0, candidates_tested = 0, connectivity_checks = 0,
-		entrance_disconnected = 0, terrain_fallbacks = 0,
+		entrance_disconnected = observe and 0 or nil, terrain_fallbacks = 0,
 		candidate_out_of_bounds = 0, candidate_badge_occupied = 0,
 		candidate_reserved = 0, candidate_unbuildable = 0,
 		candidate_impassable = 0, candidate_nonflat = 0,
@@ -9768,8 +9781,11 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 	-- time through a context built at this instant and record both verdicts durably: a cached/fresh
 	-- disagreement names that cause directly, without log scraping. Diagnostic only -- the fresh
 	-- context is never used to place anything and consumes no placement draw.
-	local fresh_validation_context = NewDepositValidationContext(map)
-	fresh_validation_context.wonder_reserved_hexes = {}
+	local fresh_validation_context
+	if observe then
+		fresh_validation_context = NewDepositValidationContext(map)
+		fresh_validation_context.wonder_reserved_hexes = {}
+	end
 	local reserved = UndergroundWonderReservedHexes(map)
 	local map_w, map_h = MapWorldSize(map)
 	local get_sector = Global("GetMapSectorXY")
@@ -9792,6 +9808,7 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 	end
 
 	local function terrain_diagnostic(pt, include_obstruction, context)
+		if not observe then return nil end
 		context = context or wonder_validation_context
 		local buildable, q, r = IsBuildableAt(map, pt, true, context)
 		local passable = PassableAt(map, pt, context)
@@ -9819,6 +9836,7 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 	end
 
 	local function state_diagnostic_text(state)
+		if not observe then return "" end
 		local diagnostic = state.diagnostic or {}
 		local fresh = state.fresh_diagnostic or {}
 		return "marker_world=" .. point_xy_text(state.marker_pos)
@@ -9873,8 +9891,11 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 		-- anomaly next to a wonder in another cavern is vanilla-correct and becomes accessible
 		-- when that tunnel is opened; entrance connectivity is therefore diagnostic, not a
 		-- placement veto. Terrain validity prevents the actual bug: a marker in black rock/void.
-		local reachable = IsReachableFromUndergroundEntrance(
-			map, marker_pos, q or marker_q, r or marker_r) == true
+		local reachable
+		if observe then
+			reachable = IsReachableFromUndergroundEntrance(
+				map, marker_pos, q or marker_q, r or marker_r) == true
+		end
 		local distance = HexDistance(spawner_q, spawner_r, marker_q, marker_r)
 		local local_ok = type(distance) == "number"
 			and distance <= DEFERRED_WONDER_ANOMALY_MAX_LOCAL_RADIUS
@@ -9885,15 +9906,19 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 			marker.SuperBigMapDeferredWonderAnomalyLocalTerrainFallback == true
 		local diagnostic = terrain_diagnostic(marker_pos, true)
 		-- Diagnostic second opinion on the identical predicates (see fresh_validation_context).
-		local fresh_terrain_ok, _, _, _, fresh_q, fresh_r = EvaluateDepositTerrain(
-			map, marker_pos, fresh_validation_context, true)
-		local fresh_unobstructed = fresh_terrain_ok and IsUnobstructedAt(
-			map, marker_pos, true, fresh_validation_context, fresh_q, fresh_r) == true
-		local fresh_diagnostic = terrain_diagnostic(marker_pos, true, fresh_validation_context)
+		local fresh_terrain_ok, fresh_base_ok, fresh_diagnostic
+		if observe then
+			local fresh_ok, _, _, _, fresh_q, fresh_r = EvaluateDepositTerrain(
+				map, marker_pos, fresh_validation_context, true)
+			fresh_terrain_ok = fresh_ok == true
+			fresh_base_ok = fresh_terrain_ok and IsUnobstructedAt(
+				map, marker_pos, true, fresh_validation_context, fresh_q, fresh_r) == true
+			fresh_diagnostic = terrain_diagnostic(marker_pos, true, fresh_validation_context)
+		end
 		return terrain_ok and (base_ok or accepted_terrain_fallback)
 			and local_ok and not overlap, {
-			fresh_terrain_ok = fresh_terrain_ok == true,
-			fresh_base_ok = (fresh_terrain_ok and fresh_unobstructed) == true,
+			fresh_terrain_ok = fresh_terrain_ok,
+			fresh_base_ok = fresh_base_ok,
 			fresh_diagnostic = fresh_diagnostic,
 			marker_pos = marker_pos, spawner_pos = spawner_pos,
 			marker_q = marker_q, marker_r = marker_r,
@@ -9950,16 +9975,18 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 				local terrain_ok, _, _, _, q, r = EvaluateDepositTerrain(
 					map, candidate_point, wonder_validation_context, true)
 				if not terrain_ok then
-					local diagnostic = terrain_diagnostic(candidate_point, false)
-					if not diagnostic.buildable then
-						ring.unbuildable = ring.unbuildable + 1
-						stats.candidate_unbuildable = stats.candidate_unbuildable + 1
-					elseif not diagnostic.passable then
-						ring.impassable = ring.impassable + 1
-						stats.candidate_impassable = stats.candidate_impassable + 1
-					elseif not diagnostic.flat_ok then
-						ring.nonflat = ring.nonflat + 1
-						stats.candidate_nonflat = stats.candidate_nonflat + 1
+					if observe then
+						local diagnostic = terrain_diagnostic(candidate_point, false)
+						if not diagnostic.buildable then
+							ring.unbuildable = ring.unbuildable + 1
+							stats.candidate_unbuildable = stats.candidate_unbuildable + 1
+						elseif not diagnostic.passable then
+							ring.impassable = ring.impassable + 1
+							stats.candidate_impassable = stats.candidate_impassable + 1
+						elseif not diagnostic.flat_ok then
+							ring.nonflat = ring.nonflat + 1
+							stats.candidate_nonflat = stats.candidate_nonflat + 1
+						end
 					end
 					return
 				end
@@ -9997,7 +10024,7 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 					other_sector_candidates[#other_sector_candidates + 1] = candidate
 				end
 			end)
-			if diagnostic_radii[radius] then
+			if observe and diagnostic_radii[radius] then
 				ring_diagnostics[#ring_diagnostics + 1] = diagnostic_class
 					.. ":r" .. tostring(radius)
 					.. "{tested=" .. tostring(ring.tested)
@@ -10032,7 +10059,7 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 		local valid, state = marker_state(marker, occupied)
 		local class_name = tostring(marker.SuperBigMapDeferredWonderClass
 			or marker.spawner and marker.spawner.class or "?")
-		if state.reachable ~= true then
+		if observe and state.reachable ~= true then
 			stats.entrance_disconnected = stats.entrance_disconnected + 1
 		end
 		if valid then
@@ -10042,8 +10069,10 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 			end
 			marker.SuperBigMapDeferredWonderAnomalyReachabilityValidated = true
 			marker.SuperBigMapDeferredWonderAnomalyDistanceHex = state.distance
-			details[#details + 1] = class_name .. "=valid:"
-				.. state_diagnostic_text(state)
+			if observe then
+				details[#details + 1] = class_name .. "=valid:"
+					.. state_diagnostic_text(state)
+			end
 		else
 			stats.invalid = stats.invalid + 1
 			if state.terrain_ok ~= true then
@@ -10057,8 +10086,10 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 			if not candidate or type(marker.SetPos) ~= "function" then
 				stats.unresolved = stats.unresolved + 1
 				marker.SuperBigMapDeferredWonderAnomalyReachabilityValidated = nil
-				details[#details + 1] = class_name .. "=unresolved:"
-					.. state_diagnostic_text(state)
+				if observe then
+					details[#details + 1] = class_name .. "=unresolved:"
+						.. state_diagnostic_text(state)
+				end
 			else
 				local old_pos = state.marker_pos
 				local old_x, old_y = old_pos:xy()
@@ -10092,55 +10123,61 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 						stats.terrain_fallbacks = stats.terrain_fallbacks + 1
 					end
 					StampResolvedBadgeHex(marker, candidate.q, candidate.r)
-					details[#details + 1] = class_name .. "=moved@"
-						.. tostring(state.marker_q) .. "," .. tostring(state.marker_r)
-						.. "->" .. tostring(candidate.q) .. "," .. tostring(candidate.r)
-						.. ":radius=" .. tostring(candidate.radius)
-						.. ":distance=" .. tostring(post_state.distance)
-						-- The pre-move judgment is the record that must match run to run.
-						.. ":pre=" .. state_diagnostic_text(state)
+					if observe then
+						details[#details + 1] = class_name .. "=moved@"
+							.. tostring(state.marker_q) .. "," .. tostring(state.marker_r)
+							.. "->" .. tostring(candidate.q) .. "," .. tostring(candidate.r)
+							.. ":radius=" .. tostring(candidate.radius)
+							.. ":distance=" .. tostring(post_state.distance)
+							-- The pre-move judgment is the record that must match run to run.
+							.. ":pre=" .. state_diagnostic_text(state)
+					end
 				else
 					stats.unresolved = stats.unresolved + 1
 					marker.SuperBigMapDeferredWonderAnomalyReachabilityValidated = nil
-					details[#details + 1] = class_name .. "=postmove_failed"
+					if observe then details[#details + 1] = class_name .. "=postmove_failed" end
 				end
 			end
 		end
 	end
-	stats.details = table.concat(details, ";")
-	stats.ring_diagnostics = table.concat(ring_diagnostics, ";")
-	stats.connectivity_cache_checks = reachability.checks
-	stats.connectivity_cache_rejected = reachability.rejected
-	stats.connectivity_failures = reachability.failures
-	-- Durable per-map record of this pass (gate 1's underground half). The audit channel is config
-	-- gated and lives only in the log; a pinned seed-parity pair has to diff the verdicts themselves,
-	-- so keep them on the map where the probe can read them like SuperBigMapPlacementSeedReport.
-	local entrance_hexes = {}
-	for _, seed_pos in ipairs(reachability.seeds or {}) do
-		local ok_seed_hex, seed_q, seed_r = pcall(world_to_hex, seed_pos)
-		entrance_hexes[#entrance_hexes + 1] = ok_seed_hex
-			and (tostring(seed_q) .. "," .. tostring(seed_r)) or "?"
+	if observe then
+		stats.details = table.concat(details, ";")
+		stats.ring_diagnostics = table.concat(ring_diagnostics, ";")
+		stats.connectivity_cache_checks = reachability.checks
+		stats.connectivity_cache_rejected = reachability.rejected
+		stats.connectivity_failures = reachability.failures
+		-- Opt-in seed-parity evidence, never a placement input. The release path
+		-- still returns the production validity/repair counts used by its caller.
+		local entrance_hexes = {}
+		for _, seed_pos in ipairs(reachability.seeds or {}) do
+			local ok_seed_hex, seed_q, seed_r = pcall(world_to_hex, seed_pos)
+			entrance_hexes[#entrance_hexes + 1] = ok_seed_hex
+				and (tostring(seed_q) .. "," .. tostring(seed_r)) or "?"
+		end
+		local wonder_report = type(map.SuperBigMapWonderReachabilityReport) == "table"
+			and map.SuperBigMapWonderReachabilityReport or {}
+		if #wonder_report < 8 then
+			wonder_report[#wonder_report + 1] = {
+				repair = repair_invalid == true,
+				markers = stats.markers, valid = stats.valid, invalid = stats.invalid,
+				moved = stats.moved, unresolved = stats.unresolved,
+				entrance_disconnected = stats.entrance_disconnected,
+				draws = type(deterministic_placement_rng) == "table"
+					and deterministic_placement_rng.calls or -1,
+				method = tostring(reachability.method),
+				entrance_seeds = table.concat(entrance_hexes, "|"),
+				connectivity_checks = reachability.checks,
+				connectivity_rejected = reachability.rejected,
+				connectivity_failures = reachability.failures,
+				details = stats.details,
+			}
+		end
+		map.SuperBigMapWonderReachabilityReport = wonder_report
+		AuditEmit("UNDERGROUND_WONDER_ANOMALY_REACHABILITY", stats, map)
+	else
+		-- Do not carry old diagnostic evidence forward as a current release verdict.
+		map.SuperBigMapWonderReachabilityReport = nil
 	end
-	local wonder_report = type(map.SuperBigMapWonderReachabilityReport) == "table"
-		and map.SuperBigMapWonderReachabilityReport or {}
-	if #wonder_report < 8 then
-		wonder_report[#wonder_report + 1] = {
-			repair = repair_invalid == true,
-			markers = stats.markers, valid = stats.valid, invalid = stats.invalid,
-			moved = stats.moved, unresolved = stats.unresolved,
-			entrance_disconnected = stats.entrance_disconnected,
-			draws = type(deterministic_placement_rng) == "table"
-				and deterministic_placement_rng.calls or -1,
-			method = tostring(reachability.method),
-			entrance_seeds = table.concat(entrance_hexes, "|"),
-			connectivity_checks = reachability.checks,
-			connectivity_rejected = reachability.rejected,
-			connectivity_failures = reachability.failures,
-			details = stats.details,
-		}
-	end
-	map.SuperBigMapWonderReachabilityReport = wonder_report
-	AuditEmit("UNDERGROUND_WONDER_ANOMALY_REACHABILITY", stats, map)
 	return stats.unresolved == 0 and stats.valid == stats.markers, stats
 end
 
