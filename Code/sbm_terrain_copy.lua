@@ -2603,6 +2603,12 @@ end
 -- not move or relax a top-up candidate; it proves how many of the terrain edits actually became
 -- usable construction coordinates under the game's own final grid.
 local function AuditNaturalMountainBaseBuildableAprons(map)
+	local diagnostics = SuperBigMap.Diagnostics
+	if not (diagnostics and diagnostics.GenerationAuditEnabled
+		and diagnostics.GenerationAuditEnabled()) then
+		if map then map.SuperBigMapNaturalMountainBaseApronAudit = nil end
+		return true, { skipped = true, reason = "diagnostic audit disabled" }
+	end
 	local centers = map and map.SuperBigMapNaturalMountainBaseApronCenters
 	if type(centers) ~= "table" or #centers == 0 then
 		return true, { created = 0, buildable_centers = 0, reason = "no aprons" }
@@ -6027,6 +6033,17 @@ local function AnnotateDecorRelief(map, terrain_source_map)
 					source_shape_hexes = CaveInShapePointCount(obj),
 					source = ObjectTransformSourceSnapshot(obj, pos),
 				}
+				-- The source may be a temporary native map; sampling the expanded
+				-- backing here (or resampling the destination anchor later) changes
+				-- the rubble's authored vertical placement near a height-grid edge.
+				if record.class == "CaveInRubble" then
+					if record.source.explicit_z then
+						record.source.visual_z = record.source.raw_z
+					elseif relief_terrain_available then
+						record.source.visual_z = terrain_api.GetHeight(relief_terrain_map, pos)
+					end
+					obj.SuperBigMapNativeRubbleZ = record.source.visual_z
+				end
 				cave_capture.list[#cave_capture.list + 1] = record
 			end
 		end
@@ -6248,6 +6265,17 @@ local function ClearDecorRelief(map)
 	end
 end
 
+local function CaveInExpandedHeight(map, source)
+	local z, mul, div, add = source.visual_z, map.SuperBigMapZScaleMul,
+		map.SuperBigMapZScaleDiv, map.SuperBigMapZScaleAdd
+	if type(z) ~= "number" or type(mul) ~= "number" or type(div) ~= "number"
+		or div <= 0 or type(add) ~= "number" then return nil end
+	if z ~= z or mul ~= mul or div ~= div or add ~= add
+		or math.abs(z) == math.huge or math.abs(mul) == math.huge
+		or math.abs(div) == math.huge or math.abs(add) == math.huge then return nil end
+	return math.floor(z * (mul + 0.0) / div + add + 0.5)
+end
+
 local function CaveInTerrainGluedPoint(x, y, raw_z, explicit_z)
 	local point_fn = Global("point")
 	if type(point_fn) ~= "function" then return nil end
@@ -6453,7 +6481,17 @@ local function ScaleCapturedCaveInsToFull(map, scale_x, scale_y, full_tw, full_t
 
 				local target_x = math.floor(source_x * scale_x + 0.5)
 				local target_y = math.floor(source_y * scale_y + 0.5)
-				local target = CaveInTerrainGluedPoint(target_x, target_y)
+				local target_z
+				if record.class == "CaveInRubble" then
+					target_z = CaveInExpandedHeight(map, source)
+					if target_z == nil then
+						error("native cave-in height transform unavailable")
+						-- Debug builds may suppress error(); still abort the protected
+						-- transaction so its grid/pose rollback cannot be skipped.
+						local unavailable;unavailable()
+					end
+				end
+				local target = CaveInTerrainGluedPoint(target_x, target_y, target_z, target_z ~= nil)
 				if not target or type(obj.SetPos) ~= "function" then error("SetPos unavailable") end
 				obj:SetPos(target)
 				if type(old_scale) == "number" and old_scale > 0 then

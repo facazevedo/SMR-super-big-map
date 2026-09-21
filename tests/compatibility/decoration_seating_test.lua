@@ -14,6 +14,15 @@ p=S.Plan({stone(0,20,10)},function()return nil end,{tile=1})
 assert(not p,'missing terrain never permits repair')
 p=S.Plan({stone(0,20,10)},function()return 0 end,{tile=1,allowed=function()return false end})
 assert(not p,'placement guard can veto a correction')
+-- Native rock meshes often extend below their origin. Visibility retention must
+-- compare with the already visible formation, not require exposing half of a
+-- large buried foundation while also grounding its detached small stone.
+local partial={stone(0,-320,580),stone(20,74,124)}
+p=S.Plan(partial,function()return 0 end,{tile=1,retain_existing_visibility=true})
+assert(p and p.dz==-74,'partly buried foundation must not prevent a safe minimal seating')
+assert(260+p.dz>=260/2 and 198+p.dz>=124/2,'retain at least half each originally visible component')
+p=S.Plan({stone(0,-9,10),stone(20,20,10)},function()return 0 end,{tile=1,retain_existing_visibility=true})
+assert(not p,'an already small exposed tip must not be buried to repair another component')
 dofile('Code/sbm_decoration_geometry.lua')
 local separated=SuperBigMap.DecorationGeometry.TrianglesSeparated
 local a={{0,0,0},{2,0,0},{0,2,0}}
@@ -30,7 +39,7 @@ local obj={GetVisualPos=function()return pos end,GetPos=function()return pos end
 local success=true;local checks=0
 local validator={SeatingEvidence=function()return {{obj=obj,confirmed=true,bounds={20,0,20,22,2,30},components={stone(20,20,10)}}}end,
  SeatingPlacementClear=function()return true end,
- RecordSeating=function()obj.SuperBigMapSupportRepair={version=1}end,
+ RecordSeating=function()obj.SuperBigMapSupportRepair={version=1};return true end,
  Run=function()
   checks=checks+1
   if success then obj.SuperBigMapSupportValidation={current_geometry_status='valid',placement_repaired=true};return {}end
@@ -47,4 +56,24 @@ success=false;pos=point(20,0,20);report=S.Run(map)
 assert(report.corrected==0 and report.rejected==1 and report.records[1].rolled_back,'failed proof must not be reported as repaired')
 assert(select(3,pos:xyz())==20 and obj.SuperBigMapSupportRepair==annotation,'rollback restores position and previous annotation')
 assert(checks==3,'rollback must refresh the diagnostic ledger')
+success=true
+for _,fault in ipairs({'record exception','record refusal','verification exception'})do
+ pos=point(20,0,20);local before=pos;local old_record,old_run=validator.RecordSeating,validator.Run
+ validator.RecordSeating=function(...)
+  obj.SuperBigMapSupportRepair={partial=true}
+  if fault=='record exception' then error('record failed')end
+  if fault=='record refusal' then return false end
+  return old_record(...)
+ end
+ validator.Run=function(...)if fault=='verification exception'then error('verification failed')end;return old_run(...)end
+ report=S.Run(map)
+ assert(report.corrected==0 and pos==before and obj.SuperBigMapSupportRepair==annotation,'surface rollback failed: '..fault)
+ validator.RecordSeating,validator.Run=old_record,old_run
+end
+pos=point(20,0,20);local before=pos;local old_evidence=validator.SeatingEvidence
+validator.SeatingEvidence=function()
+ local rows=old_evidence();rows[2]={obj={GetVisualPos=function()error('later candidate failed')end}};return rows
+end
+report=S.Run(map)
+assert(report.error and report.corrected==0 and pos==before and obj.SuperBigMapSupportRepair==annotation,'a later preparation exception leaked the earlier move')
 print('decoration seating: rigid corrections, no buried clusters, native XY preservation and fail-closed terrain passed')

@@ -18,5 +18,22 @@
   {"site":"20S45E","lat":1200,"lon":2700,"seed":"13000027"},
   {"site":"50N150W","lat":-3000,"lon":-9000,"seed":"14000029"},
   {"site":"50S150E","lat":3000,"lon":9000,"seed":"15000017"},
-  {"site":"70N10E","lat":-4200,"lon":600,"seed":"16000057"}
+  {"site":"70N10E","lat":-4200,"lon":600,"seed":"16000057"},
+  {
+    "site":"30S146E",
+    "lat":1800,
+    "lon":8760,
+    "seed":"8351877768356166168",
+    "game_seed_text":"jJRXM7pE",
+    "surface_seed":"-8259618194048590238",
+    "surface_template":"BlankBigTerraceCMix_19",
+    "underground_template":"BlankUnderground_03",
+    "game_mode":"regular",
+    "rules":["RoughTerrain"],
+    "sponsor":"IMM",
+    "commander":"rocketscientist",
+    "source_save":"Test2.savegame.sav",
+    "source_sha256":"60ED3593207ABF5CEBA89134499393A6DC95097C035CB5F7E8327497A7B4DD39",
+    "source_lua_revision":396349
+  }
 ]

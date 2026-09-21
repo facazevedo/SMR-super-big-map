@@ -19,6 +19,8 @@ for key,bad in pairs({BlendType='blendNormal',AlphaTestValue=26,VertexNoise='noi
  assert(not G.Material(key).complete,'unsupported rendering coverage: '..key)
 end
 materials.absent={};assert(not G.Material('absent').complete,'missing metadata never passes')
+assert(G.Material('SpecialType').render_kind=='terrain texture projection','baked decal supplies analytic projection evidence, not solid geometry')
+assert(not G.Material('SpecialType').complete,'projected volumes must never become opaque support')
 missing=true;assert(not G.Material('later').complete)
 missing=false;materials.later=opaque;assert(not G.Material('later').complete,'failure cached inside one pass')
 local good=G.Material('opaque');G.RetryIncomplete()

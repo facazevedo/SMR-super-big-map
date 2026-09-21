@@ -60,6 +60,14 @@ list={lower,upper};capture()
 local report=V.Validate(map,'native stack')
 assert(report.valid==2 and report.confirmed_defect==0,'legitimate stack roots through lower rock')
 assert(upper.SuperBigMapSupportBaseline.components['0:rock:1'].supported)
+-- A newly available terrain witness does not erase a STILL PRESENT native
+-- object contact. The fast terrain path must explicitly verify the saved edge.
+globals.terrain.GetHeight=function()return 20 end
+globals.terrain.GetMinMaxHeight=function()return 20,20 end
+report=V.Validate(map,'additional terrain witness')
+assert(report.valid==2,'fast terrain witness discarded intact native stack contact')
+globals.terrain.GetHeight=function()return 0 end
+globals.terrain.GetMinMaxHeight=function()return 0,0 end
 upper.z=32;report=V.Validate(map,'known split column')
 assert(report.confirmed_defect==1 and upper.SuperBigMapSupportValidation.status=='confirmed defect')
 upper.z=20;upper.x=115;capture();report=V.Validate(map,'overhang')
@@ -102,11 +110,14 @@ c.scale=200;d.scale=200;d.z=40
 report=V.Validate(map,'top-up similarity')
 assert(report.valid==2,'native prefab support survives a uniform group similarity')
 -- Simulate inactive-map serialization dropping arbitrary cosmetic-object fields.
+c.SuperBigMapDecorEnginePass=true;V.Validate(map,'persist explicit top-up policy')
 local c_id,d_id=c.SuperBigMapSupportId,d.SuperBigMapSupportId
 c.SuperBigMapSupportBaseline=nil;c.SuperBigMapSupportId=nil
+c.SuperBigMapDecorEnginePass=nil
 d.SuperBigMapSupportBaseline=nil;d.SuperBigMapSupportId=nil
 V.Clear(map);report=V.Recheck(map,'value-only ledger restore')
 assert(report.valid==2 and c.SuperBigMapSupportId==c_id and d.SuperBigMapSupportId==d_id)
+assert(c.SuperBigMapDecorEnginePass==true and d.SuperBigMapDecorEnginePass~=true,'restore known top-up policy without granting native stones XY permission')
 -- Ambiguous duplicate poses must not be guessed when rebinding source support.
 local e,f=object(nil,800,800,0),object(nil,800,800,0)
 list={e,f};capture();V.Validate(map)
@@ -204,4 +215,199 @@ function blocker:GetAnimPhase()return 0 end
 list={blocker,candidate};capture();V.Validate(map)
 assert(not V.SeatingPlacementClear(map,candidate,{140,90,0,160,110,20}),'posed neighbour must veto collision')
 G.Entity,G.BoneMatrix=original_entity,original_bone;component.bone=nil
-print('support fixtures: native stack/overhang/attachment accepted; split/attachment defects detected; unknown/cycles/old saves not passed; read-only and load recheck passed')
+-- Neither rock's extremal vertices need lie on the other surface. Crossing
+-- triangle interiors still form a legitimate rooted connection.
+list={object(110,7000,7000,0),object(111,7015,7015,15)}
+capture();report=V.Validate(map,'intersecting triangle interiors')
+assert(report.valid==2,'full rendered triangle intersection must root the overhang')
+local embedded=object(113,7000,7000,5);embedded.scale=25
+list={object(114,7000,7000,0),embedded};capture();report=V.Validate(map,'embedded fragment')
+assert(report.valid==2,'closed solid containment must root fully embedded fragments')
+assert(G.PointInClosedComponent(geometry,component,{0,0,10})==true)
+assert(G.PointInClosedComponent(geometry,component,{30,0,10})==false)
+local open={bounds=component.bounds,vertices=component.vertices,triangles={triangles[1],triangles[2]}}
+assert(G.PointInClosedComponent(geometry,open,{0,0,10})==nil,'open sheet cannot prove containment')
+local mirrored=object(112,8000,8000,0)
+function mirrored:GetMirrored()return true end
+function mirrored:GetRelativePoint(p)local a,b,c=p:xyz();return point(self.x+a,self.y-b,self.z+c)end
+list={mirrored};capture();report=V.Validate(map,'native mirrored basis')
+assert(report.valid==1,'native relative-point basis already contains mirror reflection')
+-- Intentional native clearing changes the entity, not the verified placement.
+-- Its current mesh still needs complete contact proof and a native descriptor.
+G.Entity=function(entity)return {complete=true,parts={{lod=0,material='native',mesh={path=entity,geometry=geometry}}}}end
+local rubble=object(987,100,100,0,'CaveIn_TunnelBlocker_1');rubble.class='TunnelBlockerRubble'
+rubble.anim_phases=5;rubble.gradual_clearing_name='CaveIn_TunnelBlocker';rubble.progress=0
+function rubble:GetForcedLOD()return 0 end
+function rubble:GetClearProgress()return self.progress end
+list={rubble};V.Clear(map);capture();V.Validate(map)
+assert(V.RecordRubbleSeating(map,rubble,{100,100,1},{100,100,0}))
+rubble.entity='CaveIn_TunnelBlocker_3';rubble.progress=42
+report=V.Validate(map,'native clearing transition')
+assert(report.valid==1 and report.instances[1].native_clearing_transition,'verified native clearing transition lost its placement evidence')
+rubble.x=101;report=V.Validate(map,'moved clearing geometry')
+assert(report.valid==0,'entity-transition exception accepted a changed placement')
+rubble.x=100;rubble.progress=21;report=V.Validate(map,'wrong clearing entity')
+assert(report.valid==0,'wrong native clearing phase accepted')
+print('support fixtures: native formations, precise defects, missing evidence, lifecycle and native clearing transitions passed')
+-- Native wonder prefabs contain visible attached architecture deliberately
+-- excluded from the free-standing scaling pass. It still supplies real support.
+local parent,arch,fragment=object(120,8500,8500,0),object(121,8500,8500,20),object(122,8500,8500,40)
+arch.parent=parent
+function parent:ForEachAttach(fn)fn(arch)end
+local scales=SuperBigMap.ObjectClone.ObjectScalesWithTerrain
+SuperBigMap.ObjectClone.ObjectScalesWithTerrain=function(o)return o~=arch end
+list={parent,arch,fragment};capture();report=V.Validate(map,'attached prefab support mesh')
+assert(fragment.SuperBigMapSupportValidation.status=='valid','attached native prefab architecture must provide verified mesh support')
+SuperBigMap.ObjectClone.ObjectScalesWithTerrain=scales
+-- Late native logical markers have positively empty rendering, not missing
+-- decoration meshes. Their lack of a pre-expansion baseline is not a defect.
+local sight=object(130,9000,9000,400,'');sight.class='SafariSight'
+list={sight};V.Clear(map);report=V.Recheck(map,'late safari marker')
+assert(report.valid==1 and report.instances[1].render_kind=='native non-rendering logical marker')
+assert(not report.instances[1].native_baseline,'do not invent a baseline for a post-generation marker')
+
+-- Release mode disables exhaustive diagnostics on BOTH layers, but retains
+-- scoped correction evidence. It does not fabricate a native-source baseline
+-- or overwrite the last diagnostic report with a partial-map "pass".
+SuperBigMap.Config.DECORATION_VALIDATION_ENABLED=false
+SuperBigMap.RockGrounding={Eligible=function(o)return o.class=='Rock' and not o:GetParent() end}
+G.Entity=original_entity
+local historical=map.SuperBigMapDecorationValidation
+for _,method in ipairs({'BeginCapture','Capture','FinishCapture','CaptureGroup','Validate','Recheck'})do
+ assert(V.Run(method,map)==nil,'disabled exhaustive diagnostic ran: '..method)
+end
+local calls=scheduled_count
+V.Schedule(map,'surface disabled');SuperBigMap.Engine.MapDataEnvironment=function()return 'Underground'end
+map.SuperBigMapUndergroundPrepared=true;V.Schedule(map,'underground disabled')
+assert(scheduled_count==calls,'disabled lifecycle diagnostics scheduled work')
+local loose=object(140,3000,3000,20)
+local distant=object(141,9000,9000,500,'Unknown')
+distant.class='UnrelatedDecoration'
+list={loose,distant}
+local instance=G.Instance
+local loose_builds=0
+G.Instance=function(o)
+ assert(o~=distant,'correction inspected distant geometry')
+ if o==loose then loose_builds=loose_builds+1 end
+ return instance(o)
+end
+local result=V.WithCorrectionEvidence(map,'Surface',function()
+ assert(loose_builds==1,'surface nomination and initial proof rebuilt the same unchanged instance')
+ local entries=V.SeatingEvidence(map)
+ assert(#entries==1 and entries[1].obj==loose and entries[1].confirmed)
+ loose.z=0;assert(V.RecordSeating(map,loose,{3000,3000,20},{3000,3000,0}))
+ local proof=V.VerifyCorrection(map,{{obj=loose}},'release surface correction')
+ assert(loose_builds>1,'changed placement reused the nomination geometry')
+ assert(proof and loose.SuperBigMapSupportValidation.current_geometry_status=='valid')
+ assert(loose.SuperBigMapSupportValidation.placement_repaired)
+ assert(not loose.SuperBigMapSupportBaseline and not loose.SuperBigMapSupportValidation.native_baseline)
+ return {corrected=1}
+end)
+assert(result.corrected==1 and map.SuperBigMapDecorationValidation==historical)
+G.Instance=instance
+-- Overlapping candidate neighbourhoods must classify each unchanged neighbour
+-- once, including negative decisions. Exact support still runs afterwards.
+local n1,n2,neighbour,excluded=object(150,7000,7000,20),object(151,7001,7000,20),
+ object(152,7000,7001,0),object(153,7000,7002,0)
+excluded.entity='Excluded';excluded.class='UnrelatedDecoration'
+local old_skip,old_scales=SuperBigMap.ObjectClone.ShouldSkipObject,SuperBigMap.ObjectClone.ObjectScalesWithTerrain
+local classifications={}
+SuperBigMap.ObjectClone.ShouldSkipObject=function(o)
+ classifications[o]=(classifications[o] or 0)+1;return false
+end
+SuperBigMap.ObjectClone.ObjectScalesWithTerrain=function(o)return o~=excluded end
+list={n1,n2,neighbour,excluded}
+V.WithCorrectionEvidence(map,'Surface',function()return {}end)
+assert(classifications[neighbour]==1 and classifications[excluded]==1,
+ 'overlapping correction neighbourhoods repeatedly classified an unchanged object')
+SuperBigMap.ObjectClone.ShouldSkipObject,SuperBigMap.ObjectClone.ObjectScalesWithTerrain=old_skip,old_scales
+local base,top=object(142,4000,4000,0),object(143,4000,4000,20)
+list={base,top}
+V.WithCorrectionEvidence(map,'Surface',function()
+ assert(#V.SeatingEvidence(map)==0,'diagnostics-off correction must preserve a legitimate stack')
+ return {}
+end)
+local unknown=object(144,5000,5000,20,'Unknown');loose=object(145,5000,5000,20)
+list={unknown,loose}
+V.WithCorrectionEvidence(map,'Surface',function()
+ assert(#V.SeatingEvidence(map)==0,'unknown nearby geometry must veto a correction')
+ return {}
+end)
+local block=object(146,6000,6000,20,'CaveIn_TunnelBlocker_1')
+block.class='TunnelBlockerRubble';block.remaining_work_to_clear=100;block.required_work_to_clear=100
+function block:GetForcedLOD()return self.forced end
+local distant=object(147,1000,1000,0)
+function distant:GetAnimPhase()error('release correction must not fingerprint an unrelated object')end
+list={block,distant}
+local prior_print,release_logs=globals.print,0
+globals.print=function()release_logs=release_logs+1 end
+V.WithCorrectionEvidence(map,'Underground',function()
+ assert(block.SuperBigMapSupportValidation.geometry_complete)
+ block.z=0;block.forced=0
+ assert(V.RecordRubbleSeating(map,block,{6000,6000,20},{6000,6000,0}))
+ local proof=V.VerifyCorrection(map,{{obj=block}},'release underground correction')
+ assert(proof and block.SuperBigMapSupportValidation.placement_repaired)
+ assert(block.SuperBigMapSupportValidation.current_geometry_status=='valid')
+ return {corrected=1}
+end)
+assert(map.SuperBigMapDecorationValidation==historical,'partial correction report replaced the full diagnostic report')
+assert(release_logs==0,'release correction must not print diagnostic success summaries')
+globals.print=prior_print
+print('release mode: both-layer diagnostics disabled, scoped fixes preserved, no distant mesh scans or invented baselines')
+
+-- A native multi-rock entity may have one grounded component and one proven
+-- floating component. Nominate its rigid pose; the planner must still preserve
+-- every visible component, native XY, neighbours, attachments and dependents.
+SuperBigMap.Config.DECORATION_VALIDATION_ENABLED=true
+SuperBigMap.RockGrounding={Eligible=function()return true end}
+local group_vertices={};for i,p in ipairs(verts)do group_vertices[i]=p;group_vertices[i+8]={p[1]+40,p[2],p[3]+5}end
+local small={bounds={30,-10,5,50,10,25},samples={},triangles={},vertices={}}
+for i=9,16 do small.vertices[#small.vertices+1]=i;small.samples[#small.samples+1]=group_vertices[i]end
+for _,t in ipairs(triangles)do small.triangles[#small.triangles+1]={t[1]+8,t[2]+8,t[3]+8}end
+local group_asset={complete=true,parts={{lod=0,mesh={path='native-group',geometry={vertices=group_vertices,components={component,small}}}}}}
+G.Entity=function()return group_asset end
+local group=object(901,3000,3000,0)
+function group:GetObjectBBox()return box(2990,2990,0,3050,3010,25)end
+list={group};capture();report=V.Validate(map,'native partly grounded group')
+assert(report.confirmed_defect==1,'group fixture did not reproduce its detached fragment')
+local candidates=V.SeatingEvidence(map)
+assert(#candidates==1 and candidates[1].obj==group and #candidates[1].components==2,'safe native group was not nominated for visibility-preserving rigid planning')
+group.ForEachAttach=function(_,fn)fn({})end
+assert(#V.SeatingEvidence(map)==0,'native attachment must veto group correction')
+print('native groups: detached fragment nominated without allowing attachment changes')
+
+-- A candidate completely inside a closed neighbouring rock has no intersecting
+-- surface triangles, but is not an empty placement. The same indexed complete
+-- contact/containment proof used for support must reject it.
+G.Entity=function()return asset end
+local enclosed=object(910,4000,4000,100);enclosed.scale=10
+local enclosing=object(911,4000,4000,0)
+list={enclosed,enclosing};capture();V.Validate(map,'enclosed placement fixture')
+assert(not V.SeatingPlacementClear(map,enclosed,{3999,3999,10,4001,4001,12}),'a contained placement was incorrectly called empty')
+
+-- A placement group with a permanently unrooted component is already rejected;
+-- subsequent components cannot add outgoing support edges to that component.
+-- Do not finish unrelated triangle searches after that decision is certain.
+SuperBigMap.Config.DECORATION_VALIDATION_ENABLED=false
+G.Entity=original_entity
+dofile('Code/sbm_decoration_seating.lua')
+local first_bad,second_bad=object(920,3000,3000,20),object(921,8000,8000,20)
+first_bad.GetScale=first_bad.GetWorldScale;second_bad.GetScale=second_bad.GetWorldScale
+local make_index=V.Index;local queries=0
+V.Index=function(...)
+ local index=make_index(...);local query=index.Query
+ index.Query=function(...)queries=queries+1;return query(...)end
+ return index
+end
+list={first_bad,second_bad}
+local rejected=V.BuildDecorPlacement(map,list,point(5000,5000,0),4/3)
+assert(not rejected.ok and rejected.reason=='native decor component has no verified rigid support')
+assert(queries==1,'known rejected stamp continued checking later components')
+V.Index=make_index
+local ground,stacked=object(922,3000,3000,0),object(923,3000,3000,20)
+ground.GetScale=ground.GetWorldScale;stacked.GetScale=stacked.GetWorldScale
+list={ground,stacked}
+assert(V.BuildDecorPlacement(map,list,point(3000,3000,0),4/3).ok,'short circuit rejected a rooted native stack')
+local cap=object(924,3000,3000,40);cap.GetScale=cap.GetWorldScale
+list={cap,stacked,ground}
+assert(V.BuildDecorPlacement(map,list,point(3000,3000,0),4/3).ok,'short circuit rejected a support chain resolved later')

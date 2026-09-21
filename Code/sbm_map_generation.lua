@@ -11390,12 +11390,13 @@ function SuperBigMap.GenerationGrids.RebuildFinal(map, stage)
 	local final_pass_box = (invalidate_final and type(box_ctor) == "function"
 		and final_pass_w > 0 and final_pass_h > 0)
 		and box_ctor(0, 0, final_pass_w, final_pass_h) or false
-	-- Generation-time stamps (never saved) so a probe can tell "this call site ran and
-	-- changed the grid" from "it never ran" without a debug build: the passability
-	-- digest either side of the rebuild plus the branch, the stage and its cost. They live
-	-- on the rebuilt map, so each environment carries its own. The LAST rebuild of that
-	-- map's pipeline is the one they describe.
+	-- Keep cheap stage/cost stamps, but hash whole grids only during an explicit
+	-- validation session. These digests are evidence, never rebuild inputs. Assign
+	-- nil in release mode so a prior diagnostic session's hashes cannot look current.
 	local function pass_hash()
+		local diagnostics = SuperBigMap.Diagnostics
+		if not (diagnostics and diagnostics.GenerationAuditEnabled
+			and diagnostics.GenerationAuditEnabled()) then return nil end
 		if type(terrain_api.HashPassability) ~= "function" then return "unavailable" end
 		local ok_h, h = pcall(terrain_api.HashPassability, map)
 		return ok_h and tostring(h) or "error"
@@ -12340,7 +12341,10 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					if validation then
 						validation.Run("Validate",map,"surface final placement")
 						local seating=SuperBigMap.DecorationSeating
-						if seating then seating.Run(map) end
+						if seating then
+							local result=seating.Run(map)
+							if result and result.error then error("surface decoration correction failed: "..tostring(result.error)) end
+						end
 					end
 					SuperBigMap.GenerationGrids.RebuildFinal(
 						map, "post-pipeline scheduled revalidation")
@@ -13039,7 +13043,9 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				-- Durable record of what the settle found pending, alongside the reachability report:
 				-- a changed passability digest here means the grids the spawn would otherwise have
 				-- read were stale.
-				map.SuperBigMapWonderSpawnGridSettle = {
+				local diagnostics = SuperBigMap.Diagnostics
+				map.SuperBigMapWonderSpawnGridSettle = diagnostics
+					and diagnostics.GenerationAuditEnabled and diagnostics.GenerationAuditEnabled() and {
 					stage = tostring(map.SuperBigMapFinalPassStage),
 					branch = tostring(map.SuperBigMapFinalPassBranch),
 					hash_before = tostring(map.SuperBigMapFinalPassHashBefore),
@@ -13047,7 +13053,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 					dirty = map.SuperBigMapFinalPassHashBefore ~= map.SuperBigMapFinalPassHashAfter,
 					rebuild_ms = tonumber(map.SuperBigMapFinalPassMs) or -1,
 					rebuild_count = tonumber(map.SuperBigMapFinalPassCount) or -1,
-				}
+				} or nil
 				SetLoadingPhase("Activating underground wonder anomalies")
 				local wonder_anomaly_token = LoadingBegin(
 					"underground activate buried wonder anomalies", map)
@@ -13416,6 +13422,18 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			map.SuperBigMapStretchPipelinePending = false
 		end
 		if ok_branch then
+			local final_ok,final_report=pcall(function()
+				local validation=SuperBigMap.DecorationValidation
+				if validation then validation.Run("Validate",map,"underground final placement") end
+				local seating=SuperBigMap.DecorationSeating
+				return seating and seating.RunUnderground(map)
+			end)
+			if not final_ok or (final_report and final_report.error) then
+				ok_branch=false
+				branch_err="underground decoration correction failed: "..tostring(final_ok and final_report.error or final_report)
+			end
+		end
+		if ok_branch then
 			-- Same derived-object record as the surface, for the underground CityInit spawns
 			-- (SurfaceTunnelMarker, SubsurfaceSpecialAnomalyMarker, attached passage imprints).
 			do
@@ -13425,8 +13443,6 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				end
 			end
 			map.SuperBigMapUndergroundStretchDone = true
-			local validation=SuperBigMap.DecorationValidation
-			if validation then validation.Run("Validate",map,"underground final placement") end
 			map.SuperBigMapUndergroundPrepared = true
 			map.SuperBigMapExpanded = true
 			-- The final passability/buildable grids were synchronously rebuilt before the

@@ -87,6 +87,16 @@ end
 
 local Diagnostics = {}
 
+-- Whole-grid digests and full object correspondence exist only to collect
+-- validation evidence. Keep this separate from required placement/grid work.
+function Diagnostics.GenerationAuditEnabled()
+	local c = Config()
+	return c.DECORATION_VALIDATION_ENABLED == true or c.NATIVE_SOURCE_MANIFEST == true
+		or c.TRACE_UNDERGROUND_ROCK_PARITY == true
+		or (Enabled() and (c.DEBUG_LOADING_TIMINGS == true or c.DEBUG_COMPATIBILITY == true
+			or c.DEBUG_ENRICHMENT_AUDIT == true))
+end
+
 -- Temporary, observational breadcrumbs. No native connectivity queries are made:
 -- the failing constructor can leave its internal structure uninitialized.
 function Diagnostics.CompatibilityEnabled()

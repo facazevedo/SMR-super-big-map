@@ -26,8 +26,8 @@
 --   * the whole-map prefab orientation is not reproduced.  For the full-circle rotation every
 --     decor prefab uses, adding a constant offset to a uniform draw changes nothing.
 -- After stamping, each new group receives the same similarity the stretch gave its neighbours:
--- object offsets and cosmetic scale x area_factor^0.5 about the group centre, Z reseated on the
--- stretched terrain.
+-- object offsets in all three axes and cosmetic scale x area_factor^0.5 about the group centre.
+-- Independent Z snapping destroys authored stacked-rock contacts.
 --
 -- When the authored sites run out (they do: most unused sites sit inside Border/Slope prefab radii
 -- that vanilla's own obstruct grid rejects), the pass continues on SYNTHETIC sites: it borrows the
@@ -65,7 +65,7 @@ local ObjectScalesWithTerrain = ObjectClone and ObjectClone.ObjectScalesWithTerr
 local DecorTopUp = {}
 SuperBigMap.DecorTopUp = DecorTopUp
 
-DecorTopUp.VERSION = 10
+DecorTopUp.VERSION = 14
 DecorTopUp.SEED_TAG = "SuperBigMapDecorEnginePass"
 DecorTopUp.LastStats = nil
 
@@ -78,6 +78,25 @@ local pass_objects_by_map = setmetatable({}, { __mode = "k" })
 function DecorTopUp.PassObjects(map)
 	local list = type(map) == "table" and pass_objects_by_map[map] or nil
 	return type(list) == "table" and list or nil
+end
+
+-- Only objects returned by this pass's new PlacePrefab call belong here.
+-- Continue cleanup after a native failure and verify destruction explicitly.
+function DecorTopUp.DiscardCreated(objects)
+	local valid,done=Global("IsValid"),Global("DoneObject")
+	if type(valid)~="function" or type(done)~="function" then return false,"decor cleanup API unavailable" end
+	local errors={}
+	for _,obj in ipairs(objects) do
+		local ok,alive=pcall(valid,obj)
+		if not ok then errors[#errors+1]="created object validity unavailable"
+		elseif alive then
+			local removed,why=pcall(done,obj)
+			if not removed then errors[#errors+1]=tostring(why) end
+			local checked,still_alive=pcall(valid,obj)
+			if not checked or still_alive then errors[#errors+1]="created decor survived cleanup" end
+		end
+	end
+	return #errors==0,table.concat(errors,"; ")
 end
 
 local function cfg_bool(key, default)
@@ -104,6 +123,23 @@ local function PointXY(pos)
 		if okx and oky then return x, y end
 	end
 	return nil, nil
+end
+
+-- PlacePrefab has already resolved authored ground/normal offsets. Transform its
+-- explicit position, including Z, with the same similarity as its neighbours.
+-- Invalid-Z scatter is different: vanilla deliberately binds it to terrain, so
+-- resolve it at the destination. Lifting that scatter with the group's centre
+-- creates new floating stones on slopes.
+-- No diagnostic geometry scan is needed for this placement rule.
+function DecorTopUp.StretchedPosition(map, obj, center, scale)
+	local pos = ObjectPosition(obj)
+	local x, y = PointXY(pos)
+	local nx = math.floor(center:x() + (x - center:x()) * scale + 0.5)
+	local ny = math.floor(center:y() + (y - center:y()) * scale + 0.5)
+	local point_fn = Global("point")
+	local nz = obj:IsValidZ() and math.floor(center:z() + (pos:z() - center:z()) * scale + 0.5)
+		or Global("terrain").GetHeight(map, point_fn(nx, ny))
+	return point_fn(nx, ny, nz)
 end
 
 -- vanilla: local max_rotation = 360*60
@@ -235,6 +271,16 @@ end
 function DecorTopUp.Run(map, pass_edits_already_suspended)
 	local stats = { version = DecorTopUp.VERSION, enabled = false, placed = 0, objects = 0 }
 	DecorTopUp.LastStats = stats
+	local active_stamp
+	local function cleanup_or_fail(objects)
+		local cleaned,why=DecorTopUp.DiscardCreated(objects)
+		if not cleaned then
+			stats.error="decor stamp cleanup failed: "..tostring(why)
+			-- Native debug builds can disable error()/assert(). Still abort this
+			-- pass inside its pcall; do not keep placing after failed rollback.
+			local abort;abort()
+		end
+	end
 	local ok, err = pcall(function()
 		if not map or type(map.MapForEach) ~= "function" then error("no live map") end
 		-- Publish the live record before the first early return, so a disabled, geometry-less or
@@ -507,7 +553,6 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 		--    weighted pick, jittered stamp inside the site, spacing circles recorded afterwards.
 		--    Returns "placed" (plus the prefab name) or the reason it did not place.
 		local dropped_non_cosmetic, dropped_out_of_band = 0, 0
-		local grounding = SuperBigMap.RockGrounding
 		local function try_stamp(marker, sx, sy, site_radius)
 			local prefabs = matches_cache[marker]
 			if prefabs == nil then
@@ -555,13 +600,15 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 				params.raster_params = copy
 			end
 			local perr, objs = place_prefab(map, name, center, angle, nil, params)
-			if perr or type(objs) ~= "table" or #objs == 0 then return "failed" end
+			active_stamp=type(objs)=="table" and objs or nil
+			local function discard()
+				if active_stamp then cleanup_or_fail(active_stamp);active_stamp=nil end
+			end
+			if perr or type(objs) ~= "table" or #objs == 0 then discard();return "failed" end
 			local validation=SuperBigMap.DecorationValidation
-			if validation then validation.Run("CaptureGroup",map,objs) end
-			local first_new_object, cosmetic_objects = #placed_list + 1, 0
+			local survivors, cosmetic_objects = {}, 0
 			-- The group arrived at native offsets and native size.  Give it the stretch's
-			-- similarity about its centre so it matches its neighbours, and reseat each object on
-			-- the stretched terrain.
+			-- similarity about its centre so authored contacts survive in XYZ.
 			for _, obj in ipairs(objs) do
 				local ox, oy = PointXY(ObjectPosition(obj))
 				if type(ox) == "number" and type(oy) == "number" then
@@ -600,49 +647,66 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 					if (outside or banded or not cosmetic) and type(done_object) == "function" then
 						if banded then dropped_out_of_band = dropped_out_of_band + 1
 						elseif not outside then dropped_non_cosmetic = dropped_non_cosmetic + 1 end
-						pcall(done_object, obj)
+						cleanup_or_fail({obj})
 					else
 						if is_stamp_marker then obj.zone = ZONE_DECOR end
-						local np = point_fn(nx, ny)
-						if type(np.SetTerrainZ) == "function" then
-							local okz, nz = pcall(np.SetTerrainZ, np, map)
-							if okz and nz then np = nz end
-						end
-						if type(obj.SetPos) == "function" then pcall(obj.SetPos, obj, np) end
-						if type(ObjectScalesWithTerrain) == "function" and ObjectScalesWithTerrain(obj)
-							and type(obj.GetScale) == "function" and type(obj.SetScale) == "function" then
-							local sc = SafeCall(obj.GetScale, obj)
-							if type(sc) == "number" and sc > 0 then
-								pcall(obj.SetScale, obj, math.min(500, math.max(1, math.floor(sc * length_scale + 0.5))))
-							end
-						end
-						if grounding and type(grounding.GroundFinal) == "function" then
-							local ground_ok, lowered, ground_err = pcall(grounding.GroundFinal, map, obj)
-							if not ground_ok or lowered == nil then
-								grounding.Failure(map, ground_ok and ground_err or lowered)
-							end
-						end
-						if type(set_game_flags) == "function" and gof ~= 0 then pcall(set_game_flags, obj, gof) end
-						obj.SuperBigMapDecorEnginePass = true
-						placed_list[#placed_list + 1] = obj
-						objects = objects + 1
+						survivors[#survivors + 1] = obj
 						if not is_stamp_marker then cosmetic_objects = cosmetic_objects + 1 end
 					end
 				elseif type(done_object) == "function" then
 					-- An unpositioned creation cannot be certified cosmetic and in bounds.
 					dropped_non_cosmetic = dropped_non_cosmetic + 1
-					pcall(done_object, obj)
+					cleanup_or_fail({obj})
 				end
 			end
 			if cosmetic_objects == 0 then
 				-- A surviving stamp marker alone restores no visible decor density.
-				for i = #placed_list, first_new_object, -1 do
-					if type(done_object) == "function" then pcall(done_object, placed_list[i]) end
-					placed_list[i] = nil
-					objects = objects - 1
-				end
+				discard()
 				return "empty"
 			end
+			-- Plan AFTER filtering, so a removed out-of-band support cannot certify
+			-- a surviving rock. Seat each connected formation rigidly; never sink a
+			-- supporting rock independently after this plan has been calculated.
+			local ticks = Global("GetPreciseTicks")
+			local started = ticks()
+			local plan = validation and validation.PlanDecorPlacement(map, survivors, center, length_scale)
+			stats.support_plan_ms = (stats.support_plan_ms or 0) + ticks() - started
+			if cfg_bool("DECORATION_VALIDATION_ENABLED", false) then
+				local log, flush = Global("print"), Global("FlushLogFile")
+				if type(log) == "function" then log(string.format("[SBM decor support] %s objects=%d plan=%s ms=%d reason=%s",
+					name, #survivors, tostring(plan and plan.ok), ticks()-started, tostring(plan and plan.reason or ""))) end
+				if type(flush) == "function" then flush() end
+			end
+			if not plan or not plan.ok then
+				stats.support_rejected = (stats.support_rejected or 0) + 1
+				stats.first_support_rejection = stats.first_support_rejection or (plan and plan.reason) or "support planner unavailable"
+				discard();return "failed"
+			end
+			local call_ok, accepted, reason = pcall(function()
+				for _, obj in ipairs(survivors) do
+					local entry = plan.placements[obj]
+					local np, sc
+					if entry then np, sc = point_fn(table.unpack(entry.position)), entry.scale
+					elseif obj.class == "PrefabMarker" then
+						np = DecorTopUp.StretchedPosition(map, obj, center, length_scale)
+						sc = ObjectScalesWithTerrain(obj) and math.min(500, math.max(1, math.floor(obj:GetScale()*length_scale+.5))) or obj:GetScale()
+					else return false, "cosmetic object missing from support plan" end
+					obj:SetPos(np);obj:SetScale(sc)
+					if obj:GetPos() ~= np or obj:GetScale() ~= sc then return false, "decor placement differs from plan" end
+					if type(set_game_flags) == "function" and gof ~= 0 then set_game_flags(obj, gof) end
+					obj.SuperBigMapDecorEnginePass = true
+				end
+				return true
+			end)
+			if not call_ok or not accepted then
+				stats.support_rejected = (stats.support_rejected or 0) + 1
+				stats.first_support_rejection = stats.first_support_rejection or tostring(call_ok and reason or accepted)
+				discard();return "failed"
+			end
+			for _, obj in ipairs(survivors) do
+				placed_list[#placed_list + 1] = obj;objects = objects + 1
+			end
+			active_stamp=nil
 			placed = placed + 1
 			prefabs_count[prefab] = (prefabs_count[prefab] or 0) + 1
 			local circle = { x = cx, y = cy, r = prefab_radius }
@@ -860,8 +924,12 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 		stats.ms = (SafeCall(Global("GetPreciseTicks")) or 0) - started_ms
 		DecorTopUp.LastObjects = placed_list
 	end)
+	if active_stamp then
+		local cleaned,why=DecorTopUp.DiscardCreated(active_stamp)
+		if not cleaned then stats.error=(stats.error and stats.error.."; " or "").."decor stamp cleanup failed: "..tostring(why) end
+	end
 	if not ok then
-		stats.error = tostring(err)
+		stats.error = stats.error or tostring(err)
 	elseif stats.enabled and type(stats.target) == "number" and stats.placed ~= stats.target then
 		stats.error = string.format("decor candidate search incomplete: placed=%s target=%s",
 			tostring(stats.placed), tostring(stats.target))

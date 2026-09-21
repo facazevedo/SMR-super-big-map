@@ -1,0 +1,24 @@
+{
+  "name": "Five-scenario decoration correction follow-up",
+  "sites": ["14N134W", "15S67E", "60S120W", "20S45E", "30S146E"],
+  "primary_site": "15S67E",
+  "strategy": "Make the primary scenario release-ready before advancing to the other four",
+  "primary_gate": ["geometry resolved", "vanilla comparison", "fresh generation", "save/load", "map switching", "new cave-ins", "entrances", "movement", "release-configuration timing"],
+  "required_wonders": ["AncientArtifact", "JumboCave", "BottomlessPit", "CaveOfWonders"],
+  "timing": {
+    "surface": "START to T1",
+    "underground": "Preparation, measured separately",
+    "aggregation": "arithmetic mean",
+    "underground_release_limit_seconds": 60,
+    "underground_release_limit_exclusive": true,
+    "budget_applies_to": "measured release configuration; primary release-mode timing explicitly requested before the remaining four scenarios"
+  },
+  "diagnostics": {
+    "campaign_layers": ["Surface", "Underground"],
+    "campaign_exhaustive_checks": true,
+    "release_exhaustive_checks": false,
+    "disable_only_after_all_five_pass": false,
+    "early_release_test_authorization": "User explicitly requested disabling diagnostics and running primary-scenario release lifecycle checks and timings",
+    "production_corrections_remain_enabled": true
+  }
+}

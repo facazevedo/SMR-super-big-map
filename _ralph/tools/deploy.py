@@ -108,6 +108,16 @@ def sync():
 
 
 if __name__ == "__main__":
+    # Explicit detached snapshots support controlled old/new benchmarks without
+    # touching the user's working tree. Normal deployment always uses PROJECT.
+    if len(sys.argv) == 4 and sys.argv[2] == "--source":
+        snapshot = Path(sys.argv[3]).resolve(strict=True)
+        allowed = (PROJECT / "_ralph" / "tmp").resolve()
+        if not snapshot.is_relative_to(allowed) or not (snapshot / "metadata.lua").is_file():
+            raise SystemExit("benchmark source must be a mod snapshot under _ralph/tmp")
+        PROJECT = snapshot
+    elif len(sys.argv) > 2:
+        raise SystemExit("usage: deploy.py audit|sync [--source <_ralph/tmp snapshot>]")
     mode = sys.argv[1] if len(sys.argv) > 1 else "audit"
     if mode == "audit":
         sys.exit(audit())

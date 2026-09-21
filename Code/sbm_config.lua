@@ -28,21 +28,24 @@ config.DebugOverviewCamera = false
 config.DebugSectorInteraction = false
 config.DebugOverviewGridVisuals = false
 config.DebugUndergroundDecorationPositions = false
--- Provisional diagnostic-only geometry/support validation. It reports uncertainty
--- explicitly and never changes placement. Timings are measured before release.
-config.DecorationValidation = true
+-- Exhaustive investigation on BOTH surface and underground. Explicitly disabled
+-- for release-configuration timing/lifecycle tests; enable for diagnostic campaigns.
+-- This gates exhaustive source/final/load/switch/spawn audits, not production
+-- placement fixes or their scoped transactional safety checks. Time the final
+-- release configuration separately (underground preparation must be <60 s).
+config.DecorationValidation = false
 -- Focused temporary parity trace: scalar-only and independent from the broad release-debug gate.
--- Keep enabled until the fresh vanilla/expanded twin isolates reservation versus consumer drift.
-config.TraceUndergroundSeedReservation = true
+-- Enable only during explicit native/expanded seed-parity investigations.
+config.TraceUndergroundSeedReservation = false
 -- Focused outer-ring terrain-crease trace. It records only detector/repair scalars and is
 -- independent from the broad release-debug gate.
-config.TraceTerrainCreaseRepair = true
+config.TraceTerrainCreaseRepair = false
 -- Focused one-run audit of the bounded failed-footprint retry.  It records only
 -- prior/current site provenance and patch construction, independent of broad debug logging.
-config.TraceOuterResourceRetryProvenance = true
+config.TraceOuterResourceRetryProvenance = false
 -- Diagnostic: record what the native source actually produced, at migration time, so a run can
 -- prove nothing was destroyed after transfer without needing a second reproducible vanilla process.
-config.NativeSourceManifest = true
+config.NativeSourceManifest = false
 -- Focused one-run parity trace. This is deliberately default-off; the Ralph harness may enable the
 -- runtime constant before fresh twins to compare every stock generator procedure and rock delta.
 config.TraceUndergroundRockParity = false
@@ -181,7 +184,7 @@ config.PreventElevatorFlatten = true
 -- unlock and quick-build the next placed Elevator, (2) follow the normal underground map switch
 -- path, (3) reveal every surface sector, and (4) reveal all underground resources, anomalies,
 -- effects, buried wonders, and darkness for inspection.
-config.PlaceElevatorButtonEnabled = true
+config.PlaceElevatorButtonEnabled = false
 
 -- Impassable edge border (WORLD UNITS) kept around the expanded map. DEFAULT is full
 -- passability (0) so a rover unloaded from a rocket that lands anywhere -- including near

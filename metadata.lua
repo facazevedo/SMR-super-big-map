@@ -37,6 +37,7 @@ return PlaceObj('ModDef', {
 		"Code/sbm_object_clone.lua",
 		"Code/sbm_provenance.lua",
 		"Code/sbm_rock_grounding.lua",
+		"Code/sbm_decoration_known_poses.lua",
 		"Code/sbm_decoration_geometry.lua",
 		"Code/sbm_decoration_validation.lua",
 		"Code/sbm_decoration_seating.lua",

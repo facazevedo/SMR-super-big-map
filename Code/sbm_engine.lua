@@ -20,8 +20,23 @@ end
 local Engine = {}
 local type, pcall = type, pcall
 
--- Read a global by name without invoking metatables.
+-- The game's sandbox rawget falls through to native globals, except when this
+-- mod has published a temporary raw shadow. MainMap/MainCity shadows from the
+-- source-generation transaction can survive LoadGame, while Maps owns the NEW
+-- live objects. Never return a released map to passage/lifecycle consumers.
 function Engine.Global(name)
+	if name=="MainMap" or name=="MainCity" then
+		local map,maps=rawget(_G,"MainMap"),rawget(_G,"Maps")
+		if type(maps)=="table" then
+			if type(map)~="table" or maps[map.slot]~=map then map=maps[1] end
+			-- A still-live temporary source retains its published identity. This is
+			-- not an unconditional slot-1 override during native source generation.
+			if type(map)=="table" then
+				if name=="MainMap" then return map end
+				if map.City then return map.City end
+			end
+		end
+	end
 	return rawget(_G, name)
 end
 

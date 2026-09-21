@@ -104,15 +104,19 @@ end
 
 -- Walk the creation chain until a recorded source is found. Returns the coordinate plus the
 -- object it came from, so the derived record names its donor and stays auditable.
-local function ResolveDonorSource(obj, seen, depth)
-	if type(obj) ~= "table" or seen[obj] or depth > MAX_DONOR_DEPTH then return nil end
+local function ResolveDonorSource(obj, seen, depth, coverage)
+	if type(obj) ~= "table" or seen[obj] then return nil end
+	if depth > MAX_DONOR_DEPTH then
+		if coverage then coverage.depth_limited = true end
+		return nil
+	end
 	seen[obj] = true
 	if not IsLiveObject(obj) then return nil end
 	local x, y, z = RecordedSource(obj)
 	if x then return x, y, z, obj end
 	local donors = Donors(obj)
 	for i = 1, #donors do
-		local dx, dy, dz, from = ResolveDonorSource(donors[i], seen, depth + 1)
+		local dx, dy, dz, from = ResolveDonorSource(donors[i], seen, depth + 1, coverage)
 		if dx then return dx, dy, dz, from end
 	end
 	return nil
@@ -120,19 +124,27 @@ end
 
 -- Fill in the derived records for one map. Idempotent: an object that already carries a record
 -- in either namespace is left untouched, so repeated calls cannot change anything.
-function Provenance.Propagate(map, reason)
+local function Propagate(map, reason, full)
 	if type(map) ~= "table" or type(map.MapGet) ~= "function" then return 0, 0 end
-	local objs = SafeCall(map.MapGet, map, "map")
+	-- Only ParSystem provenance is consumed by release placement (entrance FX
+	-- carrier ownership). Donor links can be resolved without first enumerating
+	-- or stamping their intermediate markers/deposits. Full correspondence stays
+	-- available for vanilla comparisons, but is not a normal-loading map sweep.
+	local objs
+	if full then objs = SafeCall(map.MapGet, map, "map")
+	else objs = SafeCall(map.MapGet, map, "map", "ParSystem") end
+	if not full and type(objs) ~= "table" then return Propagate(map, reason, true) end
 	if type(objs) ~= "table" then return 0, 0 end
 	local pause_ild = Global("PauseInfiniteLoopDetection")
 	local resume_ild = Global("ResumeInfiniteLoopDetection")
 	if type(pause_ild) == "function" then pcall(pause_ild, "SuperBigMapProvenance") end
 	local derived, unresolved = 0, 0
+	local coverage = {}
 	local ok, err = pcall(function()
 		for i = 1, #objs do
 			local obj = objs[i]
 			if type(obj) == "table" and IsLiveObject(obj) and not RecordedSource(obj) then
-				local x, y, z, from = ResolveDonorSource(obj, {}, 0)
+				local x, y, z, from = ResolveDonorSource(obj, {}, 0, coverage)
 				if x then
 					obj.SuperBigMapProvenanceX = x
 					obj.SuperBigMapProvenanceY = y
@@ -148,6 +160,10 @@ function Provenance.Propagate(map, reason)
 		end
 	end)
 	if type(resume_ild) == "function" then pcall(resume_ild, "SuperBigMapProvenance") end
+	-- The original full pass can resolve a >8-link chain through intermediate
+	-- stamps. Retain that behavior for unusual deep chains instead of dropping
+	-- an effect's ownership when the bounded direct lookup was inconclusive.
+	if not full and coverage.depth_limited then return Propagate(map, reason, true) end
 	map.SuperBigMapProvenanceDerived = derived
 	map.SuperBigMapProvenanceUnresolved = unresolved
 	local diagnostics = SuperBigMap.Diagnostics
@@ -160,6 +176,13 @@ function Provenance.Propagate(map, reason)
 		}, map)
 	end
 	return derived, unresolved
+end
+
+function Provenance.Propagate(map, reason)
+	local diagnostics = SuperBigMap.Diagnostics
+	local full = diagnostics and diagnostics.GenerationAuditEnabled
+		and diagnostics.GenerationAuditEnabled()
+	return Propagate(map, reason, full == true)
 end
 
 SuperBigMap.Provenance = Provenance

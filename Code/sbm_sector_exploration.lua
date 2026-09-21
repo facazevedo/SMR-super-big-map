@@ -719,6 +719,7 @@ end
 local function DestroyMapSectorObjects(map, keep)
 	local done_object = Global("DoneObject")
 	local is_valid = Global("IsValid")
+	local delete_thread, current_thread = Global("DeleteThread"), Global("CurrentThread")
 	if type(done_object) ~= "function" then return 0, 0 end
 	local objects = MapSectorObjects(map)
 	local removed = 0
@@ -726,8 +727,26 @@ local function DestroyMapSectorObjects(map, keep)
 		local sector = objects[i]
 		local valid = type(is_valid) ~= "function" or SafeCall(is_valid, sector) == true
 		if valid and not (keep and keep[sector]) then
-			pcall(done_object, sector)
-			removed = removed + 1
+			-- MapObject:CreateGameTimeThread is map-owned, not object-owned.
+			-- Vanilla's scan notification sleeps before reading sector:GetMap();
+			-- deleting an obsolete sector alone leaves that worker using a dead
+			-- CObject after unpausing/loading. Cancel only the discarded owner's
+			-- worker, before destruction. Kept sectors are never touched.
+			local notification = sector.notify_thread
+			local stopped = not notification
+			if notification and type(delete_thread) == "function"
+				and (type(current_thread) ~= "function" or notification ~= current_thread()) then
+				stopped = pcall(delete_thread, notification)
+				if stopped then sector.notify_thread = false end
+			end
+			-- Defer a caller-owned worker or failed cancellation instead of
+			-- destroying its owner and allowing a delayed invalid-object access.
+			if stopped then
+				local ok = pcall(done_object, sector)
+				if ok and (type(is_valid) ~= "function" or SafeCall(is_valid, sector) == false) then
+					removed = removed + 1
+				end
+			end
 		end
 	end
 	return removed, #objects
