@@ -16,6 +16,10 @@ return {
 		'CodeFileName', "Code/sbm_diagnostics.lua",
 	}),
 	PlaceObj('ModItemCode', {
+		'name', "sbm_legacy_pathfinder",
+		'CodeFileName', "Code/sbm_legacy_pathfinder.lua",
+	}),
+	PlaceObj('ModItemCode', {
 		'name', "sbm_pregame_toggle",
 		'CodeFileName', "Code/sbm_pregame_toggle.lua",
 	}),
@@ -70,6 +74,22 @@ return {
 	PlaceObj('ModItemCode', {
 		'name', "sbm_rock_grounding",
 		'CodeFileName', "Code/sbm_rock_grounding.lua",
+	}),
+	PlaceObj('ModItemCode', {
+		'name', "sbm_decoration_known_poses",
+		'CodeFileName', "Code/sbm_decoration_known_poses.lua",
+	}),
+	PlaceObj('ModItemCode', {
+		'name', "sbm_decoration_geometry",
+		'CodeFileName', "Code/sbm_decoration_geometry.lua",
+	}),
+	PlaceObj('ModItemCode', {
+		'name', "sbm_decoration_validation",
+		'CodeFileName', "Code/sbm_decoration_validation.lua",
+	}),
+	PlaceObj('ModItemCode', {
+		'name', "sbm_decoration_seating",
+		'CodeFileName', "Code/sbm_decoration_seating.lua",
 	}),
 	PlaceObj('ModItemCode', {
 		'name', "sbm_terrain_copy",

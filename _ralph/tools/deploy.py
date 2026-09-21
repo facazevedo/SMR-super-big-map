@@ -16,15 +16,29 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[2]
+RELEASE_PROJECT = PROJECT
 DEST = Path(
     r"C:\Users\fazevedo\AppData\Roaming\Surviving Mars Relaunched\Mods\super-big-map"
 )
 PAYLOAD_DIRS = ("Code", "Images")
 PAYLOAD_FILES = ("metadata.lua", "items.lua")
+
+
+def validate_registration():
+    # Historical benchmark snapshots deliberately contain older module sets.
+    if PROJECT != RELEASE_PROJECT:
+        return
+    check = RELEASE_PROJECT / "tests/compatibility/module_registration_test.lua"
+    result = subprocess.run(
+        ["lua", str(check), str(PROJECT)], capture_output=True, text=True
+    )
+    if result.returncode:
+        raise SystemExit("Refusing deployment: " + result.stdout + result.stderr)
 
 
 def sha256(path):
@@ -66,6 +80,7 @@ def collect_dest():
 
 
 def audit():
+    validate_registration()
     src = collect(PROJECT, PAYLOAD_DIRS, PAYLOAD_FILES)
     dst = collect_dest()
     missing = sorted(set(src) - set(dst))
@@ -86,6 +101,7 @@ def audit():
 
 
 def sync():
+    validate_registration()
     src = collect(PROJECT, PAYLOAD_DIRS, PAYLOAD_FILES)
     dst = collect_dest()
     copied, removed = [], []

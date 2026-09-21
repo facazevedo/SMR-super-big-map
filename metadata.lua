@@ -1,9 +1,9 @@
 return PlaceObj('ModDef', {
-	'title', "Super Big Map",
+	'title', "[Beta Update] Super Big Map",
 	'description', "Super Big Map\n\n3x more map. No extra fries.\n\nOn the Colony Site screen, toggle EXPAND MAP before pressing START. Expanded new games use a 20 x 20 sector grid, giving you 300 additional sectors to explore and build on. The native vanilla terrain is generated once and proportionally stretched across the expanded destination; no terrain mirroring or alternate expansion mode is used. Leave EXPAND MAP off for a completely vanilla game: all Super Big Map gameplay, UI, camera, and generation changes remain disabled.\n\nExpanded-map zoom can be changed in Game Options -> Options -> Display -> Max Zoom Level.\n\nRequirements and Compatibility:\n\nYou must start a new game with EXPAND MAP enabled. Existing saves will not be expanded.\nInitial loading takes longer because the expanded map requires more processing.\nDo not use other zoom mods. SBM includes its own zoom settings for expanded maps.\n\n[IMPORTANT]: Quit and restart the game after enabling this mod to clear cached data.\nTested on Surviving Mars Relaunched v1.1.0.403908 on Windows 11. This compatibility version is Lua-only and needs no executable patch. Start a new expanded game; pre-update expanded saves have not been validated.\n\nFeedback and bug reports: https://smr-mods-feedback.fredware.app or https://github.com/facazevedo/surviving-mars-relaunched-mods/issues",
 	'short_description', "Adds an opt-in stretch-generated 20 x 20 map expansion.",
 	'image', "Mod/SuperBigMap/Images/final_composed.jpg",
-	'last_changes', "Lua-only compatibility with v1.1.0.403908. Keeps 8192 x 8192 surface and underground terrain, underground-authoritative entrance placement, native cave-in meshes and guarded decoration/blocker corrections. Debug logging and exhaustive diagnostics are disabled for release; required placement and recovery checks remain active. Console hardware validation remains pending.",
+	'last_changes', "Restores five required module registrations and keeps the Mod Editor item list synchronized so saving and publishing retain pathfinding and decoration corrections. Lua-only compatibility with v1.1.0.403908. Keeps 8192 x 8192 surface and underground terrain, underground-authoritative entrance placement, native cave-in meshes and guarded decoration/blocker corrections. Debug logging and exhaustive diagnostics are disabled for release; required placement and recovery checks remain active. Console hardware validation remains pending.",
 	'ignore_files', {
 		"*.git/*",
 		".git/*",
@@ -14,9 +14,9 @@ return PlaceObj('ModDef', {
 	},
 	'id', "SuperBigMap",
 	'author', "fredware",
-	'version', 999,
+	'version', 1004,
 	'lua_revision', 350453,
-	'saved_with_revision', 392284,
+	'saved_with_revision', 403908,
 	'code', {
 		"Code/sbm_version.lua",
 		"Code/sbm_config.lua",
@@ -54,10 +54,10 @@ return PlaceObj('ModDef', {
 		"Code/sbm_lifecycle.lua",
 		"Code/SuperBigMap.lua",
 	},
-	'saved', 1785391374,
-	'code_hash', 3068240556717374985,
+	'saved', 1789994026,
+	'code_hash', 5502837756813861146,
 	'pdx_id', 146312,
-	'pdx_version', "12",
+	'pdx_version', "13",
 	'steam_id', "3759751183",
 	'TagGameplay', true,
 })
