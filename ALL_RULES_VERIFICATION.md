@@ -1,6 +1,53 @@
 # Full-rules verification — 2026-09-23
 
-## Reopened: 14S36W user-reported failure (2026-09-23)
+## Current: build 462 / metadata 1093 — six-case PASS
+
+Code checkpoint: `494f7af`. The general terrain-cutting support fix and exact-cut
+early terrain nomination pass six pinned RoughTerrain scenarios, including the
+reported 14S36W / `nBJAgUn3` failure. No scenario, seed or entity-name exception
+was added to production. Rock seating, positive support proof and cleanup remain
+inside START-to-T1; native floating rocks receive correction, not an exemption.
+
+Thirty distinct, cleanly closed native headless sessions cover A/B/control plus
+save/in-process reload/fresh-process load for every case. All 18 expanded
+generations meet both limits. Maximum measured times per case (A/B/save run):
+
+| Case | Surface START-to-T1 | Underground loading | Corrected surface rocks |
+| --- | ---: | ---: | ---: |
+| 17S11W | 74.955s | 57.364s | 81 |
+| 61N136W | 74.386s | 49.022s | 6 |
+| 24S74W | 72.808s | 52.271s | 7 |
+| 45S120W | 68.696s | 45.988s | 86 |
+| 15S67E | 66.965s | 47.761s | 16 |
+| 14S36W | 66.877s | 55.821s | 47 |
+
+All eligible surface and underground rocks have positive support evidence with
+zero unresolved/defect/inconclusive findings and no native-float exemptions.
+All 243 corrected surface poses survive fresh-process reload. Entrances, resource
+and decoration rules, reveal/badges, private-stream parity, exact passability
+grids/deferred masks and all three temporary buttons pass the captured checks.
+Full paired map-state comparisons pass. Build 461/462 comparisons for 17S11W,
+24S74W, 14S36W and 15S67E also preserve terrain, pass grids, sites, pads and corrected poses.
+
+The slowest cases were tested first using the then-current measurements;
+subsequent rounds use the updated descending order above. Every case retains
+its known difficult underground seed. A naturally different 14S36W draw was kept
+as diagnostic evidence and excluded, then rerun with the original difficult seed.
+The failing 461 timings and temporary profiler incidents are also excluded,
+not waived. No production profiler, readiness deferral or RNG alteration remains.
+
+Evidence: `_ralph/runs/rules-parity/fix-14s36w-20260923/complete_audit462.json`
+records `accepted=true`, `runtime_and_lifecycle_pass=true`, no failures and no
+pending checks; `release462`, `lifecycle462` and `SOURCE_REVIEW.md` retain details.
+All 80 compatibility fixtures, 18 judge tests and Code Lua syntax checks pass.
+The local Mods folder matches all 43 payload files. Windows remained 3840x2160;
+tests used the permitted windowed game configuration. No new push was performed.
+
+The narrowest surface margin is 45ms. These are measured results on this machine
+and these exact cases, not a guarantee under arbitrary system load or exhaustive
+verification of every possible scenario/mod combination.
+
+## Historical investigation: 14S36W user-reported failure (resolved)
 
 Build460 failed a new14S36W RoughTerrain game with seed `nBJAgUn3`: two rocks
 remained inconclusive beside a terrain-cutting elevator entrance. The exact
@@ -14,7 +61,7 @@ as support neighbours, without granting movement permission or weakening the
 mesh/material, hole, collision, or positive support requirements. No seed,
 coordinate or entity-name exception is added. A mock regression reproduces the
 old failure and covers missing geometry, editor-only markers and ordinary
-excluded objects. Native final-candidate verification is pending; older five-site
+excluded objects. At this checkpoint native verification was pending; older five-site
 results below are historical, not proof of this candidate or arbitrary scenarios.
 Evidence: `_ralph/runs/rules-parity/fix-14s36w-20260923`.
 
@@ -25,7 +72,7 @@ metadata1093 now uses exact projected terrain-cut faces during early nomination:
 real vertices on visible ground beside a cut can avoid the redundant support
 graph. Hidden ground and missing/failed/degenerate cut geometry still fail closed.
 All80 compatibility fixtures and Lua syntax checks pass. Native462 verification
-is pending, ordered17S11W first, then61N136W, followed by measured descending cost.
+subsequently passed as recorded above, starting17S11W, then61N136W.
 
 ## Historical build460 acceptance
 

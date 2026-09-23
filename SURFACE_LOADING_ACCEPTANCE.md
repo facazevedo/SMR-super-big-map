@@ -1,5 +1,27 @@
 # Surface START-to-T1 — runtime acceptance and local checkpoint
 
+Current build 462 / metadata 1093 (code checkpoint `494f7af`) passes six pinned
+RoughTerrain cases, including 14S36W / `nBJAgUn3`, across 30 fresh headless sessions.
+Worst of 18 expanded generations: **74.955s START-to-T1**, including completed
+rock seating and positive support proof; **57.364s underground loading** through
+prepared state and closed covers. A/B/control, both-layer all-rock support,
+entrances, passability, buttons and save/reload checks pass with clean flushed logs.
+
+The general fix inspects actual terrain-cutting structures as physical support
+neighbours. Exact projected cut faces allow already-grounded nearby rocks to avoid
+redundant support graphs; hidden terrain and missing cut geometry remain vetoes.
+No scenario-specific exception, changed tolerance or post-T1 seating deferral.
+The slowest cases run first, retaining the known difficult seeds.
+
+Evidence: `_ralph/runs/rules-parity/fix-14s36w-20260923/complete_audit462.json`;
+`accepted=true`, no failures/pending checks. See ALL_RULES_VERIFICATION.md.
+80 compatibility fixtures, 18 judge tests and Lua syntax pass. All 43 local mod
+payload files match. Windows 3840x2160 was preserved during windowed testing.
+The smallest surface margin is 45ms, so these measurements do not guarantee the
+same timing under arbitrary system load. The new fix has not been pushed.
+
+## Historical build460 checkpoint (superseded by462)
+
 Build460/metadata1091 passes all five pinned RoughTerrain scenarios in fresh
 A/B/control runs and save/in-process reload/fresh-process load checks.
 Worst of15 expanded generations: **74.776s surface START-to-T1** and

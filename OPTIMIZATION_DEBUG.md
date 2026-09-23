@@ -1,14 +1,18 @@
 # Temporary optimization investigation
 
-Current build: **guard460 / metadata1091**. All five current A/B/control and
-save/load cases pass runtime gates. Worst of15 expanded generations:
-**74.776s START-to-T1**, including all rock seating, and **57.391s underground**.
-Same-candidate paired full-state and positive all-rock support checks pass.
-The authorized local checkpoint retains the measured payload unchanged; old
-artifacts are archived recoverably and `_ralph` is below2GB. No push.
-Historical verdicts are preserved, with separate checkpoint follow-up provenance.
+Current build: **guard 462 / metadata 1093**, code checkpoint `494f7af`.
+All six A/B/control and save/load cases pass in 30 fresh native headless sessions.
+Worst of 18 expanded generations: **74.955s START-to-T1**, including all rock
+seating, and **57.364s underground**. This leaves only 45ms surface headroom.
+The 14S36W warning's missing physical-support classification is fixed generically;
+exact terrain-cut nomination removes unnecessary graph construction nearby.
+Same-candidate full-state parity and positive support for every eligible rock pass.
+All 43 local mod payload files match; Windows 3840x2160 remained unchanged.
+Slowest-first ordering is a standing repository rule. Difficult seeds are retained;
+the unpinned 14S36W diagnostic and failed 461 timings do not count as acceptance.
+80 compatibility fixtures, 18 judge tests and Code syntax pass. No new push.
 See [ALL_RULES_VERIFICATION.md](ALL_RULES_VERIFICATION.md) and
-`_ralph/runs/rules-parity/strict-460-20260923/runtime_lifecycle_audit.json`.
+`_ralph/runs/rules-parity/fix-14s36w-20260923/complete_audit462.json`.
 Production contains no process-local test profiler or verifier override.
 
 ## Historical404 investigation (superseded)
