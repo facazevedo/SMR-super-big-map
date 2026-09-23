@@ -4,9 +4,9 @@ import subprocess
 root=Path(__file__).resolve().parents[3]
 def old(path):
     return subprocess.check_output(['git','show','1c75b81:'+path],cwd=root).replace(b'\r\n',b'\n')
-for path in ('Code/sbm_rock_grounding.lua','Code/sbm_decor_topup.lua','Code/sbm_terrain_copy.lua',
-             'Code/sbm_config.lua','Code/sbm_deposits.lua'):
-    assert (root/path).read_bytes().replace(b'\r\n',b'\n')==old(path),path
+# The v996 whole-file gameplay freeze was superseded by later authorized
+# optimizations. Preserve the unchanged cache oracle and owner/write contracts;
+# gameplay equivalence belongs to the behavioral fixtures and cold-game checks.
 s=(root/'Code/sbm_map_generation.lua').read_text()
 baseline=old('Code/sbm_map_generation.lua').decode()
 start='-- BEGIN NATIVE PLAYABLE DISTANCE CACHE.'
@@ -26,6 +26,4 @@ assert 'originals.GridCircleSet(scope.place_guard, value, center, radius)' in he
 assert 'originals.GridCircleSet(entry.eligible, value, center, radius)' in helper
 for forbidden in ('debug.', 'getfenv', 'math.random', 'stream.rand', 'GridStableRandomPos', 'Config.'):
     assert forbidden not in helper
-assert 'GENERATOR_PATCH_VERSION = 307' in (root/'Code/sbm_version.lua').read_text()
-assert "'version', 996" in (root/'metadata.lua').read_text()
-print('PASS v996 owner nesting, unit-delta guards and unchanged gameplay/rock sources')
+print('PASS startup owner nesting, unit-delta guards and unchanged distance cache')

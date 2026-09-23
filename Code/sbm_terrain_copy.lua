@@ -11,6 +11,8 @@ if type(SuperBigMap) ~= "table" then
 end
 
 local Engine = SuperBigMap.Engine
+local math,string,table=math,string,table
+local type,tonumber,tostring,ipairs,pairs,pcall,next=type,tonumber,tostring,ipairs,pairs,pcall,next
 local Global = Engine.Global
 local SafeCall = Engine.SafeCall
 local IsKindOfSafe = Engine.IsKindOf
@@ -443,7 +445,8 @@ local function ResampleMapGrid(map, name, from_box, to_box, interpolate)
 	LoadingEnd(source_token, {
 		source_cells = tostring(src_w0 or "?") .. "x" .. tostring(src_h0 or "?"),
 	}, ok_s and src ~= nil)
-	if not ok_s or not src then return false end
+	if not ok_s then return false, "MapGrid source extraction failed: " .. tostring(src) end
+	if not src then return false end
 	local frac = 1.0
 	if type(to_box.sizex) == "function" and type(from_box.sizex) == "function" then
 		local ok_t, tw = pcall(function() return to_box:sizex() end)
@@ -492,15 +495,41 @@ local function ResampleMapGrid(map, name, from_box, to_box, interpolate)
 	end
 	local src_c, stretched, out
 	local write_mode = "editor_set_grid"
-	local ok_all, res = pcall(function()
+	local ok_all, res, failure = pcall(function()
 		local convert_token = LoadingBegin("terrain map grid " .. tostring(name)
 			.. ": compute conversion", map)
 		local ok_convert, converted = pcall(GridToCompute, src)
 		LoadingEnd(convert_token, nil, ok_convert and converted ~= nil)
 		if not ok_convert or not converted then
-			error("MapGrid compute conversion failed: " .. tostring(converted))
+			return false, "MapGrid compute conversion failed: " .. tostring(converted)
 		end
 		src_c = converted
+		-- A zero source remains exactly zero under either native resampler and
+		-- every storage format. Clear the already-sized live grid directly; this
+		-- avoids allocating/resampling/copying millions of identical values.
+		-- Nonzero or unavailable range evidence retains the ordinary path.
+		local minmax = Global("GridMinMax")
+		local get_ref = Global("MapGridGetRef")
+		local source_format, source_bits = grid_format(src_c)
+		local integer_source = (tostring(source_format):lower() == "u"
+			or tostring(source_format):lower() == "s") and (source_bits == 8 or source_bits == 16)
+		if cfg_bool("OPTIMIZE_MAP_GRID_DIRECT_COPY", true) and ref
+			and integer_source
+			and type(ref.clear) == "function" and type(minmax) == "function"
+			and type(get_ref) == "function" and get_ref(map, name) == ref then
+			local lo, hi = minmax(src_c)
+			if lo == 0 and hi == 0 then
+				local token = LoadingBegin("terrain map grid " .. tostring(name) .. ": zero fill", map)
+				local cleared, why = pcall(ref.clear, ref, 0)
+				LoadingEnd(token, nil, cleared)
+				if not cleared then return false, "MapGrid zero fill failed: " .. tostring(why) end
+				local invalidate = Global("DbgInvalidateTerrainOverlay")
+				if type(invalidate) == "function" then pcall(invalidate, to_box) end
+				local msg = Global("Msg")
+				if type(msg) == "function" then pcall(msg, "OnMapGridChanged", map, name, to_box) end
+				return true
+			end
+		end
 
 		local resample_token = LoadingBegin("terrain map grid " .. tostring(name)
 			.. ": resample", map, {
@@ -511,7 +540,7 @@ local function ResampleMapGrid(map, name, from_box, to_box, interpolate)
 			interpolate == true)
 		LoadingEnd(resample_token, nil, ok_resample and resampled ~= nil)
 		if not ok_resample or not resampled then
-			error("MapGrid resample failed: " .. tostring(resampled))
+			return false, "MapGrid resample failed: " .. tostring(resampled)
 		end
 		stretched = resampled
 		out = stretched
@@ -523,7 +552,7 @@ local function ResampleMapGrid(map, name, from_box, to_box, interpolate)
 			local ok_repack, repacked = pcall(GridRepack, stretched, target_fmt, target_bits)
 			LoadingEnd(repack_token, nil, ok_repack and repacked ~= nil)
 			if not ok_repack or not repacked then
-				error("MapGrid repack failed: " .. tostring(repacked))
+				return false, "MapGrid repack failed: " .. tostring(repacked)
 			end
 			out = repacked
 		end
@@ -556,19 +585,21 @@ local function ResampleMapGrid(map, name, from_box, to_box, interpolate)
 			ok_set = pcall(editor_api.SetGrid, map, name, out, to_box)
 		end
 		LoadingEnd(write_token, { mode = write_mode }, ok_set)
-		return ok_set == true
+		if not ok_set then return false, "MapGrid destination write failed" end
+		return true
 	end)
 	if out and out ~= stretched then free_grid(out) end
 	if stretched and stretched ~= src_c then free_grid(stretched) end
 	if src_c and src_c ~= src then free_grid(src_c) end
 	free_grid(dst_ref)
 	free_grid(src)
-	if not ok_all then
+	if not ok_all then failure = tostring(res) end
+	if failure then
 		LoadingStep("terrain map grid " .. tostring(name) .. ": pipeline error", {
-			error = tostring(res), metadata_source = metadata_source,
+			error = failure, metadata_source = metadata_source,
 		}, map)
 	end
-	return ok_all and res == true
+	return ok_all and res == true, failure
 end
 
 -- True once BiomeGrid has been resized to the full expanded map. Same source-vs-ref size test as the ResampleMapGrid guard: for a full-map grid the
@@ -816,7 +847,7 @@ end
 -- back into perpendicular order. The scalar predicates/ties and ALL writes stay
 -- in RepairInternalHeightStep; refinement never reuses these discovery indexes.
 local function BuildHeightStepDiscoveryIndex(api, grid, axis, perp0, perp1, along_n,
-		sample_step, max_width, threshold)
+		sample_step, max_width, threshold, with_offers, edge_sign)
 	local math, type, ipairs, pairs, table = math, type, ipairs, pairs, table
 	local required = { "IsComputeGrid", "GridRepack", "GridMulDivAdd", "GridAdd",
 		"GridAbs", "GridMask", "GridCount", "GridForeach", "NewComputeGrid", "box", "point" }
@@ -834,6 +865,9 @@ local function BuildHeightStepDiscoveryIndex(api, grid, axis, perp0, perp1, alon
 		or (max_width ~= 1 and max_width ~= 3) or threshold < 2 then
 		return nil, "invalid native crease discovery bounds"
 	end
+	if edge_sign ~= nil and (not with_offers or (edge_sign ~= 1 and edge_sign ~= -1)) then
+		return nil, "invalid native crease edge direction"
+	end
 	local stats = { cells = 0, enumerated = 0, candidates = 0, sampled_rows = 0, copies = 0 }
 	if perp1 < perp0 then return {}, stats end
 	local owned, owned_set = {}, {}
@@ -843,7 +877,7 @@ local function BuildHeightStepDiscoveryIndex(api, grid, axis, perp0, perp1, alon
 		return value
 	end
 	local function work()
-		local rows, row_seen = {}, {}
+		local rows, row_seen, offers = {}, {}, {}
 		local sampled_rows = math.floor((along_n - 1) / sample_step) + 1
 		local span = math.min(perp_n - 1, perp1 + max_width + 1) - (perp0 - 1) + 1
 		local sw, sh = axis == "x" and span or sampled_rows, axis == "x" and sampled_rows or span
@@ -885,7 +919,9 @@ local function BuildHeightStepDiscoveryIndex(api, grid, axis, perp0, perp1, alon
 				if not flank0 or not flank1 or not magnitude then return nil, "native crease clone failed" end
 				api.GridMulDivAdd(v0, -1, 1, 0); api.GridAdd(flank0, v0); api.GridAbs(flank0)
 				api.GridMulDivAdd(b, -1, 1, 0); api.GridAdd(flank1, b); api.GridAbs(flank1)
-				api.GridMulDivAdd(a, -1, 1, 0); api.GridAdd(magnitude, a); api.GridAbs(magnitude)
+				api.GridMulDivAdd(a, -1, 1, 0); api.GridAdd(magnitude, a)
+				local signed = with_offers and own(magnitude:clone())
+				api.GridAbs(magnitude)
 				local accepted, mask = own(api.NewComputeGrid(local_w, local_h, "f", 32)),
 					own(api.NewComputeGrid(local_w, local_h, "f", 32))
 				local doubled = own(magnitude:clone())
@@ -902,11 +938,32 @@ local function BuildHeightStepDiscoveryIndex(api, grid, axis, perp0, perp1, alon
 					api.GridMask(margin, mask, 262139, 2147483647)
 					api.GridMulDivAdd(accepted, mask, 1, 0)
 				end
+				local enumeration = magnitude
+				if signed then
+					-- U16 differences plus this bias are exact in f32, positive and
+					-- nonzero. Export the already-tested sign/width/jump as well as
+					-- the position, avoiding a second set of native height reads.
+					api.GridMulDivAdd(signed, 1, 1, 65537)
+					if edge_sign then
+						-- Destination acceptance already requires the low side to
+						-- face this edge. Reject the opposite sign in the native
+						-- mask, before allocating Lua offers that cannot be used.
+						-- Accepted jumps are >= threshold, so 65537 is never a
+						-- boundary value (both native mask conventions agree).
+						api.GridMask(signed, mask, edge_sign == 1 and 65537 or 1,
+							edge_sign == 1 and 2147483647 or 65537)
+						api.GridMulDivAdd(accepted, mask, 1, 0)
+					end
+					api.GridMulDivAdd(signed, accepted, 1, 0)
+					enumeration = signed
+				end
 				api.GridMulDivAdd(magnitude, accepted, 1, 0)
 				local expected = api.GridCount(magnitude, 1, 2147483647)
 				local count, callback_error, emitted = 0, nil, {}
-				api.GridForeach(magnitude, function(jump, x, y)
+				api.GridForeach(enumeration, function(value, x, y)
 					if callback_error then return end
+					local signed_jump = signed and value - 65537 or value
+					local jump = math.abs(signed_jump)
 					if type(x) ~= "number" or type(y) ~= "number" or type(jump) ~= "number"
 						or x ~= math.floor(x) or y ~= math.floor(y) or jump ~= math.floor(jump)
 						or x < 0 or y < 0 or x >= local_w or y >= local_h
@@ -918,6 +975,11 @@ local function BuildHeightStepDiscoveryIndex(api, grid, axis, perp0, perp1, alon
 					emitted[key] = true; count = count + 1
 					local along = (axis == "x" and y or x) * sample_step
 					local perp = perp0 + (axis == "x" and x or y)
+					if signed then
+						local offer_row = offers[along] or {}; offers[along] = offer_row
+						local position = offer_row[perp] or {}; offer_row[perp] = position
+						position[width] = signed_jump
+					end
 					local seen = row_seen[along]
 					if not seen then seen = {}; row_seen[along] = seen; rows[along] = {} end
 					if not seen[perp] then
@@ -934,9 +996,9 @@ local function BuildHeightStepDiscoveryIndex(api, grid, axis, perp0, perp1, alon
 			end
 		end
 		for _, row in pairs(rows) do table.sort(row) end
-		return rows, stats
+		return rows, stats, offers
 	end
-	local ok, rows, detail = pcall(work)
+	local ok, rows, detail, offers = pcall(work)
 	local cleanup_error
 	for i = #owned, 1, -1 do
 		local freed, err = pcall(owned[i].free, owned[i])
@@ -944,7 +1006,7 @@ local function BuildHeightStepDiscoveryIndex(api, grid, axis, perp0, perp1, alon
 	end
 	if not ok then return nil, tostring(rows) end
 	if cleanup_error then return nil, "native crease cleanup failed: " .. cleanup_error end
-	return rows, detail
+	return rows, detail, offers
 end
 
 -- Batched translation of independent rows within ONE already-selected track.
@@ -1100,14 +1162,15 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 	end
 	local discovery_error, translation_error
 	local discovery_stats = { cells = 0, enumerated = 0, candidates = 0, sampled_rows = 0, copies = 0 }
+	local ticks = Global("GetPreciseTicks") or function() return 0 end
 
 	-- Reuse immutable native-discovery exclusions only inside their complete domain
 	-- and only until an earlier selected track touches the exact read neighbourhood.
 	local function NewHeightStepRefinementGuide()
 		local domains, writes_x, writes_y, empty = {}, {}, {}, {}
 		local stats = { indexed = 0, live = 0, writes = 0 }
-		local function register_domain(axis, edge, lo, hi, step, rows)
-			if step == 1 then domains[axis .. ":" .. edge] = { lo = lo, hi = hi, rows = rows } end
+		local function register_domain(axis, edge, lo, hi, step, rows, offers)
+			if step == 1 then domains[axis .. ":" .. edge] = { lo = lo, hi = hi, rows = rows, offers = offers } end
 		end
 		local function register_write(axis, along, lo, hi)
 			local index = axis == "x" and writes_x or writes_y
@@ -1138,7 +1201,7 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 				end
 			end
 			stats.indexed = stats.indexed + 1
-			return domain.rows[along] or empty
+			return domain.rows[along] or empty, domain.offers and (domain.offers[along] or empty)
 		end
 		return { RegisterDomain = register_domain, RegisterWrite = register_write,
 			Candidates = candidates, stats = stats }
@@ -1146,7 +1209,30 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 	-- HEIGHT_REFINEMENT_GUIDE_END
 	-- Read-only scalar confirmation of a certified native discovery superset.
 	-- Ordered perpendicular positions and width order preserve strict tie handling.
-	local function RefineIndexedHeightStep(at, track, along, predicted, lo, hi, max_width, threshold, indexed)
+	local function RefineIndexedHeightStep(at, track, along, predicted, lo, hi, max_width, threshold, indexed, offers)
+		if offers then
+			-- The guide has proved that no prior translation/join touched ANY
+			-- input of these exact native predicates. Reuse their signed widths
+			-- and strict tie order instead of fetching the same heights again.
+			local best_perp,best_width,best_distance,best_jump
+			local before_edge=track.edge=="left" or track.edge=="top"
+			for _,perp in ipairs(indexed) do
+				if perp>hi then break end
+				if perp>=lo then
+					local position=offers[perp] or {}
+					for width=1,max_width do
+						local signed=position[width]
+						if signed and (signed>0)==track.low_before and (signed>0)==before_edge then
+							local jump,distance=math.abs(signed),math.abs(perp-predicted)
+							if not best_distance or distance<best_distance or (distance==best_distance and jump>best_jump) then
+								best_perp,best_width,best_distance,best_jump=perp,width,distance,jump
+							end
+						end
+					end
+				end
+			end
+			return best_perp,best_width
+		end
 		local cache = {}
 		local function sample(perp)
 			local value = cache[perp]
@@ -1320,32 +1406,46 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		if discovery_error then return end
 		local active = {}
 		sample_step = math.max(1, sample_step or 1)
-		local function index(lo, hi)
-			local rows, detail = BuildHeightStepDiscoveryIndex(discovery_api, grid, axis,
-				lo, hi, along_n, sample_step, wide_ring_only and 1 or 3, threshold)
+		local function index(lo, hi, edge)
+			local rows, detail, offers = BuildHeightStepDiscoveryIndex(discovery_api, grid, axis,
+				lo, hi, along_n, sample_step, wide_ring_only and 1 or 3, threshold, not wide_ring_only,
+				not wide_ring_only and ((edge == "left" or edge == "top") and 1 or -1) or nil)
 			if not rows then discovery_error = tostring(detail); return nil end
 			for key in pairs(discovery_stats) do
 				discovery_stats[key] = discovery_stats[key] + (detail[key] or 0)
 			end
-			return rows
+			return rows, offers
 		end
-		local before = index(before_perp0, before_perp1)
+		local before, before_offers = index(before_perp0, before_perp1, before_edge)
 		if not before then return end
-		local after = index(after_perp0, after_perp1)
+		local after, after_offers = index(after_perp0, after_perp1, after_edge)
 		if not after then return end
 		if refinement_guide then
-			refinement_guide.RegisterDomain(axis, before_edge, before_perp0, before_perp1, sample_step, before)
-			refinement_guide.RegisterDomain(axis, after_edge, after_perp0, after_perp1, sample_step, after)
+			refinement_guide.RegisterDomain(axis, before_edge, before_perp0, before_perp1, sample_step, before, before_offers)
+			refinement_guide.RegisterDomain(axis, after_edge, after_perp0, after_perp1, sample_step, after, after_offers)
+		end
+		local function accept(row, along, perp, edge, offers)
+			local position = offers and offers[along] and offers[along][perp]
+			if not position then scan_line_range(row, axis, along, perp, perp, edge); return end
+			for width = 1, 3 do
+				local jump = position[width]
+				if jump then
+					local low_before = jump > 0
+					if low_before == (edge == "left" or edge == "top") then
+						offer_candidate(row, axis, perp, width, edge, low_before, math.abs(jump))
+					end
+				end
+			end
 		end
 		for along = 0, along_n - 1, sample_step do
 			local row = {}
 			-- Exact scalar acceptance, width order and edge order are unchanged. Only
 			-- positions proven unable to offer any width are omitted by the native index.
 			for _, perp in ipairs(before[along] or {}) do
-				scan_line_range(row, axis, along, perp, perp, before_edge)
+				accept(row, along, perp, before_edge, before_offers)
 			end
 			for _, perp in ipairs(after[along] or {}) do
-				scan_line_range(row, axis, along, perp, perp, after_edge)
+				accept(row, along, perp, after_edge, after_offers)
 			end
 
 			local used = {}
@@ -1412,10 +1512,11 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		local max_width = wide_ring_only and 1 or 3
 		-- The native superset remains usable only where every influencing height is
 		-- unchanged. Intersecting earlier translations/joins require live refinement.
-		local indexed = refinement_guide and refinement_guide.Candidates(track, along,
-			lo, hi, hi + max_width + 1)
+		local indexed,offers
+		if refinement_guide then indexed,offers=refinement_guide.Candidates(track, along,
+			lo, hi, hi + max_width + 1) end
 		if indexed then
-			return RefineIndexedHeightStep(at, track, along, predicted, lo, hi, max_width, threshold, indexed)
+			return RefineIndexedHeightStep(at, track, along, predicted, lo, hi, max_width, threshold, indexed, offers)
 		end
 		local v0, a = at(track.axis, lo - 1, along), at(track.axis, lo, along)
 		local n1, n2 = at(track.axis, lo + 1, along), at(track.axis, lo + 2, along)
@@ -1574,8 +1675,11 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 					perp_n - near_margin - 3, wide_sample_step)
 			end
 		end
+		local phase_started = ticks()
 		collect_ring("x", w, h, "left", "right")
 		collect_ring("y", h, w, "top", "bottom")
+		discovery_stats.discovery_ms = ticks() - phase_started
+		phase_started = ticks()
 		if discovery_error then return end -- No qualification or height writes on failure.
 		if refinement_guide then discovery_stats.refinement = refinement_guide.stats end
 
@@ -1622,12 +1726,14 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 				qualified[#qualified + 1] = track
 			end
 		end
+		discovery_stats.qualification_ms = ticks() - phase_started
 		if #qualified == 0 then return end
 		table.sort(qualified, function(a, b) return a.score > b.score end)
 		-- The length/density/average/max gate above reduces the first multi-cell attempt's 1,249
 		-- fragments to a small coherent boundary cohort. Keep all of those tracks: a
 		-- second relative-score cutoff discarded a real bottom segment and left a 1,171-cell wall.
 		selected_tracks = qualified
+		phase_started = ticks()
 
 		for _, selected in ipairs(selected_tracks) do
 			-- Fill short detection gaps so the translated region cannot retain isolated wall stripes.
@@ -1748,6 +1854,7 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 			selected.max_offset = max_offset
 		end
 		selected_tracks[1].qualified = #qualified
+		discovery_stats.application_ms = ticks() - phase_started
 	end)
 	if type(resume) == "function" then pcall(resume, "SBMInternalHeightStepRepair") end
 	if translation_error then
@@ -1970,12 +2077,15 @@ end
 -- its short axis toward the adjacent mountain. A wide, slightly lobed quintic feather blends the
 -- core into the original height field. The quintic has zero first and second derivative at both
 -- ends, so neither the core join nor the untouched outer boundary leaves a lighting scar.
--- Full-resolution native apron blend. Ambiguous U16 rounding cells use the original
--- scalar expression; no mask coarsening, terrain redesign or failure fallback.
+-- Full-resolution native apron blend. Rounding envelopes wider than the allowed
+-- stored-height tolerance use the original scalar expression. Strict callers
+-- default to zero; release foothills permit one height quantum per patch.
 local function RasterNaturalMountainBaseAprons(api, grid, selected, policy)
 	local math, type, ipairs, pairs, table = math, type, ipairs, pairs, table
 	local floor, ceil, min, max, sqrt = math.floor, math.ceil, math.min, math.max, math.sqrt
+	local rounding_tolerance=policy.rounding_tolerance==1 and 1 or 0
 	local stats = { modified=0, shaped=0, raster_cells=0, mask_samples=0, exact_samples=0,
+		bounded_rounding_cells=0,rounding_tolerance=rounding_tolerance,
 		mask_cells_skipped=0, mask_fast_zero=0, mask_fast_one=0,
 		native_mask_cells=0, native_mask_patches=0, scalar_mask_patches=0 }
 	local W, H = 16777216, 256
@@ -2292,7 +2402,15 @@ local function RasterNaturalMountainBaseAprons(api, grid, selected, policy)
 				-- Separate zero and nonzero integer differences by a gap, so callback filtering
 				-- is unambiguous for either inclusive or exclusive native lower-bound semantics.
 				api.GridMulDivAdd(difference,2,1,0)
-				local expected_exact=api.GridCount(difference,0,2147483647)
+				-- A one-quantum envelope already bounds the stored height to within
+				-- one U16 terrain step of the literal double-precision expression.
+				-- Release foothill blending accepts that tiny quantization difference;
+				-- larger/uncertified envelopes still execute the exact scalar repair.
+				-- Strict differential callers retain tolerance zero by default.
+				local ambiguous=api.GridCount(difference,0,2147483647)
+				local expected_exact=rounding_tolerance==0 and ambiguous
+					or api.GridCount(difference,2*rounding_tolerance,2147483647)
+				stats.bounded_rounding_cells=stats.bounded_rounding_cells+ambiguous-expected_exact
 				local exact,callback_error=0,nil
 				api.GridForeach(difference,function(value,x,y)
 					if callback_error then return end
@@ -2308,7 +2426,7 @@ local function RasterNaturalMountainBaseAprons(api, grid, selected, policy)
 					local expected=floor(aim+(old-aim)*retention+0.5)
 					packed:set(x,y,max(0,min(65535,expected)))
 					exact=exact+1
-				end,1,2147483647)
+				end,1+2*rounding_tolerance,2147483647)
 				if callback_error then return callback_error end
 				if exact~=expected_exact then return "native apron rounding enumeration mismatch" end
 				-- Count exact U16 changes before publication; preserve the existing report.
@@ -2561,7 +2679,8 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 		api[name] = Global(name)
 	end
 	local ok_call, ok_apply, stats, apply_error = pcall(RasterNaturalMountainBaseAprons,
-		api, grid, selected, {outer_short=outer_short, outer_long=outer_long, core_fraction=core_fraction})
+		api, grid, selected, {outer_short=outer_short, outer_long=outer_long,
+			core_fraction=core_fraction,rounding_tolerance=1})
 	if not ok_call then apply_error=ok_apply;ok_apply=false;stats={} end
 	local modified, shaped = stats.modified or 0, stats.shaped or 0
 	map.SuperBigMapNativeApronStats = stats
@@ -4434,12 +4553,44 @@ local function RebuildOuterResourceTerrainRegions(map, preparation, stage)
 		if world_x1 <= world_x0 or world_y1 <= world_y0 then
 			return fail("dirty-region certificate box " .. tostring(index) .. " clamps empty")
 		end
-		pass_regions[index] = box_fn(world_x0, world_y0, world_x1, world_y1)
+		pass_regions[index] = { x0=world_x0, y0=world_y0, x1=world_x1, y1=world_y1 }
+	end
+	-- The complete terrain transaction has already finished. Overlapping
+	-- resource/pad certificates often rebuild the same cells several times.
+	-- Coalesce only when the bounding box is the EXACT union. Overscanning the
+	-- corners of a non-rectangular union can change native passability cells,
+	-- even when the total scanned area decreases. Keep those calls separate.
+	local source_regions = #pass_regions
+	local merged = true
+	while merged do
+		merged = false
+		for i=1,#pass_regions do
+			local a=pass_regions[i]
+			for j=i+1,#pass_regions do
+				local b=pass_regions[j]
+				if a.x0<=b.x1 and b.x0<=a.x1 and a.y0<=b.y1 and b.y0<=a.y1 then
+					local x0,y0=math.min(a.x0,b.x0),math.min(a.y0,b.y0)
+					local x1,y1=math.max(a.x1,b.x1),math.max(a.y1,b.y1)
+					local separate=(a.x1-a.x0)*(a.y1-a.y0)+(b.x1-b.x0)*(b.y1-b.y0)
+					local overlap=math.max(0,math.min(a.x1,b.x1)-math.max(a.x0,b.x0))
+						*math.max(0,math.min(a.y1,b.y1)-math.max(a.y0,b.y0))
+					if (x1-x0)*(y1-y0)==separate-overlap then
+						pass_regions[i]={x0=x0,y0=y0,x1=x1,y1=y1}
+						table.remove(pass_regions,j);merged=true;break
+					end
+				end
+			end
+			if merged then break end
+		end
+	end
+	for i,region in ipairs(pass_regions) do
+		pass_regions[i]=box_fn(region.x0,region.y0,region.x1,region.y1)
 	end
 
 	stage = tostring(stage or "outer resource terrain")
 	local report = {
-		stage = stage, regions = #pass_regions, dependency_margin = dependency_margin,
+		stage = stage, regions = #pass_regions, source_regions = source_regions,
+		dependency_margin = dependency_margin,
 		passability_ms = 0, buildable_ms = 0, total_ms = 0, error = "",
 	}
 	local total_started = GetPreciseTicks()
@@ -5119,6 +5270,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			if scale_values then ZDumpHeightGrid(map, "source-pre", src_sub) end
 			if scale_values and environment ~= "Underground"
 				and cfg_bool("STRETCH_REPAIR_INTERNAL_HEIGHT_STEP", true) then
+				local repair_token = LoadingBegin("height source crease discovery and repair", map)
 				local detected, report, tracks, stats = RepairInternalHeightStep(src_sub, true)
 				map.SuperBigMapCreaseSamplingStats = { source = stats }
 				if report and report.error then
@@ -5135,10 +5287,13 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 						or "SOURCE_REPAIR_SKIPPED", source_report, map)
 					merge_step_report(source_report)
 				end
+				LoadingEnd(repair_token)
 			end
 			if scale_values then ZDumpHeightGrid(map, "source-post", src_sub) end
 			local fmt, bits = IsComputeGrid(src_sub)
+			local resample_token = LoadingBegin("terrain native resample: " .. tostring(label), map)
 			local stretched = GridResample(src_sub, fw, fh, interpolate == true)
+			LoadingEnd(resample_token)
 			NotifyDeterminismCaptureForTest("pre_z_transform", map, {
 				grid = stretched,
 				grid_kind = scale_values and "surface_height" or "surface_terrain",
@@ -5149,6 +5304,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			-- seamless exactly as before.  It runs only after the source repair has been resampled.
 			if scale_values and environment ~= "Underground"
 				and cfg_bool("STRETCH_REPAIR_INTERNAL_HEIGHT_STEP", true) then
+				local repair_token = LoadingBegin("height destination crease discovery and repair", map)
 				local repaired, report, _, stats = RepairInternalHeightStep(stretched, false)
 				map.SuperBigMapCreaseSamplingStats = map.SuperBigMapCreaseSamplingStats or {}
 				map.SuperBigMapCreaseSamplingStats.destination = stats
@@ -5166,6 +5322,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 				TerrainCreaseAudit(repaired and "DESTINATION_REPAIRED"
 					or "DESTINATION_SKIPPED", report, map)
 				merge_step_report(report)
+				LoadingEnd(repair_token)
 			end
 			if scale_values then ZDumpHeightGrid(map, "finish-post", stretched) end
 			-- FULL 3D STRETCH (config STRETCH_SCALE_HEIGHTS): scale the HEIGHT VALUES by the same
@@ -5188,6 +5345,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			-- Underground terrain keeps the full similarity transform because buried wonders and
 			-- their sculpted openings require its Z ratio to remain identical to X/Y.
 			if scale_values and cfg_bool("STRETCH_SCALE_HEIGHTS", true) then
+				local height_transform_token=LoadingBegin("height value transform and bounds",map)
 				local grid_muldivadd = Global("GridMulDivAdd")
 				local grid_minmax = Global("GridMinMax")
 				if type(grid_muldivadd) == "function" then
@@ -5268,6 +5426,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 						final_max = tostring(max1),
 					}, map)
 				end
+				LoadingEnd(height_transform_token)
 			end
 			NotifyDeterminismCaptureForTest("post_z_transform", map, {
 				grid = stretched,
@@ -5278,7 +5437,9 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			-- explicit, localized post-transform terrain operation and therefore run only after the
 			-- pure-transform capture/dump, but before this grid is committed and rebuilt for gameplay.
 			if scale_values and environment ~= "Underground" then
+				local apron_token=LoadingBegin("height mountain apron generation",map)
 				local _, apron_report = CreateNaturalMountainBaseBuildableAprons(map, stretched)
+				LoadingEnd(apron_token)
 				if apron_report and apron_report.error and apron_report.error ~= "" then
 					-- The private result must never be published after a failed native operation.
 					free_grid(src_sub)
@@ -5287,8 +5448,10 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 					return false
 				end
 			end
+			local setter_token=LoadingBegin("terrain destination setter: "..tostring(label),map)
 			local ok_set = pcall(set_fn, map, stretched)
 			if type(invalidate_fn) == "function" then pcall(invalidate_fn, map) end
+			LoadingEnd(setter_token)
 			free_grid(src_sub)
 			if stretched ~= src_sub then free_grid(stretched) end
 			if full_c ~= raw and full_c ~= src_sub then free_grid(full_c) end
@@ -5330,21 +5493,32 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 		terrain_api.SetTypeGrid, terrain_api.InvalidateType, false) then
 		done = done + 1
 	end
+	-- Optional colour/biome grids must never make a partial height/type stretch
+	-- look successful. Keep this gate before consuming a deferred forced mask.
+	if done ~= 2 then
+		error("terrain stretch did not complete both height and type grids")
+		return false, done
+	end
 	-- 1.1 introduced a separate forced-impassability raster. It is not rebuilt
 	-- from height/type and must follow the SAME XY transform as cave terrain and
 	-- entrances. Leaving the source-sized mask in place seals the moved entrances.
 	local forced_source = (source_map or map).SuperBigMapForcedImpassSource
+	if (source_map or map).SuperBigMapForcedImpassDeferred == true and type(forced_source) ~= "string" then
+		error("deferred forced impassability source is missing")
+		return false, done
+	end
 	if type(forced_source) == "string" then
 		local source, stretched
 		local forced_token = LoadingBegin("terrain forced impassability stretch", map)
-		local forced_ok, forced_error = pcall(function()
+		local forced_ok, forced_result, forced_error = pcall(function()
 			local read_error
 			source, read_error = Global("GridReadStr")(forced_source)
-			if not source then error("forced impassability decode: " .. tostring(read_error)) end
+			if not source then return false, "forced impassability decode: " .. tostring(read_error) end
 			local w, h = source:size()
 			local fw, fh = w * full_tw / sw_tiles, h * full_th / sh_tiles
-			if fw % 1 ~= 0 or fh % 1 ~= 0 then error("non-integral forced impassability size") end
+			if fw % 1 ~= 0 or fh % 1 ~= 0 then return false, "non-integral forced impassability size" end
 			stretched = GridResample(source, fw, fh, false)
+			if not stretched then return false, "forced impassability resample failed" end
 			-- SetForcedImpassFromMask only ADDS set bits; zeros do not clear the
 			-- previous source mask. Replace the generation-owned terrain mask as a
 			-- whole before applying its transformed version. Object obstacles and
@@ -5352,13 +5526,17 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			local tile = (Global("const") or {}).HeightTileSize or 100
 			terrain_api.SetForcedImpassableBox(map, box_fn(0, 0, full_tw * tile, full_th * tile), false)
 			local err = terrain_api.SetForcedImpassFromMask(map, stretched)
-			if err then error("forced impassability write: " .. tostring(err)) end
+			if err then return false, "forced impassability write: " .. tostring(err) end
+			return true
 		end)
 		if stretched and stretched ~= source then free_grid(stretched) end
 		free_grid(source)
+		forced_error = not forced_ok and forced_result or forced_error
+		forced_ok = forced_ok and forced_result == true
 		LoadingEnd(forced_token, {error=forced_ok and "" or tostring(forced_error)}, forced_ok)
-		if not forced_ok then error(forced_error) end
+		if not forced_ok then error(forced_error); return false, done end
 		(source_map or map).SuperBigMapForcedImpassSource = false
+		(source_map or map).SuperBigMapForcedImpassDeferred = false
 	end
 	local clutter_ok, clutter_changed = stretch_clutter()
 	if terrain_only == true then
@@ -5395,8 +5573,12 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			for _, mg in ipairs(map_grids) do
 				local grid_token = LoadingBegin("terrain map grid stretch: " .. mg.name, map,
 					{ interpolate = tostring(mg.interp == true) })
-				local grid_ok = ResampleMapGrid(map, mg.name, src_box, full_box, mg.interp)
+				local grid_ok, grid_error = ResampleMapGrid(map, mg.name, src_box, full_box, mg.interp)
 				LoadingEnd(grid_token, nil, grid_ok)
+				if grid_error then
+					error(grid_error)
+					return false, done
+				end
 				if grid_ok then done = done + 1 end
 			end
 		end
@@ -5415,6 +5597,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 	}, invalidate_ok == true)
 	if invalidate_ok ~= true then
 		error("expanded terrain revalidation failed")
+		return false, done
 	end
 	LoadingStep("terrain stretch grid suite complete", {
 		completed_grids = done,
@@ -5923,7 +6106,7 @@ local function AnnotateDecorRelief(map, terrain_source_map)
 		and type(terrain_api.GetHeight) == "function"
 	local relief_terrain_map = terrain_source_map or map
 	local grounding = SuperBigMap.RockGrounding
-	if grounding then grounding.BeginCapture(map, relief_terrain_map) end
+	if grounding and grounding.BeginCapture(map, relief_terrain_map)==false then grounding=nil end
 	local validation = SuperBigMap.DecorationValidation
 	-- Avoid dispatching a disabled diagnostic for every source decoration. The
 	-- separate grounding/correction services still run in the release build.

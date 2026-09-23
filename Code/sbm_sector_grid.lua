@@ -50,6 +50,7 @@ do
 	-- First access may occur in a different process. These are scalar/value-only
 	-- generator records, not generator instances, closures or scratch grids.
 	for _, name in ipairs({
+		"SuperBigMapForcedImpassDeferred",
 		"SuperBigMapPlacementSeed", "SuperBigMapDeferredUndergroundWonderRecords",
 		"SuperBigMapDeferredUndergroundWondersPending", "SuperBigMapDeferredUndergroundWonderCount",
 		"SuperBigMapSurfaceStretchFailed", "SuperBigMapUndergroundStretchFailed",

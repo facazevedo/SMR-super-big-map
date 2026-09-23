@@ -1,6 +1,34 @@
 # Temporary optimization investigation
 
-Current accepted result (2026-09-13): **v994**, reference START-to-T1 arithmetic
+Current build: **guard460 / metadata1091**. All five current A/B/control and
+save/load cases pass runtime gates. Worst of15 expanded generations:
+**74.776s START-to-T1**, including all rock seating, and **57.391s underground**.
+Same-candidate paired full-state and positive all-rock support checks pass.
+The authorized local checkpoint retains the measured payload unchanged; old
+artifacts are archived recoverably and `_ralph` is below2GB. No push.
+Historical verdicts are preserved, with separate checkpoint follow-up provenance.
+See [ALL_RULES_VERIFICATION.md](ALL_RULES_VERIFICATION.md) and
+`_ralph/runs/rules-parity/strict-460-20260923/runtime_lifecycle_audit.json`.
+Production contains no process-local test profiler or verifier override.
+
+## Historical404 investigation (superseded)
+
+Current workspace/deployed: guard404 / metadata1035, **not accepted**. Finalized403 45S120W:76.075s surface/46.481s underground,16 verified corrections beforeT1, zero rejections, clean flushed log. Guard402's exact small-region terrain bound and proven native/current-intersection preservation resolve the earlier group failures;403 removes repeated negative proofs for verified native compositions. Guard404 first reuses conservative terrain bounds that already prove separation, avoiding unnecessary exhaustive queries. All66 host fixtures and15 judge tests pass. The399 same-seed resource/grid mismatch, broader correctness/repeatability audit and clean performance acceptance remain open. See [ALL_RULES_VERIFICATION.md](ALL_RULES_VERIFICATION.md).
+
+The user now explicitly permits testing at the current Windows resolution. The runner accepts an explicit `--expected-display` argument, preserves that resolution throughout the run and never calls a display-setting API. One1024x768 startup crashed before generation with Windows exception0xc0000374; it has no timing result. Temporary diagnostic logs are retained and read after owned-process closure; final performance acceptance must run without added diagnostics.
+
+Historical scoped guard399: three ordinary24S74W runs74.682/73.444/73.640s; same-run gameplay, buttons and a separate deferred-mask save/load check passed. Those historical successes do not close the later failures.
+
+Historical, superseded acceptance (2026-09-22): generator guard **374**, hardest reference surface
+START-to-T1 **74.056 / 74.651 s** (mean **74.354 s**), including completed rock seating. Full underground,
+resource/passage and temporary-button checks pass with no Lua errors; Windows
+stays at 3840 × 2160 during hidden/windowed testing.
+See [SURFACE_LOADING_ACCEPTANCE.md](SURFACE_LOADING_ACCEPTANCE.md) for the measurement
+contract, clean-run evidence, bounded rounding allowance and regression checks.
+
+## Historical v994 acceptance
+
+Accepted result (2026-09-13): **v994**, reference START-to-T1 arithmetic
 average **84.666s** from 84.212 /85.294 /84.492s. The revised below85s-average
 goal is met; all five correctness scenarios and85 offline tests pass. Measured
 checkpoint `1182750`, production implementation `065ab3f`, deployed38/38.

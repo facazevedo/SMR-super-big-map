@@ -21,7 +21,11 @@ local function Bounds()
 end
 
 local function Extend(b, p)
-	for a = 1, 3 do b[a] = math.min(b[a], p[a]); b[a+3] = math.max(b[a+3], p[a]) end
+	for a = 1, 3 do
+		local value=p[a]
+		if value<b[a] then b[a]=value end
+		if value>b[a+3] then b[a+3]=value end
+	end
 end
 
 -- The split signed-16 position format stores offsets from the native AABB centre.
@@ -68,10 +72,19 @@ function Geometry.Decode(data, bounds, formats)
 		half = math.max(half, (bounds[a+3] - bounds[a]) * 0.5)
 	end
 	local quantum = packed and math.ceil(half) / 32767.0 or 0
+	-- A 48-bit key represents the three signed-16 coordinates exactly. Use it
+	-- only when adjacent quantization steps are comfortably farther apart than
+	-- the old 12-significant-digit string key's rounding. Otherwise retain that
+	-- key verbatim. This avoids decimal formatting for every ordinary packed
+	-- vertex without changing which UV seams are joined.
+	local largest=0
+	for a=1,6 do largest=math.max(largest,math.abs(bounds[a])) end
+	local packed_keys=packed and quantum>0 and quantum>largest*1e-10 and {} or nil
 	local bytes, vertices, decoded_bounds = geom.vertices, {}, Bounds()
 	local function s16(i)
 		local a,b = bytes[i],bytes[i+1]
-		if not Finite(a) or not Finite(b) or a<0 or a>255 or b<0 or b>255 then return nil end
+		if type(a)~="number" or type(b)~="number"
+			or not (a>=0 and a<=255 and b>=0 and b<=255) then return nil end
 		local n = a + 256*b
 		return n >= 32768 and n-65536 or n
 	end
@@ -85,8 +98,11 @@ function Geometry.Decode(data, bounds, formats)
 			else bones[i+1]=index+1 end
 		end
 		if packed then
-			local q = { s16(base+xy.offset), s16(base+xy.offset+2), s16(base+z.offset) }
-			for a = 1, 3 do if q[a] == nil then return nil, "invalid position bytes" end; p[a] = center[a]+q[a]*quantum end
+			local qx,qy,qz=s16(base+xy.offset),s16(base+xy.offset+2),s16(base+z.offset)
+			if qx==nil or qy==nil or qz==nil then return nil,"invalid position bytes" end
+			p[1],p[2],p[3]=center[1]+qx*quantum,center[2]+qy*quantum,center[3]+qz*quantum
+			if packed_keys and (qx%1~=0 or qy%1~=0 or qz%1~=0) then packed_keys=nil end
+			if packed_keys then packed_keys[i+1]=(qx+32768)+(qy+32768)*65536+(qz+32768)*4294967296 end
 		else
 			if pos.offset < 0 or pos.offset+12 > stride then return nil, "invalid float position offset" end
 			local chars = {}
@@ -100,7 +116,7 @@ function Geometry.Decode(data, bounds, formats)
 	for a=1,6 do
 		if math.abs(decoded_bounds[a]-bounds[a]) > tolerance then return nil, "decoded bounds disagree with native mesh" end
 	end
-	local parent, used, coincident = {}, {}, {}
+	local parent, used, coincident, bone_coincident = {}, {}, {}, {}
 	local function root(i)
 		local p=parent[i]
 		while p~=parent[p] do parent[p]=parent[parent[p]];p=parent[p] end
@@ -112,8 +128,15 @@ function Geometry.Decode(data, bounds, formats)
 	for i,p in ipairs(vertices) do
 		parent[i]=i
 		-- Exact seams, not approximate welding that could connect detached fragments.
-		local key=string.format("%.12g,%.12g,%.12g:%s",p[1],p[2],p[3],bones and bones[i] or "static")
-		if coincident[key] then join(i,coincident[key]) else coincident[key]=i end
+		local key=packed_keys and packed_keys[i]
+		local lookup=coincident
+		if key and bones then
+			lookup=bone_coincident[bones[i]]
+			if not lookup then lookup={};bone_coincident[bones[i]]=lookup end
+		elseif not key then
+			key=string.format("%.12g,%.12g,%.12g:%s",p[1],p[2],p[3],bones and bones[i] or "static")
+		end
+		if lookup[key] then join(i,lookup[key]) else lookup[key]=i end
 	end
 	local rendered_triangles={}
 	for i=1,#geom.indices,3 do
@@ -134,13 +157,21 @@ function Geometry.Decode(data, bounds, formats)
 	local components, groups = {}, {}
 	for i=1,count do if used[i] then
 		local r=root(i);local component=groups[r]
-		if not component then component={bounds=Bounds(),vertices={},triangles={}};groups[r]=component;components[#components+1]=component end
-		component.vertices[#component.vertices+1]=i;Extend(component.bounds,vertices[i])
+		if not component then component={bounds=Bounds(),vertices={},triangles={},extrema_indices={}};groups[r]=component;components[#components+1]=component end
+		component.vertices[#component.vertices+1]=i
+		-- This visit already calculates every component extremum. Keep the first
+		-- attaining vertex too, instead of scanning the same vertex list seven
+		-- more times for six contact witnesses and the bottom witness below.
+		local p,b,extrema=vertices[i],component.bounds,component.extrema_indices
+		for axis=1,3 do
+			if p[axis]<b[axis] then b[axis]=p[axis];extrema[2*axis-1]=i end
+			if p[axis]>b[axis+3] then b[axis+3]=p[axis];extrema[2*axis]=i end
+		end
 	end end
 	for _,t in ipairs(rendered_triangles) do
 		local a,b,c=t[1],t[2],t[3]
 		local triangles=groups[root(a)].triangles
-		triangles[#triangles+1]={a,b,c}
+		triangles[#triangles+1]=t
 	end
 	for _,component in ipairs(components) do
 		if bones then
@@ -152,15 +183,12 @@ function Geometry.Decode(data, bounds, formats)
 		-- Retain representative real vertices for positive contact witnesses. Failure
 		-- to find a witness here NEVER proves that a component is unsupported.
 		local samples,seen={},{}
-		for axis=1,3 do for _,sign in ipairs({-1,1}) do
-			local best
-			for _,i in ipairs(component.vertices) do if not best or vertices[i][axis]*sign>vertices[best][axis]*sign then best=i end end
+		for _,best in ipairs(component.extrema_indices) do
 			if best and not seen[best] then samples[#samples+1]=vertices[best];seen[best]=true end
-		end end
+		end
 		component.samples=samples
-		local bottom
-		for _,i in ipairs(component.vertices) do if not bottom or vertices[i][3]<vertices[bottom][3] then bottom=i end end
-		component.bottom=vertices[bottom]
+		component.bottom=vertices[component.extrema_indices[5]]
+		component.extrema_indices=nil
 	end
 	return {vertices=vertices,components=components,quantum=quantum,bounds=bounds,
 		animated=data.maxBonesPerVertex>0,rigid_skin=bones~=nil and not skin_reason,skin_reason=skin_reason,
@@ -406,6 +434,40 @@ function Geometry.BoneMatrix(obj,geometry,bone)
 	return matrix
 end
 
+-- Read the native floating rigid transform, restoring the local-Y reflection
+-- omitted by GetTransformMatrix's decomposition. Never accept a stale visual
+-- pose: independently compare its origin and long basis with GetRelativePoint.
+function Geometry.NativeRigidMatrix(obj)
+	if type(obj.GetTransformMatrix)~="function" or type(obj.GetMirrored)~="function"
+		or type(obj.GetRelativePoint)~="function" or obj:GetParent() then return nil end
+	local ok,result=pcall(function()
+		local rows={obj:GetTransformMatrix():values()};if #rows~=4 then return nil end
+		local unit=Global("guim");local mirrored=obj:GetMirrored() and -1 or 1
+		local matrix={origin={},columns={{},{},{}}}
+		for a=1,3 do
+			matrix.origin[a]=rows[a]:w()*unit
+			matrix.columns[1][a]=rows[a]:x()*unit
+			matrix.columns[2][a]=rows[a]:y()*unit*mirrored
+			matrix.columns[3][a]=rows[a]:z()*unit
+		end
+		if math.abs(rows[4]:x())+math.abs(rows[4]:y())+math.abs(rows[4]:z())>1e-6
+			or math.abs(rows[4]:w()-1)>1e-6 or not Geometry.RigidMatrix(matrix) then return nil end
+		local expected=obj:GetWorldScale()*unit/100.0
+		local column=matrix.columns[1]
+		if not Finite(expected) or expected<=0 or math.abs(math.sqrt(column[1]^2+column[2]^2+column[3]^2)-expected)>expected*1e-4 then return nil end
+		for basis=0,3 do
+			local p={0,0,0};if basis>0 then p[basis]=100*unit end
+			local native={obj:GetRelativePoint(Global("point")(p[1],p[2],p[3])):xyz()}
+			for a=1,3 do
+				local predicted=matrix.origin[a]+(basis>0 and matrix.columns[basis][a]*100 or 0)
+				if not Finite(native[a]) or math.abs(predicted-native[a])>2 then return nil end
+			end
+		end
+		return matrix
+	end)
+	return ok and result or nil
+end
+
 function Geometry.RigidMatrix(matrix)
 	local columns=matrix and matrix.columns
 	if not columns or #columns~=3 or not matrix.origin then return false end
@@ -626,26 +688,52 @@ function Geometry.TriangleTree(geometry,component)
 	if component.triangle_tree then return component.triangle_tree end
 	local entries={};local vertices=geometry.vertices
 	for _,triangle in ipairs(component.triangles) do
-		local b=Bounds()
-		for _,i in ipairs(triangle) do Extend(b,vertices[i]) end
+		local a,b,c=vertices[triangle[1]],vertices[triangle[2]],vertices[triangle[3]]
+		local b={math.min(a[1],b[1],c[1]),math.min(a[2],b[2],c[2]),math.min(a[3],b[3],c[3]),
+			math.max(a[1],b[1],c[1]),math.max(a[2],b[2],c[2]),math.max(a[3],b[3],c[3])}
 		entries[#entries+1]={bounds=b,triangle=triangle}
 	end
-	local function build(items)
+	local function build(first,last)
 		local b=Bounds()
-		for _,item in ipairs(items) do
-			Extend(b,{item.bounds[1],item.bounds[2],item.bounds[3]})
-			Extend(b,{item.bounds[4],item.bounds[5],item.bounds[6]})
+		for i=first,last do
+			local a=entries[i].bounds
+			-- These entries already have complete finite bounds. Preserve the exact
+			-- extrema while avoiding six library calls per entry at every tree level.
+			if a[1]<b[1] then b[1]=a[1] end
+			if a[2]<b[2] then b[2]=a[2] end
+			if a[3]<b[3] then b[3]=a[3] end
+			if a[4]>b[4] then b[4]=a[4] end
+			if a[5]>b[5] then b[5]=a[5] end
+			if a[6]>b[6] then b[6]=a[6] end
 		end
 		local node={bounds=b}
-		if #items<=12 then node.items=items;return node end
+		-- Smaller leaves avoid the Cartesian product of up to 12 x 12 triangle
+		-- boxes in paired-mesh queries. Every triangle remains in the hierarchy;
+		-- this changes only the partition granularity, not the contact predicate.
+		if last-first<4 then
+			node.items={};for i=first,last do node.items[#node.items+1]=entries[i] end
+			return node
+		end
 		local axis=1
 		for a=2,3 do if b[a+3]-b[a]>b[axis+3]-b[axis] then axis=a end end
-		table.sort(items,function(a,c)return a.bounds[axis]+a.bounds[axis+3]<c.bounds[axis]+c.bounds[axis+3] end)
-		local left,right={},{};local middle=math.floor(#items/2.0)
-		for i,item in ipairs(items) do local list=i<=middle and left or right;list[#list+1]=item end
-		node.left,node.right=build(left),build(right);return node
+		local middle=math.floor((first+last)/2.0)
+		-- Only the median partition is needed, not a full sort at every level.
+		-- Partition one shared entry array in place; every original triangle still
+		-- occurs exactly once and each node retains its complete geometric bounds.
+		local function center(i)local a=entries[i].bounds;return a[axis]+a[axis+3] end
+		local lo,hi=first,last
+		while lo<hi do
+			local pivot=center(math.floor((lo+hi)/2.0));local i,j=lo,hi
+			while i<=j do
+				while center(i)<pivot do i=i+1 end
+				while center(j)>pivot do j=j-1 end
+				if i<=j then entries[i],entries[j]=entries[j],entries[i];i,j=i+1,j-1 end
+			end
+			if middle<=j then hi=j elseif middle>=i then lo=i else break end
+		end
+		node.left,node.right=build(first,middle),build(middle+1,last);return node
 	end
-	component.triangle_tree=build(entries);return component.triangle_tree
+	component.triangle_tree=build(1,#entries);return component.triangle_tree
 end
 
 -- Separating-axis proof for two rigid triangles, including the coplanar case.
@@ -653,15 +741,34 @@ end
 function Geometry.TrianglesSeparated(a,b,tolerance)
 	-- Same axes, arithmetic order and thresholds; avoid allocating a vector for
 	-- each edge/cross product in this triangle-pair hot path.
+	-- The second result retains the zero-tolerance decision from these same
+	-- projections, so contact callers need not repeat the entire SAT traversal.
+	local strictly_separated=false
+	-- Each of the seventeen candidate axes reads the same six vertices. Bind
+	-- their scalar coordinates once, retaining the original projection arithmetic
+	-- and comparison order without repeated nested-table reads or loop setup.
+	local apx,apy,apz=a[1][1],a[1][2],a[1][3]
+	local aqx,aqy,aqz=a[2][1],a[2][2],a[2][3]
+	local arx,ary,arz=a[3][1],a[3][2],a[3][3]
+	local bpx,bpy,bpz=b[1][1],b[1][2],b[1][3]
+	local bqx,bqy,bqz=b[2][1],b[2][2],b[2][3]
+	local brx,bry,brz=b[3][1],b[3][2],b[3][3]
 	local function separated(ax,ay,az)
+		local x,y=apx*ax+apy*ay+apz*az,bpx*ax+bpy*ay+bpz*az
+		local al,ah,bl,bh=x,x,y,y
+		x,y=aqx*ax+aqy*ay+aqz*az,bqx*ax+bqy*ay+bqz*az
+		if x<al then al=x end;if x>ah then ah=x end
+		if y<bl then bl=y end;if y>bh then bh=y end
+		x,y=arx*ax+ary*ay+arz*az,brx*ax+bry*ay+brz*az
+		if x<al then al=x end;if x>ah then ah=x end
+		if y<bl then bl=y end;if y>bh then bh=y end
+		-- Overlapping projections cannot separate at a nonnegative tolerance.
+		-- Only a real gap needs axis normalization; keep the original square
+		-- root and degeneracy threshold on that path (including tiny axes).
+		if tolerance>=0 and al<=bh and bl<=ah then return false end
 		local length=math.sqrt(ax^2+ay^2+az^2)
 		if length<1e-12 then return false end
-		local al,ah,bl,bh=math.huge,-math.huge,math.huge,-math.huge
-		for i=1,3 do
-			local x=a[i][1]*ax+a[i][2]*ay+a[i][3]*az
-			local y=b[i][1]*ax+b[i][2]*ay+b[i][3]*az
-			al=math.min(al,x);ah=math.max(ah,x);bl=math.min(bl,y);bh=math.max(bh,y)
-		end
+		if al>bh or bl>ah then strictly_separated=true end
 		return al>bh+tolerance*length or bl>ah+tolerance*length
 	end
 	local a1x,a1y,a1z=a[2][1]-a[1][1],a[2][2]-a[1][2],a[2][3]-a[1][3]
@@ -670,7 +777,7 @@ function Geometry.TrianglesSeparated(a,b,tolerance)
 	local b2x,b2y,b2z=b[3][1]-b[2][1],b[3][2]-b[2][2],b[3][3]-b[2][3]
 	local anx,any,anz=a1y*a2z-a1z*a2y,a1z*a2x-a1x*a2z,a1x*a2y-a1y*a2x
 	local bnx,bny,bnz=b1y*b2z-b1z*b2y,b1z*b2x-b1x*b2z,b1x*b2y-b1y*b2x
-	if separated(anx,any,anz) or separated(bnx,bny,bnz) then return true end
+	if separated(anx,any,anz) or separated(bnx,bny,bnz) then return true,true end
 	for i=1,3 do
 		local ax,ay,az,bx,by,bz
 		if i==1 then ax,ay,az,bx,by,bz=a1x,a1y,a1z,b1x,b1y,b1z
@@ -678,18 +785,51 @@ function Geometry.TrianglesSeparated(a,b,tolerance)
 		else ax,ay,az=a[1][1]-a[3][1],a[1][2]-a[3][2],a[1][3]-a[3][3]
 			bx,by,bz=b[1][1]-b[3][1],b[1][2]-b[3][2],b[1][3]-b[3][3] end
 		if separated(any*az-anz*ay,anz*ax-anx*az,anx*ay-any*ax)
-			or separated(bny*bz-bnz*by,bnz*bx-bnx*bz,bnx*by-bny*bx) then return true end
+			or separated(bny*bz-bnz*by,bnz*bx-bnx*bz,bnx*by-bny*bx) then return true,true end
 		for j=1,3 do
 			if j==1 then bx,by,bz=b1x,b1y,b1z
 			elseif j==2 then bx,by,bz=b2x,b2y,b2z
 			else bx,by,bz=b[1][1]-b[3][1],b[1][2]-b[3][2],b[1][3]-b[3][3] end
-			if separated(ay*bz-az*by,az*bx-ax*bz,ax*by-ay*bx) then return true end
+			if separated(ay*bz-az*by,az*bx-ax*bz,ax*by-ay*bx) then return true,true end
 		end
 	end
-	return false
+	return false,strictly_separated
 end
 
 Geometry.ReadMesh=ReadMesh
+
+-- First contact while A translates vertically downward, with fixed orientation.
+-- Intersect the continuous overlap intervals of every triangle SAT axis; this
+-- cannot jump through a thin support as a sampled/binary height search could.
+function Geometry.VerticalTriangleContact(a,b,maximum)
+	local low,high=0,maximum
+	local function axis(x,y,z)
+		if x*x+y*y+z*z<1e-24 then return true end
+		local al,ah,bl,bh=math.huge,-math.huge,math.huge,-math.huge
+		for i=1,3 do
+			local p=a[i][1]*x+a[i][2]*y+a[i][3]*z
+			local q=b[i][1]*x+b[i][2]*y+b[i][3]*z
+			al=math.min(al,p);ah=math.max(ah,p);bl=math.min(bl,q);bh=math.max(bh,q)
+		end
+		if z==0 then return al<=bh and bl<=ah end
+		local enter,leave=(bl-ah)/(-z),(bh-al)/(-z)
+		if enter>leave then enter,leave=leave,enter end
+		low=math.max(low,enter);high=math.min(high,leave)
+		return low<=high
+	end
+	local function sub(p,q)return {p[1]-q[1],p[2]-q[2],p[3]-q[3]}end
+	local function cross(p,q)return {p[2]*q[3]-p[3]*q[2],p[3]*q[1]-p[1]*q[3],p[1]*q[2]-p[2]*q[1]}end
+	local ae={sub(a[2],a[1]),sub(a[3],a[2]),sub(a[1],a[3])}
+	local be={sub(b[2],b[1]),sub(b[3],b[2]),sub(b[1],b[3])}
+	local an,bn=cross(ae[1],ae[2]),cross(be[1],be[2])
+	if not axis(1,0,0) or not axis(0,1,0) or not axis(0,0,1)
+		or not axis(table.unpack(an)) or not axis(table.unpack(bn)) then return nil end
+	for i=1,3 do
+		if not axis(table.unpack(cross(an,ae[i]))) or not axis(table.unpack(cross(bn,be[i]))) then return nil end
+		for j=1,3 do if not axis(table.unpack(cross(ae[i],be[j]))) then return nil end end
+	end
+	return low
+end
 
 -- Value-only identity for comparison with a captured native composition. This
 -- is not a support witness: matching a detached native piece never grounds it.
@@ -719,6 +859,159 @@ end
 -- upper(bounds) must bound all terrain inside the XY rectangle (including
 -- interpolation neighbours). Longest-edge subdivision tightens the independent
 -- terrain/mesh intervals; exhausting the bounded work budget remains unknown.
+-- A bounded, exhaustive integer-coordinate height query for a small rectangle.
+-- This is not a sparse miss test: every native terrain coordinate in the padded
+-- footprint is included. Large rectangles retain the conservative grid bound
+-- and are subdivided by TrianglesAboveTerrain. The caller owns any height cache
+-- for its single immutable-terrain transaction.
+function Geometry.IntegerTerrainUpper(bounds,height_at,width,height,padding,budget)
+	local x0,y0=math.max(0,math.floor(bounds[1]-padding)),math.max(0,math.floor(bounds[2]-padding))
+	local x1,y1=math.min(width-1,math.ceil(bounds[4]+padding)),math.min(height-1,math.ceil(bounds[5]+padding))
+	if x1<x0 or y1<y0 or (x1-x0+1)*(y1-y0+1)>budget then return nil end
+	local high=-math.huge
+	for x=x0,x1 do for y=y0,y1 do
+		local z=height_at(x,y)
+		if type(z)~="number" or z~=z or z==math.huge or z==-math.huge then return nil end
+		if z>high then high=z end
+	end end
+	-- Retain a separate vertical budget for the native integral height result.
+	return high+2
+end
+
+-- Same exhaustive integer footprint as IntegerTerrainUpper, with lazy aligned
+-- 4x4/4x1/1x4 maxima. Only fully covered blocks are read, so this never samples
+-- outside the requested rectangle or substitutes an interpolation assumption.
+-- The caller must discard this closure before any terrain mutation.
+function Geometry.CachedIntegerTerrainUpper(height_at,width,height)
+	local pixels,rows,columns,blocks={},{},{},{}
+	local floor,ceil,max,min=math.floor,math.ceil,math.max,math.min
+	local function pixel(x,y)
+		local key=x+y*width;local z=pixels[key]
+		if z==nil then
+			z=height_at(x,y)
+			if type(z)~="number" or z~=z or z==math.huge or z==-math.huge then z=false end
+			pixels[key]=z
+		end
+		return z
+	end
+	local function row(x,y)
+		local key=x+y*width;local z=rows[key]
+		if z==nil then
+			local a,b,c,d=pixel(x,y),pixel(x+1,y),pixel(x+2,y),pixel(x+3,y)
+			z=a and b and c and d and max(a,b,c,d) or false;rows[key]=z
+		end
+		return z
+	end
+	local function column(x,y)
+		local key=x+y*width;local z=columns[key]
+		if z==nil then
+			local a,b,c,d=pixel(x,y),pixel(x,y+1),pixel(x,y+2),pixel(x,y+3)
+			z=a and b and c and d and max(a,b,c,d) or false;columns[key]=z
+		end
+		return z
+	end
+	local function block(x,y)
+		local key=x+y*width;local z=blocks[key]
+		if z==nil then
+			local a,b,c,d=row(x,y),row(x,y+1),row(x,y+2),row(x,y+3)
+			z=a and b and c and d and max(a,b,c,d) or false;blocks[key]=z
+		end
+		return z
+	end
+	return function(bounds,padding,budget)
+		local x0,y0=max(0,floor(bounds[1]-padding)),max(0,floor(bounds[2]-padding))
+		local x1,y1=min(width-1,ceil(bounds[4]+padding)),min(height-1,ceil(bounds[5]+padding))
+		if x1<x0 or y1<y0 or (x1-x0+1)*(y1-y0+1)>budget then return nil end
+		local high=-math.huge;local y=y0
+		while y<=y1 do
+			local tall=y%4==0 and y+3<=y1;local x=x0
+			while x<=x1 do
+				local wide=x%4==0 and x+3<=x1
+				local z
+				if tall then
+					if wide then z=block(x,y) else z=column(x,y) end
+				else
+					if wide then z=row(x,y) else z=pixel(x,y) end
+				end
+				if z==false then return nil end
+				if z>high then high=z end
+				x=x+(wide and 4 or 1)
+			end
+			y=y+(tall and 4 or 1)
+		end
+		return high+2
+	end
+end
+
+-- Exact piecewise-planar heightfield bound. The native terrain cell is split
+-- along (0,0)--(tile,tile), not bilinearly interpolated (native l_GetHeight;
+-- separately checked against 2000 native queries). Clip each mesh triangle to
+-- both terrain faces. Their height difference is affine, so polygon vertices
+-- contain its extrema. Expand every clipping half-plane by the XY transform
+-- uncertainty and subtract the corresponding slope/Z error, rather than losing
+-- XY/Z correlation to independent rectangle extrema.
+function Geometry.TrianglesAboveHeightfield(triangles,height,tile,width,height_limit,error_bound,budget,extrema)
+	if #triangles==0 or not Finite(tile) or tile<=0 or not Finite(error_bound) or error_bound<0
+		or not Finite(width) or not Finite(height_limit) or width<=0 or height_limit<=0 then return false end
+	local remaining=budget or 4096
+	local minimum,maximum=math.huge,-math.huge
+	local function clip(poly,a,b)
+		local dx,dy=b[1]-a[1],b[2]-a[2]
+		local padding=error_bound*(math.abs(dx)+math.abs(dy))
+		local function side(p)return dx*(p[2]-a[2])-dy*(p[1]-a[1])+padding end
+		local out={};local previous=poly[#poly]
+		if not previous then return out end
+		local before=side(previous)
+		for _,current in ipairs(poly) do
+			local after=side(current)
+			if (before>=0)~=(after>=0) then
+				local t=before/(before-after)
+				out[#out+1]={previous[1]+t*(current[1]-previous[1]),previous[2]+t*(current[2]-previous[2]),previous[3]+t*(current[3]-previous[3])}
+			end
+			if after>=0 then out[#out+1]=current end
+			previous,before=current,after
+		end
+		return out
+	end
+	for _,triangle in ipairs(triangles) do
+		if #triangle~=3 then return false end
+		local bounds=Bounds()
+		for _,p in ipairs(triangle) do
+			for a=1,3 do if not Finite(p[a]) then return false end end
+			Extend(bounds,p)
+		end
+		local x0=math.floor((bounds[1]-error_bound)/tile)*tile
+		local y0=math.floor((bounds[2]-error_bound)/tile)*tile
+		local x1=math.floor((bounds[4]+error_bound)/tile)*tile
+		local y1=math.floor((bounds[5]+error_bound)/tile)*tile
+		if x0<0 or y0<0 or x1+tile>=width or y1+tile>=height_limit then return false end
+		for x=x0,x1,tile do for y=y0,y1,tile do
+			remaining=remaining-1;if remaining<0 then return false end
+			local h00,h10,h01,h11=height(x,y),height(x+tile,y),height(x,y+tile),height(x+tile,y+tile)
+			if not Finite(h00) or not Finite(h10) or not Finite(h01) or not Finite(h11) then return false end
+			local corners={{x,y},{x+tile,y},{x+tile,y+tile},{x,y+tile}}
+			for half=1,2 do
+				local face=half==1 and {corners[1],corners[2],corners[3]} or {corners[1],corners[3],corners[4]}
+				local poly=triangle
+				for i=1,3 do poly=clip(poly,face[i],face[i%3+1]) end
+				local gx,gy
+				if half==1 then gx,gy=(h10-h00)/tile,(h11-h10)/tile
+				else gx,gy=(h11-h01)/tile,(h01-h00)/tile end
+				local margin=error_bound*(1+math.abs(gx)+math.abs(gy))
+				local roundoff=1e-7*math.max(1,math.abs(h00),math.abs(h10),math.abs(h01),math.abs(h11))
+				for _,p in ipairs(poly) do
+					local clearance=p[3]-(h00+gx*(p[1]-x)+gy*(p[2]-y))
+					if extrema then
+						minimum=math.min(minimum,clearance);maximum=math.max(maximum,clearance)
+					elseif clearance<=margin+roundoff then return false end
+				end
+			end
+		end end
+	end
+	if extrema then return minimum>0,minimum,maximum end
+	return true
+end
+
 function Geometry.TrianglesAboveTerrain(triangles,upper,margin,budget)
 	if #triangles==0 or type(margin)~="number" or margin<0 then return false end
 	local remaining=budget or 4096
@@ -745,6 +1038,147 @@ end
 -- A fragment embedded completely inside a solid rock has no surface/surface
 -- intersection. Only a closed, consistently oriented two-manifold may supply
 -- that additional witness; open meshes and ambiguous rays cannot pass here.
+-- A separating projection proves a point is outside every possible solid
+-- bounded by this mesh, including an open mesh whose volume is unspecified.
+-- Face normals are candidate axes only; EVERY vertex must lie on the opposite
+-- side. Failure finds no answer and never grants contact or containment.
+local function HullInteriorWitness(geometry,component,p,epsilon)
+	local vertices=geometry.vertices
+	local cache=component.interior_tetrahedra
+	if not cache or cache.geometry~=geometry or cache.vertices~=vertices
+		or cache.indices~=component.vertices or cache.count~=#component.vertices
+		or cache.triangles~=component.triangles or cache.faces~=#component.triangles then
+		local first=vertices[component.vertices[1]];if not first then return false end
+		local x,y,z=0,0,0;local members={}
+		for _,vi in ipairs(component.vertices)do
+			local v=vertices[vi];members[vi]=true
+			x=x+v[1]-first[1];y=y+v[2]-first[2];z=z+v[3]-first[3]
+		end
+		local count=#component.vertices+0.0
+		cache={geometry=geometry,vertices=vertices,indices=component.vertices,count=#component.vertices,
+			triangles=component.triangles,faces=#component.triangles,members=members,
+			center={first[1]+x/count,first[2]+y/count,first[3]+z/count},items={}}
+		component.interior_tetrahedra=cache
+	end
+	local center=cache.center;local px,py,pz=p[1]-center[1],p[2]-center[2],p[3]-center[3]
+	local function contains(t)
+		if not t or p[1]<t[10] or p[2]<t[11] or p[3]<t[12]
+			or p[1]>t[13] or p[2]>t[14] or p[3]>t[15] then return false end
+		local u=t[1]*px+t[2]*py+t[3]*pz
+		local v=t[4]*px+t[5]*py+t[6]*pz
+		local w=t[7]*px+t[8]*py+t[9]*pz
+		return u>t[16] and v>t[17] and w>t[18] and u+v+w<1-t[19]
+	end
+	if contains(cache.hint) then return true end
+	for i,face in ipairs(component.triangles)do
+		local t=cache.items[i]
+		if t==nil then
+			t=false
+			if cache.members[face[1]] and cache.members[face[2]] and cache.members[face[3]] then
+				local a,b,c=vertices[face[1]],vertices[face[2]],vertices[face[3]]
+				local ax,ay,az=a[1]-center[1],a[2]-center[2],a[3]-center[3]
+				local bx,by,bz=b[1]-center[1],b[2]-center[2],b[3]-center[3]
+				local cx,cy,cz=c[1]-center[1],c[2]-center[2],c[3]-center[3]
+				local ux,uy,uz=by*cz-bz*cy,bz*cx-bx*cz,bx*cy-by*cx
+				local det=ax*ux+ay*uy+az*uz
+				local extent=math.max(math.abs(ax),math.abs(ay),math.abs(az),math.abs(bx),math.abs(by),math.abs(bz),math.abs(cx),math.abs(cy),math.abs(cz))
+				if math.abs(det)>1e-12*extent*extent*extent then
+					local vx,vy,vz=(cy*az-cz*ay)/det,(cz*ax-cx*az)/det,(cx*ay-cy*ax)/det
+					local wx,wy,wz=(ay*bz-az*by)/det,(az*bx-ax*bz)/det,(ax*by-ay*bx)/det
+					ux,uy,uz=ux/det,uy/det,uz/det
+					local e=epsilon*8
+					t={ux,uy,uz,vx,vy,vz,wx,wy,wz,
+						math.min(center[1],a[1],b[1],c[1]),math.min(center[2],a[2],b[2],c[2]),math.min(center[3],a[3],b[3],c[3]),
+						math.max(center[1],a[1],b[1],c[1]),math.max(center[2],a[2],b[2],c[2]),math.max(center[3],a[3],b[3],c[3]),
+						e*(math.abs(ux)+math.abs(uy)+math.abs(uz)),e*(math.abs(vx)+math.abs(vy)+math.abs(vz)),
+						e*(math.abs(wx)+math.abs(wy)+math.abs(wz)),e*(math.abs(ux+vx+wx)+math.abs(uy+vy+wy)+math.abs(uz+vz+wz))}
+				end
+			end
+			cache.items[i]=t
+		end
+		if contains(t) then cache.hint=t;return true end
+	end
+	return false
+end
+function Geometry.PointOutsideComponentHull(geometry,component,p)
+	local vertices=geometry.vertices
+	local epsilon=1e-8
+	for a=1,6 do epsilon=math.max(epsilon,1e-8*math.abs(component.bounds[a])) end
+	-- A complete all-vertex separating plane is a reusable geometric witness,
+	-- not a cached answer for a different point. Re-evaluate its half-space at
+	-- every query; interior/ambiguous points still take the full original path.
+	local planes=component.outside_planes
+	if planes and (planes.geometry~=geometry or planes.vertices~=vertices
+		or planes.indices~=component.vertices or planes.count~=#component.vertices) then planes=nil end
+	for _,plane in ipairs(planes or {}) do
+		local distance=plane[1]*(p[1]-plane[4])+plane[2]*(p[2]-plane[5])+plane[3]*(p[3]-plane[6])
+		if distance>plane[7]+4*epsilon then return true end
+	end
+	-- The mean of the mesh vertices is in their convex hull. Any tetrahedron
+	-- formed from that mean and three actual vertices is a subset of the hull.
+	-- Strict interior barycentrics therefore prove that no separating axis can
+	-- exist, avoiding repeated full scans for the same open-cliff interior.
+	-- This is NOT a solid-volume/contact witness: open meshes still return nil
+	-- from PointInClosedComponent, and all surface-triangle checks remain intact.
+	if HullInteriorWitness(geometry,component,p,epsilon) then return false end
+	local function remember(dx,dy,dz)
+		local norm=math.sqrt(dx*dx+dy*dy+dz*dz)
+		if norm<=0 or norm>=math.huge then return end
+		dx,dy,dz=dx/norm,dy/norm,dz/norm
+		local anchor=vertices[component.vertices[1]];local high=-math.huge
+		for _,vi in ipairs(component.vertices) do
+			local v=vertices[vi]
+			high=math.max(high,dx*(v[1]-anchor[1])+dy*(v[2]-anchor[2])+dz*(v[3]-anchor[3]))
+		end
+		planes=planes or {geometry=geometry,vertices=vertices,indices=component.vertices,count=#component.vertices};component.outside_planes=planes
+		table.insert(planes,1,{dx,dy,dz,anchor[1],anchor[2],anchor[3],high})
+		if #planes>64 then table.remove(planes) end
+	end
+	-- Gilbert's closest-convex-point iteration proposes additional separating
+	-- directions, including hull faces absent from an open/concave mesh. Only
+	-- the complete all-vertex projection is a verdict; non-convergence is unknown.
+	local first=vertices[component.vertices[1]]
+	local qx,qy,qz=first[1],first[2],first[3]
+	for iteration=1,64 do
+		local dx,dy,dz=p[1]-qx,p[2]-qy,p[3]-qz
+		local length=math.sqrt(dx*dx+dy*dy+dz*dz)
+		if length<=epsilon then break end
+		local support,best=nil,-math.huge
+		for _,vi in ipairs(component.vertices) do
+			local v=vertices[vi];local projection=dx*(v[1]-p[1])+dy*(v[2]-p[2])+dz*(v[3]-p[3])
+			if projection>best then best=projection;support=v end
+		end
+		if best < -epsilon*length then remember(dx,dy,dz);return true end
+		local sx,sy,sz=support[1]-qx,support[2]-qy,support[3]-qz
+		local squared=sx*sx+sy*sy+sz*sz
+		if squared<=epsilon*epsilon then break end
+		local t=math.max(0,math.min(1,(dx*sx+dy*sy+dz*sz)/squared))
+		if t<=1e-12 then break end
+		qx,qy,qz=qx+t*sx,qy+t*sy,qz+t*sz
+	end
+	for _,t in ipairs(component.triangles) do
+		local a,b,c=vertices[t[1]],vertices[t[2]],vertices[t[3]]
+		local ux,uy,uz=b[1]-a[1],b[2]-a[2],b[3]-a[3]
+		local vx,vy,vz=c[1]-a[1],c[2]-a[2],c[3]-a[3]
+		local nx,ny,nz=uy*vz-uz*vy,uz*vx-ux*vz,ux*vy-uy*vx
+		local norm=math.sqrt(nx*nx+ny*ny+nz*nz)
+		if norm>1e-12 then
+			local distance=nx*(p[1]-a[1])+ny*(p[2]-a[2])+nz*(p[3]-a[3])
+			local margin=epsilon*norm
+			if math.abs(distance)>margin then
+				local sign=distance>0 and 1 or -1
+				local limit=sign*distance-margin;local separated=true
+				for _,vi in ipairs(component.vertices) do
+					local v=vertices[vi]
+					if sign*(nx*(v[1]-a[1])+ny*(v[2]-a[2])+nz*(v[3]-a[3]))>=limit then separated=false;break end
+				end
+				if separated then remember(sign*nx,sign*ny,sign*nz);return true end
+			end
+		end
+	end
+	return false
+end
+
 function Geometry.PointInClosedComponent(geometry,component,p)
 	-- Outside a complete component's bounds cannot be inside its volume, even
 	-- when the authoring mesh is open. Only an inside result needs closure proof.
@@ -765,7 +1199,10 @@ function Geometry.PointInClosedComponent(geometry,component,p)
 		component.closed=true
 		for _,e in pairs(edges) do if e.count~=2 or e.balance~=0 then component.closed=false;break end end
 	end
-	if not component.closed then return nil end
+	if not component.closed then
+		if Geometry.PointOutsideComponentHull(geometry,component,p) then return false end
+		return nil
+	end
 	for _,dir in ipairs({{1,0.371390676,0.529150263},{0.618033989,1,0.414213562},{0.732050808,0.271828183,1}}) do
 		local count,ambiguous=0,false
 		local function visit(tree)

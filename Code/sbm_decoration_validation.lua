@@ -23,8 +23,9 @@ do
 end
 
 local function Overlap(a,b,pad)
-	for i=1,3 do if a[i]>b[i+3]+pad or b[i]>a[i+3]+pad then return false end end
-	return true
+	return not (a[1]>b[4]+pad or b[1]>a[4]+pad
+		or a[2]>b[5]+pad or b[2]>a[5]+pad
+		or a[3]>b[6]+pad or b[3]>a[6]+pad)
 end
 
 -- Spatial buckets include the complete AABB, not just an object's pivot. Large
@@ -35,9 +36,11 @@ function Validator.Index(size)
 		local b=node.bounds
 		local x0,y0,x1,y1=floor(b[1]/(size+0.0)),floor(b[2]/(size+0.0)),floor(b[4]/(size+0.0)),floor(b[5]/(size+0.0))
 		if (x1-x0+1)*(y1-y0+1)>256 then self.large[#self.large+1]=node;return end
-		for x=x0,x1 do for y=y0,y1 do
-			local key=x..":"..y;local bucket=self.buckets[key]
-			if not bucket then bucket={};self.buckets[key]=bucket end
+		for x=x0,x1 do
+			local column=self.buckets[x];if not column then column={};self.buckets[x]=column end
+		for y=y0,y1 do
+			local bucket=column[y]
+			if not bucket then bucket={};column[y]=bucket end
 			bucket[#bucket+1]=node
 		end end
 	end
@@ -47,8 +50,11 @@ function Validator.Index(size)
 			if not seen[node] and Overlap(node.bounds,bounds,pad) then seen[node]=true;out[#out+1]=node end
 		end
 		for x=floor((bounds[1]-pad)/(size+0.0)),floor((bounds[4]+pad)/(size+0.0)) do
+			local column=self.buckets[x]
+			if column then
 			for y=floor((bounds[2]-pad)/(size+0.0)),floor((bounds[5]+pad)/(size+0.0)) do
-				for _,node in ipairs(self.buckets[x..":"..y] or {}) do take(node) end
+				for _,node in ipairs(column[y] or {}) do take(node) end
+			end
 			end
 		end
 		for _,node in ipairs(self.large) do take(node) end
@@ -61,8 +67,11 @@ function Validator.Index(size)
 			if not seen[node] and Overlap(node.bounds,bounds,pad) then seen[node]=true;visit(node) end
 		end
 		for x=floor((bounds[1]-pad)/(size+0.0)),floor((bounds[4]+pad)/(size+0.0)) do
+			local column=self.buckets[x]
+			if column then
 			for y=floor((bounds[2]-pad)/(size+0.0)),floor((bounds[5]+pad)/(size+0.0)) do
-				for _,node in ipairs(self.buckets[x..":"..y] or {}) do take(node) end
+				for _,node in ipairs(column[y] or {}) do take(node) end
+			end
 			end
 		end
 		for _,node in ipairs(self.large) do take(node) end
@@ -140,8 +149,20 @@ function Validator.TrianglesContact(a,b,tolerance)
 	-- separation, so skip the much more expensive closest-feature calculation.
 	-- Failure to find such an axis is NOT proof of contact: retain the complete
 	-- vertex/face and edge/edge distance test for every remaining candidate.
-	return not Geometry.TrianglesSeparated(a,b,tolerance)
-		and Validator.TrianglePairDistanceSquared(a,b)<=tolerance*tolerance
+	local separated,strictly_separated=Geometry.TrianglesSeparated(a,b,tolerance)
+	if separated then return false end
+	if not strictly_separated then return true end
+	local limit=tolerance*tolerance
+	-- A positive exact closest-feature witness is sufficient. A negative answer
+	-- still requires every vertex/face and edge/edge pair, in the original order.
+	for i=1,3 do
+		if Validator.TriangleDistanceSquared(a[i],b[1],b[2],b[3])<=limit
+			or Validator.TriangleDistanceSquared(b[i],a[1],a[2],a[3])<=limit then return true end
+		for j=1,3 do
+			if SegmentPairDistanceSquared(a[i],a[i%3+1],b[j],b[j%3+1])<=limit then return true end
+		end
+	end
+	return false
 end
 
 function Validator.Classify(nodes,complete,attachment_changed)
@@ -305,12 +326,18 @@ local function Matrix(record)
 end
 
 local function World(record,p)
-	local m=Matrix(record);local q={}
-	for a=1,3 do q[a]=m.origin[a]+record.pose.shift[a]+m.columns[1][a]*p[1]+m.columns[2][a]*p[2]+m.columns[3][a]*p[3] end
-	return q
+	-- Only the private same-frame contact oracle marks this exact identity
+	-- transform. Its immutable decoded coordinates are already in query space.
+	if record.pose.asset_local then return p end
+	local m=Matrix(record);local o,s,c=m.origin,record.pose.shift,m.columns
+	local x,y,z=p[1],p[2],p[3];local a,b,d=c[1],c[2],c[3]
+	return {o[1]+s[1]+a[1]*x+b[1]*y+d[1]*z,
+		o[2]+s[2]+a[2]*x+b[2]*y+d[2]*z,
+		o[3]+s[3]+a[3]*x+b[3]*y+d[3]*z}
 end
 
 local function Local(record,p)
+	if record.pose.asset_local then return p end
 	local m=Matrix(record);local c=m.columns
 	local q={p[1]-m.origin[1]-record.pose.shift[1],p[2]-m.origin[2]-record.pose.shift[2],p[3]-m.origin[3]-record.pose.shift[3]}
 	-- Rigid engine transforms have orthogonal columns and one uniform scale.
@@ -318,16 +345,28 @@ local function Local(record,p)
 end
 
 local function WorldBounds(record,b)
+	if record.pose.asset_local then return b end
 	local m=Matrix(record);local c=m.columns
+	-- A captured matrix is immutable. Its absolute coefficients are shared by
+	-- every node/triangle box in this pose, rather than nine abs calls per box.
+	local ac=m.absolute_columns
+	if not ac then
+		ac={{abs(c[1][1]),abs(c[1][2]),abs(c[1][3])},
+			{abs(c[2][1]),abs(c[2][2]),abs(c[2][3])},
+			{abs(c[3][1]),abs(c[3][2]),abs(c[3][3])}}
+		m.absolute_columns=ac
+	end
 	local x,y,z=(b[1]+b[4])*0.5,(b[2]+b[5])*0.5,(b[3]+b[6])*0.5
 	local hx,hy,hz=(b[4]-b[1])*0.5,(b[5]-b[2])*0.5,(b[6]-b[3])*0.5
-	local result={}
-	for a=1,3 do
-		local center=m.origin[a]+record.pose.shift[a]+c[1][a]*x+c[2][a]*y+c[3][a]*z
-		local extent=abs(c[1][a])*hx+abs(c[2][a])*hy+abs(c[3][a])*hz
-		result[a],result[a+3]=center-extent,center+extent
-	end
-	return result
+	local o,s,c1,c2,c3=m.origin,record.pose.shift,c[1],c[2],c[3]
+	local a1,a2,a3=ac[1],ac[2],ac[3]
+	local cx=o[1]+s[1]+c1[1]*x+c2[1]*y+c3[1]*z
+	local cy=o[2]+s[2]+c1[2]*x+c2[2]*y+c3[2]*z
+	local cz=o[3]+s[3]+c1[3]*x+c2[3]*y+c3[3]*z
+	local ex=a1[1]*hx+a2[1]*hy+a3[1]*hz
+	local ey=a1[2]*hx+a2[2]*hy+a3[2]*hz
+	local ez=a1[3]*hx+a2[3]*hy+a3[3]*hz
+	return {cx-ex,cy-ey,cz-ez,cx+ex,cy+ey,cz+ez}
 end
 
 local function EntirelyClipped(obj,b)
@@ -346,8 +385,8 @@ local function EntirelyClipped(obj,b)
 	return negative and not positive,negative and positive
 end
 
-local function BuildNodes(record)
-	local obj=record.obj;local asset=Geometry.Instance(obj)
+local function BuildNodes(record,asset)
+	local obj=record.obj;asset=asset or Geometry.Instance(obj)
 	record.asset=asset;record.complete=asset.complete;record.nodes={};record.clipped_nodes={};record.reason=asset.reason
 	record.projected=Projected(obj)
 	record.nonphysical=nil
@@ -420,7 +459,7 @@ local function BuildNodes(record)
 					else sample=XYZ(obj:GetRelativePoint(component.bottom_point));sample[3]=sample[3]+record.pose.shift[3] end
 					local node={record=record,transform_record=transform,geometry=geometry,component=component,lod=part.lod,
 						key=part.lod..":"..part.mesh.path..":"..component_index,
-						samples={sample},edges={},contacts={},partial=partial}
+						samples={sample},sample_vertices={bottom},edges={},contacts={},partial=partial}
 					record.nodes[#record.nodes+1]=node
 					if partial then record.complete=false end
 				end
@@ -454,47 +493,286 @@ end
 -- Extremal points miss face/edge intersections in legitimate stacked meshes.
 -- Traverse both shared triangle BVHs; world bounds prune disjoint subtrees.
 -- This inspects rendered triangles, not overlapping object boxes as proof.
+local function OrientedContactBounds(record,bounds)
+	local cache=record.pose.oriented_contact_bounds
+	if not cache then cache={};record.pose.oriented_contact_bounds=cache end
+	local box=cache[bounds];if box then return box end
+	local columns=record.pose.asset_local and {{1,0,0},{0,1,0},{0,0,1}} or Matrix(record).columns
+	box={center=World(record,{(bounds[1]+bounds[4])*.5,(bounds[2]+bounds[5])*.5,(bounds[3]+bounds[6])*.5}),edges={},axes={}}
+	for i=1,3 do
+		local c=columns[i];local h=(bounds[i+3]-bounds[i])*.5
+		box.edges[i]={c[1]*h,c[2]*h,c[3]*h}
+		box.axes[i]={c[1],c[2],c[3],math.sqrt(c[1]^2+c[2]^2+c[3]^2)}
+	end
+	cache[bounds]=box;return box
+end
+
+local function OrientedContactSeparated(ar,ab,br,bb,tolerance)
+	local a,b=OrientedContactBounds(ar,ab),OrientedContactBounds(br,bb)
+	local x,y,z=b.center[1]-a.center[1],b.center[2]-a.center[2],b.center[3]-a.center[3]
+	-- Every tested direction bounds ALL eight corners of both affine boxes.
+	-- A separating projection proves empty space, even for reflected frames.
+	-- An overlapping projection proves nothing; retain the full mesh fallback.
+	local scale=max(1,abs(a.center[1]),abs(a.center[2]),abs(a.center[3]),abs(b.center[1]),abs(b.center[2]),abs(b.center[3]))
+	for i=1,6 do
+		local n=i<=3 and a.axes[i] or b.axes[i-3]
+		local nx,ny,nz=n[1],n[2],n[3];local radius=0
+		for j=1,3 do
+			local u,v=a.edges[j],b.edges[j]
+			radius=radius+abs(nx*u[1]+ny*u[2]+nz*u[3])+abs(nx*v[1]+ny*v[2]+nz*v[3])
+		end
+		local gap=abs(nx*x+ny*y+nz*z)-radius
+		local slack=1e-7*(scale*(abs(nx)+abs(ny)+abs(nz))+radius)
+		if gap>tolerance*n[4]+slack then return true end
+	end
+	return false
+end
+
+-- The native neighbour's axes usually bound a rotated cliff far more tightly
+-- than world XYZ. Project BOTH complete BVHs onto those same unit directions;
+-- disjoint intervals prove separation in world-distance units. Overlap still
+-- reaches the unchanged world-space triangle and containment predicates.
+local function ContactProjection(record,reference)
+	local cache=record.pose.reference_frames or {};record.pose.reference_frames=cache
+	local identity=reference.pose.pair_contact_frame or reference.pose
+	local frame=cache[identity];if frame then return frame end
+	local m,r=Matrix(record),Matrix(reference)
+	local origin,delta,magnitudes={}, {}, {}
+	local columns={{},{},{}};local magnitude=1
+	for i=1,3 do
+		local a,b=m.origin[i]+record.pose.shift[i],r.origin[i]+reference.pose.shift[i]
+		delta[i]=a-b;magnitude=magnitude+abs(a)+abs(b)
+		local c=m.columns[i];magnitudes[i]=abs(c[1])+abs(c[2])+abs(c[3])
+	end
+	for axis=1,3 do
+		local v=r.columns[axis];local length=math.sqrt(Dot(v,v))
+		if not (length>=1e-12 and length<math.huge) then return nil end
+		local n={v[1]/length,v[2]/length,v[3]/length}
+		origin[axis]=Dot(delta,n)
+		for i=1,3 do columns[i][axis]=Dot(m.columns[i],n) end
+	end
+	frame={record={pose={matrix={origin=origin,columns=columns},shift={0,0,0}}},
+		bounds={},origin_magnitude=magnitude,column_magnitudes=magnitudes}
+	cache[identity]=frame;return frame
+end
+
+local function ProjectionRoundoff(frame,bounds)
+	local magnitude=frame.origin_magnitude
+	for i=1,3 do magnitude=magnitude+frame.column_magnitudes[i]*max(abs(bounds[i]),abs(bounds[i+3])) end
+	-- Outward budget for subtraction, normalization and affine projection. This
+	-- can only retain extra candidates, never supply a positive contact witness.
+	return magnitude*1e-7
+end
+
 local function RawComponentContact(a,b,tolerance)
 	local ar,br=a.transform_record or a.record,b.transform_record or b.record
-	local ac,bc={},{}
-	local function bounds(record,tree,cache)
-		local value=cache[tree]
-		if not value then value=WorldBounds(record,tree.bounds);cache[tree]=value end
-		return value
+	-- The spatial index may use a conservative native object box for a grounded
+	-- neighbour. Reject disjoint component boxes before constructing either mesh
+	-- hierarchy; this is the same root test the triangle traversal would perform.
+	if not Overlap(WorldBounds(ar,a.component.bounds),WorldBounds(br,b.component.bounds),tolerance) then
+		return false,true
 	end
-	local av,bv={},{}
+	if OrientedContactSeparated(ar,a.component.bounds,br,b.component.bounds,tolerance) then return false,true,true end
+	-- Transforms belong to a captured pose, not an object lifetime. Reuse them
+	-- across pair queries in this scan; BuildNodes/Pose after movement obtains
+	-- fresh caches, including independent post-seating validation.
+	ar.pose.contact_bounds=ar.pose.contact_bounds or {}
+	br.pose.contact_bounds=br.pose.contact_bounds or {}
+	local ac,bc=ar.pose.contact_bounds,br.pose.contact_bounds
+	local projected_a,projected_b
+	if ar~=br and not ar.pose.asset_local and not br.pose.asset_local then
+		projected_a,projected_b=ContactProjection(ar,br),ContactProjection(br,br)
+		if projected_a and projected_b then ac,bc=projected_a.bounds,projected_b.bounds
+		else projected_a,projected_b=nil,nil end
+	end
+	local tree_ar,tree_br=projected_a and projected_a.record or ar,projected_b and projected_b.record or br
+	local tree_tolerance=tolerance+(projected_a and
+		ProjectionRoundoff(projected_a,a.component.bounds)+ProjectionRoundoff(projected_b,b.component.bounds) or 0)
+	local function vertex_cache(record,geometry)
+		local by_geometry=record.pose.contact_vertices or {};record.pose.contact_vertices=by_geometry
+		local cache=by_geometry[geometry] or {};by_geometry[geometry]=cache
+		return cache
+	end
+	local av,bv=vertex_cache(ar,a.geometry),vertex_cache(br,b.geometry)
+	local function triangle_cache(record,geometry)
+		local by_geometry=record.pose.contact_triangles or {};record.pose.contact_triangles=by_geometry
+		local cache=by_geometry[geometry] or {};by_geometry[geometry]=cache;return cache
+	end
+	local atc,btc=triangle_cache(ar,a.geometry),triangle_cache(br,b.geometry)
 	local function vertex(node,record,cache,i)
 		local value=cache[i]
 		if not value then value=World(record,node.geometry.vertices[i]);cache[i]=value end
 		return value
 	end
+	local function triangle(node,record,cache,t,triangles)
+		local value=triangles[t]
+		if not value then
+			value={vertex(node,record,cache,t[1]),vertex(node,record,cache,t[2]),vertex(node,record,cache,t[3])}
+			triangles[t]=value
+		end
+		return value
+	end
+	local hint_key,hint_bucket
+	if ar~=br then
+		-- Hints are triangle identities, NEVER cached support verdicts. Repeated
+		-- prefab formations often contact at the same mesh features. Test those
+		-- features at the current captured poses before another full BVH search.
+		local q=Local(ar,World(br,{0,0,0}));local box=a.component.bounds
+		local cell=max(.01,box[4]-box[1],box[5]-box[2],box[6]-box[3])*.2
+		hint_key=floor(q[1]/cell)..":"..floor(q[2]/cell)..":"..floor(q[3]/cell)
+		local by_component=a.component.contact_hints
+		local pair=by_component and by_component[b.component]
+		hint_bucket=pair and pair[hint_key]
+		for _,hint in ipairs(hint_bucket or {}) do
+			if Validator.TrianglesContact(triangle(a,ar,av,hint[1],atc),triangle(b,br,bv,hint[2],btc),tolerance) then return true end
+		end
+		-- A local placement search can cross a bucket boundary while the same
+		-- two rendered faces still intersect. Retest the most recent exact face
+		-- witness at these NEW poses before restarting the complete BVH walk.
+		-- This is never a cached contact verdict or a negative shortcut.
+		local recent=pair and pair.recent
+		if recent then
+			local tried=false
+			for _,hint in ipairs(hint_bucket or {}) do if hint==recent then tried=true;break end end
+			if not tried and Validator.TrianglesContact(triangle(a,ar,av,recent[1],atc),triangle(b,br,bv,recent[2],btc),tolerance) then return true end
+		end
+	end
+	local function remember(at,bt)
+		if not hint_key then return end
+		local by_component=a.component.contact_hints or {};a.component.contact_hints=by_component
+		local pair=by_component[b.component]
+		if not pair then pair={order={}};by_component[b.component]=pair end
+		local bucket=pair[hint_key]
+		if not bucket then
+			bucket={};pair[hint_key]=bucket;pair.order[#pair.order+1]=hint_key
+			if #pair.order>32 then pair[table.remove(pair.order,1)]=nil end
+		end
+		for _,hint in ipairs(bucket) do if hint[1]==at and hint[2]==bt then pair.recent=hint;return end end
+		local hint={at,bt};pair.recent=hint
+		table.insert(bucket,1,hint);if #bucket>4 then table.remove(bucket) end
+	end
 	local function visit(at,bt)
-		if not Overlap(bounds(ar,at,ac),bounds(br,bt,bc),tolerance) then return false end
+		-- Explicit depth-first stack retains left-before-right traversal and every
+		-- bounds/triangle predicate, without a Lua call for every visited node.
+		-- Only pending right branches are retained; no result outlives this pose.
+		local pending={};local count=0
+		while at do
+		local ab,bb=ac[at],bc[bt]
+		if not ab then ab=WorldBounds(tree_ar,at.bounds);ac[at]=ab end
+		if not bb then bb=WorldBounds(tree_br,bt.bounds);bc[bt]=bb end
+		if Overlap(ab,bb,tree_tolerance) then
 		if at.items and bt.items then
-			for _,ai in ipairs(at.items) do for _,bi in ipairs(bt.items) do
-				if Overlap(bounds(ar,ai,ac),bounds(br,bi,bc),tolerance) then
-					local x,y={},{}
-					for i=1,3 do x[i]=vertex(a,ar,av,ai.triangle[i]);y[i]=vertex(b,br,bv,bi.triangle[i]) end
+			for _,ai in ipairs(at.items) do
+				local aib=ac[ai];if not aib then aib=WorldBounds(tree_ar,ai.bounds);ac[ai]=aib end
+				-- One triangle disjoint from the complete opposite leaf cannot
+				-- contact any of its triangles. Avoid up to twelve repeated pair
+				-- bounds checks, retaining conservative world-rounding slack.
+				if Overlap(aib,bb,tree_tolerance+1e-6) then for _,bi in ipairs(bt.items) do
+				local bib=bc[bi];if not bib then bib=WorldBounds(tree_br,bi.bounds);bc[bi]=bib end
+				if Overlap(aib,bib,tree_tolerance) then
+					-- All pairs in this captured pose share the same transformed
+					-- triangle, just as they already share its exact vertex cache.
+					local x=atc[ai.triangle] or triangle(a,ar,av,ai.triangle,atc)
+					local y=btc[bi.triangle] or triangle(b,br,bv,bi.triangle,btc)
 					-- A padded SAT failure is not a distance witness. Check every
 					-- vertex/face and edge/edge pair, including interior edge contacts.
-					if Validator.TrianglesContact(x,y,tolerance) then return true end
+					if Validator.TrianglesContact(x,y,tolerance) then remember(ai.triangle,bi.triangle);return true end
 				end
-			end end
-			return false
+			end end end
+		else
+		-- Split only the larger world-space box at this level. A child outside
+		-- the other complete subtree then prunes all its descendants at once;
+		-- splitting both sides eagerly repeats those failed bounds tests. Every
+		-- overlapping leaf pair still reaches the unchanged triangle predicate.
+		local split_a=not at.items and (bt.items
+			or ab[4]-ab[1]+ab[5]-ab[2]+ab[6]-ab[3]>=bb[4]-bb[1]+bb[5]-bb[2]+bb[6]-bb[3])
+		if split_a then
+			pending[count+1],pending[count+2]=at.right,bt;at=at.left
+		else
+			pending[count+1],pending[count+2]=at,bt.right;bt=bt.left
 		end
-		if at.items then return visit(at,bt.left) or visit(at,bt.right) end
-		if bt.items then return visit(at.left,bt) or visit(at.right,bt) end
-		return visit(at.left,bt.left) or visit(at.left,bt.right) or visit(at.right,bt.left) or visit(at.right,bt.right)
+		count=count+2
+		goto next_pair
+		end
+		end
+		if count==0 then return false end
+		at,bt=pending[count-1],pending[count]
+		pending[count-1],pending[count]=nil,nil;count=count-2
+		::next_pair::
+		end
+		return false
 	end
 	if visit(Geometry.TriangleTree(a.geometry,a.component),Geometry.TriangleTree(b.geometry,b.component)) then return true end
-	local ap=World(ar,a.geometry.vertices[a.component.vertices[1]])
-	local bp=World(br,b.geometry.vertices[b.component.vertices[1]])
-	local a_in_b=Geometry.PointInClosedComponent(b.geometry,b.component,Local(br,ap))
-	local b_in_a=Geometry.PointInClosedComponent(a.geometry,a.component,Local(ar,bp))
+	-- Open authored meshes cannot answer an inside-volume ray query. A first
+	-- vertex inside the other's AABB is not proof of containment, either. After
+	-- the COMPLETE triangle search above excludes every crossing, any vertex
+	-- outside the other's complete bounds proves this connected component is
+	-- not embedded in it. Try all vertices only for that ambiguous case; never
+	-- infer separation from a sampled miss or bypass a real triangle contact.
+	local function outside_bounds(node,record,other,other_record)
+		local b=other.component.bounds
+		-- If the COMPLETE transformed component box lies inside the other local
+		-- box, none of its vertices can provide an outside-box witness. Avoid
+		-- rechecking hundreds of interior vertices before the unchanged hull/volume
+		-- test. This is not a containment/contact verdict, only a failed-witness
+		-- search shortcut. Include generous outward floating-point slack.
+		local box=OrientedContactBounds(record,node.component.bounds)
+		local p=Local(other_record,box.center)
+		local columns=other_record.pose.asset_local and {{1,0,0},{0,1,0},{0,0,1}} or Matrix(other_record).columns
+		local inside=true
+		local magnitude=max(1,abs(box.center[1]),abs(box.center[2]),abs(box.center[3]))
+		for axis=1,3 do
+			local n=columns[axis];local denominator=Dot(n,n);local radius=0
+			for j=1,3 do radius=radius+abs(Dot(n,box.edges[j])) end
+			radius=radius/(denominator+0.0)
+			local slack=1e-7*(magnitude*(abs(n[1])+abs(n[2])+abs(n[3]))/(denominator+0.0)+abs(p[axis])+radius+1)
+			if not (p[axis]-radius>b[axis]+slack and p[axis]+radius<b[axis+3]-slack) then inside=false;break end
+		end
+		if inside then return false end
+		for _,vi in ipairs(Geometry.SupportVertices(node.geometry,node.component)) do
+			local p=Local(other_record,World(record,node.geometry.vertices[vi]))
+			for axis=1,3 do
+				local margin=1e-8*max(1,abs(b[axis]),abs(b[axis+3]))
+				if p[axis]<b[axis]-margin or p[axis]>b[axis+3]+margin then return true end
+			end
+		end
+		return false
+	end
+	-- Once every face pair is separated, any outside rendered vertex excludes
+	-- containment of its CONNECTED component. Try this cheap complete witness
+	-- before an open-mesh convex-hull search, not after that expensive search
+	-- returns unknown. Components wholly enclosed by the other's bounds retain
+	-- the original closed-volume/hull test and its conservative unknown result.
+	local a_in_b,b_in_a
+	if outside_bounds(a,ar,b,br) then a_in_b=false
+	else a_in_b=Geometry.PointInClosedComponent(b.geometry,b.component,Local(br,World(ar,a.geometry.vertices[a.component.vertices[1]]))) end
+	if outside_bounds(b,br,a,ar) then b_in_a=false
+	else b_in_a=Geometry.PointInClosedComponent(a.geometry,a.component,Local(ar,World(br,b.geometry.vertices[b.component.vertices[1]]))) end
 	-- The complete triangle search has excluded contact. Both connected pieces
 	-- must also be demonstrably outside each other's volume before their
 	-- overlapping broad-phase boxes may be dismissed as possible support.
-	return a_in_b==true or b_in_a==true,a_in_b==false and b_in_a==false
+	return a_in_b==true or b_in_a==true,a_in_b==false and b_in_a==false,
+		a_in_b~=true and b_in_a~=true -- every rendered face is separated; open-volume relation may remain unknown
+end
+
+local function ContactFrameEntry(node,record)
+	local pose=record.pose;local matrix=Matrix(record);local o,s,c=matrix.origin,pose.shift,matrix.columns
+	local frame=pose.pair_contact_frame;local v=frame and frame.values
+	local same=v and v[1]==o[1] and v[2]==o[2] and v[3]==o[3]
+		and v[4]==s[1] and v[5]==s[2] and v[6]==s[3] and frame.asset_local==pose.asset_local
+	if same then for i=1,3 do for j=1,3 do if v[6+(i-1)*3+j]~=c[i][j] then same=false end end end end
+	if not same then
+		pose.contact_bounds=nil;pose.contact_vertices=nil;pose.contact_triangles=nil;pose.oriented_contact_bounds=nil
+		pose.reference_frames=nil
+		v={o[1],o[2],o[3],s[1],s[2],s[3]}
+		for i=1,3 do for j=1,3 do v[#v+1]=c[i][j] end end
+		frame={values=v,asset_local=pose.asset_local,geometries={}};pose.pair_contact_frame=frame
+	end
+	local components=frame.geometries[node.geometry]
+	if not components then components={};frame.geometries[node.geometry]=components end
+	local entry=components[node.component]
+	if not entry then entry={};components[node.component]=entry end
+	return entry
 end
 
 local function ComponentContact(a,b,tolerance,reuse_bounds)
@@ -517,7 +795,12 @@ local function ComponentContact(a,b,tolerance,reuse_bounds)
 			local hi=math.ceil(tolerance/math.sqrt(lower)*1e6)/1e6
 			local cache=a.component.rigid_contacts
 			if not cache then cache={};a.component.rigid_contacts=cache end
-			local pair=cache[b.component];if not pair then pair={};cache[b.component]=pair end
+			local reverse=b.component.rigid_contacts
+			if not reverse then reverse={};b.component.rigid_contacts=reverse end
+			local pair=cache[b.component] or reverse[a.component] or {}
+			-- Distance/contact and mutual containment are symmetric. The opposite
+			-- traversal of this same rigid pair may reuse the very same proof.
+			cache[b.component]=pair;reverse[a.component]=pair
 			-- A positive asset-space witness at a stricter tolerance remains valid
 			-- at a looser one. Conversely complete separation at a looser tolerance
 			-- proves it at every stricter one. Keep the same conservative metric
@@ -528,7 +811,7 @@ local function ComponentContact(a,b,tolerance,reuse_bounds)
 			end
 			local key=lo..":"..hi;local result=pair[key]
 			if not result then
-				local r={pose={matrix={origin={0,0,0},columns={{1,0,0},{0,1,0},{0,0,1}}},shift={0,0,0},scale=100}}
+				local r={pose={asset_local=true,matrix={origin={0,0,0},columns={{1,0,0},{0,1,0},{0,0,1}}},shift={0,0,0},scale=100}}
 				local x={record=r,geometry=a.geometry,component=a.component}
 				local y={record=r,geometry=b.geometry,component=b.component}
 				local hit,separated=RawComponentContact(x,y,lo)
@@ -548,8 +831,32 @@ local function ComponentContact(a,b,tolerance,reuse_bounds)
 			if result[1]~=nil then return result[1],result[2] end
 		end
 	end
-	return RawComponentContact(a,b,tolerance)
+	-- Repeated graph/placement queries at the SAME two captured frames need not
+	-- rediscover an exact pair relation. Changed origin, shift, basis, geometry,
+	-- component or tolerance obtains a new entry; a new actual-pose capture is
+	-- independent of every planning pose. Both positive and negative results are
+	-- scoped to those frames, never a location bucket or approximate transform.
+	local left,right=ContactFrameEntry(a,ar),ContactFrameEntry(b,br)
+	local pair=left[right] or right[left]
+	if not pair then pair={};left[right]=pair;right[left]=pair end
+	local result=pair[tolerance]
+	if not result then result={RawComponentContact(a,b,tolerance)};pair[tolerance]=result end
+	return result[1],result[2],result[3]
 end
+
+-- A contact with an already rooted component settles this support question.
+-- Keep all candidates (and stable order within each group), but try proven
+-- roots before building edges to other unrooted pieces. Negative/unknown
+-- evidence still visits every candidate; unsupported cycles cannot self-root.
+local function RootedCandidatesFirst(candidates)
+	local ordered={}
+	for _,node in ipairs(candidates) do if node.supported then ordered[#ordered+1]=node end end
+	if #ordered==0 or #ordered==#candidates then return candidates end
+	for _,node in ipairs(candidates) do if not node.supported then ordered[#ordered+1]=node end end
+	return ordered
+end
+
+local CompositionEvidence
 
 local function Scan(context,source)
 	local started=Tick();local profile={phase="building",candidates=0,probes=0,visited=0}
@@ -561,6 +868,7 @@ local function Scan(context,source)
 	local separation_margin=Global("const").HeightTileSize
 	local tolerance=min(2,separation_margin/50.0)
 	local width,height=map:GetMapSize()
+	local integer_upper,heightfield_nodes
 	local function inside(p)return p[1]>=0 and p[2]>=0 and p[1]<width and p[2]<height end
 	local uncaptured,uncaptured_complete
 	local function NoUncapturedSupport(bounds)
@@ -606,14 +914,29 @@ local function Scan(context,source)
 		-- Later CheckPlacements/load/switch scans always reconstruct changed poses.
 		local prebuilt=context.correction_only and not source and record.correction_prebuilt
 		record.correction_prebuilt=nil
-		if refresh and not prebuilt then record.pose=Pose(record.obj,source and context.source_map or nil);record.fast_bounds=nil end
-		local obj=record.obj;local key=obj:GetEntity()..":"..tostring(obj:GetState())
-		if hole_types[key]==nil then
-			local flag=(Global("EntitySurfaces") or {}).TerrainHole
-			local has=Global("HasAnySurfaces")
-			hole_types[key]=flag and type(has)=="function" and has(obj,flag,true) or false
+		if refresh and not prebuilt then
+			-- Unselected objects contribute only conservative native world bounds.
+			-- No local mesh frame is consumed for them. Source-map scans still need
+			-- their terrain-relative Z correction; newly selected geometry always
+			-- captures a complete current pose before BuildNodes below.
+			if context.correction_only and not source and not record.relevant and not record.nodes then
+				record.pose={shift={0,0,0}}
+			else record.pose=Pose(record.obj,source and context.source_map or nil) end
+			record.fast_bounds=nil
 		end
-		if hole_types[key] then
+		local obj=record.obj;local is_hole
+		if context.preparation_snapshot and context.cut_snapshot then
+			is_hole=context.cut_snapshot[obj]
+		else
+			local key=obj:GetEntity()..":"..tostring(obj:GetState())
+			if hole_types[key]==nil then
+				local flag=(Global("EntitySurfaces") or {}).TerrainHole
+				local has=Global("HasAnySurfaces")
+				hole_types[key]=flag and type(has)=="function" and has(obj,flag,true) or false
+			end
+			is_hole=hole_types[key]
+		end
+		if is_hole then
 			has_holes=true
 			local for_each=Global("ForEachSurface");local count=0
 			local ok=type(for_each)=="function" and pcall(for_each,obj,Global("EntitySurfaces").TerrainHole,function(a,b,c)
@@ -637,8 +960,11 @@ local function Scan(context,source)
 		-- Unknown/skinned parts may still support another formation. Do not turn
 		-- omitted geometry into a false proof that no neighbouring support exists.
 		if not record.editor_only and not record.projected and not record.nonphysical and (not record.complete or not record.nodes or #record.nodes==0) then
-			local b=BoxBounds(record.obj:GetObjectBBox())
-			b[3],b[6]=b[3]+record.pose.shift[3],b[6]+record.pose.shift[3]
+			local b=context.preparation_snapshot and not source and record.nomination_bounds
+			if not b then
+				b=BoxBounds(record.obj:GetObjectBBox())
+				b[3],b[6]=b[3]+record.pose.shift[3],b[6]+record.pose.shift[3]
+			end
 			index:Add({bounds=b,record=record,unknown=true})
 		end
 	end end
@@ -656,7 +982,7 @@ local function Scan(context,source)
 		end
 		node.terrain_upper=high or false;return high
 	end
-	local function TerrainFaceWitness(node,upper)
+	local function TerrainFaceWitnessImpl(node,upper)
 		-- Terrain may meet the INTERIOR of a face while every mesh vertex misses
 		-- it. A sampled hit is a positive witness only: misses never prove a gap.
 		-- Query at integer XY and recompute the triangle's exact Z there, avoiding
@@ -670,7 +996,21 @@ local function Scan(context,source)
 		for _,t in ipairs(node.component.triangles) do
 			local a,b,c=vertex(t[1]),vertex(t[2]),vertex(t[3])
 			local den=(b[2]-c[2])*(a[1]-c[1])+(c[1]-b[1])*(a[2]-c[2])
-			if abs(den)>1e-12 and (not upper or min(a[3],b[3],c[3])<=upper+tolerance) then
+			local face_upper=upper
+			-- A formation-wide upper height can be far above terrain under this
+			-- individual face. Bound its complete XY footprint before up to 69
+			-- interior samples. This only discards faces that cannot yield a hit;
+			-- it does not turn the missed positive search into a defect proof.
+			if abs(den)>1e-12 and (not upper or min(a[3],b[3],c[3])<=upper+tolerance)
+				and type(terrain_api.GetMinMaxHeight)=="function" and inside(a) and inside(b) and inside(c) then
+				local _,high=terrain_api.GetMinMaxHeight(map,Global("box")(
+					max(0,floor(min(a[1],b[1],c[1]))-separation_margin),
+					max(0,floor(min(a[2],b[2],c[2]))-separation_margin),
+					min(width-1,math.ceil(max(a[1],b[1],c[1]))+separation_margin),
+					min(height-1,math.ceil(max(a[2],b[2],c[2]))+separation_margin)))
+				if type(high)=="number" then face_upper=high end
+			end
+			if abs(den)>1e-12 and (not face_upper or min(a[3],b[3],c[3])<=face_upper+tolerance) then
 				local function sample(x,y)
 					x,y=floor(x+0.5),floor(y+0.5)
 					local u=((b[2]-c[2])*(x-c[1])+(c[1]-b[1])*(y-c[2]))/den
@@ -696,18 +1036,25 @@ local function Scan(context,source)
 			end
 		end
 	end
+	local function TerrainFaceWitness(node,upper)
+		local before=Tick()
+		local result=TerrainFaceWitnessImpl(node,upper)
+		profile.face_ms=(profile.face_ms or 0)+Tick()-before
+		return result
+	end
 	for node_index,node in ipairs(nodes) do
 		YieldBatch(node_index,context)
 		profile.visited=node_index
 		local record=node.record
 		local transform=node.transform_record or record
-		for _,p in ipairs(node.samples) do
+		for sample_index,p in ipairs(node.samples) do
 			local in_hole=InHole(p)
 			-- The height field still exists beneath a terrain-cutting wonder. Without
 			-- an exact hole coverage witness it must not count as visible support.
 			local height=inside(p) and not in_hole and terrain_api.GetHeight(map,Point(p))
 			if height and p[3]<=height+tolerance then
-				node.supported=true;node.contacts.terrain=true;node.terrain_witness={point=p,height=height};break
+				node.supported=true;node.contacts.terrain=true;node.terrain_witness={point=p,height=height}
+				node.terrain_vertex=node.sample_vertices and node.sample_vertices[sample_index];break
 			end
 		end
 		if node.supported then
@@ -716,7 +1063,11 @@ local function Scan(context,source)
 			-- triangles still decide another object's contact with this support.
 			if #node.geometry.components==1 and not node.geometry.animated then
 				local b=record.fast_bounds
-				if not b then b=BoxBounds(record.obj:GetObjectBBox());b[3],b[6]=b[3]+record.pose.shift[3],b[6]+record.pose.shift[3];record.fast_bounds=b end
+				if not b then
+					b=context.preparation_snapshot and not source and record.nomination_bounds
+					if not b then b=BoxBounds(record.obj:GetObjectBBox());b[3],b[6]=b[3]+record.pose.shift[3],b[6]+record.pose.shift[3] end
+					record.fast_bounds=b
+				end
 				node.bounds=b
 			else
 				-- A rubble entity can contain dozens of distant components. Using its
@@ -724,12 +1075,15 @@ local function Scan(context,source)
 				node.bounds=WorldBounds(transform,node.component.bounds)
 			end
 		else
-			node.bounds=WorldBounds(transform,node.component.bounds);node.samples={}
+			node.bounds=WorldBounds(transform,node.component.bounds);node.samples={};node.sample_vertices=node.component.samples
 			for _,p in ipairs(node.component.samples) do node.samples[#node.samples+1]=World(transform,p) end
 			-- After rotation, minimum-local-Z need not be minimum-world-Z.
-			for _,p in ipairs(node.samples) do
+			for sample_index,p in ipairs(node.samples) do
 				local h=inside(p) and not InHole(p) and terrain_api.GetHeight(map,Point(p))
-				if h and p[3]<=h+tolerance then node.supported=true;node.contacts.terrain=true;node.terrain_witness={point=p,height=h};break end
+				if h and p[3]<=h+tolerance then
+					node.supported=true;node.contacts.terrain=true;node.terrain_witness={point=p,height=h}
+					node.terrain_vertex=node.sample_vertices[sample_index];break
+				end
 			end
 		end
 		-- A slope can intersect an interior mesh vertex without touching any of
@@ -751,11 +1105,12 @@ local function Scan(context,source)
 				else p=XYZ(record.obj:GetRelativePoint(local_point));p[3]=p[3]+record.pose.shift[3] end
 				local h=inside(p) and not InHole(p) and terrain_api.GetHeight(map,Point(p))
 				if h and p[3]<=h+tolerance then
-					node.supported=true;node.contacts.terrain=true;node.terrain_witness={point=p,height=h};break
+					node.supported=true;node.contacts.terrain=true;node.terrain_witness={point=p,height=h}
+					node.terrain_vertex=node.geometry.vertices[Geometry.SupportVertices(node.geometry,node.component)[pi]];break
 				end
 			end
 		end
-		if not node.supported and not node.partial and not context.positive_only
+		if not context.correction_only and not node.supported and not node.partial and not context.positive_only
 			and (not terrain_upper or node.bounds[3]<=terrain_upper+tolerance) then
 			local witness=TerrainFaceWitness(node,terrain_upper)
 			if witness then node.supported=true;node.contacts.terrain=true;node.terrain_witness=witness end
@@ -766,6 +1121,27 @@ local function Scan(context,source)
 		end
 	end
 	-- Seed every terrain/attachment root first. A proven contact with any rooted
+	profile.terrain_ms=Tick()-started-profile.build_ms
+	if source and context.placement_only then
+		-- A new prefab with an isolated unsupported component will be rejected
+		-- by this same graph walk regardless of its other members. Establish
+		-- that cheap decision first, before unrelated stacked-mesh contacts.
+		-- Terrain/attachment witnesses above are complete for this nomination;
+		-- any possible neighbour, including unknown geometry, keeps the full walk.
+		for _,node in ipairs(nodes) do if not node.supported then
+			local possible=false
+			for _,other in ipairs(index:Query(node.bounds,tolerance)) do
+				if other~=node and ((other.record~=node.record and (other.unknown or other.lod==0))
+					or (other.record==node.record and (other.unknown or other.lod==node.lod))) then possible=true;break end
+			end
+			if not possible then
+				context.placement_support_rejected=true
+				profile.contacts_ms=Tick()-started-profile.build_ms
+				profile.total_ms=Tick()-started;profile.phase="rejected"
+				context.profile=profile;context.index=index;return
+			end
+		end end
+	end
 	-- neighbour then needs no further triangle searches for that component.
 	for node_index,node in ipairs(nodes) do
 		YieldBatch(node_index,context)
@@ -773,24 +1149,35 @@ local function Scan(context,source)
 		-- One proven terrain witness is sufficient for this connected component.
 		-- Do not scan every neighbour of thousands of already grounded small rocks.
 		local candidates=not node.supported and index:Query(node.bounds,tolerance) or {}
+		if context.correction_only then candidates=RootedCandidatesFirst(candidates) end
 		local possible_other=false
+		local surfaces_clear=true
+		local contact_started=Tick()
 		for _,other in ipairs(candidates) do
 			profile.candidates=profile.candidates+1;YieldBatch(profile.candidates,context)
 			if other~=node and ((other.record~=record and (other.unknown or other.lod==0))
 				or (other.record==record and (other.unknown or other.lod==node.lod))) then
-				if other.unknown or other.partial then node.unknown_support=true;possible_other=true
+				if other.unknown or other.partial then node.unknown_support=true;possible_other=true;surfaces_clear=false
 				else
-					local contact,separated=false,false
+					local contact,separated,surface_separated=false,false,false
 					-- Same-frame fragment pairs have a reusable complete triangle
 					-- result; avoid repeating sample-to-triangle probes before it.
 					if (node.transform_record or node.record)~=(other.transform_record or other.record) then
 						for _,p in ipairs(node.samples) do
 							profile.probes=profile.probes+1
-							if MeshContact(other,p,tolerance) then contact=true;break end
+							local probe_started=Tick()
+							local hit=MeshContact(other,p,tolerance)
+							profile.point_contact_ms=(profile.point_contact_ms or 0)+Tick()-probe_started
+							if hit then contact=true;break end
 						end
 					end
-					if not contact then contact,separated=ComponentContact(node,other,tolerance,context.placement_only) end
+					if not contact then
+						local pair_started=Tick()
+						contact,separated,surface_separated=ComponentContact(node,other,tolerance,context.placement_only or context.correction_only)
+						profile.pair_contact_ms=(profile.pair_contact_ms or 0)+Tick()-pair_started
+					end
 					if not separated then possible_other=true end
+					if contact or not (separated or surface_separated) then surfaces_clear=false end
 					if contact then
 						node.edges[#node.edges+1]=other
 						local kind=other.bounds[3]>node.bounds[3]+tolerance and "ceiling" or "object"
@@ -801,18 +1188,46 @@ local function Scan(context,source)
 			end
 			if node.supported then break end
 		end
+		profile.object_ms=(profile.object_ms or 0)+Tick()-contact_started
+		local settled_root=node.supported
+		if settled_root and not node.contacts.terrain then
+			for _,edge in ipairs(node.edges) do
+				for _,part in ipairs(edge.record.nodes or {}) do
+					if not part.supported then settled_root=false;break end
+				end
+				if not settled_root then break end
+			end
+		end
+		if context.correction_only and not settled_root and not node.partial and not context.positive_only then
+			-- A real contact with a rooted neighbour is already complete positive
+			-- support evidence. Only search terrain face interiors if the cheaper
+			-- roots/vertices and exact neighbour search did not settle this node.
+			-- A partly unsupported neighbour may itself need correction: retain an
+			-- independent terrain root rather than introducing a false dependent.
+			-- Unrooted cycles receive no exemption: every remaining face search and
+			-- the original negative proof/graph propagation still run below.
+			local upper=TerrainUpper(node)
+			if not upper or node.bounds[3]<=upper+tolerance then
+				local witness=TerrainFaceWitness(node,upper)
+				if witness then
+					node.supported=true;node.edges={};node.contacts={terrain=true};node.terrain_witness=witness
+				end
+			end
+		end
+		local negative_started=Tick()
 		if source and context.placement_only and not node.supported and #node.edges==0 then
 			-- This new stamp will be rejected: every terrain witness and possible
 			-- support for this component has been tried, and later nodes cannot add
 			-- an outgoing edge to it. Root propagation therefore cannot rescue it.
 			-- Stop wasted work on the rest of a rejected stamp, not necessary checks
 			-- on any accepted one. Diagnostic captures still collect every finding.
+			context.placement_support_rejected=true
 			profile.contacts_ms=Tick()-started-profile.build_ms
 			profile.total_ms=Tick()-started;profile.phase="rejected"
 			context.profile=profile;context.index=index
 			return
 		end
-		if not node.supported and not possible_other and not node.partial and not context.incomplete and not context.positive_only then
+		if not node.supported and (not possible_other or surfaces_clear) and not node.partial and not context.incomplete and not context.positive_only then
 			-- Exact native terrain upper bound + disjoint complete nearby AABBs proves
 			-- separation. Sparse ray/sample misses alone never confirm a defect.
 			if type(terrain_api.GetMinMaxHeight)=="function"
@@ -871,7 +1286,76 @@ local function Scan(context,source)
 							end
 							return heights[key] or nil
 						end
-						if Geometry.TrianglesAboveTerrain(triangles,upper,error_bound) then
+						local separated=false
+						if separation_margin==100 then
+							-- First try the tighter, correlated proof with the existing
+							-- conservative affine error. This avoids thousands of repeated
+							-- integer-rectangle queries when a few terrain cells suffice.
+							heightfield_nodes=heightfield_nodes or {}
+							local function height_at(x,y)
+								local key=x..":"..y;local value=heightfield_nodes[key]
+								if value==nil then value=terrain_api.GetHeight(map,x,y);heightfield_nodes[key]=value or false end
+								return value
+							end
+							separated=Geometry.TrianglesAboveHeightfield(triangles,height_at,100,width,height,error_bound)
+						end
+						if not separated then separated=Geometry.TrianglesAboveTerrain(triangles,upper,error_bound) end
+						if not separated and width>0 and height>0 and width==floor(width) and height==floor(height)
+							and width<=67108864 and height<=67108864 then
+							integer_upper=integer_upper or Geometry.CachedIntegerTerrainUpper(function(x,y)
+								return terrain_api.GetHeight(map,x,y)
+							end,width,height)
+							local function refined(rect)
+								-- The first proof stops at its first unresolved triangle.
+								-- On retry, retain cheap complete bounds for all already
+								-- separated triangles/subtriangles; exhaustive queries can
+								-- only refine a bound that does not yet prove separation.
+								local coarse=upper(rect)
+								if type(coarse)=="number" and coarse~=-math.huge and rect[3]>coarse+error_bound then return coarse end
+								-- The horizontal transform budget excludes the extra unit
+								-- reserved above for the integral terrain-height result.
+								return integer_upper(rect,error_bound-1,1024) or coarse
+							end
+							separated=Geometry.TrianglesAboveTerrain(triangles,refined,error_bound)
+						end
+						if not separated and not source and not node.geometry.animated
+							and (node.transform_record or record)==record and separation_margin==100 then
+							-- The native floating transform removes integral basis rounding;
+							-- exact terrain-face clipping retains correlation on slopes.
+							local precise=Geometry.NativeRigidMatrix(record.obj)
+							if precise then
+								local points,faces={},{};local extent,origin=0,0
+								for a=1,3 do origin=max(origin,abs(precise.origin[a])) end
+								for _,t in ipairs(node.component.triangles) do
+									local face={}
+									for i,vi in ipairs(t) do
+										if not points[vi] then
+											local v=node.geometry.vertices[vi];local p={}
+											for a=1,3 do
+												local offset=precise.columns[1][a]*v[1]+precise.columns[2][a]*v[2]+precise.columns[3][a]*v[3]
+												p[a]=precise.origin[a]+offset;extent=max(extent,abs(offset))
+											end
+											points[vi]=p
+										end
+										face[i]=points[vi]
+									end
+									faces[#faces+1]=face
+								end
+								-- Outward FP32 transform/vertex-decode budget, at least one
+								-- native world unit; no positive contact tolerance changes.
+								local uncertainty=max(1,(origin+extent)/1048576.0+extent/131072.0
+									+2*(node.geometry.quantum or 0)*Global("guim")*record.pose.scale/100.0)
+								heightfield_nodes=heightfield_nodes or {}
+								local function height_at(x,y)
+									local key=x..":"..y;local value=heightfield_nodes[key]
+									if value==nil then value=terrain_api.GetHeight(map,x,y);heightfield_nodes[key]=value or false end
+									return value
+								end
+								separated=Geometry.TrianglesAboveHeightfield(faces,height_at,100,width,height,uncertainty)
+								if separated then node.precise_terrain_separation=true;node.precise_error_bound=uncertainty end
+							end
+						end
+						if separated then
 							node.defect=true;node.reason="every rendered triangle separated from bounded terrain and nearby support"
 							node.separation_error_bound=error_bound
 						end
@@ -879,6 +1363,17 @@ local function Scan(context,source)
 				end
 			end
 		end
+		if node.defect then
+			node.terrain_separated=true
+			if possible_other then
+				-- Complete rendered surfaces are disjoint, but an open cliff has no
+				-- defined closed volume. Authorize only a swept, rollback-guarded
+				-- seating proposal, never a fabricated positive support verdict.
+				node.defect=false;node.seating_proposal=surfaces_clear
+				node.reason="terrain gap and disjoint rendered faces; open-volume relation unresolved"
+			end
+		end
+		profile.negative_ms=(profile.negative_ms or 0)+Tick()-negative_started
 	end
 	profile.contacts_ms=Tick()-started-profile.build_ms
 	-- Resolve stacked/cantilevered connected components from actual rooted contact
@@ -1015,12 +1510,12 @@ function Validator.Capture(map,obj,skip,important)
 	end
 end
 
-local function FinishCapture(context)
+local function StoreBaselines(context)
 	local map=context.map
-	local started=Tick();Scan(context,true)
 	for _,record in ipairs(context.list) do if record.relevant and IsValid(record.obj) then
 		local baseline={version=1,entity=record.obj:GetEntity(),state=record.obj:GetState(),
 			geometry_complete=record.complete or false,
+			geometry_only=context.native_geometry_only or false,
 			render_kind=record.nonphysical,
 			parent=Identity(map,record.pose.parent),components={}}
 		baseline.composition_signature=Geometry.CompositionSignature(record.asset)
@@ -1042,6 +1537,11 @@ local function FinishCapture(context)
 		end
 		record.obj.SuperBigMapSupportBaseline=baseline
 	end end
+end
+
+local function FinishCapture(context)
+	local started=Tick();Scan(context,true)
+	StoreBaselines(context)
 	context.capture_ms=Tick()-started
 	context.capture_profile=context.profile
 	context.source_map=nil -- release a temporary native source after its witnesses were recorded
@@ -1085,10 +1585,13 @@ function Validator.BuildDecorPlacement(map,objects,center,factor)
 	local context
 	if Enabled() then context=Validator.CaptureGroup(map,objects)
 	else context=DecorGroupContext(map,objects);context.placement_only=true;Scan(context,true) end
+	if context.placement_support_rejected then
+		return {ok=false,reason="native decor component has no verified rigid support"}
+	end
 	local parents,entries={},{}
 	local terrain=Global("terrain")
 	local width,height=map:GetMapSize()
-	local function flat_height(bounds)
+	local function height_range(bounds)
 		if type(terrain.GetMinMaxHeight)~="function" or bounds[1]<0 or bounds[2]<0
 			or bounds[4]>=width or bounds[5]>=height then return nil end
 		-- Include interpolation neighbours and integer point rounding. Equal
@@ -1097,16 +1600,31 @@ function Validator.BuildDecorPlacement(map,objects,center,factor)
 		local low,high=terrain.GetMinMaxHeight(map,Global("box")(
 			max(0,floor(bounds[1])-tile),max(0,floor(bounds[2])-tile),
 			min(width-1,math.ceil(bounds[4])+tile),min(height-1,math.ceil(bounds[5])+tile)))
-		if type(low)=="number" and low==high then return low end
+		if type(low)=="number" and type(high)=="number" then return low,high end
+	end
+	local function flat_height(bounds)
+		local low,high=height_range(bounds)
+		if low and low==high then return low end
 	end
 	-- The terrain is immutable for this synchronous stamp plan. Native vertices
 	-- across components/LODs often quantize to the same XY query. Keep the cache
 	-- local to this plan so no placement/load/terraform can reuse stale heights.
-	local heights={}
+	local heights,height_rows={},{}
+	-- Integer coordinates inside these bounded dimensions have an exact numeric
+	-- cell key (at most 2^52). Avoid allocating a separate table for virtually
+	-- every distinct X on rotated meshes; keep the unrestricted row path outside.
+	local linear_heights=width>0 and height>0 and width<=67108864 and height<=67108864
+		and width==floor(width) and height==floor(height)
 	local terrain_height=terrain.GetHeight
 	local function height_at(x,y)
 		x,y=floor(x+.5),floor(y+.5)
-		local row=heights[x];if not row then row={};heights[x]=row end
+		if linear_heights and x>=0 and y>=0 and x<width and y<height then
+			local key=x+y*width
+			local value=heights[key]
+			if value==nil then value=terrain_height(map,x,y);heights[key]=value end
+			return value
+		end
+		local row=height_rows[x];if not row then row={};height_rows[x]=row end
 		-- The stock XY overload reads the same integer coordinates without an
 		-- intermediate Lua array and native point allocation for each query.
 		if row[y]==nil then row[y]=terrain_height(map,x,y) end
@@ -1116,14 +1634,9 @@ function Validator.BuildDecorPlacement(map,objects,center,factor)
 		while parents[record]~=record do record=parents[record] end
 		return record
 	end
-	local linked={}
-	for _,record in ipairs(context.list) do for _,node in ipairs(record.nodes or {}) do
-		for _,other in ipairs(node.edges or {}) do if other.record~=record then
-			linked[record]=true;linked[other.record]=true
-		end end
-	end end
 	local function zero_offset(record,p,ratio)
-		if linked[record] or #(record.nodes or {})==0 then return false end
+		if record.nonphysical then return true,0 end
+		if #(record.nodes or {})==0 then return false,0 end
 		local old=record.pose.origin;local roots=0
 		for _,node in ipairs(record.nodes) do
 			if not node.supported or node.partial or node.geometry.animated then return false end
@@ -1140,22 +1653,46 @@ function Validator.BuildDecorPlacement(map,objects,center,factor)
 			local terrain_root=node.contacts.terrain==true
 			if terrain_root then roots=roots+1 end
 			local grounded,exposed=not terrain_root,false
+			local target_visible=-math.huge
 			for _,v in ipairs(node.component.samples or {}) do
 				local w=World(node.transform_record or record,v)
 				local x,y,z=p[1]+(w[1]-old[1])*ratio,p[2]+(w[2]-old[2])*ratio,p[3]+(w[3]-old[3])*ratio
 				local h=height_at(x,y)
 				if type(h)~="number" then return false end
 				local clearance=z-h
+				if clearance>target_visible then target_visible=clearance end
 				if clearance<=0 then grounded=true end
 				if clearance>=visible then exposed=true end
 				if grounded and exposed then break end
+			end
+			if not grounded and node.terrain_vertex then
+				-- Scan already found this real mesh vertex at the source terrain.
+				-- Re-evaluate it in the exact proposed frame/target terrain; its old
+				-- support status alone is never reused as proof after movement.
+				local w=World(node.transform_record or record,node.terrain_vertex)
+				local x,y,z=p[1]+(w[1]-old[1])*ratio,p[2]+(w[2]-old[2])*ratio,p[3]+(w[3]-old[3])*ratio
+				local h=height_at(x,y)
+				if type(h)=="number" and z<=h then grounded=true end
+			end
+			if grounded and not exposed then
+				-- The original planner requires half the SOURCE visible extent, not
+				-- half the whole (possibly deeply buried) mesh. A terrain lower bound
+				-- over its complete padded footprint gives a conservative upper bound
+				-- on that visible extent. This can certify the same exact zero shift
+				-- without an all-vertex source/target height walk. Unknown bounds still
+				-- fall through to the complete original interval computation.
+				local low=height_range(b)
+				if low then
+					local required=max(2,min(b[6]-b[3],max(0,b[6]-low))*.5+1)
+					if target_visible>=required then exposed=true end
+				end
 			end
 			if not grounded or not exposed then return false end
 		end
 		-- For every root, exact minimum clearance <= 0; for every component,
 		-- exact maximum clearance >= its required visible height. Thus the full
 		-- planner's interval contains zero and its preferred shift is EXACTLY zero.
-		return roots>0
+		return true,roots
 	end
 	local cx,cy,cz=center:xyz()
 	for _,record in ipairs(context.list) do if record.relevant then
@@ -1170,10 +1707,32 @@ function Validator.BuildDecorPlacement(map,objects,center,factor)
 		local entry={obj=obj,position=p,scale=ns,components={}}
 		entries[record]=entry;parents[record]=record
 		if record.nonphysical then p[3]=terrain.GetHeight(map,Point(p)) end
+	end end
+	for record in pairs(entries) do for _,node in ipairs(record.nodes or {}) do for _,other in ipairs(node.edges or {}) do
+		if entries[other.record] then parents[root(record)]=root(other.record) end
+	end end end
+	-- Zero is an exact plan for a CONNECTED island only when EVERY member's
+	-- visibility/contact interval contains zero and the island has a terrain root.
+	-- If one member fails this certificate, retain full intervals for ALL members;
+	-- otherwise a later nonzero shift could invalidate a skipped member's bounds.
+	local zero_islands={}
+	for _,record in ipairs(context.list) do if entries[record] then
+		local entry=entries[record];local key=root(record)
+		local guard=zero_islands[key] or {ok=true,roots=0,physical=false};zero_islands[key]=guard
+		guard.physical=guard.physical or not record.nonphysical
+		if guard.ok then
+			local proven,roots=zero_offset(record,entry.position,entry.scale/(record.obj:GetScale()+0.0))
+			guard.ok=proven;guard.roots=guard.roots+(roots or 0)
+		end
+	end end
+	for _,record in ipairs(context.list) do if entries[record] then
+		local entry=entries[record];local p,ns=entry.position,entry.scale
+		local old,sc=record.pose.origin,record.obj:GetScale()
 		local px,py,pz=p[1],p[2],p[3]
 		local sx,sy,sz=old[1],old[2],old[3]
 		local ratio=ns/(sc+0.0)
-		entry.zero_offset_proven=zero_offset(record,p,ratio)
+		local guard=zero_islands[root(record)]
+		entry.zero_offset_proven=guard.ok and (guard.roots>0 or not guard.physical)
 		if not entry.zero_offset_proven then
 		for _,node in ipairs(record.nodes or {}) do
 			if not node.supported or node.partial or node.geometry.animated then
@@ -1232,9 +1791,6 @@ function Validator.BuildDecorPlacement(map,objects,center,factor)
 		end
 		end
 	end end
-	for record in pairs(entries) do for _,node in ipairs(record.nodes or {}) do for _,other in ipairs(node.edges or {}) do
-		if entries[other.record] then parents[root(record)]=root(other.record) end
-	end end end
 	local groups={}
 	for record,entry in pairs(entries) do
 		local r=root(record);groups[r]=groups[r] or {entries={},components={}}
@@ -1287,6 +1843,7 @@ function Validator.CompareComposition(before,after)
 			if not a.retained then return false,"native support relationship lost" end
 			rooted=rooted+1
 		else
+			if not b.defect then return false,"native fragment support was inconclusive" end
 			inherited=inherited+1
 		end
 	end
@@ -1314,22 +1871,42 @@ function Validator.PreservedContactGraph(graph)
 	return reached
 end
 
+-- Baselines contain only saved scalar evidence. Keep decoded native comparison
+-- frames outside them, so save files never acquire geometry/cache references.
+local native_contact_frames=setmetatable({}, {__mode="k"})
+local function NativeComponent(node)
+	local r=node.record;local b=r.obj.SuperBigMapSupportBaseline
+	if not b or not b.geometry_complete or not b.composition_pose or not b.composition_frames
+		or not b.composition_signature or b.composition_signature~=Geometry.CompositionSignature(r.asset) then return end
+	local frame=b.composition_frames[node.key]
+	if not frame or #frame~=4 then return end
+	local pose=b.composition_pose
+	local cache=native_contact_frames[b];local prior=cache and cache[node.key]
+	local values={pose.origin[1],pose.origin[2],pose.origin[3],pose.scale}
+	for i=1,3 do for j=1,3 do values[#values+1]=pose.columns[i][j] end end
+	for i=1,4 do for j=1,3 do values[#values+1]=frame[i][j] end end
+	if prior and prior.geometry==node.geometry and prior.component==node.component then
+		local same=true
+		for i=1,#values do if values[i]~=prior.values[i] then same=false;break end end
+		if same then return prior.node end
+	end
+	local native={pose={matrix=pose,shift={0,0,0},scale=pose.scale}}
+	local origin=World(native,frame[1]);local columns={}
+	for i=1,3 do local p=World(native,frame[i+1]);columns[i]={p[1]-origin[1],p[2]-origin[2],p[3]-origin[3]} end
+	local transform={pose={matrix={origin=origin,columns=columns},shift={0,0,0},scale=pose.scale}}
+	local n={record=transform,geometry=node.geometry,component=node.component}
+	n.bounds=WorldBounds(transform,node.component.bounds)
+	cache=cache or {};native_contact_frames[b]=cache
+	cache[node.key]={geometry=node.geometry,component=node.component,values=values,node=n}
+	return n
+end
+
 local function PreservedContacts(context,map)
-	local graph,nodes,source,signatures={},{},{},{}
+	local graph,nodes,source={},{},{}
 	local function source_node(node)
 		if source[node]~=nil then return source[node] or nil end
 		source[node]=false
-		local r=node.record;local b=r.obj.SuperBigMapSupportBaseline
-		if not b or not b.geometry_complete or not b.composition_pose or not b.composition_frames then return end
-		if signatures[r]==nil then signatures[r]=b.composition_signature~=nil and b.composition_signature==Geometry.CompositionSignature(r.asset) end
-		local frame=b.composition_frames[node.key]
-		if not signatures[r] or not frame or #frame~=4 then return end
-		local pose=b.composition_pose;local native={pose={matrix=pose,shift={0,0,0},scale=pose.scale}}
-		local origin=World(native,frame[1]);local columns={}
-		for i=1,3 do local p=World(native,frame[i+1]);columns[i]={p[1]-origin[1],p[2]-origin[2],p[3]-origin[3]} end
-		local transform={pose={matrix={origin=origin,columns=columns},shift={0,0,0},scale=pose.scale}}
-		local n={record=transform,geometry=node.geometry,component=node.component}
-		n.bounds=WorldBounds(transform,node.component.bounds);source[node]=n;return n
+		local n=NativeComponent(node);source[node]=n or false;return n
 	end
 	for _,r in ipairs(context.list) do if IsValid(r.obj) then
 		local id=Identity(map,r.obj);local b=r.obj.SuperBigMapSupportBaseline
@@ -1387,7 +1964,7 @@ local function CompositionFramePreserved(record,node,frame)
 		min(2,Global("const").HeightTileSize/50.0))
 end
 
-local function CompositionEvidence(record,baseline,map,preserved_contacts)
+CompositionEvidence=function(record,baseline,map,preserved_contacts)
 	if not baseline or not baseline.composition_frames then return false,"native composition not captured" end
 	local after={complete=record.complete,signature=Geometry.CompositionSignature(record.asset),
 		parent=Identity(map,record.pose.parent),components={},clipped=record.clipped_nodes}
@@ -1411,7 +1988,6 @@ function Validator.Validate(map,reason)
 		valid=0,confirmed_defect=0,inconclusive=0,native_composition_verified=0,instances={},capture_ms=context.capture_ms,
 		contact_tolerance_world_units=min(2,Global("const").HeightTileSize/50.0),
 		capture_profile=context.capture_profile,validation_profile=context.profile}
-	local preserved_contacts
 	for _,record in ipairs(context.list) do if record.relevant and IsValid(record.obj) then
 		local cached=context.selection and not context.selection[record] and record.obj.SuperBigMapSupportValidation
 		if cached then
@@ -1419,7 +1995,7 @@ function Validator.Validate(map,reason)
 			report[key]=report[key]+1;report.instances[#report.instances+1]=cached
 			if cached.native_composition_verified then report.native_composition_verified=report.native_composition_verified+1 end
 		else
-		local baseline=not context.correction_only and record.obj.SuperBigMapSupportBaseline or nil
+		local baseline=not context.native_capture and record.obj.SuperBigMapSupportBaseline or nil
 		local changed=baseline and baseline.parent~=Identity(map,record.pose.parent)
 		local complete=record.complete
 		local preserved=baseline~=nil
@@ -1464,24 +2040,18 @@ function Validator.Validate(map,reason)
 		if clearing_repair and status=="valid" then why="verified native clearing transition with supported rendered components" end
 		local key=status=="confirmed defect" and "confirmed_defect" or status
 		report[key]=report[key]+1
-		local composition,composition_detail=false
-		if status~="valid" then
-			composition,composition_detail=CompositionEvidence(record,baseline,map)
-			if not composition and composition_detail=="native support relationship lost" then
-				preserved_contacts=preserved_contacts or PreservedContacts(context,map)
-				composition,composition_detail=CompositionEvidence(record,baseline,map,preserved_contacts)
-			end
-		end
-		if composition then report.native_composition_verified=report.native_composition_verified+1 end
 		local row={handle=record.obj.handle,id=Identity(map,record.obj),entity=record.obj:GetEntity(),class=record.obj.class,status=status,
 			reason=status=="confirmed defect" and why or record.reason or why,
 			geometry_complete=complete or false,support_preserved=preserved,current_geometry_status=current_status,
 			render_kind=record.nonphysical or "physical geometry",
 			placement_repaired=repaired or false,
 			native_clearing_transition=clearing_repair or false,
-			native_composition_verified=composition or false,native_composition_detail=composition_detail,
+			native_composition_verified=false,
 			effect_evidence=record.asset.effect,
 			native_baseline=baseline~=nil,components=#(record.nodes or {}),position=XYZ(record.obj:GetVisualPos())}
+		local proposal=false
+		for _,node in ipairs(record.nodes or {}) do if node.seating_proposal then proposal=true end end
+		row.seating_proposal=proposal and record.complete or false
 		if status~="valid" then
 			row.findings={}
 			for _,node in ipairs(record.nodes or {}) do if not node.supported or node.defect then
@@ -1501,7 +2071,9 @@ function Validator.Validate(map,reason)
 		-- candidate/support bounds used by CheckPlacements, not a saved pose string
 		-- and another native bbox query for every unrelated object on the map.
 		if not context.correction_only then record.fingerprint=Fingerprint(record.obj) end
-		if not context.correction_only or record.relevant then record.last_bounds=BoxBounds(record.obj:GetObjectBBox()) end
+		if not context.correction_only or record.relevant then
+			record.last_bounds=context.preparation_snapshot and record.nomination_bounds or BoxBounds(record.obj:GetObjectBBox())
+		end
 	end end
 	if not context.correction_only then PersistBaselines(context) end
 	report.validation_ms=Tick()-started;report.errors=context.errors;map.SuperBigMapDecorationValidation=report
@@ -1518,6 +2090,7 @@ end
 function Validator.CheckPlacements(map,changes,reason)
 	local context=contexts[map]
 	if not context or not context.index then return nil end
+	context.seated=nil -- subsequent validation rebuilds actual changed poses
 	local selection={}
 	for _,change in ipairs(changes) do
 		local record=context.by_object[change.obj]
@@ -1635,9 +2208,16 @@ end
 Validator.Clear=function(map)contexts[map]=nil end
 function Validator.RecordSeating(map,obj,from,to)
 	local row=obj.SuperBigMapSupportValidation
-	if not row or row.status~="confirmed defect" or not row.geometry_complete then return false end
+	if not row or (row.status~="confirmed defect" and not row.seating_proposal) or not row.geometry_complete then return false end
 	obj.SuperBigMapSupportRepair={version=1,pose=PersistedPoseKey(obj),from=from,to=to,
 		reason="confirmed unsupported cosmetic geometry",source_id=row.id}
+	local context=contexts[map];local original=context and context.by_object[obj]
+	if original then
+		local moved={obj=obj,pose=Pose(obj),relevant=true}
+		BuildNodes(moved,original.asset)
+		for _,node in ipairs(moved.nodes) do node.bounds=WorldBounds(node.transform_record or moved,node.component.bounds) end
+		context.seated=context.seated or {};context.seated[obj]=moved
+	end
 	return true
 end
 
@@ -1657,12 +2237,14 @@ function Validator.SeatingEvidence(map)
 	local eligible=SBM.RockGrounding and SBM.RockGrounding.Eligible
 	for _,record in ipairs(context.list) do
 		local obj=record.obj;local row=IsValid(obj) and obj.SuperBigMapSupportValidation
-		if row and row.status=="confirmed defect" and record.complete and eligible and eligible(obj)
+		if row and (row.status=="confirmed defect" or row.seating_proposal) and record.complete and eligible and eligible(obj)
 			and (not context.correction_only or context.repair_targets[obj])
 			and not record.pose.parent and #record.nodes>0 then
 			local safe=true;local unsupported=false
 			for _,node in ipairs(record.nodes) do
-				if node.geometry.animated or node.partial or node.unknown_support or #node.edges>0 then safe=false end
+				if node.geometry.animated or node.partial or node.unknown_support then safe=false end
+				for _,edge in ipairs(node.edges) do if edge.record~=record then safe=false end end
+				if not node.supported and not (node.defect or node.seating_proposal) then safe=false end
 				if not node.supported then unsupported=true end
 				-- A grounded member does not forbid a rigid group correction by
 				-- itself. The planner must retain every component's visible extent;
@@ -1685,94 +2267,518 @@ function Validator.SeatingEvidence(map)
 					end
 					c.height=hi-lo;components[#components+1]=c
 				end
-				result[#result+1]={obj=obj,components=components,bounds=bounds,confirmed=row.status=="confirmed defect"}
+				result[#result+1]={obj=obj,components=components,bounds=bounds,confirmed=row.status=="confirmed defect" or row.seating_proposal}
 			end
 		end
 	end
 	return result
 end
 
-function Validator.SeatingPlacementClear(map,obj,bounds)
+-- Difficult sloped placements may meet terrain inside a face, not at a mesh
+-- vertex. Complete terrain-face clipping refines the rigid planner only;
+-- independent positive rendered-support verification still decides acceptance.
+function Validator.SeatingFlatSearchHeight(map,bounds,radius)
+	local terrain=Global("terrain");local width,height=map:GetMapSize()
+	if type(terrain.GetMinMaxHeight)~="function" then return nil end
+	local pad=radius+Global("const").HeightTileSize
+	if bounds[1]-pad<0 or bounds[2]-pad<0 or bounds[4]+pad>=width or bounds[5]+pad>=height then return nil end
+	local low,high=terrain.GetMinMaxHeight(map,Global("box")(floor(bounds[1]-pad),floor(bounds[2]-pad),
+		math.ceil(bounds[4]+pad),math.ceil(bounds[5]+pad)))
+	if type(low)=="number" and low==high and low>-math.huge and low<math.huge then return low end
+end
+
+function Validator.RefineSeatingComponents(map,entry)
+	local context=contexts[map];local record=context and context.by_object[entry.obj]
+	if not record or not record.complete then return false end
+	local width,height=map:GetMapSize();local terrain=Global("terrain")
+	local clearances={};local heights={}
+	local function at(x,y)
+		local key=x..":"..y
+		if heights[key]==nil then heights[key]=terrain.GetHeight(map,x,y) end
+		return heights[key]
+	end
+	for i,node in ipairs(record.nodes) do
+		local vertices,triangles={},{}
+		for _,t in ipairs(node.component.triangles) do
+			local triangle={}
+			for j,vi in ipairs(t) do
+				vertices[vi]=vertices[vi] or World(node.transform_record or record,node.geometry.vertices[vi])
+				triangle[j]=vertices[vi]
+			end
+			triangles[#triangles+1]=triangle
+		end
+		local _,low,high=Geometry.TrianglesAboveHeightfield(triangles,at,Global("const").HeightTileSize,width,height,0,32768,true)
+		if not low or not high or low>=math.huge or high<=-math.huge then return false end
+		-- Native integer height and affine basis rounding are not positive
+		-- witnesses. Retain slack here and let the actual-pose verifier decide.
+		clearances[i]={low+2,high-2}
+	end
+	for i,c in ipairs(entry.components) do c.clearance=clearances[i] end
+	return true
+end
+
+-- A small rigid tilt is a last resort for an authored two-piece gap on flat
+-- ground, where no translation can seat both pieces without burying one. Keep
+-- the original visibility thresholds; never lower the bar after rotating.
+function Validator.RotationSeatingEvidence(map,entry,degrees,direction)
+	local context=contexts[map];local original=context and context.by_object[entry.obj]
+	local compose=Global("ComposeRotation")
+	if not original or not original.complete or original.pose.parent or type(compose)~="function"
+		or type(entry.obj.SetAxisAngle)~="function" then return nil end
+	local azimuth=direction*math.pi/4
+	local ax,ay=math.cos(azimuth),math.sin(azimuth)
+	local rotation_axis=Point({math.floor(ax*4096+.5),math.floor(ay*4096+.5),0})
+	ax,ay=rotation_axis:xy();local length=math.sqrt(ax*ax+ay*ay);ax,ay=ax/length,ay/length
+	local theta=degrees*math.pi/180;local cosine,sine=math.cos(theta),math.sin(theta)
+	local function rotate(p)
+		local dot=ax*p[1]+ay*p[2]
+		return {p[1]*cosine+ay*p[3]*sine+ax*dot*(1-cosine),
+			p[2]*cosine-ax*p[3]*sine+ay*dot*(1-cosine),
+			p[3]*cosine+(ax*p[2]-ay*p[1])*sine}
+	end
+	local base=Matrix(original)
+	local record={obj=entry.obj,pose={matrix={origin=base.origin,columns={rotate(base.columns[1]),rotate(base.columns[2]),rotate(base.columns[3])}},
+		shift=original.pose.shift,scale=original.pose.scale}}
+	-- Native ComposeRotation applies its FIRST rotation, then its SECOND
+	-- (the HSL product uses axis2 cross axis1). Match the world-axis Rodrigues
+	-- transform above by composing the existing pose before the new world tilt.
+	local axis,angle=compose(entry.obj:GetAxis(),entry.obj:GetAngle(),rotation_axis,degrees*60)
+	local result={record=record,axis=axis,angle=angle,degrees=degrees,components={},bounds=Geometry.Bounds()}
+	local terrain=Global("terrain")
+	for i,node in ipairs(original.nodes) do
+		if node.geometry.animated or node.partial then return nil end
+		local c={vertices={},height=entry.components[i].height}
+		local exposed=entry.components[i].clearance and entry.components[i].clearance[2] or -math.huge
+		for _,p in ipairs(entry.components[i].clearance and {} or entry.components[i].vertices) do
+			exposed=max(exposed,p[3]-terrain.GetHeight(map,Point(p)))
+		end
+		c.required_visibility=max(2,min(c.height,max(0,exposed))*.5)
+		for _,vi in ipairs(Geometry.SupportVertices(node.geometry,node.component)) do
+			local p=World(record,node.geometry.vertices[vi]);c.vertices[#c.vertices+1]=p;Geometry.Extend(result.bounds,p)
+		end
+		result.components[#result.components+1]=c
+	end
+	return result
+end
+
+function Validator.SeatingRotationMatches(map,obj,rotation,from,to)
+	local context=contexts[map];local original=context and context.by_object[obj]
+	if not original or not original.complete then return false end
+	local expected={origin={},columns=Matrix(rotation.record).columns}
+	local base=Matrix(rotation.record)
+	for i=1,3 do expected.origin[i]=base.origin[i]+rotation.record.pose.shift[i]+to[i]-from[i] end
+	local actual_record={obj=obj,pose=Pose(obj)}
+	local actual=Matrix(actual_record)
+	for _,node in ipairs(original.nodes) do
+		if not Validator.AffineBoundsAgree(node.component.bounds,expected,actual,2) then return false end
+	end
+	return true
+end
+
+-- A successful correction count is not proof that every rock was checked.
+-- Account for untouched positive witnesses as well as current support graphs;
+-- missing or inconclusive evidence must keep surface readiness closed.
+function Validator.SurfaceSupportSummary(map)
+	local context=contexts[map]
+	if not context then return nil,"surface support context unavailable" end
+	local result={eligible=0,terrain=0,graph=0,native_composition=0,unresolved=0,findings={}}
+	local eligible=SBM.RockGrounding and SBM.RockGrounding.Eligible
+	if not eligible then return nil,"rock eligibility unavailable" end
+	for _,record in ipairs(context.list) do
+		local is_eligible=record.eligible_rock
+		if is_eligible==nil then is_eligible=IsValid(record.obj) and eligible(record.obj) end
+		if IsValid(record.obj) and is_eligible then
+		result.eligible=result.eligible+1
+		local row=record.obj.SuperBigMapSupportValidation
+		if record.support_terrain_witness and not (context.repair_targets and context.repair_targets[record.obj]) then
+			result.terrain=result.terrain+1
+		elseif record.relevant and record.complete and row and row.geometry_complete and row.current_geometry_status=="valid" then
+			result.graph=result.graph+1
+		else
+			result.unresolved=result.unresolved+1
+			result.findings[#result.findings+1]={entity=record.obj:GetEntity(),position=XYZ(record.obj:GetVisualPos()),
+				status=row and row.current_geometry_status or "inconclusive",reason=row and row.reason or record.reason}
+		end
+	end end
+	return result
+end
+
+local function PlacementNeighbours(context,bounds,pad)
+	local result={}
+	for _,node in ipairs(context.index:Query(bounds,pad)) do
+		if not (context.seated and context.seated[node.record.obj]) then result[#result+1]=node end
+	end
+	for _,record in pairs(context.seated or {}) do
+		for _,node in ipairs(record.nodes) do if Overlap(node.bounds,bounds,pad) then result[#result+1]=node end end
+	end
+	return result
+end
+
+function Validator.SeatingPlacementClear(map,obj,bounds,rotation,search)
 	local context=contexts[map]
 	if not context or not context.index then return false end
 	local record=context.by_object[obj];if not record then return false end
-	local original=BoxBounds(obj:GetObjectBBox())
+	local original=rotation and rotation.bounds or BoxBounds(obj:GetObjectBBox())
 	local delta={bounds[1]-original[1],bounds[2]-original[2],bounds[3]-original[3]}
-	local moved={}
+	local moved,transforms={},{}
 	for _,own in ipairs(record.nodes) do
-		local source=own.transform_record or record
-		local transform={obj=obj,pose={matrix=Matrix(source),scale=source.pose.scale,shift={}}}
-		for i=1,3 do transform.pose.shift[i]=source.pose.shift[i]+delta[i] end
-		moved[#moved+1]={record=record,transform_record=transform,geometry=own.geometry,component=own.component}
+		local source=rotation and rotation.record or own.transform_record or record
+		-- All rigid pieces in this proposal share one captured pose. Share its
+		-- transformed-vertex/BVH caches too; discard them for the next proposal.
+		local transform=transforms[source]
+		if not transform then
+			transform={obj=obj,pose={matrix=Matrix(source),scale=source.pose.scale,shift={}}}
+			for i=1,3 do transform.pose.shift[i]=source.pose.shift[i]+delta[i] end
+			transforms[source]=transform
+		end
+		moved[#moved+1]={record=record,transform_record=transform,geometry=own.geometry,component=own.component,original=own}
 	end
-	for _,node in ipairs(context.index:Query(bounds,2)) do
+	-- The rejecting member of a rigid group is often the same across adjacent
+	-- proposals. Try that member first at the NEW pose, just as we already try
+	-- the last blocking neighbour first. This retains every check on accepted
+	-- placements and caches no collision/support verdict across movement.
+	if search and search.blocking_component then
+		for i,own in ipairs(moved) do
+			if own.component==search.blocking_component and own.geometry==search.blocking_geometry then
+				moved[1],moved[i]=own,moved[1];break
+			end
+		end
+	end
+	local neighbours=PlacementNeighbours(context,bounds,2)
+	-- Adjacent search positions often encounter the same obstruction. Test that
+	-- captured node first, but only if the NEW bounds query still includes it.
+	-- This is ordering, not a cached collision verdict at a different pose.
+	if search and search.blocker then
+		for i,node in ipairs(neighbours) do if node==search.blocker then
+			neighbours[1],neighbours[i]=node,neighbours[1];break
+		end end
+	end
+	local function reject(node,reason,own)
+		if search then
+			search.blocker=node
+			search.blocking_component=own and own.component
+			search.blocking_geometry=own and own.geometry
+		end
+		return false,node.record.obj:GetEntity(),reason
+	end
+	for _,node in ipairs(neighbours) do
 		if node.record.obj~=obj then
-			if node.unknown or node.partial or not node.record.complete then return false,node.record.obj:GetEntity() end
+			if node.unknown or node.partial or not node.record.complete then return reject(node,"neighbour geometry unavailable") end
 			for _,own in ipairs(moved) do
 				-- Shared BVHs prune irrelevant triangle pairs. Empty placement needs
 				-- proven separation, including containment, not just no crossing faces.
 				local contact,separated=ComponentContact(own,node,2)
-				if contact or not separated then return false,node.record.obj:GetEntity() end
+				if contact then
+					-- A native formation may already intersect its neighbouring rocks.
+					-- A vertical seating must not invent a new intersecting component pair.
+					-- Retain an existing pair only with actual current AND native contact
+					-- proofs; the planner and post-move validator still enforce visibility
+					-- and rooted support for every component of the rigid assembly.
+					local movement=rotation and rotation.movement or delta
+					if movement[1]~=0 or movement[2]~=0 or movement[3]>=0 or obj.SuperBigMapDecorEnginePass then
+						return reject(node,"intersection during relocation or upward move",own) end
+					local proofs=search and search[own.original]
+					local proof=proofs and proofs[node]
+					if not proof then
+						proof={}
+						if not ComponentContact(own.original,node,2) then proof.reason="new current component intersection"
+						else
+							local a,b=NativeComponent(own.original),NativeComponent(node)
+							if not a or not b then proof.reason="native component frame unavailable"
+							elseif not ComponentContact(a,b,2) then proof.reason="native component pair did not intersect" end
+						end
+						if search then proofs=proofs or {};search[own.original]=proofs;proofs[node]=proof end
+					end
+					if proof.reason then return reject(node,proof.reason,own) end
+				elseif not separated then return reject(node,"open containment unresolved",own) end
 			end
 		end
 	end
 	return true
+end
+
+-- Confirm the actual native pose, not merely the planner's affine rotation.
+-- Retained intersections require the same current AND native pair proofs;
+-- local XY moves may not introduce or retain an intersecting pair.
+function Validator.SeatingCurrentPoseClear(map,obj,from)
+	local context=contexts[map];local original=context and context.by_object[obj]
+	if not original or not original.complete then return false end
+	local bounds=BoxBounds(obj:GetObjectBBox())
+	local x,y,z=obj:GetPosXYZ()
+	local movement=from and {x-from[1],y-from[2],z-from[3]} or {0,0,0}
+	return Validator.SeatingPlacementClear(map,obj,bounds,{bounds=bounds,movement=movement,record={obj=obj,pose=Pose(obj)}})
+end
+
+-- A stone supported by a cliff in vanilla must stop at the cliff, not be driven
+-- through it to the terrain. Sweep the entire rigid rendered geometry through
+-- the proposed downward move and return the first detailed-mesh contact. All
+-- unknown bounds still veto; independent rooted-support validation after the
+-- move decides whether this is a usable support, never this proposal alone.
+function Validator.SeatingVerticalContact(map,obj,bounds,maximum)
+	local context=contexts[map]
+	local record=context and context.by_object[obj]
+	if not context or not context.index or not record or not record.complete
+		or type(maximum)~="number" or maximum<=0 or maximum>=math.huge then return nil end
+	local swept={bounds[1],bounds[2],bounds[3]-maximum,bounds[4],bounds[5],bounds[6]}
+	local near=PlacementNeighbours(context,swept,2)
+	local best,found,best_node=maximum,false,nil
+	local function can_meet(a,b)
+		return a[1]<=b[4] and b[1]<=a[4] and a[2]<=b[5] and b[2]<=a[5]
+			and a[3]-best<=b[6] and b[3]<=a[6]
+	end
+	for _,other in ipairs(near) do if other.record.obj~=obj then
+		if other.unknown or other.partial or not other.record.complete then return nil,"unknown swept neighbour" end
+		-- The same detailed neighbour mesh supplies physical support in Scan.
+		-- Lower LODs are alternative visuals, not simultaneous stacked solids.
+		if other.lod==0 then
+		for _,own in ipairs(record.nodes) do
+			local retained=false
+			if not obj.SuperBigMapDecorEnginePass and ComponentContact(own,other,2) then
+				local a,b=NativeComponent(own),NativeComponent(other)
+				retained=a and b and ComponentContact(a,b,2) or false
+			end
+			if not retained then
+			local ar,br=own.transform_record or record,other.transform_record or other.record
+			local av,bv,ab,bb={},{},{},{}
+			local function vertex(node,r,cache,i)
+				if not cache[i] then cache[i]=World(r,node.geometry.vertices[i]) end
+				return cache[i]
+			end
+			local function world_box(r,tree,cache)
+				if not cache[tree] then cache[tree]=WorldBounds(r,tree.bounds) end
+				return cache[tree]
+			end
+			local function visit(a,b)
+				if not can_meet(world_box(ar,a,ab),world_box(br,b,bb)) then return end
+				if a.items and b.items then
+					for _,ai in ipairs(a.items) do for _,bi in ipairs(b.items) do
+						if can_meet(world_box(ar,ai,ab),world_box(br,bi,bb)) then
+							local x,y={},{}
+							for i=1,3 do x[i]=vertex(own,ar,av,ai.triangle[i]);y[i]=vertex(other,br,bv,bi.triangle[i]) end
+							local distance=Geometry.VerticalTriangleContact(x,y,best)
+							if distance then best=distance;found=true;best_node=own end
+						end
+					end end
+				elseif a.items then visit(a,b.left);visit(a,b.right)
+				elseif b.items then visit(a.left,b);visit(a.right,b)
+				else visit(a.left,b.left);visit(a.left,b.right);visit(a.right,b.left);visit(a.right,b.right) end
+			end
+			visit(Geometry.TriangleTree(own.geometry,own.component),Geometry.TriangleTree(other.geometry,other.component))
+			end
+		end
+		end
+	end end
+	if not found then return nil,"no rendered support along vertical move" end
+	if best_node and best_node.supported then return nil,"new contact blocks the grounded member before its floating neighbour seats" end
+	-- Native Z is integral. Stop just BEFORE contact, within the validator's
+	-- two-unit contact tolerance; never round down through the supporting mesh.
+	local drop=floor(best-1e-6)
+	if drop<=0 then return nil,"no safe nonzero vertical move" end
+	return -drop
 end
 -- The diagnostic switch must not disable production fixes. A correction-only
 -- scope inspects candidate placements and nearby support, not source history,
 -- distant wonders, animated cave-ins or every object on map load/switch. Bounds
 -- of ALL other objects remain in the index, so omitted geometry can veto a
 -- correction but can never become evidence of empty space.
-function Validator.Correction(map,layer,apply)
+local function MultipleRenderedComponents(asset)
+	if not asset or not asset.complete then return false end
+	local counts={}
+	for _,part in ipairs(asset.parts or {}) do
+		local geometry=part.mesh and part.mesh.geometry
+		if not geometry then return false end
+		-- LODs are alternative renderings, not simultaneous fragments of a
+		-- native assembly. Only a single rendered LOD can contain both an
+		-- authored gap and its retained root. Current support still checks ALL
+		-- LODs; this narrows only pre-expansion composition capture.
+		local lod=part.lod or 0
+		counts[lod]=(counts[lod] or 0)+#geometry.components
+		if counts[lod]>1 then return true end
+	end
+	return false
+end
+
+local function GroundedRigidInstance(obj,map,width,height,tolerance,asset)
+	asset=asset or Geometry.Instance(obj)
+	if not asset.complete or asset.animated or Projected(obj) or obj:GetClipPlane()~=0
+		or (type(obj.GetSkewX)=="function" and obj:GetSkewX()~=0)
+		or (type(obj.GetSkewY)=="function" and obj:GetSkewY()~=0)
+		or (type(obj.GetWarped)=="function" and obj:GetWarped())
+		or type(obj.GetTerrainDistortedSupport)~="function" then return false,asset end
+	local distorted=obj:GetTerrainDistortedSupport()
+	if distorted~=false and distorted~="disabled" then return false,asset end
+	local terrain=Global("terrain");local unit=Global("guim");local count=0
+	local function grounded(local_point)
+		local p=obj:GetRelativePoint(local_point);local x,y,z=p:xyz()
+		return x>=0 and y>=0 and x<width and y<height and z<=terrain.GetHeight(map,p)+tolerance
+	end
+	for _,part in ipairs(asset.parts) do
+		local geometry=part.mesh.geometry
+		if not geometry or geometry.animated or part.material_complete==false then return false,asset end
+		for _,component in ipairs(geometry.components) do
+			count=count+1
+			local bottom=component.bottom or component.samples[1]
+			if not component.bottom_point then component.bottom_point=Point({bottom[1]*unit,bottom[2]*unit,bottom[3]*unit}) end
+			local supported=grounded(component.bottom_point)
+			if not supported then
+				local points=component.extrema_points
+				if not points then
+					points={};component.extrema_points=points
+					for _,p in ipairs(component.samples) do points[#points+1]=Point({p[1]*unit,p[2]*unit,p[3]*unit}) end
+				end
+				for _,p in ipairs(points) do if grounded(p) then supported=true;break end end
+			end
+			if not supported then return false,asset end
+		end
+	end
+	return count>0,asset
+end
+
+function Validator.Correction(map,layer,apply,native_capture)
 	local prior=contexts[map]
 	local old_report,old_progress=map.SuperBigMapDecorationValidation,map.SuperBigMapDecorationValidationProgress
-	local context={map=map,list={},by_object={},capture_ms=0,correction_only=true,repair_targets={},positive_only=layer=="Underground"}
+	-- Native history is retained only to protect real authored intersections.
+	-- Proving native gaps is redundant now: they no longer exempt a floating
+	-- expanded component. Current geometry still receives the full gap proof.
+	local context={map=map,list={},by_object={},capture_ms=0,correction_only=true,repair_targets={},positive_only=layer=="Underground" or native_capture,native_capture=native_capture}
+	local correction_started=Tick()
+	-- Nomination and its initial scans are one synchronous, read-only phase.
+	-- Reuse its complete native world bounds and hole census only in that phase;
+	-- discard the permission BEFORE the correction callback can move anything.
+	context.preparation_snapshot=true
 	contexts[map]=context
 	local ok,result=pcall(function()
+		if native_capture then
+			-- A map with no multi-piece rendered assemblies cannot need a
+			-- rooted-plus-gap native-composition baseline. Avoid constructing an
+			-- unused map-wide bounds index and thousands of record tables there.
+			-- Inspect actual instance assets (including overrides), never infer
+			-- this from entity names. Any eligible assembly keeps the full path.
+			local found=false;local eligible=SBM.RockGrounding and SBM.RockGrounding.Eligible
+			map:MapForEach("map","CObject",function(obj)
+				if not found and IsValid(obj) and eligible and eligible(obj)
+					and MultipleRenderedComponents(Geometry.Instance(obj)) then found=true end
+			end)
+			if not found then return {captured=true,candidates=0,total_ms=Tick()-correction_started} end
+		end
 		local bounds_index=Validator.Index(6400)
+		-- During this synchronous source capture, decoded asset descriptors are
+		-- immutable and shared by many instances. A one-piece asset cannot need
+		-- an authored assembly baseline. Establish that before invoking the full
+		-- gameplay-object classifier, but keep every object's bounds in the index.
+		-- The live instance descriptor (including forced LOD/replacements) is still
+		-- read for every object; this caches only the asset's component count.
+		local native_assemblies={}
+		local function native_assembly(obj)
+			local asset=Geometry.Instance(obj)
+			local multiple=native_assemblies[asset]
+			if multiple==nil then multiple=MultipleRenderedComponents(asset);native_assemblies[asset]=multiple end
+			return multiple,asset
+		end
 		local terrain=Global("terrain");local width,height=map:GetMapSize()
 		local tolerance=min(2,Global("const").HeightTileSize/50.0)
-		local candidates={};local eligible=SBM.RockGrounding and SBM.RockGrounding.Eligible
+		-- A native height value under a terrain-cutting entrance/wonder is not
+		-- visible ground. Nomination must not certify such a rock before Scan's
+		-- exact hole-triangle and rendered-neighbour checks can run. This census
+		-- precedes EVERY nomination, independent of object enumeration order.
+		local cuts={}
+		local hole_flag=(Global("EntitySurfaces") or {}).TerrainHole
+		local has_surfaces=Global("HasAnySurfaces")
+		if layer=="Surface" and hole_flag and type(has_surfaces)=="function" then
+			context.cut_snapshot={}
+			map:MapForEach("map","CObject",function(obj)
+				if IsValid(obj) and has_surfaces(obj,hole_flag,true) then
+					context.cut_snapshot[obj]=true
+					cuts[#cuts+1]=BoxBounds(obj:GetObjectBBox())
+				end
+			end)
+		end
+		local candidates={};local evidence_profiles={};local eligible=SBM.RockGrounding and SBM.RockGrounding.Eligible
 		map:MapForEach("map","CObject",function(obj)
 			if not IsValid(obj) then return end
 			local kind=Global("IsKindOf")
 			local record={obj=obj,relevant=false,projected=Projected(obj),
 				editor_only=type(kind)=="function" and kind(obj,"EditorVisibleObject") or false}
+			if layer=="Surface" then record.eligible_rock=false end
 			context.list[#context.list+1]=record;context.by_object[obj]=record
-			bounds_index:Add({bounds=BoxBounds(obj:GetObjectBBox()),record=record})
+			local object_bounds=BoxBounds(obj:GetObjectBBox())
+			record.nomination_bounds=object_bounds
+			bounds_index:Add({bounds=object_bounds,record=record})
+			local near_cut=false
+			for _,b in ipairs(cuts) do
+				if object_bounds[1]<=b[4] and b[1]<=object_bounds[4]
+					and object_bounds[2]<=b[5] and b[2]<=object_bounds[5] then near_cut=true;break end
+			end
 			local candidate=false
+			local native_multiple,native_asset
+			if native_capture and layer=="Surface" then native_multiple,native_asset=native_assembly(obj) end
 			if layer=="Underground" then
 				candidate=obj.class=="TunnelBlockerRubble" and obj:GetEntity()=="CaveIn_TunnelBlocker_1"
 					and not obj.SuperBigMapSupportRepair and not obj.clear_request
 					and obj.remaining_work_to_clear==obj.required_work_to_clear
-			elseif layer=="Surface" and eligible and eligible(obj) then
-				-- A real terrain witness for every connected component rules out the
-				-- loose-stone fix. A missing witness only nominates a candidate; the
-				-- exact support/separation checks still authorize any actual move.
-				record.pose=Pose(obj);BuildNodes(record)
+			elseif layer=="Surface" and (not native_capture or native_multiple) and eligible and eligible(obj) then
+				record.eligible_rock=true
+				-- A one-component rendered LOD cannot have BOTH an inherited gap and a
+				-- retained native root. It needs no native-composition nomination.
+				-- Such objects still enter the bounds index and are fully inspected
+				-- when a multi-component neighbour needs their support evidence.
+				if not native_capture or native_multiple then
+				-- Most rocks have direct terrain witnesses. Probe those actual vertices
+				-- without allocating a full support graph/pose per grounded instance.
+				-- A failed/unsupported probe still takes the complete existing path.
+				local grounded_instance,asset=false,native_asset
+				if not near_cut then grounded_instance,asset=GroundedRigidInstance(obj,map,width,height,tolerance,native_asset) end
+				record.support_terrain_witness=grounded_instance or false
+				if not grounded_instance then
+				-- Only real mesh vertices can prove that every connected component touches
+				-- terrain. An object's origin can lie below terrain while its mesh floats.
+				-- Try the six component extrema when the local bottom misses on a slope;
+				-- these are the same positive witnesses used by Scan, so they avoid expanding
+				-- a full nearby support search for already-grounded objects.
+				record.pose=Pose(obj);BuildNodes(record,asset)
 				if record.complete and #record.nodes>0 then
-					for _,node in ipairs(record.nodes) do
-						local p=node.samples[1]
-						if node.geometry.animated or node.partial then candidate=false;break end
-						if p[1]<0 or p[2]<0 or p[1]>=width or p[2]>=height
-							or p[3]>terrain.GetHeight(map,Point(p))+tolerance then candidate=true end
+					local all_grounded=true
+					local function grounded(p)
+						return not near_cut and p[1]>=0 and p[2]>=0 and p[1]<width and p[2]<height
+							and p[3]<=terrain.GetHeight(map,Point(p))+tolerance
 					end
+					for _,node in ipairs(record.nodes) do
+						if node.geometry.animated or node.partial then candidate=false;all_grounded=false;break end
+						local supported=grounded(node.samples[1])
+						if not supported then
+							for _,p in ipairs(node.component.samples or {}) do
+								if grounded(World(node.transform_record or record,p)) then supported=true;break end
+							end
+						end
+						if not supported then candidate=true;all_grounded=false end
+					end
+					record.support_terrain_witness=all_grounded
 				end
 				record.correction_prebuilt=true
+				end
+				end
 			end
 			if candidate then candidates[#candidates+1]=record;context.repair_targets[obj]=true end
 		end)
+		local nomination_ms=Tick()-correction_started
 		local selected={};local c=SBM.ObjectClone
 		local function select_near(node)
 			local near=node.record
 			if not near.relevant then
 				near.relevant=Relevant(near.obj,c.ShouldSkipObject(near.obj),c.IsImportantSectorObject(near.obj))
+				if not near.relevant and not near.nonphysical then
+					local asset=Geometry.Instance(near.obj)
+					if asset.complete and (asset.render_kind=="native non-rendering logical marker"
+						or asset.render_kind=="native non-rendering entity") then
+						near.nonphysical=asset.render_kind;near.complete=true
+					end
+				end
 			end
 		end
 		for _,record in ipairs(candidates) do
 			record.relevant=true
 			local b=BoxBounds(record.obj:GetObjectBBox())
-			local range=record.obj.SuperBigMapDecorEnginePass and 32*5*Global("const").HeightTileSize or 2
+			local range=2
 			local region={b[1]-range,b[2]-range,-1e12,b[4]+range,b[5]+range,1e12}
 			if layer=="Surface" then bounds_index:QueryOnce(region,2,selected,select_near) end
 		end
@@ -1800,17 +2806,66 @@ function Validator.Correction(map,layer,apply)
 						geometry_complete=record.complete,placement_repaired=false,reason="correction proposal awaiting positive support proof"}
 				end
 			else
+				if native_capture then
+					-- New policy needs the original mesh/rigid frame to protect authored
+					-- intersections, not a second terrain-support census. Reconstruct
+					-- only the selected source geometry; source support remains explicitly
+					-- unclassified and can never exempt current floating geometry.
+					context.native_geometry_only=true
+					for _,record in ipairs(context.list) do if record.relevant and IsValid(record.obj) then
+						if not record.nodes then record.pose=Pose(record.obj);BuildNodes(record) end
+					end end
+					StoreBaselines(context)
+					return {captured=true,geometry_only=true,candidates=#candidates,total_ms=Tick()-correction_started,
+						nomination_ms=nomination_ms,evidence_ms=Tick()-correction_started-nomination_ms}
+				end
 				Validator.Validate(map,"correction-only placement evidence")
+				evidence_profiles[#evidence_profiles+1]=context.profile
 				for _,record in ipairs(candidates) do record.correction_complete=record.complete end
+				-- Build exact neighbour geometry only around confirmed correction
+				-- candidates. Native float repairs have a tightly bounded local search;
+				-- top-ups retain their original wider relocation neighbourhood.
+				-- All other objects remain conservative unknown bounds.
+				local expansion={}
+				for _,entry in ipairs(Validator.SeatingEvidence(map)) do
+						local b=entry.bounds;local range=32*5*Global("const").HeightTileSize
+						if not entry.obj.SuperBigMapDecorEnginePass then range=16*Global("const").HeightTileSize end
+						local region={b[1]-range,b[2]-range,-1e12,b[4]+range,b[5]+range,1e12}
+						bounds_index:QueryOnce(region,2,selected,function(node)
+							local before=node.record.relevant
+							select_near(node)
+							if not before and node.record.relevant then expansion[node.record]=true end
+						end)
+				end
+				if next(expansion) then
+					-- Cached initial findings are retained for unchanged instances; newly loaded
+					-- neighbours receive full geometry/support inspection before any move.
+					context.selection=expansion
+					Validator.Validate(map,"correction relocation neighbourhood")
+					evidence_profiles[#evidence_profiles+1]=context.profile
+				end
 			end
 		end
-		return apply(map)
+		local evidence_ms=Tick()-correction_started-nomination_ms
+		if native_capture then return {captured=true,candidates=0,total_ms=Tick()-correction_started} end
+		context.preparation_snapshot=nil;context.cut_snapshot=nil
+		local result=apply(map)
+		if type(result)=="table" then
+			result.nomination_ms=nomination_ms;result.evidence_ms=evidence_ms
+			result.total_ms=Tick()-correction_started;result.candidates=#candidates
+			result.evidence_profiles=evidence_profiles
+		end
+		return result
 	end)
 	contexts[map]=prior
 	map.SuperBigMapDecorationValidation=old_report
 	map.SuperBigMapDecorationValidationProgress=old_progress
 	if not ok then error(result) end
 	return result
+end
+
+function Validator.CaptureNativeCompositions(map)
+	return Protected("Correction",map,"Surface",nil,true)
 end
 
 function Validator.WithCorrectionEvidence(map,layer,apply)

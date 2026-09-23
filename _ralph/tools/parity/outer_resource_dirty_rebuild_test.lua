@@ -128,4 +128,37 @@ assert(#failures == 1 and failures[1].unit == "outer resource terrain dirty-regi
 	"invalid certificate did not record exactly one optimization failure")
 assert(#calls == 0, "invalid certificate performed a partial rebuild")
 
-print("PASS outer resource dirty-region rebuild: patch + terminal bounds, margin, full buildable, fail-loud")
+-- A resource patch inside its rocket pad must not request a second native
+-- pass. Partially overlapping boxes may merge only when scan area decreases.
+calls, failures = {}, {}
+certificate.dirty_height_regions={
+ {source='patch',x0=100,y0=100,x1=200,y1=200},
+ {source='patch',x0=125,y0=125,x1=175,y1=175},
+ {source='patch',x0=150,y0=100,x1=250,y1=200},
+ {source='patch',x0=700,y0=700,x1=710,y1=710},
+}
+certificate.dirty_region_count=4
+ok,report=rebuild(map,certificate,'overlapping pads')
+assert(ok and report.source_regions==4 and report.regions==2 and #calls==7)
+assert(calls[1].value.x0==9800 and calls[1].value.y0==9800
+ and calls[1].value.x1==25200 and calls[1].value.y1==20200,'merged coverage differs')
+local original_area,merged_area=0,0
+for _,r in ipairs(certificate.dirty_height_regions) do original_area=original_area+(r.x1-r.x0+4)*(r.y1-r.y0+4)*10000 end
+for i=1,#calls-1,3 do local r=calls[i].value;merged_area=merged_area+(r.x1-r.x0)*(r.y1-r.y0) end
+assert(merged_area<=original_area,'coalescing increased native scan area')
+for _,r in ipairs(certificate.dirty_height_regions) do
+ local covered=false
+ for i=1,#calls-1,3 do local b=calls[i].value
+  if b.x0<=r.x0*100-200 and b.y0<=r.y0*100-200 and b.x1>=r.x1*100+200 and b.y1>=r.y1*100+200 then covered=true end
+ end
+ assert(covered,'coalescing dropped a certified cell or dependency margin')
+end
+calls,failures={},{}
+certificate.dirty_height_regions={
+ {source='patch',x0=100,y0=100,x1=200,y1=200},
+ {source='patch',x0=125,y0=125,x1=225,y1=225},
+}
+certificate.dirty_region_count=2
+ok,report=rebuild(map,certificate,'non-rectangular overlap')
+assert(ok and report.regions==2,'bounding-box overscan changed the certified union')
+print("PASS outer resource dirty-region rebuild: exact union, no overscan, full buildable, fail-loud")

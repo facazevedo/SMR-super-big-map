@@ -184,7 +184,7 @@ config.PreventElevatorFlatten = true
 -- unlock and quick-build the next placed Elevator, (2) follow the normal underground map switch
 -- path, (3) reveal every surface sector, and (4) reveal all underground resources, anomalies,
 -- effects, buried wonders, and darkness for inspection.
-config.PlaceElevatorButtonEnabled = false
+config.PlaceElevatorButtonEnabled = true
 
 -- Impassable edge border (WORLD UNITS) kept around the expanded map. DEFAULT is full
 -- passability (0) so a rover unloaded from a rocket that lands anywhere -- including near
@@ -624,10 +624,10 @@ config.OptimizeAnomalyCandidateSearch = true
 -- Reuse class-invariant DepositMarker property metadata and the immutable XYZ captured by stage 01
 -- while serializing native enrichment records from the temporary source.
 config.OptimizeNativeEnrichmentRecordCapture = true
--- Experimental only. Although the temporary surface source's passability grid is never consumed,
--- this engine asserts from map destruction unless every suspended PassEdits reason was resumed.
--- Keep the required flush enabled; disabling it is not a valid optimization on the retail build.
-config.OptimizeDiscardTemporarySourcePassEdits = false
+-- Defer the temporary source's final migration edit batch until its backing is released.
+-- The native source is still retained for the passage-query bridge; do not remove that bridge.
+-- The destination has its own committed pass/build grids and final passage validation.
+config.OptimizeDiscardTemporarySourcePassEdits = true
 -- Experimental deferred reachability was slower in runtime testing because most candidates chosen
 -- by the spacing selectors were unreachable, forcing hundreds of rejected ConnectivityCheck calls.
 -- Keep reachability in the original candidate-validation path used by v658/308d89c.

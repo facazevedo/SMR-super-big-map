@@ -1359,6 +1359,24 @@ CreateRealTimeThread(function()
 				-- reveal census that is this run's whole purpose.
 				Sleep(control_settle_ms)
 			end
+			-- Include first-access preparation even if it starts during placement,
+			-- and never end the timer with either loading cover still visible.
+			local function loading_ready()
+				return CurrentMap == ug
+					and (not expand_map or (ug.SuperBigMapUndergroundPrepared == true
+						and ug.SuperBigMapUndergroundStretchDone == true
+						and ug.SuperBigMapForcedImpassDeferred ~= true
+						and cover_refs == 0 and cover_visible() == "false"))
+					and type(GetLoadingScreenDialog) == "function" and not GetLoadingScreenDialog()
+			end
+			while GetPreciseTicks() < sdl and not loading_ready() do Sleep(10) end
+			R.ug_loading_ms = GetPreciseTicks() - phase_t0
+			R.ug_loading_ready = tostring(loading_ready())
+			R.ug_loading_boundary = "first-access-phase through prepared and covers closed"
+			if not loading_ready() then
+				restore_counters()
+				return "underground preparation or loading covers did not finish within 900 s"
+			end
 			switch_win_t1 = GetPreciseTicks()
 			R.ug_switch_ms = switch_win_t1 - switch_t0
 			R.ug_current_is_underground = tostring(CurrentMap == ug)

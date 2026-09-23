@@ -7,6 +7,8 @@ if arg[2]then local k=assert(io.open(arg[2],'r'));kernel_source=k:read('*a');k:c
 local kernel_body=assert(kernel_source:match('(local function TranslateHeightTrack.-)\nreturn TranslateHeightTrack')
  or kernel_source:match('(local function TranslateHeightTrack.-)\nlocal function RepairInternalHeightStep'))
 local translate=assert(load(kernel_body..'\nreturn TranslateHeightTrack'))()
+local discovery_body=assert(candidate:match('(local function BuildHeightStepDiscoveryIndex.-)\nlocal function TranslateHeightTrack'))
+local native_discovery=assert(load(discovery_body..'\nreturn BuildHeightStepDiscoveryIndex'))()
 local api=dofile('_ralph/tools/parity/native_grid_double.lua')
 api.GridMask=function(input,output,lo,hi)
  local w,h=input:size();for y=0,h-1 do for x=0,w-1 do
@@ -44,7 +46,7 @@ local function run(s,case)
   batched=batched+1
   return translate(...)
  end
- local env=setmetatable({BuildHeightStepDiscoveryIndex=scalar_discovery,TranslateHeightTrack=counted_translation,
+ local env=setmetatable({BuildHeightStepDiscoveryIndex=s==candidate and native_discovery or scalar_discovery,TranslateHeightTrack=counted_translation,
   Global=function(k)if k=='GridMinMax'then return function()return 0,65535 end end;return api[k]end},{__index=_G})
  local repair=assert(load(extract(s)..'\nreturn RepairInternalHeightStep','track order','t',env))()
  local changed,report=repair(g,false)

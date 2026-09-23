@@ -64,6 +64,35 @@ for _,inclusive in ipairs({false,true}) do
 			check(rows~=nil,"native build failed: "..tostring(stats))
 			check(same(rows,oracle(grid,axis,1,perpendicular-3,n,step,widths,128)),"candidate/order mismatch")
 			check(stats.enumerated>=stats.candidates,"enumeration census")
+			local fast,fast_stats,offers=build(api,grid,axis,1,perpendicular-3,n,step,widths,128,true)
+			check(same(rows,fast),"signed offer export changed candidate order: "..tostring(fast_stats).." case="..case.." axis="..axis.." step="..step.." widths="..widths)
+			local function at(p,a) return axis=="x" and grid:get(p,a) or grid:get(a,p) end
+			for _,sign in ipairs({-1,1}) do
+				local directed,dstats,doffers=build(api,grid,axis,1,perpendicular-3,n,step,widths,128,true,sign)
+				check(directed~=nil,'directed discovery failed: '..tostring(dstats))
+				local expected_rows={}
+				for along,row in pairs(offers) do for p,position in pairs(row) do
+					local found=false
+					for width,jump in pairs(position) do
+						local expected=jump*sign>0 and jump or nil
+						local actual=doffers[along] and doffers[along][p] and doffers[along][p][width]
+						check(actual==expected,'edge mask changed a qualifying signed offer')
+						found=found or expected~=nil
+					end
+					if found then expected_rows[along]=expected_rows[along] or {};table.insert(expected_rows[along],p) end
+				end end
+				for _,row in pairs(expected_rows) do table.sort(row) end
+				check(same(directed,expected_rows),'edge mask changed candidate order')
+			end
+			for along=0,n-1,step do for p=1,perpendicular-3 do for width=1,widths do
+				if p+width+1<perpendicular then
+					local v0,a,b,v3=at(p-1,along),at(p,along),at(p+width,along),at(p+width+1,along)
+					local jump=b-a
+					local expected=math.abs(jump)>=128 and math.abs(jump)>=2*math.max(math.abs(a-v0),math.abs(v3-b),1)
+					local actual=offers[along] and offers[along][p] and offers[along][p][width]
+					check((expected and actual==jump) or (not expected and actual==nil),"signed offer differs from scalar predicate")
+				end
+			end end end
 		end end end
 		grid:free()
 	end

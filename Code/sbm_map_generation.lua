@@ -3301,24 +3301,40 @@ end
 -- generation is viewing an expanded backing through native-sized dimensions.
 -- Preserve cell pitch: pad/copy the source rectangle, never rescale it. The
 -- native setter must receive the physical backing size, even in source view.
-function SuperBigMap.InstallSourceTerrainWriteBridge(map, source_w, source_h, backing_w, backing_h)
+function SuperBigMap.InstallSourceTerrainWriteBridge(map, source_w, source_h, backing_w, backing_h, defer_impass)
 	local api = Global("terrain")
 	local set_type, set_impass = api.SetTypeGrid, api.SetForcedImpassFromMask
-	local stats = { type_writes = 0, mask_writes = 0 }
+	local rebuild_pass = api.RebuildPassability
+	local stats = { type_writes = 0, mask_writes = 0, deferred_masks = 0, deferred_rebuilds = 0 }
 	local function write(original, target, grid, mask, ...)
 		if target ~= map then return original(target, grid, ...) end
 		if mask then
 			local bytes, encode_error = Global("GridWriteStr")(grid)
-			if type(bytes) ~= "string" then error("forced impassability capture: " .. tostring(encode_error)) end
+			if type(bytes) ~= "string" then
+				stats.error = "forced impassability capture: " .. tostring(encode_error)
+				error(stats.error)
+				return nil
+			end
 			map.SuperBigMapForcedImpassSource = bytes
+			if defer_impass == true then
+				-- Passage anchors have already been generated. Their authored coordinates and
+				-- the surface's nearest-valid-footprint planner do not read this underground
+				-- raster. Keep its exact bytes for the final stretch, before access is allowed,
+				-- instead of installing a temporary source mask that must later be replaced.
+				map.SuperBigMapForcedImpassDeferred = true
+				stats.deferred_masks = stats.deferred_masks + 1
+				return nil
+			end
 		end
 		local w, h = grid:size()
 		local expected_w = w * backing_w / source_w
 		local expected_h = h * backing_h / source_h
 		if expected_w % 1 ~= 0 or expected_h % 1 ~= 0 then
-			error("source terrain write has non-integral backing dimensions")
+			stats.error = "source terrain write has non-integral backing dimensions"
+			error(stats.error)
 			return nil
 		end
+		local args = PackValues(...)
 		local raw, padded
 		if mask then
 			padded = Global("NewComputeGrid")(expected_w, expected_h, "U", 8)
@@ -3327,12 +3343,31 @@ function SuperBigMap.InstallSourceTerrainWriteBridge(map, source_w, source_h, ba
 			raw = api.GetTypeGrid(target)
 			local rw, rh = raw:size()
 			if rw ~= expected_w or rh ~= expected_h then
-				error("source terrain write does not match physical type-grid dimensions")
+				stats.error = "source terrain write does not match physical type-grid dimensions"
+				error(stats.error)
 				return nil
 			end
-			padded = Global("GridToCompute")(raw)
+			-- Native unscaled, corner-anchored regional writing preserves every cell
+			-- outside the source rectangle. Its API requires a real U8 compute grid;
+			-- the generator's packed grid is not necessarily U8. Exact repacking plus
+			-- this write avoids copying tens of millions of cells into a padded grid.
+			local typed
+			local results = PackValues(pcall(function()
+				typed = Global("GridRepack")(grid, "U", 8)
+				if not typed then return "source type-grid U8 conversion failed" end
+				return original(target, {
+					type_grid = typed, pos = Global("point")(0, 0), scale = 100, centered = false,
+				}, Unpack(args, 1, args.n))
+			end))
+			if typed then FreeMigrationGrid(typed, grid) end
+			if not results[1] or results[2] then
+				stats.error = "source regional type-grid write: " .. tostring(results[2])
+				error(stats.error)
+				return nil
+			end
+			stats.type_writes = stats.type_writes + 1
+			return Unpack(results, 2, results.n)
 		end
-		local args = PackValues(...)
 		local results = PackValues(pcall(function()
 			padded:copyrect(grid, Global("box")(0, 0, w, h), Global("point")(0, 0))
 			return original(target, padded, Unpack(args, 1, args.n))
@@ -3344,11 +3379,23 @@ function SuperBigMap.InstallSourceTerrainWriteBridge(map, source_w, source_h, ba
 	end
 	local type_wrapper = function(target, grid, ...) return write(set_type, target, grid, false, ...) end
 	local mask_wrapper = function(target, grid, ...) return write(set_impass, target, grid, true, ...) end
+	local rebuild_wrapper = function(target, ...)
+		-- Only the final native rebuild AFTER the captured mask is redundant. Earlier
+		-- generation queries and other maps keep their original rebuilds. Final expanded
+		-- terrain is rebuilt synchronously before underground access/entrance validation.
+		if target == map and stats.deferred_masks > 0 then
+			stats.deferred_rebuilds = stats.deferred_rebuilds + 1
+			return nil
+		end
+		return rebuild_pass(target, ...)
+	end
 	api.SetTypeGrid = type_wrapper
 	if type(set_impass) == "function" then api.SetForcedImpassFromMask = mask_wrapper end
+	if defer_impass == true and type(rebuild_pass) == "function" then api.RebuildPassability = rebuild_wrapper end
 	return function()
 		if api.SetTypeGrid == type_wrapper then api.SetTypeGrid = set_type end
 		if api.SetForcedImpassFromMask == mask_wrapper then api.SetForcedImpassFromMask = set_impass end
+		if api.RebuildPassability == rebuild_wrapper then api.RebuildPassability = rebuild_pass end
 	end, stats
 end
 
@@ -3615,6 +3662,44 @@ end
 -- through the passage bootstrap and delegate the query to it. Retention is released as soon as the
 -- bootstrap's selection window closes; the slot cost is one of the thirteen idle slots measured
 -- free at that call (iter-012), never the one the underground phase uses.
+function SuperBigMap.PrepareTemporarySourceForUnload(source, deferred)
+	if not deferred then return true end
+	local reason = "SuperBigMapVanillaSourceMigration"
+	local edits = source.SuspendPassEditsReasons
+	local processes = source.SuspendProcessReasons
+	local pass = type(processes)=="table" and processes.Passability
+	local cancel = Global("CancelProcessing")
+	local function sole(t, key)
+		return type(t)=="table" and t[key]~=nil and next(t)==key and next(t,key)==nil
+	end
+	-- The source's last query has finished and this owned backing is about to
+	-- be destroyed. Cancel its deferred Lua passability callbacks through the
+	-- engine's teardown API, just as DoneMap does, BEFORE DoneMap checks for
+	-- unbalanced processing reasons. Do not flush a grid nobody will read again,
+	-- clear a foreign reason, or suppress the engine's cleanup assertion.
+	if sole(edits,reason) and sole(processes,"Passability") and sole(pass,"PassEdits")
+		and type(cancel)=="function" then
+		local ok = pcall(cancel,source,"Passability")
+		if ok and not source.SuspendProcessReasons.Passability
+			and not (source.SuspendedProcessing and source.SuspendedProcessing.Passability) then
+			return true
+		end
+	end
+	-- Changed engine protocol: retain the normal balanced flush as a fallback.
+	if type(source.ResumePassEdits)~="function" then return false,"source resume API unavailable" end
+	local ok,why=pcall(source.ResumePassEdits,source,reason)
+	if not ok then return false,tostring(why) end
+	if source.SuspendPassEditsReasons and next(source.SuspendPassEditsReasons) then
+		return false,"temporary source retains another pass-edit owner"
+	end
+	for _,reasons in pairs(source.SuspendProcessReasons or {}) do
+		if type(reasons)=="table" and next(reasons) then
+			return false,"temporary source retains another processing owner"
+		end
+	end
+	return true
+end
+
 local function ReleaseRetainedNativeSourceMap(surface_map, reason)
 	local retention = type(surface_map) == "table"
 		and surface_map.SuperBigMapRetainedNativeSourceMap or nil
@@ -3636,6 +3721,13 @@ local function ReleaseRetainedNativeSourceMap(surface_map, reason)
 	local unload_token = LoadingBegin("unload retained vanilla source backing", surface_map, {
 		source_slot = tostring(slot), reason = tostring(reason),
 	})
+	local ready,prepare_error=SuperBigMap.PrepareTemporarySourceForUnload(retention.map,retention.pass_edits_deferred)
+	if not ready then
+		surface_map.SuperBigMapRetainedNativeSourceMap=retention
+		surface_map.SuperBigMapRetainedNativeSourceUnloadFailed=tostring(prepare_error)
+		LoadingEnd(unload_token,{error=tostring(prepare_error)},false)
+		return false
+	end
 	local unload_call_ok, unload_error = pcall(change_map_in_slot, slot, "")
 	local unload_ok = unload_call_ok and unload_error == nil
 	if not unload_ok and retention.pass_edits_deferred and retention.map
@@ -5448,6 +5540,7 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 	SuperBigMap.State.vanilla_source_migration_active = true
 	SuperBigMap.State.pending_vanilla_underground_seed = nil
 	SuperBigMap.State.underground_seed_reservation_trace = nil
+	local native_composition_error
 	local ok, migration_error = pcall(function()
 		local allocation_token = LoadingBegin("allocate temporary vanilla backing", destination,
 			{ source_slot = source_slot })
@@ -5529,9 +5622,9 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 			mode = discard_source_pass_edits and "discard_on_unload" or "flush",
 		})
 		if discard_source_pass_edits then
-			-- Nothing downstream consumes source.passable/buildable: height/type are stretched directly,
-			-- marker state is value-captured, and transferred objects are revalidated on destination.
-			-- Keep the batch suspended so ChangeMapInSlot can destroy it without first rebuilding it.
+			-- Height/type are stretched directly and transferred objects are revalidated on
+			-- destination. Retain the native source for the passage-query bridge below, but
+			-- do not add a final migration flush before releasing that isolated backing.
 			source_pass_edits_deferred = true
 		else
 			if type(source.ResumePassEdits) == "function" then
@@ -5678,6 +5771,20 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		LoadingStep("native enrichment records staged on destination", {
 			record_count = #native_enrichment_records,
 		}, destination)
+		if Engine.MapDataEnvironment(source.mapdata) == "Surface" then
+			local validation = SuperBigMap.DecorationValidation
+			source.SuperBigMapSupportIdSequence = math.max(source.SuperBigMapSupportIdSequence or 0,
+				destination.SuperBigMapSupportIdSequence or 0)
+			local capture = validation and validation.CaptureNativeCompositions(source)
+			if type(capture) ~= "table" or not capture.captured then
+				native_composition_error = "native rock composition capture failed"
+				error(native_composition_error)
+				return false
+			end
+			destination.SuperBigMapNativeCompositionCapture = capture
+			destination.SuperBigMapSupportIdSequence = math.max(destination.SuperBigMapSupportIdSequence or 0,
+				source.SuperBigMapSupportIdSequence or 0)
+		end
 		local object_transfer_token = LoadingBegin("transfer generated non-enrichment objects", destination)
 		local transferred = TransferGeneratedObjects(source, destination, source_baseline,
 			native_enrichment_excluded)
@@ -5708,6 +5815,7 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		destination.SuperBigMapSurfaceBuildableCurrent = true
 	end)
 
+	if native_composition_error then ok, migration_error = false, native_composition_error end
 	-- Always restore the real surface as current and release the temporary slot. This also keeps
 	-- the slot available for the vanilla additional-map/underground phase that follows Generate.
 	rawset(_G, "MainMap", destination_main_map)
@@ -5737,7 +5845,9 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 	elseif maps[source_slot] then
 		local unload_token = LoadingBegin("unload temporary vanilla backing", destination,
 			{ source_slot = source_slot, pass_edits_deferred = tostring(source_pass_edits_deferred) })
-		local unload_call_ok, unload_error = pcall(change_map_in_slot, source_slot, "")
+		local ready,prepare_error=SuperBigMap.PrepareTemporarySourceForUnload(source,source_pass_edits_deferred)
+		local unload_call_ok, unload_error=false,prepare_error
+		if ready then unload_call_ok,unload_error=pcall(change_map_in_slot,source_slot,"") end
 		local unload_ok = unload_call_ok and unload_error == nil
 		local resumed_for_retry = false
 		if not unload_ok and source_pass_edits_deferred and source
@@ -6548,18 +6658,24 @@ local function BootstrapPassagesAndDeferWonders(env)
 		pcall(pause_ild, "SBMNativeSurfacePassageBuildableBridge")
 	end
 	local copy_ok, copy_error = pcall(function()
-		for y = 0, source_hex_h - 1 do
-			for x = 0, source_hex_w - 1 do
-				padded_surface_grid:set(x, y, pending_surface_buildable.grid:get(x, y))
-			end
+		-- Both are native U16 grids. Copy the exact source rectangle without
+		-- resampling/conversion or one Lua-to-native get/set pair per cell. The
+		-- destination's unbuildable padding remains untouched.
+		if type(padded_surface_grid.copyrect) ~= "function" then
+			error("native buildable-grid rectangle copy unavailable")
+			return false
 		end
+		padded_surface_grid:copyrect(pending_surface_buildable.grid,
+			Global("box")(0, 0, source_hex_w, source_hex_h), Global("point")(0, 0))
+		return true
 	end)
 	if type(resume_ild) == "function" then
 		pcall(resume_ild, "SBMNativeSurfacePassageBuildableBridge")
 	end
-	if not copy_ok then
+	if not copy_ok or copy_error ~= true then
 		SuperBigMap.FreeOwnedGrid(padded_surface_grid)
 		error("surface passage buildable bridge copy failed: " .. tostring(copy_error))
+		return false, "surface passage buildable bridge copy failed: " .. tostring(copy_error)
 	end
 	surface_map.buildable.z_grid = padded_surface_grid
 	local restore_fallback_radius
@@ -9732,6 +9848,9 @@ function SuperBigMap.FinalizeDeferredBreakthroughAnomalyInitialization(map, reas
 	-- of the one shipped call - instance-field shadows reach the engine's Lua callers, rawset(_G, ...)
 	-- does not - so the prune replays vanilla's decision instead of re-deriving it. The SET handed over
 	-- stays exactly what the real query would return; only the ORDER is vanilla's.
+	-- Current game builds additionally sort this list by handle before shuffling.
+	-- Recreated handles are not native identities: replay that one sort against
+	-- captured source handles, without changing live handles or any random draw.
 	local function InstallStagedBreakthroughOrder(map, city)
 		local stats = { staged = 0, live = 0, resolved = 0, missing = 0, extra = 0, applied = false }
 		local function noop() end
@@ -9756,7 +9875,7 @@ function SuperBigMap.FinalizeDeferredBreakthroughAnomalyInitialization(map, reas
 				if index[key] == nil then index[key] = marker end
 			end
 		end
-		local ordered, taken = {}, {}
+		local ordered, taken, source_handles = {}, {}, {}
 		for i = 1, #order do
 			local record = order[i] or {}
 			local key = tostring(record.class) .. ":" .. tostring(record.source_x)
@@ -9764,6 +9883,7 @@ function SuperBigMap.FinalizeDeferredBreakthroughAnomalyInitialization(map, reas
 			local marker = index[key]
 			if marker and not taken[marker] then
 				taken[marker] = true
+				source_handles[marker] = record.source_handle
 				ordered[#ordered + 1] = marker
 				stats.resolved = stats.resolved + 1
 			else
@@ -9778,23 +9898,59 @@ function SuperBigMap.FinalizeDeferredBreakthroughAnomalyInitialization(map, reas
 		end
 		local real_map_get = city.MapGet
 		local saved = rawget(city, "MapGet")
+		local table_lib = Global("table") or table
+		local real_sort = table_lib.sortby_field
+		local sort_target, sort_wrapper
 		local restored = false
-		local function restore()
+		local function restore_map_get()
 			if restored then return end
 			restored = true
 			rawset(city, "MapGet", saved)
+		end
+		local function restore()
+			restore_map_get()
+			if sort_wrapper and table_lib.sortby_field == sort_wrapper then
+				table_lib.sortby_field = real_sort
+			end
+		end
+		if type(real_sort) == "function" then
+			sort_wrapper = function(array, field, ...)
+				if array ~= sort_target or field ~= "handle" then
+					return real_sort(array, field, ...)
+				end
+				-- Only the exact query result qualifies; every native identity must
+				-- resolve. A changed/missing record is an error, never a new shuffle.
+				table_lib.sortby_field = real_sort
+				local keys, seen_handles = {}, {}
+				for i = 1, #array do
+					local handle = source_handles[array[i]]
+					if type(handle) ~= "number" or seen_handles[handle] then
+						stats.error = "native breakthrough sort has missing or duplicate source handles"
+						error(stats.error)
+						return
+					end
+					seen_handles[handle] = true
+					keys[i] = { handle = handle, marker = array[i] }
+				end
+				local result = real_sort(keys, field, ...)
+				for i = 1, #keys do array[i] = keys[i].marker end
+				stats.handle_sort_applied = true
+				return result == keys and array or result
+			end
+			table_lib.sortby_field = sort_wrapper
 		end
 		rawset(city, "MapGet", function(self, ...)
 			local area, class, filter = ...
 			if area == "map" and class == "SubsurfaceAnomalyMarker" and type(filter) == "function" then
 				-- One shot: the shipped method asks exactly once, at its first line.
-				restore()
+				restore_map_get()
 				local result = {}
 				for i = 1, #ordered do
 					local marker = ordered[i]
 					local ok_filter, keep = pcall(filter, marker)
 					if ok_filter and keep then result[#result + 1] = marker end
 				end
+				sort_target = result
 				return result
 			end
 			return real_map_get(self, ...)
@@ -9830,8 +9986,9 @@ function SuperBigMap.FinalizeDeferredBreakthroughAnomalyInitialization(map, reas
 	map.SuperBigMapBreakthroughStagedOrderMissing = order_stats.missing
 	map.SuperBigMapBreakthroughStagedOrderExtra = order_stats.extra
 	map.SuperBigMapBreakthroughStagedOrderApplied = order_stats.applied
-	if not ok then
-		return false, { error = tostring(init_error), before = before }
+	map.SuperBigMapBreakthroughNativeHandleSortApplied = order_stats.handle_sort_applied or false
+	if not ok or order_stats.error then
+		return false, { error = order_stats.error or tostring(init_error), before = before }
 	end
 	local after = count_breakthrough_markers()
 	map.SuperBigMapBreakthroughInitializationDeferred = nil
@@ -9961,6 +10118,8 @@ local function PatchRandomMapGenerator()
 			local closure_new_compute_grid = closure_global("NewComputeGrid", Global("NewComputeGrid"))
 			local closure_is_compute_grid = closure_global("IsComputeGrid", Global("IsComputeGrid"))
 			local closure_grid_fill = closure_global("GridFill", Global("GridFill"))
+			local closure_box = closure_global("box", Global("box"))
+			local closure_point = closure_global("point", Global("point"))
 			local closure_mask_buildable_grid =
 				closure_global("MaskBuildableGrid", Global("MaskBuildableGrid"))
 			local closure_build_unbuildable_z = closure_global("buildUnbuildableZ", Global("buildUnbuildableZ"))
@@ -10041,6 +10200,7 @@ local function PatchRandomMapGenerator()
 				if type(closure_new_grid) ~= "function"
 					or type(closure_init_buildable_grid) ~= "function"
 					or type(closure_process_buildable_grid) ~= "function"
+					or type(closure_box) ~= "function" or type(closure_point) ~= "function"
 					or type(closure_hex_to_world) ~= "function"
 					or type(closure_storage_to_hex) ~= "function" then
 					return nil, "required-api-unavailable"
@@ -10161,11 +10321,8 @@ local function PatchRandomMapGenerator()
 
 					init_params.buildable_grid = capacity_raw
 					closure_init_buildable_grid(build_map, init_params)
-					for y = 0, source_hex_h - 1 do
-						for x = 0, source_hex_w - 1 do
-							source_raw:set(x, y, capacity_raw:get(x, y))
-						end
-					end
+					source_raw:copyrect(capacity_raw,
+						closure_box(0, 0, source_hex_w, source_hex_h), closure_point(0, 0))
 					process_params.buildable_grid = source_raw
 					process_params.buildable_z = source_processed
 					closure_process_buildable_grid(process_params)
@@ -10209,6 +10366,7 @@ local function PatchRandomMapGenerator()
 					or type(closure_mask_buildable_grid) ~= "function"
 					or type(closure_grid_dest) ~= "function"
 					or type(closure_grid_not) ~= "function"
+					or type(closure_box) ~= "function" or type(closure_point) ~= "function"
 					then
 					return nil, "required-api-unavailable"
 				end
@@ -10307,22 +10465,13 @@ local function PatchRandomMapGenerator()
 				local ok_bridge, bridge_err = pcall(function()
 					-- The virtual grids are initialized invalid/unbuildable. Copy only the source
 					-- rectangles; their padding represents terrain outside the source view.
-					for y = 0, grid_h - 1 do
-						for x = 0, grid_w - 1 do
-							virtual_mask:set(x, y, repaired:get(x, y))
-						end
-					end
-					for y = 0, build_h - 1 do
-						for x = 0, build_w - 1 do
-							virtual_z:set(x, y, z_grid:get(x, y))
-						end
-					end
+					virtual_mask:copyrect(repaired,
+						closure_box(0, 0, grid_w, grid_h), closure_point(0, 0))
+					virtual_z:copyrect(z_grid,
+						closure_box(0, 0, build_w, build_h), closure_point(0, 0))
 					closure_mask_buildable_grid(map, virtual_z, virtual_mask, unbuildable_z)
-					for y = 0, grid_h - 1 do
-						for x = 0, grid_w - 1 do
-							repaired:set(x, y, virtual_mask:get(x, y))
-						end
-					end
+					repaired:copyrect(virtual_mask,
+						closure_box(0, 0, grid_w, grid_h), closure_point(0, 0))
 				end)
 				if virtual_mask then pcall(function() virtual_mask:free() end) end
 				if virtual_z then pcall(function() virtual_z:free() end) end
@@ -10476,11 +10625,8 @@ local function PatchRandomMapGenerator()
 						if padded then pcall(function() padded:free() end) end
 						error("underground stock-mask safety grid allocation failed")
 					end
-					for y = 0, source_h - 1 do
-						for x = 0, source_w - 1 do
-							padded:set(x, y, source_grid:get(x, y))
-						end
-					end
+					padded:copyrect(source_grid,
+						closure_box(0, 0, source_w, source_h), closure_point(0, 0))
 					retained_source_buildable_grid = source_grid
 					buildable.z_grid = padded
 					return
@@ -10964,10 +11110,13 @@ local function PatchRandomMapGenerator()
 			if type(saved_raster_parallel_div) ~= "number" or saved_raster_parallel_div < 1 then
 				error("prefab raster parallelism constant is unavailable")
 			end
+			local serialize_prefab_raster = backing_environment == "Surface"
 			local serial_install_ok, serial_install_error = pcall(function()
-				raster_const.PrefabRasterParallelDiv = 1
-				if raster_const.PrefabRasterParallelDiv ~= 1 then
-					error("prefab raster single-task write did not persist")
+				if serialize_prefab_raster then
+					raster_const.PrefabRasterParallelDiv = 1
+					if raster_const.PrefabRasterParallelDiv ~= 1 then
+						error("prefab raster single-task write did not persist")
+					end
 				end
 			end)
 			if not serial_install_ok then
@@ -11098,7 +11247,10 @@ local function PatchRandomMapGenerator()
 				map.SuperBigMapNativeFillerMaskStats = filler_stats
 			end
 			local terrain_write_close, terrain_write_stats = SuperBigMap.InstallSourceTerrainWriteBridge(
-				map, gen_world_w, gen_world_h, saved_map_width, saved_map_height)
+				map, gen_world_w, gen_world_h, saved_map_width, saved_map_height,
+				cfg_bool("DEFER_UNDERGROUND_EXPANSION_UNTIL_FIRST_ACCESS", true)
+					and cfg_bool("STRETCH_UNDERGROUND", false)
+					and type(mapdata) == "table" and Engine.MapDataEnvironment(mapdata) == "Underground")
 			local compat = SuperBigMap.Diagnostics and SuperBigMap.Diagnostics.Compatibility
 			if compat then compat("source DoGenerate begin", {
 				source_world_w = gen_world_w, source_world_h = gen_world_h,
@@ -11107,10 +11259,13 @@ local function PatchRandomMapGenerator()
 			local results = { pcall(CallWithClutterCapture, map,
 				call_original_do_generate, self, map, ...) }
 			terrain_write_close()
+			if terrain_write_stats.error then results = { false, terrain_write_stats.error } end
 			if compat then compat("source DoGenerate end", {
 				ok = results[1], error = results[1] and "" or tostring(results[2]),
 				type_writes = terrain_write_stats.type_writes,
 				mask_writes = terrain_write_stats.mask_writes,
+				deferred_masks = terrain_write_stats.deferred_masks,
+				deferred_rebuilds = terrain_write_stats.deferred_rebuilds,
 			}, map) end
 			map.SuperBigMapSourceTerrainWriteStats = terrain_write_stats
 			if filler_close then
@@ -11155,9 +11310,11 @@ local function PatchRandomMapGenerator()
 				}, map)
 			end
 			local serial_restore_ok, serial_restore_error = pcall(function()
-				raster_const.PrefabRasterParallelDiv = saved_raster_parallel_div
-				if raster_const.PrefabRasterParallelDiv ~= saved_raster_parallel_div then
-					error("prefab raster parallelism restoration did not persist")
+				if serialize_prefab_raster then
+					raster_const.PrefabRasterParallelDiv = saved_raster_parallel_div
+					if raster_const.PrefabRasterParallelDiv ~= saved_raster_parallel_div then
+						error("prefab raster parallelism restoration did not persist")
+					end
 				end
 			end)
 			if not serial_restore_ok then
@@ -11167,6 +11324,7 @@ local function PatchRandomMapGenerator()
 			LoadingStep("source prefab raster transaction serialized", {
 				previous_parallel_div = saved_raster_parallel_div,
 				restored_parallel_div = raster_const.PrefabRasterParallelDiv,
+				serialized = serialize_prefab_raster,
 				generation_ok = results[1] == true,
 			}, map)
 			local seed_trace = State.underground_seed_reservation_trace
@@ -11764,6 +11922,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				pass_window.trace = table.concat(pass_window.samples, " | ")
 				return resume_ok, resume_err
 			end
+			local terrain_stretch_error
 			local ok_branch, branch_err = pcall(function()
 				if type(StretchSourceToFull) == "function" then
 					-- Relief annotations MUST be captured BEFORE the terrain stretch (they record
@@ -11780,6 +11939,10 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						-- snapshot is no longer current until the explicit final rebuild below succeeds.
 						map.SuperBigMapSurfaceBuildableCurrent = false
 						ok_stretch, n_grids = StretchSourceToFull(map)
+						if ok_stretch ~= true then
+							terrain_stretch_error = "surface terrain stretch did not complete"
+							return
+						end
 					else
 						ok_stretch, n_grids = true, 0
 					end
@@ -12251,21 +12414,17 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				if highlight and type(highlight.EnsureEntranceVisualsReady) == "function" then
 					highlight.EnsureEntranceVisualsReady(map, nil, "surface stretch complete")
 				end
-				-- LAST WORD ON THE SURFACE GAMEPLAY GRIDS, the exact counterpart of the underground's
-				-- closing rebuild. Everything above -- the density suite, the passage commitment, the
-				-- entrance-visual and rocket moves and this synchronous visual init -- runs inside
-				-- object-grid transactions, and the engine re-derives passability over the regions each
-				-- one touches when the last SuspendPassEdits reason clears. Measured (iteration 041,
-				-- from the 039 call trace): the surface's last traced pass work is the combined resume
-				-- and the buildable rebuild above, after which its passability digest still moves twice
-				-- with nothing rebuilding it -- while the underground, which does close this way, lost
-				-- 42 of 86 at-object and 323 of 706 object-free twin differences at v809-v811 and the
-				-- surface lost none. Idempotent, whole-map, same engine sequence as both other sites.
+				-- Keep the loading cover through the scheduled post-yield placement and entrance
+				-- validation. ResumeCombinedPassEdits above has already committed every object-grid
+				-- mutation as one native transaction; rebuilding both whole-map grids again would only
+				-- reproduce that result and costs several seconds on the expanded surface.
 				if cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true) then
-					SetLoadingPhase("Finalizing surface gameplay grids")
-					SuperBigMap.GenerationGrids.RebuildFinal(map, "after last object-grid transaction")
+					map.SuperBigMapSurfaceFinalGridRebuildPending = true
 				end
 			end)
+			if terrain_stretch_error then
+				ok_branch, branch_err = false, terrain_stretch_error
+			end
 			-- Error-path cleanup. On the normal path the transaction was already resumed above.
 			local cleanup_ok, cleanup_err = ResumeCombinedPassEdits("surface stretch cleanup", true)
 			if not cleanup_ok then
@@ -12306,7 +12465,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 			else
 				SuperBigMap.GenerationReadiness.RecordSurfaceExpansionFailure(map, branch_err)
 			end
-			end_loading()
+			if not ok_branch or map.SuperBigMapSurfaceFinalGridRebuildPending ~= true then end_loading() end
 			SignalExpansionReadinessChanged(map, ok_branch and "surface stretch complete" or "surface stretch failed")
 			LoadingFinish("surface expansion complete", map, {
 				terrain_grids = n_grids, error = ok_branch and "" or tostring(branch_err),
@@ -12315,11 +12474,10 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 		end
 
 		end)
-		-- The surface aggregate is not canonical until the generation thread yields once, even
-		-- though its exposed pass grids already match stock control. Measured by t120x: the first
-		-- real-time-thread entry after this protected pipeline is the earliest stable boundary, and
-		-- one ordinary RebuildFinal there is sufficient. Keep the immediate call above for ordering
-		-- and queue this surface-only revalidation exactly once after a successful pipeline return.
+		-- Queue final placement and passage validation exactly once after a successful pipeline
+		-- return while the expansion loading cover remains visible. This yield boundary is still
+		-- required for final aggregate inspection, but the combined pass-edit commit is already
+		-- authoritative and must not be followed by a redundant whole-map grid rebuild.
 		if thread_ok and map.SuperBigMapSurfaceStretchDone == true
 			and not map.SuperBigMapSurfaceStretchFailed
 			and cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true)
@@ -12327,6 +12485,8 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 			map.SuperBigMapSurfacePostPipelineRevalidationScheduled = true
 			map.SuperBigMapSurfacePostPipelineRevalidationComplete = nil
 			map.SuperBigMapSurfacePostPipelineRevalidationError = nil
+			map.SuperBigMapSurfaceDecorationCorrectionComplete = nil
+			map.SuperBigMapSurfaceDecorationCorrectionError = nil
 			local revalidation_schedule_ok, revalidation_schedule_err = pcall(create_thread, function()
 				local pause_ild = Global("PauseInfiniteLoopDetection")
 				local resume_ild = Global("ResumeInfiniteLoopDetection")
@@ -12334,20 +12494,24 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					SafeCall(pause_ild, "SuperBigMapSurfacePostPipelineRevalidation")
 				end
 				local revalidation_ok, revalidation_err = yield_protected_call(function()
-					-- Inspect final terrain/poses before the authoritative grid rebuild.
-					-- The validator only reports; the separate, guarded seating service
-					-- corrects proven loose cosmetic stones, never gameplay objects.
-					local validation=SuperBigMap.DecorationValidation
-					if validation then
-						validation.Run("Validate",map,"surface final placement")
-						local seating=SuperBigMap.DecorationSeating
-						if seating then
-							local result=seating.Run(map)
-							if result and result.error then error("surface decoration correction failed: "..tostring(result.error)) end
-						end
+					if map.SuperBigMapRetainedNativeSourceUnloadFailed then
+						error("temporary source cleanup failed: "..tostring(map.SuperBigMapRetainedNativeSourceUnloadFailed))
 					end
-					SuperBigMap.GenerationGrids.RebuildFinal(
-						map, "post-pipeline scheduled revalidation")
+					-- Complete and verify rock seating under the loading cover, before publishing T1.
+					local validation = SuperBigMap.DecorationValidation
+					if validation then validation.Run("Validate", map, "surface final placement") end
+					local seating = SuperBigMap.DecorationSeating
+					if not seating or type(seating.Run) ~= "function" then
+						error("surface decoration correction service unavailable")
+					end
+					local result = seating.Run(map)
+					if not result or result.error or result.validation_error or (result.rejected or 0) > 0 then
+						map.SuperBigMapSurfaceDecorationCorrectionError = tostring(result
+							and (result.error or result.validation_error or "unresolved rock seating")
+							or "missing correction result")
+						error("surface decoration correction failed: " .. map.SuperBigMapSurfaceDecorationCorrectionError)
+					end
+					map.SuperBigMapSurfaceDecorationCorrectionComplete = true
 					local seen = {}
 					for _, underground in pairs(Global("Maps") or {}) do
 						if type(underground) == "table" and not seen[underground]
@@ -12362,11 +12526,15 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					SafeCall(resume_ild, "SuperBigMapSurfacePostPipelineRevalidation")
 				end
 				if revalidation_ok then
+					map.SuperBigMapSurfaceFinalGridRebuildPending = nil
 					map.SuperBigMapSurfacePostPipelineRevalidationComplete = true
+					EndSurfaceExpansionLoading(map)
 					SignalExpansionReadinessChanged(map, "surface final entrance validation complete")
 				else
+					map.SuperBigMapSurfaceFinalGridRebuildPending = nil
 					map.SuperBigMapSurfacePostPipelineRevalidationError = tostring(revalidation_err)
 					SuperBigMap.GenerationReadiness.RecordSurfaceExpansionFailure(map, revalidation_err)
+					EndSurfaceExpansionLoading(map)
 					LoadingFinish("surface post-pipeline revalidation failed", map, {
 						error = tostring(revalidation_err),
 					}, false)
@@ -12374,6 +12542,8 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 			end)
 			if not revalidation_schedule_ok then
 				map.SuperBigMapSurfacePostPipelineRevalidationScheduled = nil
+				map.SuperBigMapSurfaceFinalGridRebuildPending = nil
+				EndSurfaceExpansionLoading(map)
 				thread_ok = false
 				thread_err = "surface post-pipeline revalidation scheduling failed: "
 					.. tostring(revalidation_schedule_err)
@@ -12784,6 +12954,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 		local function RebuildFinalUndergroundGameplayGrids(stage)
 			return SuperBigMap.GenerationGrids.RebuildFinal(map, stage)
 		end
+		local terrain_stretch_error
 		local ok_branch, branch_err = pcall(function()
 			-- A surface Elevator may already be finished while its paired underground half is a
 			-- pending site with a destroyed linked_obj. Snapshot/remove only that underground half
@@ -12833,7 +13004,9 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			if cfg_bool("EXPANSION_STEP_07_STRETCH_TERRAIN", true) then
 				ok_s, n_grids = StretchSourceToFull(map)
 				if ok_s ~= true or type(n_grids) ~= "number" or n_grids < 2 then
-					error("underground terrain stretch did not complete its height/type grids")
+					terrain_stretch_error = "underground terrain stretch did not complete its height/type grids"
+					error(terrain_stretch_error)
+					return
 				end
 			end
 			if cfg_bool("OPTIMIZE_UNDERGROUND_PASS_EDIT_BATCH", true)
@@ -13393,6 +13566,13 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 						.. tostring(cleanup_err)
 				end
 			end
+		end
+		if terrain_stretch_error then
+			ok_branch, branch_err = false, terrain_stretch_error
+		end
+		if map.SuperBigMapForcedImpassDeferred == true then
+			ok_branch = false
+			branch_err = "deferred underground forced impassability was not applied"
 		end
 		LoadingEnd(underground_pipeline_token, {
 			elevator_migrations = #elevator_migrations,

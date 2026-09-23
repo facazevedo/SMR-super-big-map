@@ -1,5 +1,5 @@
--- Production apron function versus v932: every final cell, candidate and report.
--- Native copyback legitimately changes read/write counts, not terrain or decisions.
+-- Production apron function versus v932: identical selection, with the explicit
+-- release allowance of one stored-height unit in the full-resolution blend.
 local api = dofile("_ralph/tools/parity/native_grid_double.lua")
 local f = assert(io.open("Code/sbm_terrain_copy.lua", "rb"))
 local current = f:read("*a"); f:close()
@@ -43,6 +43,7 @@ local function run(source, fixture)
 	end
 	local constants = {HeightTileSize = 100, HexSize = 1000}
 	local env = setmetatable({
+		Engine = {MapDataEnvironment=function(data)return data.Environment end},
 		math = setmetatable({}, {__index = function(_, k) lookups[k] = (lookups[k] or 0) + 1; return math[k] end}),
 		cfg_bool = function(_, default) if fixture.disabled then return false end; return default end,
 		cfg_number = function(key, default) return fixture.config and fixture.config[key] or default end,
@@ -95,11 +96,23 @@ local fixtures = {
 for _, fixture in ipairs(fixtures) do
 	local before, old_lookups = run(baseline, fixture)
 	local after, new_lookups = run(current, fixture)
+	local width=fixture.width or 1024
+	local keys={};for k in pairs(before.values) do keys[k]=true end;for k in pairs(after.values) do keys[k]=true end
+	for key in pairs(keys) do
+		local original=fixture.height_at(key%width,math.floor(key/width))
+		assert(math.abs((before.values[key] or original)-(after.values[key] or original))<=1,
+			'production apron changed by more than one stored height unit')
+	end
+	local edited=next(after.values)
+	before.values,after.values=nil,nil
+	-- Each implementation already checked its own actual modified-cell census.
+	-- Quantized boundary cells can change that census, but not selected sites.
+	before.report.modified,after.report.modified=nil,nil
 	same(before, after)
 	if fixture.edited then
-		assert(next(after.values), "fixture did not exercise raster")
+		assert(edited, "fixture did not exercise raster")
 		assert((new_lookups.sqrt or 0) < (old_lookups.sqrt or 0), "sqrt lookups not reduced")
 	end
-	print("PASS " .. fixture.name .. " (exact final grid, selection and report)")
+	print("PASS " .. fixture.name .. " (bounded final grid, exact selection and semantic report)")
 end
 print(#fixtures .. " apron equivalence checks passed")

@@ -4,10 +4,18 @@ local SBM = rawget(_G, "SuperBigMap")
 local Engine = SBM.Engine
 local Global = Engine.Global
 local Clone = SBM.ObjectClone
+local math,table=math,table
+local type,tostring,ipairs,pairs,pcall=type,tostring,ipairs,pairs,pcall
 local captures = setmetatable({}, { __mode = "k" })
 
 local function Enabled()
 	return (SBM.Config or {}).STRETCH_GROUND_UNSUPPORTED_ROCKS ~= false
+end
+
+local function NoTerrainCompression(z_scale,xy_scale)
+	return type(z_scale)=="number" and type(xy_scale)=="number"
+		and z_scale>0 and z_scale<math.huge and xy_scale>0 and xy_scale<math.huge
+		and z_scale>=xy_scale-0.000001
 end
 
 local function Eligible(obj, checked_skip, checked_important)
@@ -33,15 +41,41 @@ local function BeginCapture(map, source_map)
 	local source_width = map.SuperBigMapSourceWidthTiles or map.SuperBigMapGeneratorWidthTiles
 	local source_height = map.SuperBigMapSourceHeightTiles or map.SuperBigMapGeneratorHeightTiles
 	local native_width, native_height = (source_map or map):GetMapSize()
+	-- Direct migration has already installed the final terrain and fixed its
+	-- Z/XY ratios. Apply explicitly ignores uphill samples for uniform scaling;
+	-- do not gather those unused native ray contacts. Unknown/in-place terrain
+	-- still follows the complete capture path, and floating-above-pivot rocks
+	-- retain their separate final-geometry correction in either case.
+	local full_width=map.SuperBigMapDesiredWidthTiles or (map.mapdata and map.mapdata.Width)
+	local mul,div=map.SuperBigMapZScaleMul,map.SuperBigMapZScaleDiv
+	local direct_stretch=map.SuperBigMapDirectSourceTerrainStretched==true
+		and source_map and source_map~=map and type(source_width)=="number" and source_width>0
+		and type(full_width)=="number" and type(mul)=="number" and type(div)=="number" and div>0
+	local uniform_stretch=direct_stretch and NoTerrainCompression((mul+0.0)/div,(full_width+0.0)/source_width)
+	-- The strict surface finalizer independently seats and positively verifies
+	-- every rendered rock before T1, including support lost to terrain compression.
+	-- Its complete current-geometry proof replaces the old sampled-ray prediction;
+	-- an object that still has real support need not be lowered speculatively.
+	-- Keep the old capture for in-place/unfinished terrain, underground, incomplete
+	-- services or disabled finalization. No work is deferred beyond loading.
+	local seating,validation=SBM.DecorationSeating,SBM.DecorationValidation
+	local strict_final=direct_stretch and type(Engine.MapDataEnvironment)=="function"
+		and Engine.MapDataEnvironment(map.mapdata)=="Surface"
+		and (SBM.Config or {}).EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS~=false
+		and seating and type(seating.Run)=="function"
+		and validation and type(validation.WithCorrectionEvidence)=="function"
+		and type(validation.SurfaceSupportSummary)=="function"
 	local stats = { eligible = 0, probes = 0, rays = 0, contacts = 0, lowered = 0,
 		unchanged = 0, max_lowering = 0, total_lowering = 0, failures = 0,
 		unsupported_candidates = 0, unsupported_rays = 0, unsupported_lowered = 0,
-		capture_ms = 0, apply_ms = 0 }
+		capture_ms = 0, apply_ms = 0, strict_final_handoff = strict_final==true }
 	map.SuperBigMapRockGroundingStats = stats
 	captures[map] = { source_map = source_map or map, objects = {}, stats = stats,
+		uniform_stretch=uniform_stretch==true, strict_final_handoff=strict_final==true,
 		width = width, height = height,
 		source_width = source_width and source_width * tile or native_width,
 		source_height = source_height and source_height * tile or native_height }
+	return strict_final~=true -- false only when the strict final pass owns this work
 end
 
 local function InBounds(x, y, width, height)
@@ -53,7 +87,7 @@ end
 -- classifiers retain the complete classification path.
 local function Capture(map, obj, checked_skip, checked_important)
 	local context = captures[map]
-	if not context then return end
+	if not context or context.strict_final_handoff then return end
 	local stats = context.stats
 	local ticks, point_fn = Global("GetPreciseTicks"), Global("point")
 	local started = ticks()
@@ -89,6 +123,23 @@ local function Capture(map, obj, checked_skip, checked_important)
 	local count = math.min(9, math.max(3,
 		math.ceil(math.max(bounds:sizex(), bounds:sizey()) / (4.0 * tile))))
 	local samples = {}
+	local may_have_uphill_contact = not context.uniform_stretch
+	local box_fn = Global("box")
+	if may_have_uphill_contact and type(terrain_api.GetMinMaxHeight)=="function" and type(box_fn)=="function" then
+		-- Bound the entire sampled footprint, including interpolation neighbours.
+		-- If even its maximum is below the uphill-contact threshold, none of the
+		-- original ray sites can contribute a sample. Keep unsupported candidates
+		-- below: this does not disable their independent final seating check.
+		local x0=math.max(0,math.floor(bounds:minx())-tile)
+		local y0=math.max(0,math.floor(bounds:miny())-tile)
+		local x1=math.min(context.source_width-1,math.ceil(bounds:minx()+bounds:sizex())+tile)
+		local y1=math.min(context.source_height-1,math.ceil(bounds:miny()+bounds:sizey())+tile)
+		if x0<=x1 and y0<=y1 then
+			local _,upper=terrain_api.GetMinMaxHeight(context.source_map,box_fn(x0,y0,x1,y1))
+			if type(upper)=="number" and upper<=source_z+tile then may_have_uphill_contact=false end
+		end
+	end
+	if may_have_uphill_contact then
 	for ix = 1, count do
 		local x = bounds:minx() + math.floor(bounds:sizex() * (ix + 0.0) / (count + 1) + 0.5)
 		for iy = 1, count do
@@ -112,6 +163,7 @@ local function Capture(map, obj, checked_skip, checked_important)
 				end
 			end
 		end
+	end
 	end
 	if #samples > 0 or unsupported_candidate then
 		context.objects[obj] = { scale = obj:GetScale(), angle = obj:GetAngle(),
@@ -155,6 +207,9 @@ end
 
 local function Apply(map, obj, terrain_z_scale, xy_scale)
 	local context = captures[map]
+	if context and context.uniform_stretch and not NoTerrainCompression(terrain_z_scale,xy_scale) then
+		return nil,"terrain compression changed after uniform native-contact capture"
+	end
 	local record = context and context.objects[obj]
 	if not record then return 0 end
 	context.objects[obj] = nil -- one placement pass, never accumulate the same correction

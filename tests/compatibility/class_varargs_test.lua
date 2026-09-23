@@ -44,3 +44,13 @@ for _, size in ipairs({0, 1, 15, 26, 64, 65, 256}) do
   end
 end
 print('PASS: varargs only, exact matches, empty list, 64-entry bound and scalar overflow fallback')
+assert(engine.ExcludesKinds({kind='Rock'},{'Building','Unit'},engine.IsKindOf))
+assert(not engine.ExcludesKinds({kind='Building'},{'Building','Unit'},engine.IsKindOf))
+assert(not engine.ExcludesKinds({kind='Rock'},{},engine.IsKindOf))
+local first=engine.FirstKindOf
+engine.FirstKindOf=nil
+assert(not engine.ExcludesKinds({kind='Rock'},{'Building'},engine.IsKindOf))
+engine.FirstKindOf=first
+env.IsKindOfClasses=function() return false end
+assert(not engine.ExcludesKinds({kind='Rock'},{'Building'},engine.IsKindOf))
+print('PASS: union-negative proof retains live primitive/helper identity guards')

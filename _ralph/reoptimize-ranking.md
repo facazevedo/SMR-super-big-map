@@ -5,6 +5,15 @@ Written 2026-09-07 for branch `reoptimize` (v924 `74922e1`, all ten rules-parity
 `ee56197` (276 commits, +13,683 lines over `sbm_map_generation.lua`, `sbm_terrain_copy.lua`,
 `sbm_deposits.lua`). Companion to the closed record `_ralph/optimizations-since-61d4ad6.md`.
 
+## Current checkpoint status (2026-09-23)
+
+Guard460 / metadata1091 passes the latest five-site runtime and lifecycle scope.
+Worst measured surface START-to-T1 is74.776s (all seating included), underground
+57.391s. The owner authorized a local checkpoint and recoverable historical
+artifact archive; neither changes the tested game payload. Current evidence and
+the archive lookup/provenance caveat are in `ALL_RULES_VERIFICATION.md`.
+All candidate-specific results below are historical, not the current status.
+
 ## How the ranking was made
 
 Each unit is one config flag (or one unflagged commit) from that line. Risk is judged on five
@@ -1602,3 +1611,180 @@ normally exited at one immutable checkpoint; deployed payload38/38. Prior visual
 are inherited via exact outputs, not new screenshots. Evidence: v979_reference,
 v979_matrix, v979_offline, v979_all_ten_rules_review.json and v979_source_review.md
 under under80-20260912. **80s not reached; worst validation94.349s.**
+
+## 2026-09-22: current uncommitted correction/under-75 campaign
+
+HEAD remains `d753556`; the workspace includes earlier uncommitted work. This
+entry records actual evidence and does **not** retroactively satisfy the former
+per-unit commit-before-test requirement. Nothing has been published or pushed.
+
+- Guards 375/376: canonical native donor indices and scoped original-handle
+  ordering repair repeated-seed enrichment differences in the current engine.
+  Guard-376 full reference samples: 75.306 / 75.070 s, paired gameplay and exact
+  height/passability/placement outputs agree.
+- Guard 377: native directed crease-discovery filtering; 75.130 s, exact grids.
+- Guard 378: broad overlapping-box coalescing measured 73.979 s but changed
+  actual passability cells. Rejected, not accepted as a speedup.
+- Guards 379/380: shared mesh decoding work, fused extrema and exact packed
+  coordinate identity preserve 300 mesh fixtures / 54,000 vertices. Clean 380
+  sample 75.605 s. Slow samples and diagnostic failures are retained.
+- Guards 381/382: exact rectangular-union dirty rebuilds (48 to 24 calls, no
+  overscanned cells) and integer zero-grid clear avoid redundant resampling and
+  copying. The fused/shared-slab crease experiment was removed after a height
+  mismatch. Guard-382 reference: 74.592 / 74.461 / 74.713 s, mean 74.589 s; all
+  seating before T1, full START boundary, exact native grids and gameplay gates,
+  requested button actions, clean shutdown, 43-file deployment and sampled
+  3840x2160 display invariance verified.
+- The broader sweep is not accepted: alternate-seed 15S67E A/B/control gameplay
+  and repeatability pass, but A/B times are 73.244 / 75.308 s. At 24S74W two
+  open-mesh separation ambiguities prevented seating, so T1 failed closed.
+- Guard 383 / metadata1014 proves negative containment using additional
+  outside vertices only after excluding all triangle crossings. Both original
+  placements now seat and independently verify. A newly resolved defect on a
+  small stone remains: exact captured source-frame geometry proves native
+  contact with `Cliff_02`, while expanded geometry has lost that contact.
+- Guard 384 / metadata1015 proposes a continuous vertical first-contact sweep
+  to stop at the supporting cliff instead of passing through it to the ground.
+  Native XY/shape/scale stay unchanged; unknown geometry vetoes and independent
+  rooted-support verification/rollback still gate acceptance. Focused fixtures
+  include 6,369 randomized contact boundaries and failure paths. Runtime
+  A/B/control runtime gameplay and repeatability pass at 24S74W, with six
+  independently verified corrections before T1. START-to-T1 is 87.500 / 87.215 s,
+  so the harder-case timing target remains unmet. Evidence: full-rules-384-20260922.
+
+- Resume candidate guard 385 / metadata1016 removes duplicate zero-tolerance SAT
+  traversal, replaces projection extrema library calls with equivalent finite
+  comparisons, and stops closest-feature checks only on exact positive contact.
+  All 57 compatibility fixtures pass, including 12,000 old/new SAT and fused
+  zero-tolerance decisions. No geometry, contact tolerance or T1 work is removed.
+  First full 24S74W run passes gameplay and all paired fields against guard 384,
+  but takes 91.579 s; support evidence remains about 12.75 s. No demonstrated
+  timing gain. Diagnostic profiling follows; no commit/publication.
+
+- Candidate guard 386 / metadata1017 tries existing rooted support candidates
+  first, retaining every candidate and stable order within rooted/unrooted groups.
+  Exact contact witnesses, full negative checks, unknown vetoes and independent
+  post-correction verification remain mandatory. All 58 compatibility fixtures
+  pass, including 5,000 candidate-order/set checks. Runtime verification pending.
+
+- Guard 386 passes all runtime gameplay/paired fields at 89.262 s. Final support
+  evidence falls from 12.75 to 11.82 s; the overall target remains unmet.
+- Guard 387 / metadata1018 prunes triangle/leaf-disjoint pairs before their
+  twelve individual bounds checks and unrolls the unchanged AABB comparisons.
+  1,600 multi-leaf rotated/large-world full-contact parity cases pass, plus the
+  focused contact fixtures. Diagnostic full run is 81.999 s, final seating
+  8.846 s; this is not a release timing acceptance. Native-edge witness proposals
+  will be tested diagnostically against the unchanged full rendered-mesh proof.
+
+- Guard 388 / metadata1019 extends the exact zero-offset certificate to an
+  entire connected decor island, never an isolated member of that island.
+  Every member must prove visibility/contact at zero and the island must have
+  a terrain root; otherwise all original intervals remain required. All 59
+  compatibility fixtures pass, including 700 forced-full-interval island
+  comparisons and partial-certificate/unrooted failures. Runtime pending.
+
+- Guard 388 passes all runtime gameplay and paired fields at 82.116 s, with
+  six corrections before T1 and no flushed errors. Support planning falls to
+  5.608 s; final seating is 8.785 s. Target still open.
+- Native edge-witness experiment is NOT deployed: 904 rendered-mesh witnesses
+  agree with the full reference (zero mismatches), but 1.678 s probing costs
+  cancel the 1.664 s reference work they would avoid. Retained diagnostic:
+  full-rules-387-20260922/24s74w_edge_profile (86.533 s, not release acceptance).
+- Candidate guard 389 / metadata1020 hoists immutable absolute transform
+  coefficients out of per-node bounding-box evaluation and unrolls the same
+  arithmetic. 32,000 random captured-frame boxes exactly match the reference;
+  full compatibility/runtime verification pending. No geometry/tolerance change.
+- Candidate guard 390 / metadata1021 retains the actual local mesh vertex that
+  the source support scan found, then re-tests that vertex at the proposed
+  target pose/terrain for the exact zero-shift certificate. Old source contact
+  is never accepted without the new target check, and face-interior witnesses
+  are not substituted for the full planner's vertex bounds. Focused fixtures
+  include loss of target contact and unchanged full-interval results; runtime pending.
+- Guard389's full release run passes gameplay and runtime parity at83.834 s;
+  final seating8.433 s, decor support planning5.506 s. All display samples4K.
+- Guard390's runtime test ABORTED: Windows began reporting1024x768 rather than
+  3840x2160. The tracked game quit cleanly; flushed errors empty. No accepted
+  report/timing. Saved game configuration stays windowed, and no monitor-setting
+  API was called by the runner. Cause not established; no further games launched.
+- Workspace391/metadata1022 replaces in-bounds two-level height-cache rows with
+  exact integer cell keys, bounded below2^52; arbitrary/outside domains retain
+  the original row cache.15,000 coordinate/cache-parity cases pass.
+- Workspace392/metadata1023 retains bounded (32 relative-pose buckets x4) positive
+  triangle-identity hints per component pair. Every hit is re-proven using the
+  current pose and exact rendered-triangle predicate; changed poses/components
+  cannot reuse an old verdict, and misses retain the complete BVH search.
+  Focused tests cover changed-pose rejection, fresh component identity, eviction
+  and1,600 comparisons against a no-hints/full-leaf reference.
+- Current offline checks:62 compatibility fixtures,37 Lua syntax checks,7 Python
+  tests PASS. Workspace392 is NOT deployed; deployed390 has an incomplete runtime
+  run. Below75 target, broader matrix and all-rock census remain unfinished.
+  Runtime resumption requires the primary display to report3840x2160 again.
+
+The owner clarified that vanilla's deliberate intersections/stacks are valid;
+only floating introduced by expansion must be corrected, before T1. Current
+status and all failed/accepted evidence paths: `ALL_RULES_VERIFICATION.md` and
+`_ralph/runs/seed-fix-under75-20260922`. The broader 10-site sweep, 14N134W and
+new-candidate timing repeats remain outstanding. Tests stay hidden/windowed;
+no Windows display-setting API is used.
+
+## Current scoped result: guard399 / metadata1030
+
+Three consecutive fresh 24S74W RoughTerrain release runs measured
+74.682/73.444/73.640s, mean73.922s, maximum74.682s. All eight runtime gates,
+paired fields and full final surface/underground comparisons pass; six verified
+rock corrections finish beforeT1. The three temporary buttons pass. A separate
+fresh-process checkpoint load verifies exact deferred-mask bytes, all six saved
+corrected poses, unchanged linked surface entrances and direct underground reveal
+before any Elevator placement, with the final mask applied before access.
+All logs are clean and all display samples stay3840x2160.43/43 deployment matches;
+63 compatibility fixtures,37 syntax checks and13 rule-judge tests pass. No commit.
+
+Additional retained optimizations:398 uses exact U8 repacking and native corner
+terrain-type writing (full-grid native oracle equal);399 unrolls contact-tree
+bound extrema with exact tree topology/triangle-order parity. The prior398
+75.017s overrun, failed diagnostics and instrumentation-sensitive398A surface
+parity discrepancy remain recorded, not waived. Broader site/all-rock/RNG-source
+and historical process audits remain open. Machine scoped verdict:
+`_ralph/runs/full-rules-399-20260922/release_abc_verdict.json`.
+
+## 2026-09-22 correctness follow-up (guard400 / metadata1031)
+
+Reproduced a failure-path defect: a failed MapGrid clear was accepted when the
+engine error function only logged. Conversion/resample/repack/write failures now
+return explicit failure reasons, and the containing stretch refuses readiness.
+Missing optional grids retain their existing skip behavior. Added injected
+failure tests; all63 compatibility fixtures,37 syntax checks and13 judge tests pass.
+No success-path grid algorithm changed. Candidate remains uncommitted.
+
+The guard399 post-T1 coverage diagnostic enumerated15989 eligible surface rocks:
+14783 direct-terrain witnesses and1206 support-graph passes, no reported defects
+or inconclusive cases. However, that same run reproduced enrichment parity
+failure (35 removed/35 added class/hex rows, resource RNG draws5447 versus4731),
+with different final surface height/pass grids. It is NOT accepted. Its76.491s
+timing is diagnostic, not a new sub75 result. Evidence:
+`_ralph/runs/correctness-399-20260922/24s74w_coverage`.
+Earlier claims that398A was solely unused-probe-body sensitivity are not proven;
+the recurrence requires a real determinism investigation. All display samples4K.
+
+## 2026-09-22 resumed source-mask deferral (guards396/397)
+
+Runtime resumed at3840x2160. Guard396 persists the exact source underground
+forced-mask bytes but omits its temporary native write; final scaled application
+is mandatory before access and failures keep readiness closed. Guard397 also
+omits only the source-layout rebuild after capture. Earlier generation rebuilds,
+final expanded-grid synchronization and entrance planning remain unchanged.
+The surface planner fixes the nearest valid full Elevator footprint beforeT1;
+the underground endpoint retains its transformed authored position. A host
+regression now asserts no source-phase underground pass-raster query by that planner.
+
+24S74W RoughTerrain:396=76.577s;397A/B/C=74.128/73.776/75.768s.
+A/B pass all eight runtime gates and paired fields. C retains its above75 result
+and fails no-errors due to two post-timing PinButton animation errors in the extra
+button test. Its button actions and entrance/access checks pass. The no-screenshot
+test was missing the three layout frames already used by screenshot mode; adding
+that same wait removed the PinButton errors in the later type-write diagnostic.
+That diagnostic separately fails a native U8-grid API precondition and is not
+release evidence. An explicit U8-conversion oracle is running; no regional-write
+change has been promoted into production. Offline397:63 fixtures,37 syntax checks,
+13 rule-judge tests pass. All397 display samples remain3840x2160. Broader audits,
+new deferred-state save/load and consistently sub75 repeats remain outstanding.

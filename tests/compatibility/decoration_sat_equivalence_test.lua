@@ -35,7 +35,23 @@ for case=1,3000 do
  if case%7==0 then b[1]=a[1]end
  if case%11==0 then a[3]=a[2]end
  for _,t in ipairs({0,.00001,.01,2})do
-  assert(optimized(a,b,t)==reference(a,b,t),'SAT semantics changed in case '..case)
+  local separated,strict=optimized(a,b,t)
+  assert(separated==reference(a,b,t),'SAT semantics changed in case '..case)
+  assert(strict==reference(a,b,0),'fused zero-tolerance decision changed in case '..case)
  end
 end
 print('triangle SAT: 12000 equivalent decisions across scale, coplanar, touching and degenerate cases')
+-- Coincident finite projections need no normalization. Tiny but separated
+-- axes still use the original sqrt-based degeneracy decision, not a squared
+-- threshold whose rounding can differ at the boundary.
+for _,scale in ipairs({1e-8,1e-6,1e-4,1,1e5}) do
+ local a={{0,0,0},{scale,0,0},{0,scale,0}}
+ for _,offset in ipairs({0,scale*1e-8,scale,scale*2}) do
+  local b={{offset,0,0},{offset+scale,0,0},{offset,scale,0}}
+  for _,t in ipairs({0,1e-12,.01,2}) do
+   local separated,strict=optimized(a,b,t)
+   assert(separated==reference(a,b,t) and strict==reference(a,b,0))
+  end
+ end
+end
+print('triangle SAT: overlapping/tiny-axis normalization shortcut parity')

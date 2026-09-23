@@ -25,12 +25,18 @@ an,bn=pair({{1,0,0},{0,1,0},{0,0,3}})
 assert(not contact(an,bn,.02),'nonuniform transform falsely reused a positive contact')
 -- A proof at a stricter distance remains a proof at a looser distance; do not
 -- repeat the same asset triangle search for every top-up's distinct scale.
-a.rigid_contacts=nil
+a.rigid_contacts=nil;b.rigid_contacts=nil
 an,bn=pair({{1,0,0},{0,1,0},{0,0,1}})
 assert(contact(an,bn,.02,true));n=calls
 assert(contact(an,bn,.03,true))
 assert(calls==n,'placement repeated a contact proof already valid at a stricter tolerance')
+assert(contact(bn,an,.03,true) and calls==n,'reverse traversal repeated a symmetric contact proof')
 local raw=up(contact,'RawComponentContact')
+local tree=SuperBigMap.DecorationGeometry.TriangleTree
+SuperBigMap.DecorationGeometry.TriangleTree=function()error('disjoint component boxes built a triangle hierarchy')end
+local hit,separated=raw(an,bn,.001)
+assert(not hit and separated,'disjoint component bounds did not provide complete separation')
+SuperBigMap.DecorationGeometry.TriangleTree=tree
 math.randomseed(332)
 for trial=1,1000 do
  local scale=.1+math.random()*4;local angle=math.random()*6

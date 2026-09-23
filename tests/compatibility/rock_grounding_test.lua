@@ -172,4 +172,71 @@ for _,ratios in ipairs({{4/3,4/3},{1,4/3}}) do
  check(G.Apply(map,o,ratios[1],ratios[2])==0 and o.moves==0,
   'authored elevated column piece must not be mistaken for terrain-glued rock')
 end
+globals.box=function(x0,y0,x1,y1)return {x0,y0,x1,y1}end
+local bounded_map,queried
+globals.terrain.GetMinMaxHeight=function(m,b)bounded_map=m;queried=b;return 10000,10000 end
+map,o=scene({pos=pt(5000,6000,10000)})
+capture(map,o)
+check(map.SuperBigMapRockGroundingStats.probes==0,'flat footprint repeated uphill height probes')
+check(bounded_map==map and queried[1]==3900 and queried[3]==6100,'terrain bound must include interpolation neighbours')
+map,o=scene({pos=pt(5000,6000,10000),bottom=11200,bbox_bottom=1200})
+capture(map,o);o.scale=133
+function o:IntersectSegment(low,high)return pt(low:x(),low:y(),self:GetVisualPos():z()+1200*self.scale/100)end
+check(G.Apply(map,o,1)==1596,'bounded native capture skipped required unsupported-mesh seating')
+map,o=scene();capture(map,o);o.scale=133
+check(G.Apply(map,o,1)==660,'upper terrain above pivot must retain all contact sampling')
 print('rock grounding: '..tests..' assertions passed')
+
+local function direct_uniform(m)
+ m.SuperBigMapDirectSourceTerrainStretched=true
+ m.SuperBigMapSourceWidthTiles=300;m.SuperBigMapSourceHeightTiles=300
+ m.SuperBigMapDesiredWidthTiles=400;m.SuperBigMapZScaleMul=4;m.SuperBigMapZScaleDiv=3
+ return {height=m.height,GetMapSize=m.GetMapSize}
+end
+map,o=scene();source=direct_uniform(map)
+capture(map,o,source)
+check(map.SuperBigMapRockGroundingStats.probes==0 and map.SuperBigMapRockGroundingStats.rays==0,
+ 'completed uniform stretch gathered uphill contacts that Apply cannot consume')
+o.scale=133
+check(G.Apply(map,o,4/3,4/3)==0 and o.moves==0,'uniform shortcut changed final native pose')
+map,o=scene();source=direct_uniform(map);capture(map,o,source)
+local n,why=G.Apply(map,o,1,4/3)
+check(n==nil and why=='terrain compression changed after uniform native-contact capture',
+ 'a changed compression ratio reused an incomplete native-contact capture')
+map,o=scene();source=direct_uniform(map);map.SuperBigMapZScaleMul=3;capture(map,o,source)
+check(map.SuperBigMapRockGroundingStats.probes>0,'compressed terrain lost its native support capture')
+o.scale=133;check(G.Apply(map,o,1,4/3)==660,'compressed support behavior changed')
+map,o=scene();direct_uniform(map);capture(map,o,map)
+check(map.SuperBigMapRockGroundingStats.probes>0,'in-place not-yet-stretched terrain used a stale uniform certificate')
+map,o=scene({pos=pt(5000,6000,10000),bottom=11200,bbox_bottom=1200})
+source=direct_uniform(map);capture(map,o,source);o.scale=133
+function o:IntersectSegment(low,high)return pt(low:x(),low:y(),self:GetVisualPos():z()+1200*self.scale/100)end
+check(G.Apply(map,o,4/3,4/3)==1596,'uniform shortcut exempted a wholly floating rock')
+print('uniform capture: no unused rays, unchanged compression fallback, ratio guard and floating-rock seating passed')
+
+SuperBigMap.Engine.MapDataEnvironment=function(data)return data and data.Environment end
+SuperBigMap.DecorationSeating={Run=function()end}
+SuperBigMap.DecorationValidation={WithCorrectionEvidence=function()end,SurfaceSupportSummary=function()end}
+for _,case in ipairs({'surface','underground','compressed','inplace','disabled_final','missing_service'})do
+ map,o=scene({pos=pt(5000,6000,10000),bottom=11200,bbox_bottom=1200})
+ source=direct_uniform(map);map.mapdata={Environment=case=='underground' and 'Underground' or 'Surface'}
+ if case=='compressed' then map.SuperBigMapZScaleMul=3 end
+ if case=='inplace' then source=map end
+ SuperBigMap.Config.EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS=case~='disabled_final'
+ local summary=SuperBigMap.DecorationValidation.SurfaceSupportSummary
+ if case=='missing_service' then SuperBigMap.DecorationValidation.SurfaceSupportSummary=nil end
+ local capture_needed=G.BeginCapture(map,source)
+ local delegated=case=='surface' or case=='compressed'
+ check((capture_needed==false)==delegated,'strict-final handoff escaped its guard: '..case)
+ G.Capture(map,o);o.scale=133
+ function o:IntersectSegment(low,high)return pt(low:x(),low:y(),self:GetVisualPos():z()+1200*self.scale/100)end
+ check(G.Apply(map,o,case=='compressed' and 1 or 4/3,4/3)==(delegated and 0 or 1596),
+  'strict-final handoff changed a required fallback: '..case)
+ if case=='surface' then
+  check(map.SuperBigMapRockGroundingStats.capture_ms==0,'handoff still inspected each rock')
+  local result,reason=G.Apply(map,o,1,4/3)
+  check(result==nil and reason,'handoff omitted changed-compression guard')
+ end
+ SuperBigMap.DecorationValidation.SurfaceSupportSummary=summary
+end
+print('strict surface handoff: redundant capture removed only with full pre-T1 service; all fallbacks retained')

@@ -50,11 +50,14 @@ validate()
 assert(rotated.SuperBigMapSupportValidation.current_geometry_status=='confirmed defect','rotated conservative AABB hid a real ten-unit ground gap')
 objects={}
 local crest=object('Crest',{{0,0,10},{12,0,10},{0,12,10}})
-globals.terrain.GetHeight=function(_,p)local x,y=p:xy();return x==504 and y==504 and 12 or 0 end
+local function terrain_peak(px,py)
+ return function(_,p,y)local x=p;if type(p)=='table' then x,y=p:xy()end;return x==px and y==py and 12 or 0 end
+end
+globals.terrain.GetHeight=terrain_peak(504,504)
 globals.terrain.GetMinMaxHeight=function()return 0,12 end
 validate()
 assert(crest.SuperBigMapSupportValidation.current_geometry_status=='valid','terrain can contact a triangle interior without reaching any mesh vertex')
-globals.terrain.GetHeight=function(_,p)local x,y=p:xy();return x==508 and y==508 and 12 or 0 end
+globals.terrain.GetHeight=terrain_peak(508,508)
 validate()
 assert(crest.SuperBigMapSupportValidation.current_geometry_status~='valid','a terrain crest outside the triangle must not supply support')
 print('decoration separation: complete triangle separation, unknown veto and exact transformed bounds passed')
@@ -68,7 +71,7 @@ globals.terrain.GetHeight=function()return 0 end
 V.Correction(map,'Underground',function()
  assert(crest.SuperBigMapSupportValidation.current_geometry_status~='valid','missing support cannot count as a positive proof')
 end)
-globals.terrain.GetHeight=function(_,p)local x,y=p:xy();return x==504 and y==504 and 12 or 0 end
+globals.terrain.GetHeight=terrain_peak(504,504)
 V.Correction(map,'Underground',function()
  assert(crest.SuperBigMapSupportValidation.current_geometry_status=='inconclusive','a placement proposal must not claim verification')
  V.VerifyCorrection(map,{{obj=crest}},'fixture actual placement')

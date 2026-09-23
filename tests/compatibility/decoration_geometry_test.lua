@@ -27,3 +27,32 @@ assert(decoded,err);assert(decoded.vertices[1][3]==490 and decoded.vertices[3][3
 data.maxBonesPerVertex=nil;assert(not G.Decode(data,{-3,-3,490,3,3,496},formats),'missing animation metadata')
 local entity=G.Entity('missing',0);assert(not entity.complete and entity.reason)
 print('decoration geometry: split/float decoding, disconnected fragments, exact seams, bounds guard and missing-data failures passed')
+-- Fused extrema capture must retain the scalar seven-pass witness order and
+-- first-vertex tie handling, not merely equivalent bounding-box coordinates.
+math.randomseed(379)
+for trial=1,250 do
+ local points,indices={},{}
+ local bounds={math.huge,math.huge,math.huge,-math.huge,-math.huge,-math.huge}
+ for i=1,36 do
+  points[i]={math.random(-7,7),math.random(-7,7),math.random(-7,7)}
+  for a=1,3 do bounds[a]=math.min(bounds[a],points[i][a]);bounds[a+3]=math.max(bounds[a+3],points[i][a]) end
+ end
+ for i=0,35,3 do indices[#indices+1]=i;indices[#indices+1]=i+1;indices[#indices+1]=i+2 end
+ local g=assert(G.Decode(mesh(points,indices),bounds,formats))
+ for _,component in ipairs(g.components) do
+  local expected,seen={},{}
+  for axis=1,3 do for _,sign in ipairs({-1,1}) do
+   local best
+   for _,i in ipairs(component.vertices) do
+    if not best or g.vertices[i][axis]*sign>g.vertices[best][axis]*sign then best=i end
+   end
+   if best and not seen[best] then expected[#expected+1]=g.vertices[best];seen[best]=true end
+  end end
+  assert(#expected==#component.samples,'extrema witness count changed')
+  for i,p in ipairs(expected) do assert(component.samples[i]==p,'extrema witness identity/tie order changed') end
+  local bottom
+  for _,i in ipairs(component.vertices) do if not bottom or g.vertices[i][3]<g.vertices[bottom][3] then bottom=i end end
+  assert(component.bottom==g.vertices[bottom],'bottom witness identity changed')
+ end
+end
+print('geometry fused extrema: 250 meshes retain all scalar witness identities and tie order')

@@ -135,6 +135,25 @@ local outside=object(51,500,500,0);local inside=object(52,205,205,0);inside.scal
 list={hole,outside,inside};capture();report=V.Validate(map,'exact native terrain cut')
 assert(outside.SuperBigMapSupportValidation.status=='valid','whole wonder bbox must not hide real floor outside native cut triangles')
 assert(inside.SuperBigMapSupportValidation.status=='inconclusive','height field inside a terrain cut is not visible support')
+do
+ local enabled=SuperBigMap.Config.DECORATION_VALIDATION_ENABLED
+ local grounding=SuperBigMap.RockGrounding
+ SuperBigMap.Config.DECORATION_VALIDATION_ENABLED=false
+ SuperBigMap.RockGrounding={Eligible=function(o)return o~=hole end}
+ -- Deliberately put the hole LAST. A one-pass nomination must not mark the
+ -- first rock grounded before discovering this later terrain-cutting object.
+ list={inside,outside,hole}
+ V.WithCorrectionEvidence(map,'Surface',function()
+  local result=assert(V.SurfaceSupportSummary(map))
+  assert(result.eligible==2 and result.unresolved==1,
+   'fast correction census accepted the invisible floor under a terrain hole')
+  assert(outside.SuperBigMapSupportValidation.current_geometry_status=='valid',
+   'conservative hole bounds prevented exact visible-floor validation outside the cut')
+  return {}
+ end)
+ SuperBigMap.Config.DECORATION_VALIDATION_ENABLED=enabled
+ SuperBigMap.RockGrounding=grounding
+end
 globals.HasAnySurfaces=function()return false end
 local subtle=object(53,1200,1200,0);list={subtle};capture();V.Validate(map)
 subtle.z=0.5;report=V.Validate(map,'sub-tile floating defect')
@@ -374,7 +393,61 @@ local candidates=V.SeatingEvidence(map)
 assert(#candidates==1 and candidates[1].obj==group and #candidates[1].components==2,'safe native group was not nominated for visibility-preserving rigid planning')
 group.ForEachAttach=function(_,fn)fn({})end
 assert(#V.SeatingEvidence(map)==0,'native attachment must veto group correction')
+group.ForEachAttach=nil
+SuperBigMap.Config.DECORATION_VALIDATION_ENABLED=false
+V.WithCorrectionEvidence(map,'Surface',function()
+ assert(#V.SeatingEvidence(map)==1,'a grounded origin hid a detached component in release mode')
+ return {}
+end)
+SuperBigMap.Config.DECORATION_VALIDATION_ENABLED=true
 print('native groups: detached fragment nominated without allowing attachment changes')
+
+-- Native geometry still protects authored contacts, but authored gaps must now
+-- be corrected as well. Source negative proofs no longer serve an exemption.
+local original_signature=G.CompositionSignature
+G.CompositionSignature=function(value)return value==group_asset and 'complete fixture group' or original_signature(value)end
+SuperBigMap.Config.DECORATION_VALIDATION_ENABLED=false
+group.SuperBigMapSupportBaseline=nil
+local native_capture=V.CaptureNativeCompositions(map)
+assert(native_capture and native_capture.captured and native_capture.candidates==1)
+assert(native_capture.geometry_only and group.SuperBigMapSupportBaseline.geometry_only,
+ 'source frames must be distinguished from a source support census')
+assert(not group.SuperBigMapSupportBaseline.components['0:native-group:2'].supported)
+V.WithCorrectionEvidence(map,'Surface',function()
+ assert(not group.SuperBigMapSupportValidation.native_composition_verified,'native gap exemption must stay disabled')
+ assert(group.SuperBigMapSupportValidation.current_geometry_status~='valid','authored gap was incorrectly relabeled grounded')
+ assert(#V.SeatingEvidence(map)==1,'native floating assembly must be nominated for correction')
+ return {}
+end)
+group.z=100
+V.WithCorrectionEvidence(map,'Surface',function()
+ assert(not group.SuperBigMapSupportValidation.native_composition_verified,'lost native root was exempted')
+ assert(#V.SeatingEvidence(map)==1,'expansion-induced unsupported assembly must be nominated')
+ return {}
+end)
+group.z=0
+G.CompositionSignature=original_signature
+SuperBigMap.Config.DECORATION_VALIDATION_ENABLED=true
+print('release native composition: exact capture, unchanged authored gaps, lost-root veto, no mutation')
+
+SuperBigMap.Config.DECORATION_VALIDATION_ENABLED=false
+G.Entity=function()return asset end
+local native_single=object(902,3500,3500,100)
+native_single.GetRelativePoint=function()error('single-component native nomination performed redundant vertex probes')end
+list={native_single}
+local single_capture=V.CaptureNativeCompositions(map)
+assert(single_capture and single_capture.captured and single_capture.candidates==0)
+assert(not native_single.SuperBigMapSupportBaseline,'invented a native supported-plus-gap assembly from one component')
+local lod_asset={complete=true,parts={}}
+for lod=0,3 do lod_asset.parts[#lod_asset.parts+1]={lod=lod,mesh={path='alternative-lod-'..lod,geometry=geometry}} end
+G.Entity=function()return lod_asset end
+local native_bbox=native_single.GetObjectBBox
+native_single.GetObjectBBox=function()error('native map without assemblies built a redundant bounds index')end
+local lod_capture=V.CaptureNativeCompositions(map)
+assert(lod_capture and lod_capture.captured and lod_capture.candidates==0,'alternative LODs were treated as simultaneous composition fragments')
+assert(not native_single.SuperBigMapSupportBaseline,'alternative LODs invented a native gap exemption')
+native_single.GetObjectBBox=native_bbox
+SuperBigMap.Config.DECORATION_VALIDATION_ENABLED=true
 
 -- A candidate completely inside a closed neighbouring rock has no intersecting
 -- surface triangles, but is not an empty placement. The same indexed complete
@@ -411,3 +484,78 @@ assert(V.BuildDecorPlacement(map,list,point(3000,3000,0),4/3).ok,'short circuit 
 local cap=object(924,3000,3000,40);cap.GetScale=cap.GetWorldScale
 list={cap,stacked,ground}
 assert(V.BuildDecorPlacement(map,list,point(3000,3000,0),4/3).ok,'short circuit rejected a support chain resolved later')
+local distance=V.TriangleDistanceSquared
+V.TriangleDistanceSquared=function()error('known rejected prefab did unrelated mesh contact work')end
+list={ground,stacked,second_bad}
+local early=V.BuildDecorPlacement(map,list,point(3000,3000,0),4/3)
+assert(not early.ok and early.reason=='native decor component has no verified rigid support',
+ 'late isolated unsupported piece did not reject the new prefab before unrelated contacts')
+V.TriangleDistanceSquared=distance
+print('prefab failure preflight: isolated late float rejects before unrelated mesh work; rooted chains still pass')
+
+-- Complete positive neighbour contact makes a second terrain-face witness
+-- redundant. A conservative padded height upper bound need not equal the
+-- terrain directly under this mesh, so it must not force that expensive walk.
+G.Entity=function()return asset end
+globals.terrain.GetMinMaxHeight=function()return 0,100 end
+local terrain_queries=0
+globals.terrain.GetHeight=function()terrain_queries=terrain_queries+1;return 0 end
+list={object(930,3000,3000,0),object(931,3000,3000,20)}
+V.WithCorrectionEvidence(map,'Surface',function()
+ local summary=V.SurfaceSupportSummary(map)
+ assert(summary.eligible==2 and summary.unresolved==0,'rooted stack lost positive support')
+ return {}
+end)
+assert(terrain_queries<100,'rooted component still repeated an unnecessary terrain-face witness search')
+-- With no rooted neighbour, the face-interior witness MUST still be tried.
+globals.terrain.GetHeight=function(_,p,y)
+ local x=type(p)=='number' and p or p:x();y=y or p:y()
+ return math.abs(x-3000)<3 and math.abs(y-3000)<3 and 20 or 0
+end
+list={object(932,3000,3000,20)}
+V.WithCorrectionEvidence(map,'Surface',function()
+ assert(V.SurfaceSupportSummary(map).unresolved==0,'deferred face-only terrain support was skipped')
+ return {}
+end)
+print('support proof ordering: one rooted witness suffices; face-only roots still receive full terrain search')
+
+-- An unselected grounded neighbour has only a conservative world-bounds role.
+-- A complete affine pose for it is unused; acquiring one must not be necessary.
+local face_height=globals.terrain.GetHeight
+globals.terrain.GetHeight=function()return 0 end
+local far_grounded=object(933,8000,8000,0)
+far_grounded.GetVisualPos=function()error('unselected bounds-only object captured an unused affine pose')end
+local far_bbox=far_grounded.GetObjectBBox;local far_bounds_calls=0
+far_grounded.GetObjectBBox=function(self)far_bounds_calls=far_bounds_calls+1;return far_bbox(self)end
+list={object(934,3000,3000,0),object(935,3000,3000,20),far_grounded}
+V.WithCorrectionEvidence(map,'Surface',function()
+ assert(far_bounds_calls==1,'unchanged preparation repeatedly acquired the same native bounds')
+ local summary=V.SurfaceSupportSummary(map)
+ assert(summary.eligible==3 and summary.unresolved==0,'bounds-only shortcut lost positive coverage')
+ -- Mutation begins here: the initial snapshot must no longer authorize reuse.
+ far_grounded.x=9000
+ V.Validate(map,'after callback mutation')
+ assert(far_bounds_calls>1,'post-preparation scan reused stale native bounds')
+ return {}
+end)
+print('correction scan: unselected world-bounds records need no unused local pose')
+globals.terrain.GetHeight=face_height
+
+-- A neighbour with a detached component may itself need to move. Preserve an
+-- independent terrain-face root instead of inventing a dependency on that
+-- assembly, which would otherwise veto its safe correction.
+G.Entity=function(entity)return entity=='Group' and group_asset or asset end
+globals.EntityData.Group=globals.EntityData.Rock
+globals.const.HeightTileSize=1
+globals.terrain.GetMinMaxHeight=function(_,bounds)
+ return 0,bounds:minx()<=3000 and bounds:maxx()>=3000 and 20 or 0
+end
+local movable_group=object(940,3000,3000,0,'Group')
+function movable_group:GetObjectBBox()return box(2990,2990,0,3050,3010,25)end
+list={movable_group,object(941,3000,3000,20)}
+V.WithCorrectionEvidence(map,'Surface',function()
+ local evidence=V.SeatingEvidence(map)
+ assert(#evidence==1 and evidence[1].obj==movable_group,
+  'independent terrain-face root became a false dependency on a movable assembly')
+ return {}
+end)

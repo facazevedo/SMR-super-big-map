@@ -10,6 +10,72 @@ def run(rules=None, status="complete", log="", snapshot=None):
 
 
 class EvidenceJudgeTests(unittest.TestCase):
+    def test_underground_rocks_require_positive_coverage_without_native_exemptions(self):
+        census = dict(boundary="underground after ready, before buttons", eligible=100,
+                      direct_terrain_witness=80, support_graph_valid=20,
+                      native_composition_preserved=0, inconclusive=0, incomplete=0, defect=0, findings=[])
+        def verdict(value):
+            evidence=run()
+            evidence["observations"]={"report": {"underground_support_census": value}}
+            return judge_run(evidence)["underground-rock-support"]["verdict"]
+        self.assertEqual(verdict(census), "pass")
+        self.assertEqual(verdict(None), "pending")
+        for key, value in (("boundary", "wrong"), ("inconclusive", 1), ("incomplete", 1),
+                           ("defect", 1), ("native_composition_preserved", 1),
+                           ("eligible", 101), ("findings", [{}]), ("support_graph_valid", None)):
+            self.assertEqual(verdict(dict(census, **{key: value})), "fail")
+
+    def test_all_three_temporary_buttons_require_exercised_handlers(self):
+        buttons = dict(status="complete", surface_sectors=400, surface_deep_scanned=400,
+                       underground_objects=110, underground_revealed=110, darkness=0,
+                       elevator_mode="construction", elevator_template="Elevator")
+        def verdict(value):
+            evidence=run()
+            evidence["observations"]={"report": {"buttons": value}}
+            return judge_run(evidence)["temporary-buttons"]["verdict"]
+        self.assertEqual(verdict(buttons), "pass")
+        self.assertEqual(verdict(None), "pending")
+        for key, value in (("status", "failed"), ("surface_deep_scanned", 399),
+                           ("underground_revealed", 109), ("darkness", 1),
+                           ("elevator_template", "WrongBuilding")):
+            self.assertEqual(verdict(dict(buttons, **{key: value})), "fail")
+
+    def test_rock_census_accounts_for_every_eligible_instance(self):
+        census = dict(boundary="T1 before player actions", eligible=100, direct_terrain_witness=80, support_graph_valid=20,
+                      native_composition_preserved=0, inconclusive=0, incomplete=0, defect=0, findings=[])
+        def verdict(value):
+            evidence=run()
+            evidence["observations"]={"report": {"support_census": value}}
+            return judge_run(evidence)["rock-support"]["verdict"]
+        self.assertEqual(verdict(census), "pass")
+        self.assertEqual(verdict(dict(census, support_graph_valid=15, native_composition_preserved=5)), "fail")
+        for key, value in (("inconclusive", 1), ("incomplete", 1), ("defect", 1),
+                           ("eligible", 101), ("eligible", 0), ("support_graph_valid", None),
+                           ("findings", [{}]), ("findings", None)):
+            self.assertEqual(verdict(dict(census, **{key: value})), "fail")
+        self.assertEqual(verdict(None), "pending")
+        self.assertEqual(verdict(dict(census, boundary="after access")), "pending")
+        self.assertEqual(judge_run(run())["rock-support"]["verdict"], "pending")
+
+    def test_surface_loading_includes_successful_seating_and_strict_limit(self):
+        rules = dict(t0_to_t1_ms=74999, seating_before_t1=True, seating={"rejected": 0})
+        self.assertEqual(judge_run(run(rules))["surface-loading"]["verdict"], "pass")
+        for field, value in (("t0_to_t1_ms", 75000), ("t0_to_t1_ms", 0),
+                             ("seating_before_t1", False), ("seating", None),
+                             ("seating", {"rejected": 1}), ("seating", {"rejected": 0, "error": "failed"})):
+            self.assertEqual(judge_run(run(dict(rules, **{field: value})))["surface-loading"]["verdict"], "fail")
+        self.assertEqual(judge_run(run())["surface-loading"]["verdict"], "pending")
+
+    def test_underground_loading_strict_boundary_and_readiness(self):
+        rules = dict(ug_loading_ms=59999, ug_loading_ready=True,
+                     ug_loading_boundary="first-access-phase through prepared and covers closed")
+        self.assertEqual(judge_run(run(rules))["underground-loading"]["verdict"], "pass")
+        for value in (60000, 60001, 0, -1, None, "invalid"):
+            self.assertEqual(judge_run(run(dict(rules, ug_loading_ms=value)))["underground-loading"]["verdict"], "fail")
+        for field, value in (("ug_loading_ready", False), ("ug_loading_boundary", "switch-only")):
+            self.assertEqual(judge_run(run(dict(rules, **{field: value})))["underground-loading"]["verdict"], "fail")
+        self.assertEqual(judge_run(run())["underground-loading"]["verdict"], "pending")
+
     def test_cluster_range_uses_completed_plans_not_search_target(self):
         rules = {'ring_audit_resource_clusters': 8, 'ring_audit_rocket_pads': 8,
                  'ring_plan_placed_clusters': 8, 'ring_plan_desired_clusters': 10,

@@ -18,16 +18,23 @@ local rebuild_block = assert(map_source:match(
 	"(function SuperBigMap%.GenerationGrids%.RebuildFinal.-)\n\n%-%- Stretch%-only surface"),
 	"production final-grid rebuild not found")
 
--- Unit #11 was rejected after cold runs proved that removing the immediate rebuild can change
--- native surface pass output. Keep both stages tied to the actual production lifecycle.
+-- The accepted practical-equivalence lifecycle commits every object-grid mutation through one
+-- combined pass-edit transaction. A second and third whole-map rebuild added no gameplay
+-- guarantee and cost several seconds apiece, so neither may return to the T1 path.
 local immediate =
 	'SuperBigMap.GenerationGrids.RebuildFinal(map, "after last object-grid transaction")'
 local scheduled =
 	'SuperBigMap.GenerationGrids.RebuildFinal(\n\t\t\t\t\t\tmap, "post-pipeline scheduled revalidation")'
 local has_immediate = runner:find(immediate, 1, true) ~= nil
 local has_scheduled = runner:find(scheduled, 1, true) ~= nil
-assert(has_immediate, "accepted production lifecycle lost its immediate final rebuild")
-assert(has_scheduled, "production canonical post-pipeline rebuild is missing")
+assert(not has_immediate, "redundant immediate whole-map rebuild returned")
+assert(not has_scheduled, "redundant scheduled whole-map rebuild returned")
+assert(runner:find('ResumeCombinedPassEdits(\n\t\t\t\t\t"after surface marker movement")',1,true),
+	"authoritative combined pass-edit commit is missing")
+local ready=assert(runner:find("map.SuperBigMapSurfacePostPipelineRevalidationComplete = true",1,true))
+local correction=assert(runner:find("map.SuperBigMapSurfaceDecorationCorrectionComplete = true",1,true))
+assert(correction<ready,"T1 must wait for completed rock seating")
+assert(not runner:find("sleep(2000)",1,true),"post-T1 seating delay returned")
 
 -- Rejected-unit guard: neither the config seam nor the completion-deferral machinery may return
 -- without new native-equivalence evidence.
@@ -38,9 +45,8 @@ assert(runner:find("SuperBigMapSurfaceImmediateFinalRebuildSkipped", 1, true) ==
 assert(runner:find("hold_completion_for_revalidation", 1, true) == nil,
 	"rejected unit #11 completion deferral returned")
 
--- Execute the shipped RebuildFinal implementation, not a copied model. Each invocation must
--- perform one complete invalidate/passability/buildable sequence; this makes the duplicate's
--- engine-call cost explicit even in the offline regression.
+-- RebuildFinal remains available for underground preparation and recovery paths. Execute the
+-- shipped implementation once to retain its independent full-grid contract.
 local calls = {}
 local function record(name, value)
 	calls[#calls + 1] = { name = name, value = value }
@@ -53,6 +59,7 @@ local terrain = {
 }
 local env = setmetatable({
 	SuperBigMap = { GenerationGrids = {} },
+	Engine = { MapDataEnvironment = function(mapdata) return mapdata.Environment end },
 	Global = function(name)
 		if name == "terrain" then return terrain end
 		if name == "box" then
@@ -80,8 +87,7 @@ local rebuild = assert(load(rebuild_block
 	"production-surface-final-rebuild", "t", env))()
 local map = { mapdata = { Environment = "Surface" } }
 local active_stages = {
-	"after last object-grid transaction",
-	"post-pipeline scheduled revalidation",
+	"offline recovery verification",
 }
 for _, stage in ipairs(active_stages) do rebuild(map, stage) end
 
@@ -100,6 +106,5 @@ assert(counts.InvalidateHeight == expected and counts.InvalidateType == expected
 	"production calls did not execute one complete rebuild sequence per active stage")
 assert(map.SuperBigMapFinalPassCount == expected,
 	"production rebuild counter did not observe every active surface call")
-assert(expected == 2,
-	"accepted surface lifecycle must retain both whole-map final rebuild stages")
-print("PASS surface final rebuild lifecycle: immediate and scheduled rebuilds retained")
+assert(expected == 1,"offline recovery contract should exercise one complete rebuild")
+print("PASS surface final rebuild lifecycle: combined commit retained; redundant rebuilds absent")

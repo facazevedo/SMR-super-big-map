@@ -18,7 +18,13 @@ if type(SuperBigMap) ~= "table" then
 end
 
 local Engine = {}
-local type, pcall = type, pcall
+-- Capture the module environment and immutable access primitives, not any
+-- engine values. Every lookup still reads the live table (including map
+-- shadows and rebound class predicates), without two sandbox fallbacks per
+-- call merely to resolve rawget and _G again.
+local type, pcall, rawget, _G = type, pcall, rawget, _G
+local math,table=math,table
+local tonumber,tostring,pairs,ipairs=tonumber,tostring,pairs,ipairs
 
 -- The game's sandbox rawget falls through to native globals, except when this
 -- mod has published a temporary raw shadow. MainMap/MainCity shadows from the
@@ -183,6 +189,24 @@ end
 local native_kind_pair = IsNativeClassPrimitive(native_single_kind)
 	and IsNativeClassPrimitive(native_many_kinds)
 local unpack_kind_list = table.unpack or unpack
+local canonical_first_kind
+
+-- A scoped negative proof for callers that otherwise ask several overlapping
+-- native class lists in succession. No object/class result is cached. Custom
+-- or rebound predicates cannot qualify, and a failed query is never a proof.
+function Engine.ExcludesKinds(obj, classes, single_kind)
+	if native_kind_pair and canonical_first_kind and Engine.FirstKindOf==canonical_first_kind
+		and type(obj)=="table" and #classes>0 and #classes<=64
+		and single_kind==canonical_single_kind and Engine.IsKindOf==canonical_single_kind
+		and Engine.SafeCall==canonical_safe_call
+		and rawget(_G,"IsKindOf")==native_single_kind
+		and rawget(_G,"IsKindOfClasses")==native_many_kinds
+		and type(unpack_kind_list)=="function" then
+		local ok,value=pcall(native_many_kinds,obj,unpack_kind_list(classes))
+		return ok and (value==false or value==nil)
+	end
+	return false
+end
 
 -- Return the first matching list entry and the scalar predicate's value.
 -- A negative native result is final only while every qualified identity is live.
@@ -211,6 +235,7 @@ function Engine.FirstKindOf(obj, classes, single_kind)
 	end
 	return nil, last_value
 end
+canonical_first_kind = Engine.FirstKindOf
 
 -- Best-effort world position of an object: GetPos, then visual-position fallbacks.
 -- Returns a point, or false when no position is resolvable.

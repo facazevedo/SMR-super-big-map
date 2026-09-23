@@ -10,6 +10,7 @@ if type(SuperBigMap) ~= "table" then
 end
 
 local Engine = SuperBigMap.Engine
+local type,rawget,pcall,tostring,ipairs,pairs=type,rawget,pcall,tostring,ipairs,pairs
 local Global = Engine.Global
 local SafeCall = Engine.SafeCall
 local TryCall = Engine.TryCall
@@ -143,7 +144,7 @@ local mystery_kinds = {
 	"BlackCubeMonolithBase",
 	"BlackCubeDumpSite",
 }
-local function IsMysteryRelatedObject(obj)
+local function IsMysteryRelatedObject(obj, excludes_kinds)
 	if not obj then
 		return false
 	end
@@ -151,7 +152,7 @@ local function IsMysteryRelatedObject(obj)
 	if type(class) == "string" then
 		if MatchMysteryName(class) then return true end
 	end
-	return FirstKindOfSafe(obj, mystery_kinds, IsKindOfSafe) ~= nil
+	return not excludes_kinds and FirstKindOfSafe(obj, mystery_kinds, IsKindOfSafe) ~= nil
 end
 
 local function MatchUndergroundAccessName(field, value)
@@ -192,12 +193,12 @@ local function ObjectMatchesUndergroundAccessName(obj)
 	return false
 end
 
-local function IsUndergroundAccessObject(obj)
+local function IsUndergroundAccessObject(obj, excludes_kinds)
 	if not IsLiveGameObject(obj) then
 		return false
 	end
 
-	local kind = FirstKindOfSafe(obj, underground_access_clone_kinds, IsKindOfSafe)
+	local kind = not excludes_kinds and FirstKindOfSafe(obj, underground_access_clone_kinds, IsKindOfSafe)
 	if kind then return true, "kind", kind end
 
 	local matched, field, pattern = ObjectMatchesUndergroundAccessName(obj)
@@ -231,6 +232,17 @@ local function IsResourceDepositMarker(obj)
 	return matched
 end
 
+local transform_exclusion_kinds = {}
+do
+	local seen={}
+	for _,list in ipairs({mystery_kinds,underground_access_clone_kinds,
+		resource_marker_kinds,spawned_deposit_kinds,skip_clone_kinds}) do
+		for _,kind in ipairs(list) do if not seen[kind] then
+			seen[kind]=true;transform_exclusion_kinds[#transform_exclusion_kinds+1]=kind
+		end end
+	end
+end
+
 local function ShouldSkipObject(obj)
 	if not IsLiveGameObject(obj) or skip_clone_classes[obj.class or false] then
 		return true
@@ -239,19 +251,25 @@ local function ShouldSkipObject(obj)
 	if obj.SuperBigMapEnrichmentClone then
 		return true
 	end
+	-- Most scatter objects match none of the gameplay/mystery/access classes.
+	-- One native union query proves all those negatives for this synchronous
+	-- classification. Live names and parent ownership must still be inspected.
+	local excludes_kinds = type(Engine.ExcludesKinds)=="function"
+		and Engine.ExcludesKinds(obj,transform_exclusion_kinds,IsKindOfSafe)
 
 	-- Never touch mystery content.
-	if IsMysteryRelatedObject(obj) then
+	if IsMysteryRelatedObject(obj, excludes_kinds) then
 		return true
 	end
 
 	-- Never clone underground entrance/access markers, symbols, or decoration. Game
 	-- references: UndergroundPassage.lua defines SurfaceUndergroundTunnelMarker /
 	-- Sign, and SurfacePassageRocks.lua uses ElevatorBuildIndicator_UndergroundRocks.
-	local underground = IsUndergroundAccessObject(obj)
+	local underground = IsUndergroundAccessObject(obj, excludes_kinds)
 	if underground then
 		return true
 	end
+	if excludes_kinds then return false end
 
 	-- Marker-based deposit copy: do NOT clone spawned deposit OBJECTS (we copy the markers
 	-- instead, which spawn on scan), and never copy anomalies or effect-deposit markers --

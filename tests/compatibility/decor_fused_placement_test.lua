@@ -95,16 +95,85 @@ c.samples=vertices
 local fast=validator.BuildDecorPlacement(map,{o},center,4/3)
 assert(fast.ok and fast.placements[o].zero_offset_proven,'already-correct placement did not use its positive zero-offset proof')
 for a=1,3 do assert(fast.placements[o].position[a]==reference.placements[o].position[a],'zero-offset proof changed placement')end
+c.samples={vertices[3],vertices[4]};r.nodes[1].terrain_vertex=vertices[1]
+fast=validator.BuildDecorPlacement(map,{o},center,4/3)
+assert(fast.ok and fast.placements[o].zero_offset_proven,'known real terrain vertex was not re-evaluated at target')
+for a=1,3 do assert(fast.placements[o].position[a]==reference.placements[o].position[a],'terrain vertex certificate changed placement') end
+r.nodes[1].terrain_vertex=vertices[3]
+fast=validator.BuildDecorPlacement(map,{o},center,4/3)
+assert(fast.ok and not fast.placements[o].zero_offset_proven,'old source support status substituted for target proof')
+c.samples=vertices;r.nodes[1].terrain_vertex=nil
 local o2={GetScale=function()return 100 end}
 local r2={obj=o2,relevant=true,complete=true,pose={origin={5020,5000,0},shift={0,0,0}},
  matrix={origin={5020,5000,0},columns={{1,0,0},{0,1,0},{0,0,1}}}}
 r.nodes[1].record=r
 r2.nodes={{record=r2,supported=true,geometry={vertices=vertices},component=c,contacts={terrain=true}}}
 r.nodes[1].edges={r2.nodes[1]};context={list={r,r2}}
+c.samples=nil
+local linked_reference=validator.BuildDecorPlacement(map,{o,o2},center,4/3)
+c.samples=vertices
 local linked=validator.BuildDecorPlacement(map,{o,o2},center,4/3)
-assert(linked.ok and linked.groups==1 and not linked.placements[o].zero_offset_proven
- and not linked.placements[o2].zero_offset_proven,'cross-object support island bypassed full interval planning')
+assert(linked.ok and linked.groups==1 and linked.placements[o].zero_offset_proven
+ and linked.placements[o2].zero_offset_proven,'complete zero-shift island certificate not reused')
+for _,obj in ipairs({o,o2}) do for a=1,3 do
+ assert(linked.placements[obj].position[a]==linked_reference.placements[obj].position[a],'island certificate changed placement')
+end end
+-- A single floating member requires the original full bounds for BOTH members.
+r2.pose.origin[3]=50;r2.matrix.origin[3]=50
+c.samples=nil;linked_reference=validator.BuildDecorPlacement(map,{o,o2},center,4/3)
+c.samples=vertices;linked=validator.BuildDecorPlacement(map,{o,o2},center,4/3)
+assert(linked.ok and not linked.placements[o].zero_offset_proven and not linked.placements[o2].zero_offset_proven)
+for _,obj in ipairs({o,o2}) do for a=1,3 do
+ assert(linked.placements[obj].position[a]==linked_reference.placements[obj].position[a],'partial certificate dropped an interval')
+end end
+r2.pose.origin[3]=0;r2.matrix.origin[3]=0
+r.nodes[1].contacts.terrain=false;r2.nodes[1].contacts.terrain=false
+assert(not validator.BuildDecorPlacement(map,{o,o2},center,4/3).ok,'unrooted island gained support')
+r.nodes[1].contacts.terrain=true;r2.nodes[1].contacts.terrain=true
 r2.nodes[1].supported=false
 assert(not validator.BuildDecorPlacement(map,{o,o2},center,4/3).ok,
  'a proven independent placement cannot approve an unsupported linked member')
 print('fused placement: 500 exact old/new acceptance, XYZ and scale comparisons on flat and uneven terrain, tilted/scaled meshes')
+local optimized=validator.BuildDecorPlacement
+local full_body,n=body:gsub('entry%.zero_offset_proven=guard%.ok and %(guard%.roots>0 or not guard%.physical%)','entry.zero_offset_proven=false')
+assert(n==1,'full-interval reference anchor missing')
+assert(load(full_body,'forced full-interval reference','t',env))()
+local full=validator.BuildDecorPlacement
+for trial=1,700 do
+ flat=trial%2==0;context={list={}};local objects={}
+ for i=1,2+trial%5 do
+  local scale=math.random(80,150);local obj={GetScale=function()return scale end};objects[i]=obj
+  local origin={5000+math.random(-80,80),5000+math.random(-80,80),math.random(-20,80)}
+  local angle=math.random()*6;local cs,sn=math.cos(angle)*scale/100,math.sin(angle)*scale/100
+  local record={obj=obj,relevant=true,complete=true,pose={origin=origin,shift={0,0,0}},
+   matrix={origin=origin,columns={{cs,sn,0},{-sn,cs,0},{0,0,scale/100}}}}
+  record.nodes={{record=record,supported=true,geometry={vertices=vertices},component=c,contacts={terrain=i%3~=0}}}
+  context.list[i]=record
+  if i>1 then context.list[i-1].nodes[1].edges={record.nodes[1]} end
+ end
+ local a,b=optimized(map,objects,center,4/3),full(map,objects,center,4/3)
+ assert(a.ok==b.ok and a.reason==b.reason,'island zero proof changed full-interval verdict')
+ if a.ok then
+  assert(a.groups==b.groups)
+  for _,obj in ipairs(objects) do
+   assert(a.placements[obj].scale==b.placements[obj].scale)
+   for axis=1,3 do assert(a.placements[obj].position[axis]==b.placements[obj].position[axis],'island zero proof changed full placement') end
+  end
+ end
+end
+print('island zero certificate: 700 connected formations exactly match mandatory full-interval planning')
+-- A deeply buried source needs half its visible extent, not half its total
+-- height. The complete terrain lower bound proves the unchanged placement.
+flat=true;context={list={r}};r.nodes[1].edges={};r.nodes[1].contacts.terrain=true
+r.pose.origin={5000,5000,-20};r.matrix.origin={5000,5000,-20};c.samples=vertices
+local buried=optimized(map,{o},center,1)
+local buried_full=full(map,{o},center,1)
+assert(buried.ok and buried.placements[o].zero_offset_proven,'bounded source visibility missed a zero-offset buried mesh')
+for a=1,3 do assert(buried.placements[o].position[a]==buried_full.placements[o].position[a]) end
+local range=globals.terrain.GetMinMaxHeight
+globals.terrain.GetMinMaxHeight=function()return nil,nil end
+local unknown=optimized(map,{o},center,1)
+assert(unknown.ok and not unknown.placements[o].zero_offset_proven,'unknown terrain bounds falsely certified visibility')
+for a=1,3 do assert(unknown.placements[o].position[a]==buried_full.placements[o].position[a]) end
+globals.terrain.GetMinMaxHeight=range
+print('source visibility bound: deeply buried and unavailable-terrain cases retain exact full-interval placement')

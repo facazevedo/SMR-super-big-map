@@ -73,6 +73,7 @@ for _,case in ipairs({{0},{1},{2},{17},{0,true},{0,false,true}}) do
  local u,s=anchor(underground,20,20),anchor(surface,10,10)
  u.other,s.other=s,u
  local writes=0
+ local source_phase=true
  for _,owner in ipairs({surface,underground}) do
   owner.buildable={GetZ=function(self,q,r)
    if owner==surface and invalid_edge and q==41 and r==40 then return 65535 end
@@ -98,7 +99,11 @@ for _,case in ipairs({{0},{1},{2},{17},{0,true},{0,false,true}}) do
    for _,offset in ipairs(shape) do if not fn(p.px+offset[1],p.py+offset[2]) then return false end end
    return true
   end,
-  terrain={IsPassable=function() return true end},
+  terrain={IsPassable=function(owner)
+   assert(not source_phase or owner==surface,
+    'surface entrance selection must not depend on the deferred underground pass raster')
+   return true
+  end},
   FlattenTerrainInBuildShape=function() writes=writes+1 end,
   ClearObstructions=function() writes=writes+1 end,
  }
@@ -121,6 +126,7 @@ for _,case in ipairs({{0},{1},{2},{17},{0,true},{0,false,true}}) do
   'a valid center does not authorize an invalid outer Elevator footprint hex')
  assert(surface.SuperBigMapPassageGlueReport[1].ring_distance==expected_ring)
  local sx,sy=s.pos.px,s.pos.py
+ source_phase=false
  local final,stats=planner(underground)
  assert(final and u.pos.px==40 and u.pos.py==40 and s.pos.px==sx and s.pos.py==sy)
  assert(stats.fallback==(expected_ring==0 and 0 or 1),'deferred report must retain the actual offset')
@@ -163,10 +169,11 @@ assert(surface.SuperBigMapSurfaceStretchFailed=='first fault' and #messages==1)
 assert(not surface.SuperBigMapExpanded and not surface.SuperBigMapSurfaceStretchDone
  and not surface.SuperBigMapSurfacePostPipelineRevalidationComplete)
 -- Exercise the real inner-branch completion block, not just its failure helper.
-local completion=assert(generation:match('%-%- Closing the loading UI.-\n(.-)\n\t\t\tend_loading%(%)'))
+local completion=assert(generation:match('%-%- Closing the loading UI.-\n(.-)\n\t\t\tSignalExpansionReadinessChanged'))
 for _,success in ipairs({false,true}) do
  local target={}
- compile(completion,'true',{map=target,ok_branch=success,branch_err='branch fault',SuperBigMap=sbm})
+ compile(completion,'true',{map=target,ok_branch=success,branch_err='branch fault',SuperBigMap=sbm,
+  end_loading=function() end})
  assert(target.SuperBigMapSurfaceStretchDone==success and target.SuperBigMapExpanded==success)
  assert((not not target.SuperBigMapSurfaceStretchFailed)==not success)
 end

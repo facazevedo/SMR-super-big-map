@@ -11,6 +11,8 @@ if type(SuperBigMap) ~= "table" then
 end
 
 local Engine = SuperBigMap.Engine
+local math,string,table=math,string,table
+local type,tonumber,tostring,ipairs,pairs,pcall,next=type,tonumber,tostring,ipairs,pairs,pcall,next
 local Global = Engine.Global
 local SafeCall = Engine.SafeCall
 
@@ -280,7 +282,6 @@ local MapWorldSize = Engine.MapWorldSize
 -- underground that seed is the reservation the mod makes where vanilla makes it, so the same
 -- reserved seed reproduces the same underground marker set. Lehmer stream, the constants the
 -- decor stream uses. Reference: `main` a2ba28b.
-local EngineRandInt = Engine.RandInt
 local deterministic_placement_rng = nil
 local function SeedDeterministicPlacement(map, tag)
 	local generator = type(map) == "table" and map.RandomMapGenObject or nil
@@ -321,7 +322,11 @@ end
 
 local function RandInt(limit)
 	local rng = deterministic_placement_rng
-	if type(rng) ~= "table" then return EngineRandInt(limit) end
+	if type(rng) ~= "table" then
+		-- Missing placement evidence is not permission to consume vanilla's
+		-- session-global RNG. Abort this placement phase explicitly instead.
+		error("Super Big Map private placement RNG has no map seed")
+	end
 	limit = math.floor(tonumber(limit) or 0)
 	if limit <= 0 then return 0 end
 	rng.calls = rng.calls + 1
@@ -4558,6 +4563,26 @@ function DepositRules.BuildDirectSeededClusterSelector(options)
 end
 -- DIRECT_SEEDED_CLUSTER_PLANNER_END
 
+-- Recreated native markers carry an index from the source's coordinate-sorted
+-- record list. Spatial MapForEach order is not stable across fresh processes.
+-- A seeded random index must therefore address this canonical donor order.
+-- Only a complete, unique native-record certificate permits reordering; untouched
+-- underground/custom donors retain their existing order and behavior.
+function DepositRules.SortNativeTemplates(templates)
+	local seen = {}
+	for i = 1, #templates do
+		local index = templates[i].SuperBigMapNativeRecordIndex
+		if type(index) ~= "number" or index <= 0 or index % 1 ~= 0 or seen[index] then
+			return templates
+		end
+		seen[index] = true
+	end
+	table.sort(templates, function(a, b)
+		return a.SuperBigMapNativeRecordIndex < b.SuperBigMapNativeRecordIndex
+	end)
+	return templates
+end
+
 function DepositRules.TopUpDeposits(map)
 	if cfg().TOPUP_RESOURCES ~= true then return end
 	if not ExpansionAdditionStagesReady("resource top-up") then return end
@@ -4714,6 +4739,9 @@ function DepositRules.TopUpDeposits(map)
 			src_by_type[res] = (src_by_type[res] or 0) + 1
 		end
 	end)
+
+	DepositRules.SortNativeTemplates(templates)
+	for _, list in pairs(templates_by_type) do DepositRules.SortNativeTemplates(list) end
 
 	-- The complete captured vanilla marker population is the sole density baseline. Native
 	-- generator requests are deliberately irrelevant here: exact vanilla generation already
@@ -6155,6 +6183,9 @@ function DepositRules.TopUpAnomalies(map)
 			source_by_kind[kind] = (source_by_kind[kind] or 0) + 1
 		end
 	end)
+	DepositRules.SortNativeTemplates(templates)
+	DepositRules.SortNativeTemplates(standard_templates)
+	for _, list in pairs(standard_templates_by_kind) do DepositRules.SortNativeTemplates(list) end
 	local target_by_kind, target_keys = {}, {}
 	-- This is also the authoritative surface top-up category filter. Do not broaden it to
 	-- breakthrough/other: those are finite-pool or unique families rather than density top-ups.
@@ -8184,6 +8215,7 @@ function DepositRules.TopUpEffectDeposits(map)
 	local target_by_type = {}
 	local source_by_type = {}
 	for deposit_type, templates in pairs(templates_by_type) do
+		DepositRules.SortNativeTemplates(templates)
 		if #templates > 0 then
 			types[#types + 1] = deposit_type
 			source_by_type[deposit_type] = #templates
@@ -10267,6 +10299,14 @@ end
 -- Final correctness audit for stage-03 additions and the small subset of native markers whose
 -- proportional destination intersected a reserved wonder footprint. A marker that is not on
 -- reachable/buildable/unobstructed terrain is moved to a validated candidate.
+function DepositRules.RelocationInitialPoolTarget(reused,invalid)
+	-- Start with a bounded working set. Connectivity on disconnected chambers
+	-- requires an exhaustive native path search; validating hundreds of unused
+	-- candidates up front is wasteful. The existing ranked search refills by256
+	-- whenever this pool cannot place a marker, retaining all placement checks.
+	return math.min(512,math.max(reused,64,invalid*8))
+end
+
 function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 	if not ExpansionStepEnabled(3)
 		or not ExpansionStepEnabled(11)
@@ -10471,7 +10511,7 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 		return #candidates - before
 	end
 	local pool_reused = #candidates
-	fill_pool(math.min(512, math.max(pool_reused, 64, #invalid * 32)))
+	fill_pool(DepositRules.RelocationInitialPoolTarget(pool_reused,#invalid))
 	local pool_built = #candidates
 	local pool_refills, pool_refilled = 0, 0
 

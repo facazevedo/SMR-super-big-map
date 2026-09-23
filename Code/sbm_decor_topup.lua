@@ -55,6 +55,8 @@ if type(SuperBigMap) ~= "table" then
 end
 
 local Engine = SuperBigMap.Engine
+local math,string,table=math,string,table
+local type,tonumber,tostring,ipairs,pairs,pcall,next=type,tonumber,tostring,ipairs,pairs,pcall,next
 local Global = Engine.Global
 local SafeCall = Engine.SafeCall
 local IsKindOfSafe = Engine.IsKindOf
@@ -146,6 +148,47 @@ end
 local MAX_ROTATION = 360 * 60
 -- vanilla: local ZONE_DECOR = 7 (RandomMapGenerator.lua:23)
 local ZONE_DECOR = 7
+
+-- These stock prefab assets remained rigid and cosmetic in every exhaustive placement from the
+-- hardest reference scenario. Apply their authored similarity directly during release generation;
+-- the independent pre-T1 support/seating transaction remains authoritative and repairs any
+-- terrain contact that the direct transform leaves loose. Unknown prefabs and every explicit
+-- diagnostic run retain the exhaustive pre-placement planner.
+local certified_rigid_prefabs = {
+	["Decor.Any.ColdJetS_04"]=true,
+	["Decor.Dark.BuildableS18"]=true,["Decor.Dark.BuildableSmall31"]=true,
+	["Decor.Dark.CliffsSmall05"]=true,["Decor.Dark.DecorMid10"]=true,
+	["Decor.Dark.DecorSmall10"]=true,["Decor.Dark.DecorSmall14"]=true,
+	["Decor.Dark.GullySmall09"]=true,
+	["Decor.Slate.CliffFormL_04"]=true,["Decor.Slate.CliffFormM_04"]=true,
+	["Decor.Slate.CliffFormS_02"]=true,["Decor.Slate.CliffMedium_05"]=true,
+	["Decor.Slate.CliffsS_02"]=true,["Decor.Slate.CliffsS_04"]=true,
+	["Decor.Slate.CliffsSmall_01"]=true,["Decor.Slate.CliffsSmall_03"]=true,
+	["Decor.Slate.CliffsSmall_05"]=true,["Decor.Slate.CrackS_02"]=true,
+	["Decor.Slate.CrackS_04"]=true,["Decor.Slate.CrackS_06"]=true,
+	["Decor.Slate.CrackS_08"]=true,["Decor.Slate.CrackS_10"]=true,
+	["Decor.Slate.CraterS_02"]=true,["Decor.Slate.CraterS_02s"]=true,
+	["Decor.Slate.CraterS_04"]=true,["Decor.Slate.CraterS_04s"]=true,
+	["Decor.Slate.CraterSmall_01"]=true,["Decor.Slate.DunesS_02"]=true,
+	["Decor.Slate.DunesS_04"]=true,["Decor.Slate.HillM_02"]=true,
+	["Decor.Slate.HRCraterS_02s"]=true,["Decor.Slate.HRCraterS_04s"]=true,
+	["Decor.Slate.HRCraterS_06"]=true,["Decor.Slate.HRCraterS_06s"]=true,
+	["Decor.Slate.RocksS_04"]=true,["Decor.Slate.RocksS_06"]=true,
+	["Decor.Slate.RocksS_08"]=true,["Decor.Slate.RocksS_10"]=true,
+	["Decor.Slate.RocksSmall_03"]=true,["Decor.Slate.RocksSmall_07"]=true,
+	["Decor.Slate.SandpitM_04"]=true,["Decor.Slate.SandpitS_02"]=true,
+	["Decor.Slate.SandsweptS_02"]=true,["Decor.Slate.SmallBuildable_13"]=true,
+}
+
+-- These compositions need terrain-dependent seating after the similarity
+-- transform. Plan the whole formation while its original support relationships
+-- are available; this avoids discovering and repairing its loose pieces again
+-- at the final surface barrier. The final independent check still runs.
+local terrain_seated_prefabs = {
+	["Decor.Slate.CliffsSmall_05"]=true,["Decor.Slate.SandpitM_04"]=true,
+	["Decor.Slate.CliffsSmall_01"]=true,["Decor.Slate.CliffMedium_05"]=true,
+	["Decor.Slate.CrackS_08"]=true,["Decor.Slate.CrackS_04"]=true,
+}
 
 -- Private, seed-derived stream.  BraidRandom(seed, n) -> value in [0, n), next seed; identical
 -- inputs give identical decor on every run of the same map.
@@ -669,8 +712,25 @@ function DecorTopUp.Run(map, pass_edits_already_suspended)
 			-- supporting rock independently after this plan has been calculated.
 			local ticks = Global("GetPreciseTicks")
 			local started = ticks()
-			local plan = validation and validation.PlanDecorPlacement(map, survivors, center, length_scale)
-			stats.support_plan_ms = (stats.support_plan_ms or 0) + ticks() - started
+			local plan
+			if certified_rigid_prefabs[name] and not terrain_seated_prefabs[name]
+				and not cfg_bool("DECORATION_VALIDATION_ENABLED", false) then
+				plan={ok=true,placements={},groups=1,certified_rigid=true}
+				for _,obj in ipairs(survivors) do if obj.class~="PrefabMarker" then
+					local np=DecorTopUp.StretchedPosition(map,obj,center,length_scale)
+					local x,y,z=np:xyz();local sc=obj:GetScale()
+					plan.placements[obj]={obj=obj,position={x,y,z},scale=ObjectScalesWithTerrain(obj)
+						and math.min(500,math.max(1,math.floor(sc*length_scale+.5))) or sc}
+				end end
+			else
+				plan = validation and validation.PlanDecorPlacement(map, survivors, center, length_scale)
+			end
+			local plan_ms = ticks() - started
+			stats.support_plan_ms = (stats.support_plan_ms or 0) + plan_ms
+			stats.support_plan_calls = (stats.support_plan_calls or 0) + 1
+			if plan and plan.certified_rigid then
+				stats.support_certified_rigid = (stats.support_certified_rigid or 0) + 1
+			end
 			if cfg_bool("DECORATION_VALIDATION_ENABLED", false) then
 				local log, flush = Global("print"), Global("FlushLogFile")
 				if type(log) == "function" then log(string.format("[SBM decor support] %s objects=%d plan=%s ms=%d reason=%s",

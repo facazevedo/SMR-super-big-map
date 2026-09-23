@@ -7,6 +7,9 @@ local after={complete=true,signature=before.signature,parent=false,
  components={root={retained=true,frame_preserved=true},piece={retained=false,frame_preserved=true}}}
 local ok,count=V.CompareComposition(before,after)
 assert(ok and count==1,'classify inherited authored fragment separately from a new expansion gap')
+before.components.piece.defect=false
+assert(not V.CompareComposition(before,after),'inconclusive native support must never exempt a current defect')
+before.components.piece.defect=true
 assert(V.Classify({{supported=true},{defect=true,reason='native gap'}},true,false)=='confirmed defect',
  'composition comparison must not rewrite the physical-support result')
 after.components.root.retained=false

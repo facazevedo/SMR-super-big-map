@@ -1,0 +1,16 @@
+local file=assert(io.open('Code/sbm_deposits.lua','r'));local source=file:read('*a');file:close()
+local body=assert(source:match('(function DepositRules%.RelocationInitialPoolTarget%b().-\nend)'))
+local env={DepositRules={},math=math}
+assert(load(body,'production relocation pool target','t',env))()
+local target=env.DepositRules.RelocationInitialPoolTarget
+assert(target(0,1)==64 and target(39,6)==64,'small correction sets should not precompute hundreds of paths')
+assert(target(163,6)==163,'already verified candidates must remain available')
+assert(target(0,16)==128 and target(0,100)==512,'larger demand scales within original cap')
+assert(target(600,6)==512,'original target cap remains unchanged; caller retains the full reused pool')
+local relocation=assert(source:match('function DepositRules%.RelocateUnreachableUndergroundEnrichments%b().-\nend'))
+assert(relocation:find('fill_pool(DepositRules.RelocationInitialPoolTarget(pool_reused,#invalid))',1,true))
+assert(relocation:find('fill_pool(math.min(1792, #candidates + 256))',1,true),'exhausted pools must still expand')
+assert(relocation:find('local max_attempts = 2048',1,true),'full existing search budget must remain')
+assert(relocation:find('if actual_pos and CanReceiveDeposit(',1,true),'actual committed pose must still be checked')
+assert(relocation:find('and actual_spacing_ok then',1,true),'actual committed spacing must remain mandatory')
+print('relocation working set: demand-sized initial pool; full refill/search and strict commit checks retained')

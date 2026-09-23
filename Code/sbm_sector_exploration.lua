@@ -1295,6 +1295,7 @@ local function StageNativeBreakthroughOrder(map)
 		end
 		order[#order + 1] = {
 			class = tostring(marker.class or "?"), source_x = sx, source_y = sy,
+			source_handle = marker.handle,
 		}
 	end
 	return order

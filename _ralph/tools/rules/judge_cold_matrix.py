@@ -10,7 +10,7 @@ import re
 
 GATES = ("seed-parity", "entrances-glued", "entrances-not-in-ring", "ring-content",
          "single-start-reveal", "badges-pre-reveal", "decor-rules", "no-errors",
-         "process", "underground-first-access")
+         "process", "underground-first-access", "underground-loading", "surface-loading", "rock-support", "underground-rock-support", "temporary-buttons")
 PARITY_FIELDS = (
     "enrichment_digest", "enrichment_count", "decor_digest", "decor_objects",
     "ug_enrichment_digest", "ug_enrichment_count", "ug_decor_digest",
@@ -43,6 +43,7 @@ def read_run(directory):
         path = directory / name
         return json.loads(path.read_text()) if path.exists() else None
     return {"directory": str(directory), "report": read("rules_report.json"),
+            "observations": read("measurement.json"),
             "snapshot": read("post_rules_snapshot.json"),
             "identity": read("daemon_identity.json"),
             "log": (directory / "engine_flushed.log").read_text(errors="replace")
@@ -169,6 +170,77 @@ def judge_run(run, control=None):
           "SBM cover count/refcount mismatch")
     check("underground-first-access", r.get("ug_post_hex") == "820x946" and number(r.get("ug_post_passages")) == 2,
           "expanded underground dimensions/passages mismatch")
+    if "t0_to_t1_ms" not in r or "seating_before_t1" not in r:
+        missing("surface-loading", "full START-to-T1 timing or completed seating not captured")
+    else:
+        elapsed = number(r.get("t0_to_t1_ms"))
+        check("surface-loading", elapsed is not None and 0 < elapsed < 75000,
+              "surface START-to-T1 must be strictly below 75000 ms")
+        check("surface-loading", truth(r.get("seating_before_t1")),
+              "rock seating did not complete before T1")
+        seating = r.get("seating")
+        check("surface-loading", isinstance(seating, dict) and number(seating.get("rejected")) == 0
+              and not seating.get("error") and not seating.get("validation_error"),
+              "seating rejection/error or missing report")
+    if "ug_loading_ms" not in r or "ug_loading_ready" not in r:
+        missing("underground-loading", "first-access through ready/cover-closed timing not captured")
+    else:
+        elapsed = number(r.get("ug_loading_ms"))
+        check("underground-loading", elapsed is not None and 0 < elapsed < 60000,
+              "underground loading must be strictly below 60000 ms")
+        check("underground-loading", truth(r.get("ug_loading_ready")),
+              "underground readiness and closed loading covers not verified")
+        check("underground-loading", r.get("ug_loading_boundary") == "first-access-phase through prepared and covers closed",
+              "loading timing boundary missing or incorrect")
+    observations = run.get("observations") or {}
+    buttons = (observations.get("report") or {}).get("buttons")
+    if not isinstance(buttons, dict):
+        missing("temporary-buttons", "button-handler verification not captured")
+    else:
+        check("temporary-buttons", buttons.get("status") == "complete", "button verification did not complete")
+        check("temporary-buttons", number(buttons.get("surface_sectors")) == 400
+              and number(buttons.get("surface_deep_scanned")) == 400, "Reveal Surface did not scan all 400 sectors")
+        objects, revealed = number(buttons.get("underground_objects")), number(buttons.get("underground_revealed"))
+        check("temporary-buttons", objects is not None and objects >= 0 and objects == revealed
+              and number(buttons.get("darkness")) == 0, "Reveal Underground did not expose the complete census")
+        check("temporary-buttons", buttons.get("elevator_mode") == "construction"
+              and buttons.get("elevator_template") == "Elevator", "Place Elevator did not open the correct construction mode")
+    census = r.get("support_census_at_t1") or (observations.get("report") or {}).get("support_census")
+    if not isinstance(census, dict):
+        missing("rock-support", "complete eligible-rock census not captured")
+    else:
+        if census.get("boundary") != "T1 before player actions":
+            missing("rock-support", "census was not taken at T1 before player actions")
+        eligible = number(census.get("eligible"))
+        good = [number(census.get(key)) for key in (
+            "direct_terrain_witness", "support_graph_valid", "native_composition_preserved")]
+        check("rock-support", eligible is not None and eligible > 0
+              and all(value is not None and value >= 0 for value in good)
+              and sum(value or 0 for value in good) == eligible,
+              "eligible rocks are not fully accounted for by support proofs")
+        check("rock-support", number(census.get("native_composition_preserved")) == 0,
+              "native floating placements must be corrected, not exempted")
+        for key in ("inconclusive", "incomplete", "defect"):
+            check("rock-support", number(census.get(key)) == 0, "rock census " + key + " is nonzero or missing")
+        check("rock-support", census.get("findings") == [], "rock census has unresolved or missing findings")
+    ug_census = (observations.get("report") or {}).get("underground_support_census")
+    if not isinstance(ug_census, dict):
+        missing("underground-rock-support", "all-eligible underground rock census missing")
+    else:
+        check("underground-rock-support", ug_census.get("boundary") == "underground after ready, before buttons",
+              "underground support boundary missing or incorrect")
+        eligible = number(ug_census.get("eligible"))
+        terrain_count = number(ug_census.get("direct_terrain_witness"))
+        graph_count = number(ug_census.get("support_graph_valid"))
+        check("underground-rock-support", eligible is not None and eligible >= 0
+              and terrain_count is not None and terrain_count >= 0
+              and graph_count is not None and graph_count >= 0
+              and terrain_count + graph_count == eligible,
+              "underground eligible rocks are not fully accounted for by positive proofs")
+        for key in ("native_composition_preserved", "inconclusive", "incomplete", "defect"):
+            check("underground-rock-support", number(ug_census.get(key)) == 0,
+                  "underground rock census " + key + " is nonzero or missing")
+        check("underground-rock-support", ug_census.get("findings") == [], "underground census has unresolved findings")
     missing("seed-parity", "requires paired-run comparison and RNG source audit")
     missing("process", "requires checkpoint/deployment provenance review")
     return {gate: {"verdict": "fail" if failures[gate] else "pending" if pending[gate] else "pass",
