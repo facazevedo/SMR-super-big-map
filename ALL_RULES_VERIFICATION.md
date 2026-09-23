@@ -18,6 +18,15 @@ excluded objects. Native final-candidate verification is pending; older five-sit
 results below are historical, not proof of this candidate or arbitrary scenarios.
 Evidence: `_ralph/runs/rules-parity/fix-14s36w-20260923`.
 
+Candidate461 passed the reported 14S36W A/B/control case, but the slowest
+17S11W case failed the surface limit at 75.690s and 75.824s. Gameplay A/B/control
+parity passed; this does **not** qualify461 for release. Candidate462 /
+metadata1093 now uses exact projected terrain-cut faces during early nomination:
+real vertices on visible ground beside a cut can avoid the redundant support
+graph. Hidden ground and missing/failed/degenerate cut geometry still fail closed.
+All80 compatibility fixtures and Lua syntax checks pass. Native462 verification
+is pending, ordered17S11W first, then61N136W, followed by measured descending cost.
+
 ## Historical build460 acceptance
 
 Build: **460 / metadata1091: five-site runtime and lifecycle PASS**.

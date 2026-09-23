@@ -2606,7 +2606,7 @@ local function MultipleRenderedComponents(asset)
 	return false
 end
 
-local function GroundedRigidInstance(obj,map,width,height,tolerance,asset)
+local function GroundedRigidInstance(obj,map,width,height,tolerance,asset,visible)
 	asset=asset or Geometry.Instance(obj)
 	if not asset.complete or asset.animated or Projected(obj) or obj:GetClipPlane()~=0
 		or (type(obj.GetSkewX)=="function" and obj:GetSkewX()~=0)
@@ -2618,7 +2618,8 @@ local function GroundedRigidInstance(obj,map,width,height,tolerance,asset)
 	local terrain=Global("terrain");local unit=Global("guim");local count=0
 	local function grounded(local_point)
 		local p=obj:GetRelativePoint(local_point);local x,y,z=p:xyz()
-		return x>=0 and y>=0 and x<width and y<height and z<=terrain.GetHeight(map,p)+tolerance
+		return x>=0 and y>=0 and x<width and y<height and (not visible or visible(x,y))
+			and z<=terrain.GetHeight(map,p)+tolerance
 	end
 	for _,part in ipairs(asset.parts) do
 		local geometry=part.mesh.geometry
@@ -2697,9 +2698,36 @@ function Validator.Correction(map,layer,apply,native_capture)
 			map:MapForEach("map","CObject",function(obj)
 				if IsValid(obj) and has_surfaces(obj,hole_flag,true) then
 					context.cut_snapshot[obj]=true
-					cuts[#cuts+1]=BoxBounds(obj:GetObjectBBox())
+					local cut=BoxBounds(obj:GetObjectBBox());cut.obj=obj;cuts[#cuts+1]=cut
 				end
 			end)
+		end
+		local function visible_terrain(x,y)
+			for _,cut in ipairs(cuts) do
+				if x>=cut[1] and x<=cut[4] and y>=cut[2] and y<=cut[5] then
+					-- A whole-object box nominates possible cuts, not hidden ground.
+					-- Decode projected cut faces lazily, once in this read-only phase.
+					-- Missing/degenerate coverage retains the conservative box veto.
+					if cut.triangles==nil then
+						local triangles={};local for_each=Global("ForEachSurface")
+						local ok=type(for_each)=="function" and pcall(for_each,cut.obj,hole_flag,function(a,b,c)
+							local ax,ay=a:xy();local bx,by=b:xy();local cx,cy=c:xy()
+							if (bx-ax)*(cy-ay)-(by-ay)*(cx-ax)~=0 then
+								triangles[#triangles+1]={ax,ay,bx,by,cx,cy}
+							end
+						end)
+						cut.triangles=ok and #triangles>0 and triangles or false
+					end
+					if not cut.triangles then return false end
+					for _,t in ipairs(cut.triangles) do
+						local a=(x-t[3])*(t[2]-t[4])-(t[1]-t[3])*(y-t[4])
+						local b=(x-t[5])*(t[4]-t[6])-(t[3]-t[5])*(y-t[6])
+						local c=(x-t[1])*(t[6]-t[2])-(t[5]-t[1])*(y-t[2])
+						if not ((a<0 or b<0 or c<0) and (a>0 or b>0 or c>0)) then return false end
+					end
+				end
+			end
+			return true
 		end
 		local candidates={};local evidence_profiles={};local eligible=SBM.RockGrounding and SBM.RockGrounding.Eligible
 		map:MapForEach("map","CObject",function(obj)
@@ -2735,7 +2763,7 @@ function Validator.Correction(map,layer,apply,native_capture)
 				-- without allocating a full support graph/pose per grounded instance.
 				-- A failed/unsupported probe still takes the complete existing path.
 				local grounded_instance,asset=false,native_asset
-				if not near_cut then grounded_instance,asset=GroundedRigidInstance(obj,map,width,height,tolerance,native_asset) end
+				grounded_instance,asset=GroundedRigidInstance(obj,map,width,height,tolerance,native_asset,near_cut and visible_terrain or nil)
 				record.support_terrain_witness=grounded_instance or false
 				if not grounded_instance then
 				-- Only real mesh vertices can prove that every connected component touches
@@ -2747,7 +2775,7 @@ function Validator.Correction(map,layer,apply,native_capture)
 				if record.complete and #record.nodes>0 then
 					local all_grounded=true
 					local function grounded(p)
-						return not near_cut and p[1]>=0 and p[2]>=0 and p[1]<width and p[2]<height
+						return (not near_cut or visible_terrain(p[1],p[2])) and p[1]>=0 and p[2]>=0 and p[1]<width and p[2]<height
 							and p[3]<=terrain.GetHeight(map,Point(p))+tolerance
 					end
 					for _,node in ipairs(record.nodes) do

@@ -32,7 +32,9 @@ local component={bounds={-10,-10,0,10,10,20},samples=vertices,triangles=triangle
 local geometry={vertices=vertices,components={component},animated=false}
 local asset={complete=true,parts={{lod=0,mesh={path='fixture',geometry=geometry}}}}
 local missing=false
+local structure_reads=0
 G.Entity=function(entity)
+ if entity=='Structure' then structure_reads=structure_reads+1 end
  if missing and entity=='Structure' then return {complete=false,parts={},reason='missing mesh'} end
  return asset
 end
@@ -78,4 +80,20 @@ missing=false;roof.editor=true;r=census()
 assert(r.unresolved==1,'editor-only hole marker became a rendered support')
 roof.editor=false;roof.cut=false;r=census()
 assert(r.unresolved==1,'ordinary excluded object was implicitly promoted')
+-- A nearby box is only a broad-phase cut candidate. A real vertex on visible
+-- ground outside the exact hole needs no structural mesh or support graph.
+roof.cut=true;missing=true;stone.x=1008;stone.z=0;stone.scale=10;structure_reads=0
+r=census()
+assert(r.terrain==1 and r.unresolved==0,'visible ground beside a cut was not accepted')
+assert(structure_reads==0,'direct terrain witness still decoded unrelated structure')
+stone.x=1000;r=census()
+assert(r.unresolved==1,'height field beneath the actual cut fabricated support')
+local surfaces=globals.ForEachSurface
+stone.x=1008;globals.ForEachSurface=nil;r=census()
+assert(r.unresolved==1,'missing cut API bypassed conservative bounds')
+globals.ForEachSurface=function()error('unavailable cut geometry')end;r=census()
+assert(r.unresolved==1,'failed cut API bypassed conservative bounds')
+globals.ForEachSurface=function(o,flag,fn)fn(point(0,0,0),point(0,0,1),point(0,0,2))end;r=census()
+assert(r.unresolved==1,'degenerate cut geometry bypassed conservative bounds')
+globals.ForEachSurface=surfaces
 print('terrain-cut supports: actual rendered contact, no movement, missing/editor/excluded geometry fail closed')
