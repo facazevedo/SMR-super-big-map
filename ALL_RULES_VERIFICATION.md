@@ -1,6 +1,26 @@
 # Full-rules verification — 2026-09-23
 
-Current build: **460 / metadata1091: runtime and lifecycle PASS**.
+## Reopened: 14S36W user-reported failure (2026-09-23)
+
+Build460 failed a new14S36W RoughTerrain game with seed `nBJAgUn3`: two rocks
+remained inconclusive beside a terrain-cutting elevator entrance. The exact
+failure reproduced with only Super Big Map enabled. The support selector had
+treated this fixed gameplay structure as unknown bounds because it does not
+participate in decoration scaling. One rock needed its rendered support mesh;
+the other needed a safe correction that the unknown bounds had vetoed.
+
+Candidate461 / metadata1092 inspects actual rendered terrain-cutting structures
+as support neighbours, without granting movement permission or weakening the
+mesh/material, hole, collision, or positive support requirements. No seed,
+coordinate or entity-name exception is added. A mock regression reproduces the
+old failure and covers missing geometry, editor-only markers and ordinary
+excluded objects. Native final-candidate verification is pending; older five-site
+results below are historical, not proof of this candidate or arbitrary scenarios.
+Evidence: `_ralph/runs/rules-parity/fix-14s36w-20260923`.
+
+## Historical build460 acceptance
+
+Build: **460 / metadata1091: five-site runtime and lifecycle PASS**.
 The owner authorized the local checkpoint and recoverable archive on2026-09-23.
 This checkpoint contains the tested build, regression tests and this report;
 no game-code change, new game launch or push is part of the administrative follow-up.

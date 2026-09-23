@@ -278,6 +278,14 @@ local function Relevant(obj,skip,important)
 	-- Authoring markers deliberately have non-grounded placeholder entities, but
 	-- vanilla never renders them during gameplay. They are not decorative rocks.
 	if type(kind)=="function" and kind(obj,"EditorVisibleObject") then return false end
+	-- Scaling eligibility is not support eligibility. A fixed gameplay structure
+	-- can replace terrain with a rendered floor/rim beside its hole. Inspect its
+	-- actual geometry before classifying nearby rocks: an unknown whole-object
+	-- box cannot prove either contact or a safe correction. This grants no right
+	-- to move the structure and does not waive incomplete mesh/material evidence.
+	local hole_flag=(Global("EntitySurfaces") or {}).TerrainHole
+	local has_surfaces=Global("HasAnySurfaces")
+	if hole_flag and type(has_surfaces)=="function" and has_surfaces(obj,hole_flag,true) then return true end
 	-- Attached prefab architecture is skipped by the free-standing scaling pass,
 	-- but is rendered with its parent and can support that parent's loose pieces.
 	-- Decode it rather than inserting an unknown whole-object bounding box.
