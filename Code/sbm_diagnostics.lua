@@ -411,3 +411,80 @@ function Diagnostics.LoadingFinish(reason, map, data, ok)
 end
 
 SuperBigMap.Diagnostics = Diagnostics
+
+-- TEMPORARY owner timing build (2026-09-24, owner-approved), release Mars.exe only: once per
+-- process, from the main menu, start the pinned 61N136W RoughTerrain expanded game the way the
+-- harness does (skipping only SaveNewGameSettings, telemetry, the rocket-name registry and the
+-- planet-camera wait, which touch the player's profile or need the planet screen), then quit
+-- 5 s after T1. The START-to-T1 log line comes from the timing build's T1 hook.
+do
+	local create = rawget(_G, "CreateRealTimeThread")
+	local platform = rawget(_G, "Platform")
+	if type(create) == "function" and not (platform and platform.debug) then
+		create(function()
+			local get_dialog = rawget(_G, "GetDialog")
+			local deadline = GetPreciseTicks() + 600000
+			while not (get_dialog and get_dialog("PGMainMenu")) or (rawget(_G, "GameState") or {}).loading do
+				if GetPreciseTicks() > deadline then return end
+				Sleep(500)
+			end
+			-- Owner request: only Super Big Map loaded, like the harness. Process-local mod
+			-- selection (the harness's enable_sbm_only method); AccountStorage is not saved.
+			-- The reload re-runs this module, whose new thread then starts the game.
+			local loaded = rawget(_G, "ModsLoaded") or {}
+			if not (#loaded == 1 and loaded[1].id == "SuperBigMap") then
+				if rawget(_G, "SBM_TIMING_MODS_OFF") then return end
+				rawset(_G, "SBM_TIMING_MODS_OFF", true)
+				print("[Super Big Map] Timing autostart: turning other mods off for this process")
+				AccountStorage.LoadMods = AccountStorage.LoadMods or {}
+				for _, id in ipairs(GetModsEnabledByUser() or {}) do
+					if id ~= "SuperBigMap" then TurnModOff(id) end
+				end
+				TurnModOn("SuperBigMap")
+				ProtectedModsReloadItems(nil, "force")
+				return
+			end
+			if rawget(_G, "SBM_TIMING_AUTOSTART_BEGUN") then return end
+			rawset(_G, "SBM_TIMING_AUTOSTART_BEGUN", true)
+			local ids = {}
+			for _, mod in ipairs(loaded) do ids[#ids + 1] = mod.id end
+			print("[Super Big Map] Timing autostart: loaded mods = " .. table.concat(ids, ","))
+			Sleep(3000)
+			print("[Super Big Map] Timing autostart: 61N136W expanded RoughTerrain game")
+			DoneGame()
+			NewGame({ seed_text = "v932_sweep_14134_61n136w" })
+			InitNewGameMissionParams()
+			LoadLastNewGameSettings("regular", { RoughTerrain = true })
+			ChangeMap("PreGame")
+			local params = g_CurrentMapParams
+			params.map = ""
+			GetOverlayValues(-3660, -8160)
+			params.rocket_name, params.rocket_name_base = GenerateRocketName(true)
+			params.SuperBigMapExpandMap = true
+			-- START press: same boundary as the harness and the real START action wrapper.
+			params.SuperBigMapTimingStartTicks = GetPreciseTicks()
+			-- Resolve the live mod table (the new-game Lua reload may have replaced it).
+			local sbm = SuperBigMap
+			for _, mod in ipairs(rawget(_G, "ModsLoaded") or {}) do
+				if mod.id == "SuperBigMap" and type(mod.env) == "table" and type(rawget(mod.env, "SuperBigMap")) == "table" then
+					sbm = rawget(mod.env, "SuperBigMap")
+				end
+			end
+			sbm.PregameToggle.SetStartArmed(true, "timing autostart START")
+			sbm.Lifecycle.BeginExpandedSession("timing autostart START")
+			WaitWarnAboutSkippedMods()
+			LoadingScreenOpen("idLoadingScreen", "StartGame")
+			GenerateCurrentRandomMap()
+			LoadingScreenClose("idLoadingScreen", "StartGame")
+			local stop = GetPreciseTicks() + 600000
+			while GetPreciseTicks() < stop do
+				local m = rawget(_G, "MainMap")
+				if m and m.SuperBigMapSurfacePostPipelineRevalidationComplete == true then break end
+				Sleep(200)
+			end
+			Sleep(5000)
+			print("[Super Big Map] Timing autostart: done, quitting")
+			quit()
+		end)
+	end
+end
