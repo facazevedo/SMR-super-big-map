@@ -34,6 +34,11 @@ obj.GetForcedLOD=function()return nil end
 assert(#G.Instance(obj).parts==2,'unforcing restores coverage of all renderable LODs')
 obj.class='SafariSight';obj.GetEntity=function()return '' end
 assert(G.Instance(obj).render_kind=='native non-rendering logical marker','entity-less native safari markers have no rendered fragments')
+obj.class='MapSector'
+assert(G.Instance(obj).render_kind=='native non-rendering logical marker','entity-less exploration bookkeeping is not a solid obstruction')
+obj.GetEntity=function()return 'Rock'end
+assert(G.Instance(obj).render_kind~='native non-rendering logical marker','a sector with rendered geometry cannot be excluded')
+obj.GetEntity=function()return ''end
 globals.GetRenderingMeshLods=function()return {get=function()return {lods={}} end}end
 assert(not G.Instance(obj).complete,'a marker with an unknown rendering override cannot be excluded')
 globals.GetRenderingMeshLods=nil

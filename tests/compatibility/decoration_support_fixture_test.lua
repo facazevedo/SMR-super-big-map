@@ -337,8 +337,8 @@ end
 SuperBigMap.ObjectClone.ObjectScalesWithTerrain=function(o)return o~=excluded end
 list={n1,n2,neighbour,excluded}
 V.WithCorrectionEvidence(map,'Surface',function()return {}end)
-assert(classifications[neighbour]==1 and classifications[excluded]==1,
- 'overlapping correction neighbourhoods repeatedly classified an unchanged object')
+assert(classifications[neighbour]==nil and classifications[excluded]==1,
+ 'unchanged eligible neighbour was reclassified, or negative neighbourhood decisions repeated')
 SuperBigMap.ObjectClone.ShouldSkipObject,SuperBigMap.ObjectClone.ObjectScalesWithTerrain=old_skip,old_scales
 local base,top=object(142,4000,4000,0),object(143,4000,4000,20)
 list={base,top}
@@ -559,3 +559,339 @@ V.WithCorrectionEvidence(map,'Surface',function()
   'independent terrain-face root became a false dependency on a movable assembly')
  return {}
 end)
+
+-- A supported cliff is not visually seated when its open base crosses above
+-- terrain. Nominate it despite the old positive contact, then verify the actual
+-- moved foundation independently before accepting the repair.
+local open_triangles={};for i=3,#triangles do open_triangles[#open_triangles+1]=triangles[i] end
+local open_component={bounds=component.bounds,samples=verts,triangles=open_triangles,vertices=component.vertices}
+local open_geometry={vertices=verts,components={open_component},animated=false}
+local open_asset={complete=true,parts={{lod=0,mesh={path='open-foundation',geometry=open_geometry}}}}
+G.Entity=function()return open_asset end
+globals.terrain.GetHeight=function(_,p,y)
+ local x=type(p)=='number' and p or p:x()
+ return x<=3000 and 0 or -10
+end
+globals.terrain.GetMinMaxHeight=function()return -10,0 end
+local cliff=object(950,3000,3000,0)
+cliff.GetSkewX=function()return 0 end;cliff.GetSkewY=cliff.GetSkewX
+cliff.GetWarped=function()return false end
+cliff.GetPosXYZ=function(self)return self.x,self.y,self.z end
+cliff.SetPos=function(self,p)self.x,self.y,self.z=p:xyz()end
+globals.terrain.GetTerrainType=function()return 1 end
+SuperBigMap.Engine.MapDataEnvironment=function()return 'Surface'end
+list={cliff}
+V.WithCorrectionEvidence(map,'Surface',function()
+ assert(V.SurfaceSupportSummary(map).unresolved==1,'single contact exempted an exposed open base')
+ local entries=V.SeatingEvidence(map)
+ assert(#entries==1 and entries[1].foundation,'exposed foundation was not nominated')
+ return {}
+end)
+local seated=SuperBigMap.DecorationSeating.Run(map)
+assert(seated.corrected==1 and seated.rejected==0 and not seated.error,'foundation seating failed')
+assert(cliff.x==3000 and cliff.y==3000 and cliff.z==-12,'foundation correction changed XY or failed to cover the open edge')
+assert(not cliff.SuperBigMapSupportValidation.foundation_unresolved,'actual-pose foundation remained exposed')
+V.WithCorrectionEvidence(map,'Surface',function()
+ assert(V.SurfaceSupportSummary(map).unresolved==0,'seated foundation failed independent repeat census')
+ assert(#V.SeatingEvidence(map)==0,'already covered foundation was moved again')
+ return {}
+end)
+print('foundation integration: single-contact false positive repaired vertically, independently verified and idempotent')
+
+-- Lower a supported stack as one rigid translation. Separate small objects
+-- retain independent visibility budgets and the original support relationship.
+cliff.z=0;cliff.SuperBigMapSupportRepair=nil
+local rider=object(951,3000,3000,20,'Rider')
+globals.EntityData.Rider=globals.EntityData.Rock
+rider.GetSkewX=cliff.GetSkewX;rider.GetSkewY=cliff.GetSkewY
+rider.GetWarped=cliff.GetWarped;rider.GetPosXYZ=cliff.GetPosXYZ;rider.SetPos=cliff.SetPos
+G.Entity=function(entity)return entity=='Rider' and asset or open_asset end
+list={cliff,rider}
+local grouped=SuperBigMap.DecorationSeating.Run(map)
+assert(grouped.corrected==2 and grouped.rejected==0 and not grouped.error,
+ 'rigid support group did not seat both objects: '..tostring(grouped.error))
+assert(cliff.z==-12 and rider.z==8,'supported stack lost its relative pose')
+V.WithCorrectionEvidence(map,'Surface',function()
+ assert(V.SurfaceSupportSummary(map).unresolved==0,'translated stack failed repeat support census')
+ return {}
+end)
+print('rigid support group: root and dependent translate together without added tilt or hidden separate rocks')
+
+-- An upper open-bottom rock is preserved by its actual rooted contact, not
+-- by burying its rim. When the lower rock needs seating, carry both together.
+cliff.z=0;rider.z=20
+cliff.SuperBigMapSupportRepair=nil;rider.SuperBigMapSupportRepair=nil
+G.Entity=function()return open_asset end
+local overhang_group=SuperBigMap.DecorationSeating.Run(map)
+assert(overhang_group.corrected==2 and overhang_group.rejected==0 and not overhang_group.error,
+ 'preserved open-base dependent was left behind when its support moved: '..tostring(overhang_group.error))
+assert(cliff.z==-12 and rider.z==8,'open-base supported formation lost its rigid relative pose')
+assert(rider.SuperBigMapSupportValidation.supported_overhang_preserved,
+ 'moved open-base dependent lost its actual supported-overhang proof')
+print('preserved overhang dependency: correcting its support carries the full native stack')
+
+-- Authored inverted caps have their open mouth above the body. It is not a
+-- ground-facing foundation; forcing it below terrain erases the entire rock.
+local cap=object(952,5000,5000,20)
+cap.GetSkewX=cliff.GetSkewX;cap.GetSkewY=cliff.GetSkewY
+cap.GetWarped=cliff.GetWarped;cap.GetPosXYZ=cliff.GetPosXYZ;cap.SetPos=cliff.SetPos
+function cap:GetRelativePoint(p)local a,b,c=p:xyz();return point(self.x+a,self.y-b,self.z-c)end
+function cap:GetLocalPoint(p)local a,b,c=p:xyz();return point(a-self.x,self.y-b,self.z-c)end
+function cap:GetObjectBBox()return box(self.x-10,self.y-10,self.z-20,self.x+10,self.y+10,self.z)end
+globals.terrain.GetHeight=function()return 0 end
+globals.terrain.GetMinMaxHeight=function()return 0,0 end
+list={cap}
+assert(not V.FoundationEvidence(map,cap),'upward cap opening was mistaken for a terrain-facing base')
+V.WithCorrectionEvidence(map,'Surface',function()
+ assert(V.SurfaceSupportSummary(map).unresolved==0,'grounded inverted native cap was rejected')
+ return {}
+end)
+cap.z=30
+V.WithCorrectionEvidence(map,'Surface',function()
+ assert(V.SurfaceSupportSummary(map).unresolved==1,'orientation exception falsely grounded a floating inverted cap')
+ return {}
+end)
+local cap_repair=SuperBigMap.DecorationSeating.Run(map)
+assert(cap_repair.corrected==1 and not cap_repair.error and cap.z==20,'floating inverted cap did not seat at its actual lower surface')
+print('native inverted caps: upward opening preserved; unsupported bodies still require actual ground contact')
+
+-- A steep strip under the root would bury its uphill rider if the stack were
+-- lowered vertically. The nearest safe lateral translation moves BOTH objects
+-- rigidly, and both retain their sector, terrain type and positive support.
+cliff.x,cliff.y,cliff.z=3000,3000,0
+rider.x,rider.y,rider.z=2990,3000,20
+cliff.SuperBigMapSupportRepair=nil;rider.SuperBigMapSupportRepair=nil
+globals.terrain.GetHeight=function(_,p,y)
+ local x=type(p)=='number' and p or p:x();return x>3000 and x<=3010 and -30 or 0
+end
+globals.terrain.GetMinMaxHeight=function()return -30,0 end
+globals.GetMapSectorXY=function()return {area=box(0,0,0,10000,10000,100)}end
+map.City={};list={cliff,rider}
+local lateral=SuperBigMap.DecorationSeating.Run(map)
+assert(not lateral.error and lateral.corrected==2 and lateral.rejected==0,'same-sector stack relocation failed: '..tostring(lateral.error))
+assert(cliff.x<3000 and math.abs(cliff.x-3000)<=12 and cliff.y==3000,'stack did not choose a nearby safe pose')
+assert(rider.x==cliff.x-10 and rider.y==cliff.y and rider.z==cliff.z+20,'lateral stack movement changed native composition')
+print('same-sector stack integration: bounded nearest translation preserves all relative poses and positive support')
+
+local inspected=object(953,5000,5000,0)
+inspected.GetSkewX=cliff.GetSkewX;inspected.GetSkewY=cliff.GetSkewY;inspected.GetWarped=cliff.GetWarped
+G.Entity=function()return {complete=true,parts={open_asset.parts[1],{lod=1,mesh=open_asset.parts[1].mesh}}}end
+local observed={};local level=0
+globals.terrain.GetMinMaxHeight=function()return -10,0 end
+globals.terrain.GetHeight=function(_,x,y)
+ local key=x..':'..y;assert(not observed[key],'one inspection queried a shared LOD terrain corner twice')
+ observed[key]=true;return level
+end
+assert(V.FoundationEvidence(map,inspected).gap==0)
+observed={};level=-5
+assert(V.FoundationEvidence(map,inspected).gap==5,'foundation terrain cache escaped its single-pose inspection')
+print('foundation LOD terrain cache: shared corners read once, later inspections always see fresh terrain')
+
+G.Entity=function()return open_asset end
+cliff.x,cliff.y,cliff.z=3000,3000,0;cliff.SuperBigMapSupportRepair=nil
+list={cliff}
+globals.terrain.GetHeight=function()return -10 end
+globals.terrain.GetMinMaxHeight=function()return -11,-9 end
+local full_clearance=G.FoundationClearance;local rim_checks=0
+G.FoundationClearance=function(...)
+ rim_checks=rim_checks+1;return full_clearance(...)
+end
+V.WithCorrectionEvidence(map,'Surface',function()
+ assert(rim_checks==1,'unchanged preparation repeated the complete nomination rim proof')
+ assert(V.SurfaceSupportSummary(map).unresolved==1)
+ cliff.z=-12
+ assert(V.VerifyCorrection(map,{{obj=cliff}},'test actual changed pose'))
+ assert(not cliff.SuperBigMapSupportValidation.foundation_unresolved,
+  'post-move proof did not inspect the actual pose')
+ cliff.z=1
+ assert(V.VerifyCorrection(map,{{obj=cliff}},'test exposed actual pose'))
+ assert(rim_checks==2 and cliff.SuperBigMapSupportValidation.foundation_unresolved,
+  'later exposed pose reused a previous terrain proof')
+ return {}
+end)
+G.FoundationClearance=full_clearance
+print('foundation preparation: unchanged nomination reused; post-move proof remains independent')
+
+globals.terrain.GetMinMaxHeight=function()return -10,-10 end
+G.FoundationClearance=function()error('certified flat rim needs no edge traversal')end
+assert(V.FoundationEvidence(map,cliff).gap==11,'flat certificate changed the exact exposed rim clearance')
+G.FoundationClearance=full_clearance
+print('foundation flat terrain: exact maximum rim clearance without redundant edge traversal')
+
+-- The whole opening is embedded inside a larger grounded body. Preserve the
+-- native stack rather than incorrectly dragging its upper rock to terrain.
+globals.terrain.GetHeight=function()return 0 end
+globals.terrain.GetMinMaxHeight=function()return 0,0 end
+local pedestal=object(960,5000,5000,0,'Rider');pedestal.scale=200
+local stacked=object(961,5000,5000,30)
+for _,o in ipairs({pedestal,stacked}) do
+ o.GetSkewX=cliff.GetSkewX;o.GetSkewY=cliff.GetSkewY;o.GetWarped=cliff.GetWarped
+end
+G.Entity=function(entity)return entity=='Rider' and asset or open_asset end
+list={pedestal,stacked}
+V.WithCorrectionEvidence(map,'Surface',function()
+ assert(stacked.SuperBigMapSupportValidation.supported_overhang_preserved or stacked.SuperBigMapSupportValidation.foundation_support_covered,'embedded rim lost its actual neighbour-body proof')
+ assert(V.SurfaceSupportSummary(map).unresolved==0,'native supported stack was treated as floating')
+ assert(#V.SeatingEvidence(map)==0,'supported native stack was nominated for a destructive terrain move')
+ return {}
+end)
+stacked.x=5015
+V.WithCorrectionEvidence(map,'Surface',function()
+ assert(not stacked.SuperBigMapSupportValidation.foundation_support_covered,'overhang was mislabeled as full-rim coverage')
+ assert(stacked.SuperBigMapSupportValidation.supported_overhang_preserved,'supported natural overhang was not preserved')
+ assert(not stacked.SuperBigMapSupportValidation.foundation_unresolved,'actual supported overhang still requests burial')
+ assert(#V.SeatingEvidence(map)==0,'supported overhang was nominated for a shape-changing correction')
+ local function up(fn,key)
+  for i=1,100 do local k,v=debug.getupvalue(fn,i);if k==key then return v elseif not k then break end end
+ end
+ local context=up(V.SeatingGroup,'contexts')[map]
+ local preserve=up(V.Validate,'SupportedRockOverhang')
+ local record
+ for _,r in ipairs(context.list) do if r.obj==stacked then record=r end end
+ assert(record and preserve,'overhang fixture could not inspect its actual record')
+ -- Ordinary support scanning can stop at terrain before recording rock
+ -- edges. A complete, real neighbour must still certify the overhang.
+ for _,n in ipairs(record.nodes) do n.edges={} end
+ assert(preserve(context,record,record.foundation),'missing first-witness edge hid actual rooted support')
+ for _,n in ipairs(record.nodes) do
+  local rim=record.foundation.by_component[n.component]
+  if rim and rim.gap>2 then
+   assert(#n.edges>0 and n.edges[1].record.obj==pedestal,
+    'preserved overhang lost its dependency on the actual supporting rock')
+  end
+ end
+ for _,r in ipairs(context.list) do if r.obj==pedestal then
+  for _,n in ipairs(r.nodes) do n.unknown_support=true end
+ end end
+ assert(not preserve(context,record,record.foundation),'unknown neighbour acquired a support exemption')
+ return {}
+end)
+-- A terrain witness may coexist with real stack support. It must not suppress
+-- loading the neighbour geometry needed to preserve the native overhang.
+globals.terrain.GetHeight=function(_,p,y)
+ local x=type(p)=='number' and p or p:x();return x>=5024 and 30 or 0
+end
+globals.terrain.GetMinMaxHeight=function()return 0,30 end
+V.WithCorrectionEvidence(map,'Surface',function()
+ assert(stacked.SuperBigMapSupportValidation.supported_overhang_preserved,
+  'terrain-first foundation nomination omitted its actual supporting neighbour')
+ assert(#V.SeatingEvidence(map)==0,'terrain witness caused unnecessary stack burial')
+ return {}
+end)
+globals.terrain.GetHeight=function()return 0 end
+globals.terrain.GetMinMaxHeight=function()return 0,0 end
+local prior_eligible=SuperBigMap.RockGrounding.Eligible
+local eligibility_calls,exclude_pedestal={},false
+SuperBigMap.RockGrounding.Eligible=function(o)
+ eligibility_calls[o]=(eligibility_calls[o] or 0)+1
+ return not (exclude_pedestal and o==pedestal) and prior_eligible(o)
+end
+V.WithCorrectionEvidence(map,'Surface',function()
+ assert(eligibility_calls[pedestal]==1 and eligibility_calls[stacked]==1,
+  'unchanged nomination repeated rock eligibility for neighbour LODs')
+ exclude_pedestal=true
+ V.Validate(map,'classification changed after preparation')
+ assert(stacked.SuperBigMapSupportValidation.foundation_unresolved,
+  'nomination eligibility cache escaped the immutable preparation snapshot')
+ return {}
+end)
+SuperBigMap.RockGrounding.Eligible=prior_eligible
+stacked.x=5040
+V.WithCorrectionEvidence(map,'Surface',function()
+ assert(stacked.SuperBigMapSupportValidation.foundation_unresolved,'detached opening incorrectly gained an overhang exemption')
+ assert(not stacked.SuperBigMapSupportValidation.supported_overhang_preserved,'detached rock was labeled supported')
+ return {}
+end)
+print('native stack foundations: supported overhangs preserved, detached rocks still require correction')
+
+pedestal.z=100;stacked.x,stacked.z=5000,130
+V.WithCorrectionEvidence(map,'Surface',function()
+ assert(V.SurfaceSupportSummary(map).unresolved==2,'two touching floating rocks bootstrapped their own support')
+ assert(not stacked.SuperBigMapSupportValidation.supported_overhang_preserved,'unrooted stack gained overhang permission')
+ return {}
+end)
+pedestal.z=0;stacked.z=30
+print('overhang roots: a detached contacting stack remains unsupported')
+
+stacked.x=5000
+local short_vertices={}
+for i,p in ipairs(verts) do short_vertices[i]={p[1],p[2],p[3]/4} end
+local short_component={bounds={-10,-10,0,10,10,5},samples=short_vertices,triangles=triangles,vertices=component.vertices}
+local short_geometry={vertices=short_vertices,components={short_component},animated=false}
+local changing_lods={complete=true,parts={asset.parts[1],{lod=1,mesh={path='short-pedestal',geometry=short_geometry}}}}
+G.Entity=function(entity)return entity=='Rider' and changing_lods or open_asset end
+V.WithCorrectionEvidence(map,'Surface',function()
+ assert(not stacked.SuperBigMapSupportValidation.foundation_support_covered,'one covered LOD exempted an exposed alternate LOD')
+ assert(stacked.SuperBigMapSupportValidation.foundation_unresolved,'alternate LOD hole was accepted')
+ return {}
+end)
+print('native stack foundation LODs: every rendered neighbour alternative must cover the complete rim')
+
+local twin_lods={complete=true,parts={asset.parts[1],{lod=1,mesh=asset.parts[1].mesh}}}
+G.Entity=function()return twin_lods end
+list={object(970,5000,5000,0)}
+local terrain_reads=0
+globals.terrain.GetHeight=function()terrain_reads=terrain_reads+1;return 0 end
+V.WithCorrectionEvidence(map,'Surface',function()
+ assert(V.SurfaceSupportSummary(map).unresolved==0)
+ assert(terrain_reads==1,'identical actual LOD vertex was queried repeatedly')
+ return {}
+end)
+local raised_vertices={}
+for i,p in ipairs(verts) do raised_vertices[i]={p[1],p[2],p[3]+30} end
+local raised_component={bounds={-10,-10,30,10,10,50},samples=raised_vertices,triangles=triangles,vertices=component.vertices}
+local raised_geometry={vertices=raised_vertices,components={raised_component},animated=false}
+G.Entity=function()return {complete=true,parts={asset.parts[1],{lod=1,mesh={path='raised-lod',geometry=raised_geometry}}}} end
+V.WithCorrectionEvidence(map,'Surface',function()
+ assert(V.SurfaceSupportSummary(map).unresolved==1,'one grounded LOD incorrectly supported an elevated alternate LOD')
+ return {}
+end)
+print('shared LOD witness: exact common vertex proves all alternatives; mismatching floating LOD still fails')
+
+-- Distinct LOD geometry buffers with exactly the same opening share only the
+-- rim proof. A tiny coordinate difference must still receive its own proof.
+do
+ local original=open_asset.parts[1].mesh.geometry
+ local original_component=original.components[1]
+ local vertices={};for i,p in ipairs(original.vertices) do vertices[i]={p[1],p[2],p[3]} end
+ local copy={bounds=original_component.bounds,vertices=original_component.vertices,triangles=original_component.triangles,samples=vertices}
+ local second={vertices=vertices,components={copy},animated=false}
+ local duplicate={complete=true,parts={open_asset.parts[1],{lod=1,mesh={path='identical-rim',geometry=second}}}}
+ G.Entity=function()return duplicate end
+ globals.terrain.GetMinMaxHeight=function()return -10,0 end
+ globals.terrain.GetHeight=function()return -5 end
+ local calls=0;G.FoundationClearance=function(...)calls=calls+1;return full_clearance(...)end
+ local evidence=V.FoundationEvidence(map,inspected)
+ assert(calls==1 and evidence.gap==5,'identical LOD opening repeated its full terrain proof')
+ assert(evidence.by_component[copy]==evidence.by_component[original_component])
+ vertices[1][1]=vertices[1][1]+1e-9;copy.foundation_boundary=nil
+ -- Rebuild asset/component identity after changing a test buffer: native
+ -- geometry caches are immutable and must not be invalidated behind a caller.
+ local changed={bounds=original_component.bounds,vertices=original_component.vertices,triangles=original_component.triangles,samples=vertices}
+ G.Entity=function()return {complete=true,parts={open_asset.parts[1],{lod=1,mesh={path='different-rim',geometry={vertices=vertices,components={changed},animated=false}}}}}end
+ calls=0;evidence=V.FoundationEvidence(map,inspected)
+ assert(calls==2,'near-identical opening was rounded into an unsafe shared proof')
+ G.FoundationClearance=full_clearance
+end
+print('identical LOD foundations: exact boundary identity shares proof; distinct coordinates never alias')
+
+do
+ local lower_vertices={};for i,p in ipairs(verts) do lower_vertices[i]={p[1],p[2],p[3]-1} end
+ local lower_component={bounds={-10,-10,-1,10,10,19},samples=lower_vertices,triangles=triangles,vertices=component.vertices}
+ local lower_geometry={vertices=lower_vertices,components={lower_component},animated=false}
+ local two_lods={complete=true,parts={asset.parts[1],{lod=1,mesh={path='lower-lod',geometry=lower_geometry}}}}
+ G.Entity=function()return two_lods end
+ globals.terrain.GetMinMaxHeight=function()return 0,0 end
+ local reads=0;globals.terrain.GetHeight=function()reads=reads+1;return 0 end
+ list={object(971,5000,5000,0)}
+ V.WithCorrectionEvidence(map,'Surface',function()
+  assert(V.SurfaceSupportSummary(map).unresolved==0 and reads==1,'same XY with distinct LOD heights reread terrain')
+  return {}
+ end)
+ list[1].z=5;reads=0
+ V.WithCorrectionEvidence(map,'Surface',function()
+  assert(V.SurfaceSupportSummary(map).unresolved==1 and reads>0,'terrain or contact cache escaped the instance inspection')
+  return {}
+ end)
+end
+print('LOD terrain coordinates: same XY shares height, distinct Z still receives its own contact decision')

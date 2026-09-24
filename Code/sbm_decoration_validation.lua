@@ -352,6 +352,91 @@ local function Local(record,p)
 	return {Dot(q,c[1])/(Dot(c[1],c[1])+0.0),Dot(q,c[2])/(Dot(c[2],c[2])+0.0),Dot(q,c[3])/(Dot(c[3],c[3])+0.0)}
 end
 
+local function FoundationEvidence(map,obj,asset)
+	if not asset or not asset.complete or asset.animated or not Geometry.FoundationBoundary then return nil end
+	local found=asset.foundation_descriptors
+	if not found then
+	local counts,identical_rims={},{};found={}
+	for _,part in ipairs(asset.parts or {}) do counts[part.lod or 0]=(counts[part.lod or 0] or 0)+1 end
+	for _,part in ipairs(asset.parts or {}) do
+		local g=part.mesh and part.mesh.geometry
+		-- Multiple material parts can have open seam edges despite a closed
+		-- assembled surface. Do not infer a foundation from those partial meshes.
+		if g and not g.animated and part.material_complete~=false and counts[part.lod or 0]==1 then
+			for _,c in ipairs(g.components) do
+				local rim=Geometry.FoundationBoundary(g,c)
+				if rim then
+					-- Exact rendered boundary identity, not matching bounds or rounded
+					-- coordinates. Different LOD bodies can retain the same opening;
+					-- its terrain proof needs measuring only once at this object pose.
+					local names,edges={},{}
+					for _,vi in ipairs(rim.vertices) do
+						local p=g.vertices[vi];names[vi]=string.format("%.17g,%.17g,%.17g",p[1],p[2],p[3])
+					end
+					for _,e in ipairs(rim.edges) do
+						local a,b=names[e[1]],names[e[2]];if a>b then a,b=b,a end
+						edges[#edges+1]=a..":"..b
+					end
+					table.sort(edges);local key=table.concat(edges,";")
+					local entry={geometry=g,component=c,rim=rim,equivalent=identical_rims[key]}
+					if not entry.equivalent then identical_rims[key]=entry end
+					found[#found+1]=entry
+				end
+			end
+		end
+	end
+	asset.foundation_descriptors=found
+	end
+	if #found==0 then return nil end
+	if obj:GetParent() or Projected(obj) or obj:GetClipPlane()~=0
+		or obj:GetSkewX()~=0 or obj:GetSkewY()~=0 or obj:GetWarped() then return nil end
+	local distorted=obj:GetTerrainDistortedSupport()
+	if distorted~=false and distorted~="disabled" then return nil end
+	local record={obj=obj,pose=Pose(obj)}
+	-- Vanilla also uses these meshes upside down as caps on rock stacks. The
+	-- asset-local open bottom then faces UP, not toward the ground. Burying that
+	-- rim would erase the entire cap. This is not a support exemption: the
+	-- ordinary rendered-component/terrain/neighbour proof still checks the cap.
+	if Matrix(record).columns[3][3]<=0 then return nil end
+	local width,height=map:GetMapSize();local terrain=Global("terrain");local tile=Global("const").HeightTileSize
+	-- LODs share most terrain corners. This cache belongs only to this single
+	-- synchronous actual-pose inspection, never to a later move or map change.
+	local heights={}
+	local function height_at(x,y)
+		local col=heights[x];if not col then col={};heights[x]=col end
+		if col[y]==nil then col[y]=terrain.GetHeight(map,x,y) end
+		return col[y]
+	end
+	local result={gap=-math.huge,by_component={}}
+	for _,entry in ipairs(found) do
+		local shared=entry.equivalent and result.by_component[entry.equivalent.component]
+		if shared then result.by_component[entry.component]=shared else
+		local points={};local b={math.huge,math.huge,math.huge,-math.huge,-math.huge,-math.huge}
+		for _,i in ipairs(entry.rim.vertices) do
+			local p=World(record,entry.geometry.vertices[i]);points[i]=p
+			for a=1,3 do b[a]=min(b[a],p[a]);b[a+3]=max(b[a+3],p[a]) end
+		end
+		local gap;local box=Global("box")
+		if type(terrain.GetMinMaxHeight)=="function" and type(box)=="function"
+			and b[1]>=tile and b[2]>=tile and b[4]+tile<width and b[5]+tile<height then
+			local lower,upper=terrain.GetMinMaxHeight(map,box(floor(b[1])-tile,floor(b[2])-tile,math.ceil(b[4])+tile,math.ceil(b[5])+tile))
+			-- Over a certified flat rectangle, the rim's maximum Z is the exact
+			-- maximum clearance. No edge/cell crossings add another extremum.
+			if type(lower)=="number" and (lower==upper or lower>=b[6]) then gap=b[6]-lower end
+		end
+		if not gap then gap=Geometry.FoundationClearance(points,entry.rim.edges,height_at,tile,width,height) end
+		if not gap then result.incomplete=true;return result end
+		result.gap=max(result.gap,gap)
+		result.by_component[entry.component]={points=points,edges=entry.rim.edges,gap=gap,tile=tile,width=width,height=height,maximum_z=b[6]}
+		end
+	end
+	return result
+end
+
+function Validator.FoundationEvidence(map,obj)
+	return FoundationEvidence(map,obj,Geometry.Instance(obj))
+end
+
 local function WorldBounds(record,b)
 	if record.pose.asset_local then return b end
 	local m=Matrix(record);local c=m.columns
@@ -1989,6 +2074,135 @@ CompositionEvidence=function(record,baseline,map,preserved_contacts)
 		parent=baseline.parent,components=baseline.components},after)
 end
 
+-- A supported native-style overhang is not a floating rock. Preserve its
+-- silhouette, but only with an actual rooted rock contact for each exposed
+-- foundation component and EVERY alternative LOD of its supporting neighbour.
+-- Terrain-only contact still cannot excuse an exposed, ground-facing opening.
+local function SupportedRockOverhang(context,record,foundation)
+	if not foundation or foundation.incomplete or not record.complete or record.pose.parent then return false end
+	local eligible=SBM.RockGrounding and SBM.RockGrounding.Eligible
+	if not eligible then return false end
+	local neighbours,contacts={},{};local exposed=false
+	local function supports(node,other)
+		if other==record or not other.complete then return false end
+		local lods=neighbours[other]
+		if lods==nil then
+			-- Nomination classified every live object in this SAME read-only,
+			-- non-yielding snapshot. Do not repeat the gameplay/name/parent
+			-- exclusion tree for each LOD of every nearby rock. After the
+			-- correction callback begins, all eligibility checks remain live.
+			local allowed
+			if context.preparation_snapshot and context.correction_only and not context.native_capture
+				and context.eligibility_function==eligible then allowed=other.eligible_rock end
+			if allowed==nil then allowed=eligible(other.obj) end
+			if not allowed then neighbours[other]=false;return false end
+			lods={}
+			for _,n in ipairs(other.nodes or {}) do
+				if not n.supported or n.partial or n.unknown_support or n.geometry.animated then lods=false;break end
+				local lod=n.lod or 0;local rows=lods[lod] or {};lods[lod]=rows;rows[#rows+1]=n
+			end
+			neighbours[other]=lods
+		end
+		if not lods or not next(lods) then return false end
+		local witnesses={}
+		for _,rows in pairs(lods) do
+			local contact=false
+			for _,n in ipairs(rows) do
+				if n.bounds[3]<=node.bounds[3]+2 and Overlap(node.bounds,n.bounds,2)
+					and ComponentContact(node,n,2,context.correction_only) then contact=n;break end
+			end
+			if not contact then return false end
+			witnesses[#witnesses+1]=contact
+		end
+		contacts[node]=witnesses
+		return true
+	end
+	for _,node in ipairs(record.nodes or {}) do
+		if not node.supported or node.partial or node.unknown_support or node.geometry.animated then return false end
+		local rim=foundation.by_component[node.component]
+		if rim and rim.gap>2 then
+			exposed=true;local supported=false
+			local seen={}
+			for _,edge in ipairs(node.edges or {}) do
+				seen[edge.record]=true
+				if supports(node,edge.record) then supported=true;break end
+			end
+			-- Scan may stop at its first support witness (including terrain).
+			-- That witness need not be the neighbour supporting every LOD of
+			-- this overhang. Inspect the remaining actual contacts as well;
+			-- index overlap alone never supplies an exemption.
+			if not supported and context.index then
+				for _,candidate in ipairs(context.index:Query(node.bounds,2)) do
+					local other=candidate.record
+					if not seen[other] then
+						seen[other]=true
+						if supports(node,other) then supported=true;break end
+					end
+				end
+			end
+			if not supported then return false end
+		end
+	end
+	if exposed then
+		-- These are real rooted contacts, not only a visual exemption. Retain
+		-- the witnesses so a later correction of their support carries this
+		-- dependent rock with it as part of the same rigid transaction.
+		for node,witnesses in pairs(contacts) do
+			local seen={};for _,edge in ipairs(node.edges or {}) do seen[edge]=true end
+			for _,edge in ipairs(witnesses) do if not seen[edge] then
+				node.edges[#node.edges+1]=edge;seen[edge]=true
+			end end
+		end
+	end
+	return exposed
+end
+
+local function FoundationCoveredBySupport(context,record,foundation)
+	if not foundation or foundation.incomplete or not context.index then return false end
+	local stacked=false
+	for _,node in ipairs(record.nodes or {}) do
+		if node.supported and not node.contacts.terrain then stacked=true;break end
+	end
+	if not stacked then return false end
+	local neighbours,seen={},{}
+	for _,node in ipairs(context.index:Query(BoxBounds(record.obj:GetObjectBBox()),2)) do
+		local other=node.record
+		if other~=record and not seen[other] and other.relevant and other.complete and other.nodes and #other.nodes>0 then
+			seen[other]=true;local lods={}
+			for _,n in ipairs(other.nodes) do
+				local lod=n.lod or 0;local rows=lods[lod] or {};lods[lod]=rows
+				if n.supported and not n.partial and not n.geometry.animated then
+					rows[#rows+1]={node=n,points={},inside={}}
+				end
+			end
+			neighbours[#neighbours+1]=lods
+		end
+	end
+	if #neighbours==0 then return false end
+	for _,rim in pairs(foundation.by_component) do if rim.gap>2 then
+		for _,edge in ipairs(rim.edges) do
+			local a,b=rim.points[edge[1]],rim.points[edge[2]];local covered=false
+			for _,lods in ipairs(neighbours) do
+				local all=true
+				for _,rows in pairs(lods) do
+					local found=false
+					for _,row in ipairs(rows) do
+						local n=row.node;local frame=n.transform_record or n.record
+						local p,q=row.points[a],row.points[b]
+						if not p then p=Local(frame,a);row.points[a]=p end
+						if not q then q=Local(frame,b);row.points[b]=q end
+						if Geometry.SegmentInsideRenderedBody(n.geometry,n.component,p,q,row.inside) then found=true;break end
+					end
+					if not found then all=false;break end
+				end
+				if all then covered=true;break end
+			end
+			if not covered then return false end
+		end
+	end end
+	return true
+end
+
 function Validator.Validate(map,reason)
 	local context=contexts[map];if not context or (not Enabled() and not context.correction_only) then return nil end
 	local started=Tick();Scan(context,false)
@@ -2059,6 +2273,26 @@ function Validator.Validate(map,reason)
 			native_baseline=baseline~=nil,components=#(record.nodes or {}),position=XYZ(record.obj:GetVisualPos())}
 		local proposal=false
 		for _,node in ipairs(record.nodes or {}) do if node.seating_proposal then proposal=true end end
+		if record.foundation then
+			-- Nomination and preparation scans share one non-yielding, unchanged
+			-- terrain/pose snapshot. Nomination already measured this entire rim.
+			-- The flag is cleared BEFORE any correction callback, so independent
+			-- post-move verification and later censuses always measure afresh.
+			local foundation=context.preparation_snapshot and record.foundation
+				or FoundationEvidence(map,record.obj,record.asset)
+			row.foundation_gap=foundation and not foundation.incomplete and foundation.gap or false
+			row.foundation_unresolved=not foundation or foundation.incomplete or foundation.gap>2
+			-- Vanilla builds stacks from intersecting rocks. An upper opening
+			-- need not reach terrain when EVERY rim segment is strictly inside
+			-- an actually supported neighbour body in EVERY rendered LOD.
+			-- Sparse contacts, AABBs and open-hull guesses cannot grant this proof.
+			if row.foundation_unresolved and current_status=="valid" and SupportedRockOverhang(context,record,foundation) then
+				row.foundation_unresolved=false;row.supported_overhang_preserved=true
+			elseif row.foundation_unresolved and FoundationCoveredBySupport(context,record,foundation) then
+				row.foundation_unresolved=false;row.foundation_support_covered=true
+			end
+			proposal=proposal or row.foundation_unresolved
+		end
 		row.seating_proposal=proposal and record.complete or false
 		if status~="valid" then
 			row.findings={}
@@ -2216,10 +2450,15 @@ end
 Validator.Clear=function(map)contexts[map]=nil end
 function Validator.RecordSeating(map,obj,from,to)
 	local row=obj.SuperBigMapSupportValidation
-	if not row or (row.status~="confirmed defect" and not row.seating_proposal) or not row.geometry_complete then return false end
+	local context=contexts[map]
+	local group_root=context and context.group_targets and context.group_targets[obj]
+	local group_repair=group_root and group_root.obj.SuperBigMapSupportRepair
+	local grouped=group_repair and group_repair.from and group_repair.to
+	if grouped then for i=1,3 do if to[i]-from[i]~=group_repair.to[i]-group_repair.from[i] then grouped=false;break end end end
+	if not row or (row.status~="confirmed defect" and not row.seating_proposal and not grouped) or not row.geometry_complete then return false end
 	obj.SuperBigMapSupportRepair={version=1,pose=PersistedPoseKey(obj),from=from,to=to,
-		reason="confirmed unsupported cosmetic geometry",source_id=row.id}
-	local context=contexts[map];local original=context and context.by_object[obj]
+		reason=grouped and "retained rigid support group" or "confirmed unsupported cosmetic geometry",source_id=row.id}
+	local original=context and context.by_object[obj]
 	if original then
 		local moved={obj=obj,pose=Pose(obj),relevant=true}
 		BuildNodes(moved,original.asset)
@@ -2227,6 +2466,13 @@ function Validator.RecordSeating(map,obj,from,to)
 		context.seated=context.seated or {};context.seated[obj]=moved
 	end
 	return true
+end
+
+function Validator.CancelSeating(map,obj)
+	local context=contexts[map]
+	-- Subsequent proposals must see the original indexed pose after rollback,
+	-- not the discarded pose cached by RecordSeating.
+	if context and context.seated then context.seated[obj]=nil end
 end
 
 function Validator.RecordRubbleSeating(map,obj,from,to)
@@ -2239,7 +2485,7 @@ function Validator.RecordRubbleSeating(map,obj,from,to)
 end
 -- Read-only evidence for the separate correction service. Unknown geometry,
 -- attachments, stacks and dependent formations cannot be treated as loose stones.
-function Validator.SeatingEvidence(map)
+function Validator.SeatingEvidence(map,bounds_only)
 	local context=contexts[map];local result={}
 	if not context or context.incomplete or not context.index then return result end
 	local eligible=SBM.RockGrounding and SBM.RockGrounding.Eligible
@@ -2248,11 +2494,17 @@ function Validator.SeatingEvidence(map)
 		if row and (row.status=="confirmed defect" or row.seating_proposal) and record.complete and eligible and eligible(obj)
 			and (not context.correction_only or context.repair_targets[obj])
 			and not record.pose.parent and #record.nodes>0 then
-			local safe=true;local unsupported=false
+			local safe=not (record.foundation and record.foundation.incomplete);local unsupported=record.foundation~=nil
 			for _,node in ipairs(record.nodes) do
 				if node.geometry.animated or node.partial or node.unknown_support then safe=false end
-				for _,edge in ipairs(node.edges) do if edge.record~=record then safe=false end end
-				if not node.supported and not (node.defect or node.seating_proposal) then safe=false end
+				-- An open-base repair proves terrain contact for every component at
+				-- its proposed final pose. Existing rock contact is not itself a veto;
+				-- dependencies must instead survive the exact proposed translation.
+				for _,edge in ipairs(node.edges) do if edge.record~=record and not record.foundation then safe=false end end
+				-- A complete open-base rim gap is itself the float proof. A pair of
+				-- such rocks resting only on each other has no rooted component and
+				-- no per-node negative proof, yet still needs terrain seating.
+				if not node.supported and not (node.defect or node.seating_proposal or record.foundation) then safe=false end
 				if not node.supported then unsupported=true end
 				-- A grounded member does not forbid a rigid group correction by
 				-- itself. The planner must retain every component's visible extent;
@@ -2262,23 +2514,114 @@ function Validator.SeatingEvidence(map)
 			local bounds=BoxBounds(obj:GetObjectBBox())
 			for _,other in ipairs(context.index:Query(bounds,Global("const").HeightTileSize)) do
 				if other.record~=record then
-					for _,edge in ipairs(other.edges or {}) do if edge.record==record then safe=false end end
+					for _,edge in ipairs(other.edges or {}) do if edge.record==record and not record.foundation then safe=false end end
 				end
 			end
 			if safe and unsupported then
 				local components={}
-				for _,node in ipairs(record.nodes) do
+				for _,node in ipairs(bounds_only and {} or record.nodes) do
 					local c={vertices={},height=0};local lo,hi=math.huge,-math.huge
 					for _,vi in ipairs(Geometry.SupportVertices(node.geometry,node.component)) do
 						local p=World(record,node.geometry.vertices[vi]);c.vertices[#c.vertices+1]=p
 						lo=min(lo,p[3]);hi=max(hi,p[3])
 					end
+					local b=node.component.bounds
+					c.volume=(b[4]-b[1])*(b[5]-b[2])*(b[6]-b[3])
+					c.lod=node.lod
+					c.foundation=record.foundation and record.foundation.by_component[node.component]
 					c.height=hi-lo;components[#components+1]=c
 				end
-				result[#result+1]={obj=obj,components=components,bounds=bounds,confirmed=row.status=="confirmed defect" or row.seating_proposal}
+				result[#result+1]={obj=obj,components=components,bounds=bounds,foundation=record.foundation~=nil,
+					confirmed=row.status=="confirmed defect" or row.seating_proposal}
 			end
 		end
 	end
+	return result
+end
+
+-- Keep a small supported stack rigid instead of lowering its root out from
+-- underneath it. Only complete, unattached cosmetic dependents with no separate
+-- open-base repair participate. Every member retains its own visibility/burial
+-- budget; a separate small object does not become an attached fragment.
+function Validator.SeatingGroup(map,entry)
+	local context=contexts[map];local root=context and context.by_object[entry.obj]
+	if not root or not root.foundation then return nil end
+	local members,member_set={root},{[root]=true}
+	local floating={}
+	local eligible=SBM.RockGrounding and SBM.RockGrounding.Eligible
+	local dependents=context.seating_dependents
+	if not dependents then
+		dependents={};context.seating_dependents=dependents
+		for _,candidate in ipairs(context.list) do if candidate.nodes then
+			local seen={}
+			for _,node in ipairs(candidate.nodes) do for _,edge in ipairs(node.edges or {}) do
+				local support=edge.record
+				if support~=candidate and not seen[support] then
+					seen[support]=true;local rows=dependents[support] or {};dependents[support]=rows;rows[#rows+1]=candidate
+				end
+			end end
+		end end
+	end
+	local cursor=1
+	while cursor<=#members do
+		local support=members[cursor];cursor=cursor+1
+		for _,candidate in ipairs(dependents[support] or {}) do if not member_set[candidate] then
+				if context.seated and context.seated[candidate.obj] then return nil end
+				local validation=candidate.obj.SuperBigMapSupportValidation
+				local covered=validation and (validation.foundation_support_covered or validation.supported_overhang_preserved)
+				-- An authored stack of open-base rocks that float together moves as
+				-- one rigid unit; each such member keeps its own complete rim-gap
+				-- constraint below, so every open base reaches terrain.
+				local floating_foundation=candidate.foundation and not covered and not candidate.foundation.incomplete
+					and (not context.repair_targets or context.repair_targets[candidate.obj])
+				if (candidate.foundation and not covered and not floating_foundation)
+					or not candidate.complete or not candidate.pose or candidate.pose.parent
+					or not eligible or not eligible(candidate.obj) or not candidate.nodes or #candidate.nodes==0 then return nil end
+				local attached=false
+				if type(candidate.obj.ForEachAttach)=="function" then candidate.obj:ForEachAttach(function()attached=true end) end
+				if attached then return nil end
+				for _,node in ipairs(candidate.nodes) do
+					if node.partial or node.geometry.animated or (not node.supported and not floating_foundation) then return nil end
+				end
+				if floating_foundation then floating[candidate]=true end
+				members[#members+1]=candidate;member_set[candidate]=true
+		end end
+	end
+	if #members==1 then return nil end
+	local rooted={}
+	for _,node in ipairs(root.nodes) do rooted[node]=true end
+	local changed=true
+	while changed do
+		changed=false
+		for _,record in ipairs(members) do for _,node in ipairs(record.nodes) do if not rooted[node] then
+			for _,edge in ipairs(node.edges) do if rooted[edge] then rooted[node]=true;changed=true;break end end
+		end end end
+	end
+	local result={obj=entry.obj,bounds=entry.bounds,foundation=true,confirmed=entry.confirmed,components={},members={},group_members={}}
+	for _,record in ipairs(members) do
+		result.group_members[record.obj]=true
+		local member={obj=record.obj,bounds=BoxBounds(record.obj:GetObjectBBox()),foundation=record==root or floating[record]}
+		result.members[#result.members+1]=member
+		for i,node in ipairs(record.nodes) do
+			local c
+			if record==root then c=entry.components[i]
+			else
+				-- A floating open-base member is not held up by the root: it must
+				-- reach terrain itself and close its own complete rim gap.
+				c={vertices={},height=0,lod=node.lod,terrain_root=floating[record] or not rooted[node],
+					foundation=floating[record] and record.foundation.by_component[node.component] or nil}
+				local lo,hi=math.huge,-math.huge
+				for _,vi in ipairs(Geometry.SupportVertices(node.geometry,node.component)) do
+					local p=World(node.transform_record or record,node.geometry.vertices[vi]);c.vertices[#c.vertices+1]=p
+					lo=min(lo,p[3]);hi=max(hi,p[3])
+				end
+				local b=node.component.bounds;c.volume=(b[4]-b[1])*(b[5]-b[2])*(b[6]-b[3]);c.height=hi-lo
+			end
+			c.burial_owner=record.obj;result.components[#result.components+1]=c
+		end
+	end
+	context.group_targets=context.group_targets or {}
+	for i=2,#members do context.group_targets[members[i].obj]=root end
 	return result
 end
 
@@ -2400,7 +2743,8 @@ function Validator.SurfaceSupportSummary(map)
 		local row=record.obj.SuperBigMapSupportValidation
 		if record.support_terrain_witness and not (context.repair_targets and context.repair_targets[record.obj]) then
 			result.terrain=result.terrain+1
-		elseif record.relevant and record.complete and row and row.geometry_complete and row.current_geometry_status=="valid" then
+		elseif record.relevant and record.complete and row and row.geometry_complete and row.current_geometry_status=="valid"
+			and not row.foundation_unresolved then
 			result.graph=result.graph+1
 		else
 			result.unresolved=result.unresolved+1
@@ -2422,6 +2766,51 @@ local function PlacementNeighbours(context,bounds,pad)
 	return result
 end
 
+local function CosmeticExteriorWitness(map,inner,outer)
+	if not inner or not outer or #inner==0 or #outer==0 then return false end
+	local terrain=Global("terrain");local width,height=map:GetMapSize()
+	local fragments={}
+	for _,node in ipairs(inner) do
+		local b=node.component.bounds
+		fragments[#fragments+1]={lod=node.lod,volume=(b[4]-b[1])*(b[5]-b[2])*(b[6]-b[3])}
+	end
+	if SBM.DecorationSeating and SBM.DecorationSeating.MarkSmallFragments then SBM.DecorationSeating.MarkSmallFragments(fragments) end
+	for i,node in ipairs(inner) do if not fragments[i].allow_burial then
+		if node.partial or node.geometry.animated then return false end
+		local transform=node.transform_record or node.record
+		local samples={};local highest
+		for _,vi in ipairs(Geometry.SupportVertices(node.geometry,node.component)) do
+			local p=World(transform,node.geometry.vertices[vi])
+			if not highest or p[3]>highest[3] then highest=p end
+		end
+		if highest then samples[1]=highest end
+		for _,v in ipairs(node.component.samples or {}) do samples[#samples+1]=World(transform,v) end
+		local visible=false
+		for _,p in ipairs(samples) do
+			if p[1]>=0 and p[2]>=0 and p[1]<width and p[2]<height and p[3]>terrain.GetHeight(map,Point(p))+2 then
+				-- Only upward-facing view directions: an open underside is not a
+				-- visibility exemption. Every rendered variant must leave this same
+				-- real surface point visible; no inferred solid/hull is involved.
+				for _,direction in ipairs({{0,0,1},{1,0,1},{-1,0,1},{0,1,1},{0,-1,1}}) do
+					local clear=true
+					for _,other in ipairs(outer) do
+						if other.partial or other.geometry.animated then return false end
+						local target=other.transform_record or other.record
+						local local_p=Local(target,p)
+						local local_end=Local(target,{p[1]+direction[1]*100,p[2]+direction[2]*100,p[3]+direction[3]*100})
+						local d={local_end[1]-local_p[1],local_end[2]-local_p[2],local_end[3]-local_p[3]}
+						if not Geometry.ComponentRayClear(other.geometry,other.component,local_p,d) then clear=false;break end
+					end
+					if clear then visible=true;break end
+				end
+			end
+			if visible then break end
+		end
+		if not visible then return false end
+	end end
+	return true
+end
+
 function Validator.SeatingPlacementClear(map,obj,bounds,rotation,search)
 	local context=contexts[map]
 	if not context or not context.index then return false end
@@ -2439,7 +2828,7 @@ function Validator.SeatingPlacementClear(map,obj,bounds,rotation,search)
 			for i=1,3 do transform.pose.shift[i]=source.pose.shift[i]+delta[i] end
 			transforms[source]=transform
 		end
-		moved[#moved+1]={record=record,transform_record=transform,geometry=own.geometry,component=own.component,original=own}
+		moved[#moved+1]={record=record,transform_record=transform,geometry=own.geometry,component=own.component,lod=own.lod,original=own}
 	end
 	-- The rejecting member of a rigid group is often the same across adjacent
 	-- proposals. Try that member first at the NEW pose, just as we already try
@@ -2469,8 +2858,76 @@ function Validator.SeatingPlacementClear(map,obj,bounds,rotation,search)
 		end
 		return false,node.record.obj:GetEntity(),reason
 	end
+	if record.foundation then
+		-- Preserve every incoming support edge, even when its dependent lies
+		-- outside the new bounds. Later independent graph validation also checks
+		-- the actual native poses and the complete transitive dependent set.
+		for _,dependent in ipairs(context.index:Query(original,Global("const").HeightTileSize)) do
+			if dependent.record~=record and not (search and search.group_members and search.group_members[dependent.record.obj]) then
+				for _,edge in ipairs(dependent.edges or {}) do if edge.record==record then
+					local retained=false
+					for _,own in ipairs(moved) do
+						if own.component==edge.component and own.geometry==edge.geometry
+							and ComponentContact(dependent,own,2) then retained=true;break end
+					end
+					if not retained then return reject(dependent,"dependent support would be lost") end
+				end end
+			end
+		end
+	end
 	for _,node in ipairs(neighbours) do
-		if node.record.obj~=obj then
+		local nonphysical=node.record.nonphysical
+		if node.unknown and not nonphysical then
+			-- Foundation-only nomination deliberately avoids expanding unrelated
+			-- neighbour meshes. Resolve actual non-rendering logical markers on
+			-- demand; their bookkeeping bounds are not a physical obstruction.
+			local ok,asset=pcall(Geometry.Instance,node.record.obj)
+			if ok and asset and asset.complete and (asset.render_kind=="native non-rendering logical marker"
+				or asset.render_kind=="native non-rendering entity") then
+				nonphysical=asset.render_kind;node.record.nonphysical=nonphysical
+			end
+		end
+		if node.record.obj~=obj and not nonphysical and not (search and search.group_members and search.group_members[node.record.obj]) then
+			-- Cosmetic rocks may overlap to form a larger natural formation. This
+			-- is not permission to intersect gameplay objects: use the same strict
+			-- eligibility predicate as the correction service for BOTH objects.
+			-- The moving formation still needs complete geometry. A permitted
+			-- overlap need not decode the neighbour, but may NOT supply a support
+			-- witness: independent rooted-support/visibility checks still apply.
+			local eligible=SBM.RockGrounding and SBM.RockGrounding.Eligible
+			local cosmetic_overlap=eligible and eligible(obj) and eligible(node.record.obj)
+			if cosmetic_overlap then
+				local other=BoxBounds(node.record.obj:GetObjectBBox())
+				local function contains(a,b)
+					return a[1]<=b[1] and a[2]<=b[2] and a[3]<=b[3]
+						and a[4]>=b[4] and a[5]>=b[5] and a[6]>=b[6]
+				end
+				-- An enclosing world box is only a nomination. Require positive
+				-- rendered visibility before allowing overlap inside that box.
+				-- Pure downward translation cannot newly cover an unchanged
+				-- neighbour from above: every point of the moving surface decreases
+				-- in Z at the same XY. Preserve its incoming support edges separately.
+				-- The moving formation still needs its own exterior witness if the
+				-- neighbour encloses it; upward/XY/rotated moves have no such proof.
+				local downward=not rotation and delta[1]==0 and delta[2]==0 and delta[3]<0
+				local inspect_inner=contains(other,bounds)
+				local inspect_other=contains(bounds,other) and not downward
+				if inspect_inner or inspect_other then
+					local nearby=node.record
+					if not nearby.complete or not nearby.nodes or #nearby.nodes==0 then
+						search=search or {};search.exterior_records=search.exterior_records or {}
+						nearby=search.exterior_records[node.record]
+						if not nearby then
+							nearby={obj=node.record.obj,pose=Pose(node.record.obj)};BuildNodes(nearby)
+							search.exterior_records[node.record]=nearby
+						end
+					end
+					cosmetic_overlap=nearby.complete and nearby.nodes and #nearby.nodes>0
+						and (not inspect_inner or CosmeticExteriorWitness(map,moved,nearby.nodes))
+						and (not inspect_other or CosmeticExteriorWitness(map,nearby.nodes,moved))
+				end
+			end
+			if not cosmetic_overlap then
 			if node.unknown or node.partial or not node.record.complete then return reject(node,"neighbour geometry unavailable") end
 			for _,own in ipairs(moved) do
 				-- Shared BVHs prune irrelevant triangle pairs. Empty placement needs
@@ -2500,6 +2957,7 @@ function Validator.SeatingPlacementClear(map,obj,bounds,rotation,search)
 					if proof.reason then return reject(node,proof.reason,own) end
 				elseif not separated then return reject(node,"open containment unresolved",own) end
 			end
+			end
 		end
 	end
 	return true
@@ -2508,13 +2966,13 @@ end
 -- Confirm the actual native pose, not merely the planner's affine rotation.
 -- Retained intersections require the same current AND native pair proofs;
 -- local XY moves may not introduce or retain an intersecting pair.
-function Validator.SeatingCurrentPoseClear(map,obj,from)
+function Validator.SeatingCurrentPoseClear(map,obj,from,search)
 	local context=contexts[map];local original=context and context.by_object[obj]
 	if not original or not original.complete then return false end
 	local bounds=BoxBounds(obj:GetObjectBBox())
 	local x,y,z=obj:GetPosXYZ()
 	local movement=from and {x-from[1],y-from[2],z-from[3]} or {0,0,0}
-	return Validator.SeatingPlacementClear(map,obj,bounds,{bounds=bounds,movement=movement,record={obj=obj,pose=Pose(obj)}})
+	return Validator.SeatingPlacementClear(map,obj,bounds,{bounds=bounds,movement=movement,record={obj=obj,pose=Pose(obj)}},search)
 end
 
 -- A stone supported by a cliff in vanilla must stop at the cliff, not be driven
@@ -2606,21 +3064,77 @@ local function MultipleRenderedComponents(asset)
 	return false
 end
 
-local function GroundedRigidInstance(obj,map,width,height,tolerance,asset,visible)
+local function SharedTerrainWitness(asset,unit)
+	if asset.shared_terrain_witness~=nil then return asset.shared_terrain_witness or nil end
+	asset.shared_terrain_witness=false
+	local components={}
+	for _,part in ipairs(asset.parts or {}) do
+		local geometry=part.mesh and part.mesh.geometry
+		if not geometry or geometry.animated or part.material_complete==false then return nil end
+		for _,component in ipairs(geometry.components) do
+			components[#components+1]={geometry=geometry,component=component}
+		end
+	end
+	if #components<2 then return nil end
+	local first=components[1].component;local candidates,buckets={},{}
+	for _,p in ipairs(first.samples or {}) do
+		-- This band only chooses promising witnesses. A point still must be an
+		-- EXACT vertex of every component and LOD before it can prove anything.
+		if p[3]<=first.bounds[3]+(first.bounds[6]-first.bounds[3])*.05 then
+			local xs=buckets[p[1]] or {};buckets[p[1]]=xs
+			local ys=xs[p[2]] or {};xs[p[2]]=ys
+			if not ys[p[3]] then local row={point=p};ys[p[3]]=row;candidates[#candidates+1]=row end
+		end
+	end
+	for _,entry in ipairs(components) do
+		local present={}
+		for _,vi in ipairs(entry.component.vertices) do
+			local p=entry.geometry.vertices[vi];local xs=buckets[p[1]];local ys=xs and xs[p[2]]
+			local row=ys and ys[p[3]];if row then present[row]=true end
+		end
+		local retained={}
+		for _,row in ipairs(candidates) do if present[row] then retained[#retained+1]=row end end
+		candidates=retained;if #candidates==0 then return nil end
+	end
+	table.sort(candidates,function(a,b)
+		local p,q=a.point,b.point
+		if p[3]~=q[3] then return p[3]<q[3] end
+		if p[1]~=q[1] then return p[1]<q[1] end
+		return p[2]<q[2]
+	end)
+	local p=candidates[1].point
+	asset.shared_terrain_witness=Point({p[1]*unit,p[2]*unit,p[3]*unit})
+	return asset.shared_terrain_witness
+end
+
+local function GroundedRigidInstance(obj,map,width,height,tolerance,asset,visible,projected,terrain,unit)
 	asset=asset or Geometry.Instance(obj)
-	if not asset.complete or asset.animated or Projected(obj) or obj:GetClipPlane()~=0
+	-- These values were read immediately before this call in the same
+	-- non-yielding nomination. Do not repeat projection/global queries per rock.
+	if not asset.complete or asset.animated or projected or obj:GetClipPlane()~=0
 		or (type(obj.GetSkewX)=="function" and obj:GetSkewX()~=0)
 		or (type(obj.GetSkewY)=="function" and obj:GetSkewY()~=0)
 		or (type(obj.GetWarped)=="function" and obj:GetWarped())
 		or type(obj.GetTerrainDistortedSupport)~="function" then return false,asset end
 	local distorted=obj:GetTerrainDistortedSupport()
 	if distorted~=false and distorted~="disabled" then return false,asset end
-	local terrain=Global("terrain");local unit=Global("guim");local count=0
+	local count=0;local previous_x,previous_y,previous_height
 	local function grounded(local_point)
 		local p=obj:GetRelativePoint(local_point);local x,y,z=p:xyz()
-		return x>=0 and y>=0 and x<width and y<height and (not visible or visible(x,y))
-			and z<=terrain.GetHeight(map,p)+tolerance
+		if x<0 or y<0 or x>=width or y>=height or (visible and not visible(x,y)) then return false end
+		-- Alternative LOD bottoms often have different Z but the same actual
+		-- integer XY. Reuse only the terrain height at that identical coordinate
+		-- within this synchronous instance inspection, never a contact decision.
+		if x~=previous_x or y~=previous_y then
+			previous_x,previous_y,previous_height=x,y,terrain.GetHeight(map,p)
+		end
+		return z<=previous_height+tolerance
 	end
+	-- Some static LODs retain the identical bottom vertex. One actual terrain
+	-- contact then proves every component at once; nonmatching assets and misses
+	-- retain the complete original per-component path below.
+	local shared=SharedTerrainWitness(asset,unit)
+	if shared and grounded(shared) then return true,asset end
 	for _,part in ipairs(asset.parts) do
 		local geometry=part.mesh.geometry
 		if not geometry or geometry.animated or part.material_complete==false then return false,asset end
@@ -2685,6 +3199,7 @@ function Validator.Correction(map,layer,apply,native_capture)
 			return multiple,asset
 		end
 		local terrain=Global("terrain");local width,height=map:GetMapSize()
+		local unit,kind=Global("guim"),Global("IsKindOf")
 		local tolerance=min(2,Global("const").HeightTileSize/50.0)
 		-- A native height value under a terrain-cutting entrance/wonder is not
 		-- visible ground. Nomination must not certify such a rock before Scan's
@@ -2730,9 +3245,9 @@ function Validator.Correction(map,layer,apply,native_capture)
 			return true
 		end
 		local candidates={};local evidence_profiles={};local eligible=SBM.RockGrounding and SBM.RockGrounding.Eligible
+		context.eligibility_function=eligible
 		map:MapForEach("map","CObject",function(obj)
 			if not IsValid(obj) then return end
-			local kind=Global("IsKindOf")
 			local record={obj=obj,relevant=false,projected=Projected(obj),
 				editor_only=type(kind)=="function" and kind(obj,"EditorVisibleObject") or false}
 			if layer=="Surface" then record.eligible_rock=false end
@@ -2763,7 +3278,15 @@ function Validator.Correction(map,layer,apply,native_capture)
 				-- without allocating a full support graph/pose per grounded instance.
 				-- A failed/unsupported probe still takes the complete existing path.
 				local grounded_instance,asset=false,native_asset
-				grounded_instance,asset=GroundedRigidInstance(obj,map,width,height,tolerance,native_asset,near_cut and visible_terrain or nil)
+				grounded_instance,asset=GroundedRigidInstance(obj,map,width,height,tolerance,native_asset,
+					near_cut and visible_terrain or nil,record.projected,terrain,unit)
+				if not native_capture then
+					local foundation=FoundationEvidence(map,obj,asset)
+					if foundation and (foundation.incomplete or foundation.gap>2) then
+						record.foundation=foundation;record.foundation_only=grounded_instance
+						candidate=true;grounded_instance=false
+					end
+				end
 				record.support_terrain_witness=grounded_instance or false
 				if not grounded_instance then
 				-- Only real mesh vertices can prove that every connected component touches
@@ -2801,7 +3324,8 @@ function Validator.Correction(map,layer,apply,native_capture)
 		local function select_near(node)
 			local near=node.record
 			if not near.relevant then
-				near.relevant=Relevant(near.obj,c.ShouldSkipObject(near.obj),c.IsImportantSectorObject(near.obj))
+				if near.eligible_rock and not near.editor_only then near.relevant=true
+				else near.relevant=Relevant(near.obj,c.ShouldSkipObject(near.obj),c.IsImportantSectorObject(near.obj)) end
 				if not near.relevant and not near.nonphysical then
 					local asset=Geometry.Instance(near.obj)
 					if asset.complete and (asset.render_kind=="native non-rendering logical marker"
@@ -2816,7 +3340,17 @@ function Validator.Correction(map,layer,apply,native_capture)
 			local b=BoxBounds(record.obj:GetObjectBBox())
 			local range=2
 			local region={b[1]-range,b[2]-range,-1e12,b[4]+range,b[5]+range,1e12}
-			if layer=="Surface" then bounds_index:QueryOnce(region,2,selected,select_near) end
+			if layer=="Surface" then
+				if not record.foundation_only then bounds_index:QueryOnce(region,2,selected,select_near)
+				else
+					-- A terrain witness does not disprove an additional native rock
+					-- support. Decode just the overlapping cosmetic neighbours before
+					-- deciding that this exposed foundation needs to move.
+					for _,near in ipairs(bounds_index:Query(b,2)) do
+						if near.record.eligible_rock then select_near(near) end
+					end
+				end
+			end
 		end
 		-- Retain precisely the same selected geometry as before. Unselected
 		-- objects remain conservative unknown bounds, not newly granted supports.
@@ -2863,7 +3397,8 @@ function Validator.Correction(map,layer,apply,native_capture)
 				-- top-ups retain their original wider relocation neighbourhood.
 				-- All other objects remain conservative unknown bounds.
 				local expansion={}
-				for _,entry in ipairs(Validator.SeatingEvidence(map)) do
+				for _,entry in ipairs(Validator.SeatingEvidence(map,true)) do
+					if not entry.foundation then
 						local b=entry.bounds;local range=32*5*Global("const").HeightTileSize
 						if not entry.obj.SuperBigMapDecorEnginePass then range=16*Global("const").HeightTileSize end
 						local region={b[1]-range,b[2]-range,-1e12,b[4]+range,b[5]+range,1e12}
@@ -2872,6 +3407,7 @@ function Validator.Correction(map,layer,apply,native_capture)
 							select_near(node)
 							if not before and node.record.relevant then expansion[node.record]=true end
 						end)
+					end
 				end
 				if next(expansion) then
 					-- Cached initial findings are retained for unchanged instances; newly loaded

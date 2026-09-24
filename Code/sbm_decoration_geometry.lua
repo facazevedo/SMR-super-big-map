@@ -607,7 +607,9 @@ local function InstanceAsset(obj)
 		-- PrefabFeature creates entity-less SafariSight logic objects after the
 		-- decoration capture. Confirm the absence of an instance override before
 		-- classifying them: an absent entity alone is not missing-mesh evidence.
-		if obj.class=="SafariSight" and obj:GetEntity()=="" then return logical_marker_asset end
+		-- MapSector also owns logical exploration bookkeeping, not the separate
+		-- sector decal/scan objects. Its point bounds must not obstruct rocks.
+		if (obj.class=="SafariSight" or obj.class=="MapSector") and obj:GetEntity()=="" then return logical_marker_asset end
 		return Geometry.Entity(obj:GetEntity(),obj:GetState())
 	end
 	if type(data)~="table" or type(data.lods)~="table" or #data.lods==0 then
@@ -1179,7 +1181,207 @@ function Geometry.PointOutsideComponentHull(geometry,component,p)
 	return false
 end
 
-function Geometry.PointInClosedComponent(geometry,component,p)
+-- Recognize an open foundation, not arbitrary holes/material seams. Its welded
+-- boundary must be closed loops entirely within the bottom five percent of the
+-- component. No entity names, source poses or scenario coordinates are used.
+function Geometry.FoundationBoundary(geometry,component)
+	if component.foundation_boundary~=nil then return component.foundation_boundary end
+	component.foundation_boundary=false
+	if geometry.animated or not component.bounds or not component.vertices or not component.triangles then return false end
+	local b=component.bounds;local height=b[6]-b[3]
+	if height<=0 then return false end
+	local ids,canonical,edges={},{},{}
+	for _,i in ipairs(component.vertices) do
+		local v=geometry.vertices[i];local key=string.format("%.12g,%.12g,%.12g",v[1],v[2],v[3])
+		canonical[key]=canonical[key] or i;ids[i]=canonical[key]
+	end
+	for _,t in ipairs(component.triangles) do for j=1,3 do
+		local a,b=ids[t[j]],ids[t[j%3+1]]
+		local lo,hi=math.min(a,b),math.max(a,b);local key=lo..":"..hi
+		local e=edges[key] or {a=lo,b=hi,count=0,balance=0};edges[key]=e
+		e.count=e.count+1;e.balance=e.balance+(a<b and 1 or -1)
+	end end
+	local result={edges={},vertices={}};local degree={}
+	for _,e in pairs(edges) do
+		if e.count==1 then
+			for _,i in ipairs({e.a,e.b}) do
+				if geometry.vertices[i][3]>b[3]+height*.05 then return false end
+				degree[i]=(degree[i] or 0)+1
+			end
+			result.edges[#result.edges+1]={e.a,e.b}
+		elseif e.count~=2 or e.balance~=0 then return false end
+	end
+	if #result.edges<3 then return false end
+	for i,n in pairs(degree) do if n~=2 then return false end;result.vertices[#result.vertices+1]=i end
+	table.sort(result.vertices)
+	table.sort(result.edges,function(a,b)return a[1]<b[1] or (a[1]==b[1] and a[2]<b[2])end)
+	component.foundation_boundary=result
+	return result
+end
+
+-- A terrain grid is piecewise planar. Along an edge the clearance is linear
+-- between X/Y grid lines and cell diagonals; inspect all crossings, not a sparse
+-- sample that can miss a valley midway along an otherwise buried bottom edge.
+function Geometry.FoundationClearance(points,edges,height,tile,width,map_height,maximum_allowed)
+	local maximum=-math.huge
+	local cache,cells={},{}
+	local function h(x,y)
+		local column=cache[x];if not column then column={};cache[x]=column end
+		local v=column[y]
+		if v==nil then v=height(x,y);column[y]=v end
+		return v
+	end
+	local function inspect(a,b,t)
+		local x,y,z=a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t,a[3]+(b[3]-a[3])*t
+		local gx,gy=math.floor(x/tile)*tile,math.floor(y/tile)*tile
+		if gx<0 or gy<0 or gx+tile>=width or gy+tile>=map_height then return false end
+		local column=cells[gx];if not column then column={};cells[gx]=column end
+		local cell=column[gy]
+		if not cell then
+			local h00,h10,h01,h11=h(gx,gy),h(gx+tile,gy),h(gx,gy+tile),h(gx+tile,gy+tile)
+			if not Finite(h00) or not Finite(h10) or not Finite(h01) or not Finite(h11) then return false end
+			cell={h00,h10-h00,h11-h10,h11-h01,h01-h00};column[gy]=cell
+		end
+		local fx,fy=(x-gx)/tile,(y-gy)/tile
+		local ground=fx>=fy and (cell[1]+cell[2]*fx+cell[3]*fy)
+			or (cell[1]+cell[4]*fx+cell[5]*fy)
+		local clearance=z-ground;if clearance>maximum then maximum=clearance end
+		-- One exact crossing above the planner's visibility budget already
+		-- disproves this candidate. Never truncate a potentially accepted proof.
+		return not maximum_allowed or maximum<=maximum_allowed
+	end
+	for _,e in ipairs(edges) do
+		local a,b=points[e[1]],points[e[2]]
+		if not a or not b then return nil end
+		for i=1,3 do if not Finite(a[i]) or not Finite(b[i]) then return nil end end
+		if not inspect(a,b,0) or not inspect(a,b,1) then return nil end
+		for axis=1,3 do
+			local u=axis==3 and a[1]-a[2] or a[axis]
+			local v=axis==3 and b[1]-b[2] or b[axis]
+			if u~=v then
+				local lo,hi=math.min(u,v),math.max(u,v)
+				for line=(math.floor(lo/tile)+1)*tile,hi,tile do
+					local t=(line-u)/(v-u)
+					if t>0 and t<1 and not inspect(a,b,t) then return nil end
+				end
+			end
+		end
+	end
+	return maximum>-math.huge and maximum or nil
+end
+
+-- Integer height-tile translations preserve every edge/grid/diagonal crossing.
+-- Cache that immutable geometric stencil once per original foundation pose;
+-- each proposal still queries the actual destination terrain at every crossing.
+function Geometry.FoundationTranslationClearance(f,dx,dy,height,maximum_allowed)
+	local tile=f.tile
+	if dx%tile~=0 or dy%tile~=0 then
+		local shifted={};for i,p in pairs(f.points) do shifted[i]={p[1]+dx,p[2]+dy,p[3]} end
+		return Geometry.FoundationClearance(shifted,f.edges,height,tile,f.width,f.height,maximum_allowed)
+	end
+	local stencil=f.translation_stencil
+	if not stencil then
+		stencil={cells={},bounds={math.huge,math.huge,-math.huge,-math.huge}};local seen,cells={},{}
+		local function emit(a,b,t)
+			local x,y,z=a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t,a[3]+(b[3]-a[3])*t
+			local xs=seen[x] or {};seen[x]=xs;local ys=xs[y] or {};xs[y]=ys
+			if ys[z] then return end;ys[z]=true
+			local gx,gy=math.floor(x/tile)*tile,math.floor(y/tile)*tile
+			local p={gx,gy,z,(x-gx)/tile,(y-gy)/tile};stencil[#stencil+1]=p
+			local col=cells[gx];if not col then col={};cells[gx]=col end
+			local cell=col[gy]
+			if not cell then cell={x=gx,y=gy};col[gy]=cell;stencil.cells[#stencil.cells+1]=cell end
+			cell[#cell+1]=p
+			local bounds=stencil.bounds
+			if gx<bounds[1] then bounds[1]=gx end;if gy<bounds[2] then bounds[2]=gy end
+			if gx>bounds[3] then bounds[3]=gx end;if gy>bounds[4] then bounds[4]=gy end
+		end
+		for _,e in ipairs(f.edges) do
+			local a,b=f.points[e[1]],f.points[e[2]]
+			if not a or not b then return nil end
+			for i=1,3 do if not Finite(a[i]) or not Finite(b[i]) then return nil end end
+			emit(a,b,0);emit(a,b,1)
+			for axis=1,3 do
+				local u=axis==3 and a[1]-a[2] or a[axis]
+				local v=axis==3 and b[1]-b[2] or b[axis]
+				if u~=v then
+					for line=(math.floor(math.min(u,v)/tile)+1)*tile,math.max(u,v),tile do
+						local t=(line-u)/(v-u);if t>0 and t<1 then emit(a,b,t) end
+					end
+				end
+			end
+		end
+		f.translation_stencil=stencil
+	end
+	local maximum=-math.huge;local bounds=stencil.bounds
+	if bounds[1]+dx<0 or bounds[2]+dy<0 or bounds[3]+dx+tile>=f.width or bounds[4]+dy+tile>=f.height then return nil end
+	-- Group immutable crossings by terrain cell once, rather than rebuilding
+	-- a destination cell table and looking it up for every crossing on every
+	-- candidate. All crossings remain; only the traversal order changes.
+	-- Nearby rejected proposals commonly expose the same rim section. Try its
+	-- last exact rejection cell first; never reuse the old height or verdict.
+	-- A potentially accepted proposal still traverses every cell and crossing.
+	local first=stencil.reject_cell or 1
+	for visit=1,#stencil.cells do
+		local index=visit==1 and first or (visit<=first and visit-1 or visit)
+		local cell=stencil.cells[index]
+		local gx,gy=cell.x+dx,cell.y+dy
+		local h00,h10,h01,h11=height(gx,gy),height(gx+tile,gy),height(gx,gy+tile),height(gx+tile,gy+tile)
+		if not Finite(h00) or not Finite(h10) or not Finite(h01) or not Finite(h11) then return nil end
+		local ax,ay,bx,by=h10-h00,h11-h10,h11-h01,h01-h00
+		for _,p in ipairs(cell) do
+			local fx,fy=p[4],p[5]
+			local ground=fx>=fy and (h00+ax*fx+ay*fy) or (h00+bx*fx+by*fy)
+			local clearance=p[3]-ground;if clearance>maximum then maximum=clearance end
+			if maximum_allowed and maximum>maximum_allowed then stencil.reject_cell=index;return nil end
+		end
+	end
+	return maximum>-math.huge and maximum or nil
+end
+
+-- Positive visibility witness against actual rendered triangles, including open
+-- cliffs. A missing face below a formation must not be mistaken for a closed
+-- convex volume. This says only that this ray is clear, never that a mesh floats
+-- or that it can support another object. Near-edge hits remain obstructed.
+function Geometry.ComponentRayClear(geometry,component,p,dir,maximum_distance)
+	if geometry.animated or not component.triangles then return false end
+	local function visit(tree)
+		local low,high=0,maximum_distance or math.huge
+		for a=1,3 do
+			if math.abs(dir[a])<1e-12 then
+				if p[a]<tree.bounds[a]-1e-7 or p[a]>tree.bounds[a+3]+1e-7 then return true end
+			else
+				local u,v=(tree.bounds[a]-p[a])/dir[a],(tree.bounds[a+3]-p[a])/dir[a]
+				low=math.max(low,math.min(u,v));high=math.min(high,math.max(u,v))
+			end
+		end
+		if low>high+1e-7 then return true end
+		if not tree.items then return visit(tree.left) and visit(tree.right) end
+		for _,item in ipairs(tree.items) do
+			local t=item.triangle;local a,b,c=geometry.vertices[t[1]],geometry.vertices[t[2]],geometry.vertices[t[3]]
+			local e={b[1]-a[1],b[2]-a[2],b[3]-a[3]};local f={c[1]-a[1],c[2]-a[2],c[3]-a[3]}
+			local h={dir[2]*f[3]-dir[3]*f[2],dir[3]*f[1]-dir[1]*f[3],dir[1]*f[2]-dir[2]*f[1]}
+			local det=e[1]*h[1]+e[2]*h[2]+e[3]*h[3]
+			if math.abs(det)>1e-12 then
+				local s={p[1]-a[1],p[2]-a[2],p[3]-a[3]}
+				local u=(s[1]*h[1]+s[2]*h[2]+s[3]*h[3])/det
+				local q={s[2]*e[3]-s[3]*e[2],s[3]*e[1]-s[1]*e[3],s[1]*e[2]-s[2]*e[1]}
+				local v=(dir[1]*q[1]+dir[2]*q[2]+dir[3]*q[3])/det
+				local distance=(f[1]*q[1]+f[2]*q[2]+f[3]*q[3])/det
+				if u>=-1e-7 and v>=-1e-7 and u+v<=1+1e-7 and distance>=-1e-7
+					and (not maximum_distance or distance<=maximum_distance+1e-7) then return false end
+			else
+				local nx,ny,nz=e[2]*f[3]-e[3]*f[2],e[3]*f[1]-e[1]*f[3],e[1]*f[2]-e[2]*f[1]
+				local norm=math.sqrt(nx*nx+ny*ny+nz*nz)
+				if norm<1e-12 or math.abs((p[1]-a[1])*nx+(p[2]-a[2])*ny+(p[3]-a[3])*nz)<=1e-7*norm then return false end
+			end
+		end
+		return true
+	end
+	return visit(Geometry.TriangleTree(geometry,component))
+end
+
+function Geometry.PointInClosedComponent(geometry,component,p,above_open_base)
 	-- Outside a complete component's bounds cannot be inside its volume, even
 	-- when the authoring mesh is open. Only an inside result needs closure proof.
 	local b=component.bounds
@@ -1200,8 +1402,27 @@ function Geometry.PointInClosedComponent(geometry,component,p)
 		for _,e in pairs(edges) do if e.count~=2 or e.balance~=0 then component.closed=false;break end end
 	end
 	if not component.closed then
-		if Geometry.PointOutsideComponentHull(geometry,component,p) then return false end
-		return nil
+		local upper_body=false
+		if above_open_base then
+			local rim=Geometry.FoundationBoundary(geometry,component)
+			if rim then
+				local maximum=rim.maximum_z
+				if not maximum then
+					maximum=-math.huge
+					for _,vi in ipairs(rim.vertices) do maximum=math.max(maximum,geometry.vertices[vi][3]) end
+					rim.maximum_z=maximum
+				end
+				upper_body=maximum<p[3]-1e-7
+			end
+		end
+		-- All rays below have positive local Z. If the only open loops lie
+		-- strictly below the query, closing them anywhere below that plane
+		-- cannot change parity. This proves the actual upper body, not an
+		-- invented convex hull or the unspecified volume beneath an open base.
+		if not upper_body then
+			if Geometry.PointOutsideComponentHull(geometry,component,p) then return false end
+			return nil
+		end
 	end
 	for _,dir in ipairs({{1,0.371390676,0.529150263},{0.618033989,1,0.414213562},{0.732050808,0.271828183,1}}) do
 		local count,ambiguous=0,false
@@ -1234,6 +1455,23 @@ function Geometry.PointInClosedComponent(geometry,component,p)
 		if not ambiguous then return count%2==1 end
 	end
 	return nil
+end
+
+function Geometry.SegmentInsideRenderedBody(geometry,component,a,b,cache)
+	if geometry.animated then return false end
+	local bounds=component.bounds
+	for axis=1,3 do
+		if a[axis]<=bounds[axis] or a[axis]>=bounds[axis+3]
+			or b[axis]<=bounds[axis] or b[axis]>=bounds[axis+3] then return false end
+	end
+	cache=cache or {}
+	for _,p in ipairs({a,b}) do
+		if cache[p]==nil then cache[p]=Geometry.PointInClosedComponent(geometry,component,p,true)==true end
+		if not cache[p] then return false end
+	end
+	-- Two interior endpoints alone do not prove containment in a concave body:
+	-- the COMPLETE joining segment must avoid every actual boundary triangle.
+	return Geometry.ComponentRayClear(geometry,component,a,{b[1]-a[1],b[2]-a[2],b[3]-a[3]},1)
 end
 Geometry.Bounds=Bounds
 Geometry.Extend=Extend
