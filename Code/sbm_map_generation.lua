@@ -10025,6 +10025,60 @@ local function PatchRandomMapGenerator()
 	end
 
 	local State = SuperBigMap.State
+	-- One predicate for "this DoGenerate belongs to an expansion transaction" (surface
+	-- source backing, underground source view, and the expanded maps themselves).
+	local function IsExpansionGeneration(map)
+		local mapdata = map and map.mapdata
+		return map and (
+			map.SuperBigMapExpansionPending == true
+				or map.SuperBigMapVanillaSourceMigration == true
+			or map.SuperBigMapDesiredWidthTiles ~= nil)
+			or type(mapdata) == "table" and (
+				mapdata.SuperBigMapOriginalWidthTiles ~= nil
+				or mapdata.SuperBigMapSourceWidthTiles ~= nil)
+			or State.vanilla_source_migration_active == true
+	end
+
+	-- Vanilla DoGenerate ends by deleting every PrefabObj helper (PrefabMarker, PrefabDecorMarker,
+	-- ...) unless `Platform.debug and Platform.desktop`; that debug branch instead keeps them with
+	-- gofPermanent cleared (Lua/RandomMap/RandomMapGenerator.lua). The expansion's decor top-ups
+	-- read those markers after generation, so in release builds they found no sites and placed
+	-- nothing. For expansion generations in release builds only, reproduce the debug branch that
+	-- every harness run was measured and qualified with: vanilla skips the deletion (temporary
+	-- class-level leave_on_map), then gofPermanent is cleared exactly as the debug branch does.
+	-- Helpers that are really leave_on_map (PrefabFeature) keep their stock treatment.
+	local function CallDoGenerateKeepingPrefabMarkers(map, call, ...)
+		local platform = Global("Platform")
+		local classes, descendants = Global("g_Classes"), Global("ClassDescendantsList")
+		local const_tbl = Global("const")
+		if type(platform) ~= "table" or (platform.debug and platform.desktop)
+			or type(classes) ~= "table" or type(classes.PrefabObj) ~= "table" then
+			return call(...)
+		end
+		local names = { "PrefabObj" }
+		if type(descendants) == "function" then
+			for _, name in ipairs(descendants("PrefabObj") or {}) do names[#names + 1] = name end
+		end
+		local changed = {}
+		for _, name in ipairs(names) do
+			local class = classes[name]
+			if type(class) == "table" and not class.leave_on_map then
+				changed[#changed + 1] = { class = class, raw = rawget(class, "leave_on_map") }
+				class.leave_on_map = true
+			end
+		end
+		local results = PackValues(pcall(call, ...))
+		for _, entry in ipairs(changed) do rawset(entry.class, "leave_on_map", entry.raw) end
+		if not results[1] then error(results[2], 0) end
+		local permanent = type(const_tbl) == "table" and const_tbl.gofPermanent
+		if permanent and type(map) == "table" and type(map.MapForEach) == "function" then
+			map:MapForEach("map", "PrefabObj", function(obj)
+				if not obj.leave_on_map then obj:ClearGameFlags(permanent) end
+			end)
+		end
+		return (table.unpack or unpack)(results, 2, results.n)
+	end
+
 	-- Re-verify the wrappers are STILL on the class, not just the version.
 	-- ClassesBuilt (mod reload / class rebuild) resets the methods to vanilla and
 	-- re-calls us; a version-only guard would wrongly think we're still patched
@@ -10051,6 +10105,10 @@ local function PatchRandomMapGenerator()
 	local original_do_generate = State.generator_original_do_generate
 	local original_on_generate_logic = State.generator_original_on_generate_logic
 	local function call_original_do_generate(generator, map, ...)
+		if IsExpansionGeneration(map) then
+			return CallDoGenerateKeepingPrefabMarkers(map, SuperBigMap.CallDoGenerateWithRockParityTrace,
+				original_do_generate, generator, map, ...)
+		end
 		return SuperBigMap.CallDoGenerateWithRockParityTrace(
 			original_do_generate, generator, map, ...)
 	end
@@ -10776,14 +10834,7 @@ local function PatchRandomMapGenerator()
 		end
 		local do_generate_wrapper = function(self, map, ...)
 			local mapdata = map and map.mapdata
-			local expansion_transaction = map and (
-				map.SuperBigMapExpansionPending == true
-					or map.SuperBigMapVanillaSourceMigration == true
-				or map.SuperBigMapDesiredWidthTiles ~= nil)
-				or type(mapdata) == "table" and (
-					mapdata.SuperBigMapOriginalWidthTiles ~= nil
-					or mapdata.SuperBigMapSourceWidthTiles ~= nil)
-				or State.vanilla_source_migration_active == true
+			local expansion_transaction = IsExpansionGeneration(map)
 			if not expansion_transaction then
 			-- Exact vanilla fast path: no temporary-source migration or expansion behavior.
 				return call_original_do_generate(self, map, ...)
