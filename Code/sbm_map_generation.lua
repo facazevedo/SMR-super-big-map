@@ -12579,39 +12579,6 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				if revalidation_ok then
 					map.SuperBigMapSurfaceFinalGridRebuildPending = nil
 					map.SuperBigMapSurfacePostPipelineRevalidationComplete = true
-					-- TEMPORARY owner timing build (2026-09-24): one log line per expanded START.
-					do
-						local params, ticks, print_fn = Global("g_CurrentMapParams"), Global("GetPreciseTicks"), Global("print")
-						local start = type(params) == "table" and tonumber(params.SuperBigMapTimingStartTicks)
-						if start and type(ticks) == "function" and type(print_fn) == "function" then
-							local seating = map.SuperBigMapDecorationSeating
-							print_fn(string.format("[Super Big Map] Timing: START-to-T1 %d ms (rock seating %s ms, %s rocks corrected)",
-								ticks() - start, tostring(seating and seating.total_ms), tostring(seating and seating.corrected)))
-							params.SuperBigMapTimingStartTicks = nil
-							-- Census for the release-vs-debug comparison (after T1; not timed).
-							local support = seating and seating.support or {}
-							local objects, topups = 0, 0
-							if type(map.MapForEach) == "function" then
-								map:MapForEach("map", "CObject", function(o)
-									objects = objects + 1
-									if o.SuperBigMapDecorEnginePass == true then topups = topups + 1 end
-								end)
-							end
-							print_fn(string.format("[Super Big Map] Timing census: eligible=%s terrain=%s graph=%s unresolved=%s candidates=%s nomination=%s evidence=%s apply=%s objects=%d topup_decor=%d",
-								tostring(support.eligible), tostring(support.terrain), tostring(support.graph), tostring(support.unresolved),
-								tostring(seating and seating.candidates), tostring(seating and seating.nomination_ms),
-								tostring(seating and seating.evidence_ms), tostring(seating and seating.ms), objects, topups))
-							local d = map.SuperBigMapDecorEnginePassReport or {}
-							local keys = { "target", "placed_authored", "placed_synthetic", "decor_sites", "vanilla_decor_groups",
-								"unused_sites", "markers_resolved", "markers_unresolved", "decorated_circles", "obstruct_circles",
-								"fallback_sites", "synthetic_attempts", "synthetic_templates", "failed", "support_rejected",
-								"dropped_non_cosmetic", "skipped_by_decorated", "skipped_by_obstruct", "sites_prestretched",
-								"sites_relocated", "objects", "reason", "error" }
-							local parts = {}
-							for _, key in ipairs(keys) do parts[#parts + 1] = key .. "=" .. tostring(d[key]) end
-							print_fn("[Super Big Map] Timing decor: " .. table.concat(parts, " "))
-						end
-					end
 					EndSurfaceExpansionLoading(map)
 					SignalExpansionReadinessChanged(map, "surface final entrance validation complete")
 				else
