@@ -12528,6 +12528,17 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				if revalidation_ok then
 					map.SuperBigMapSurfaceFinalGridRebuildPending = nil
 					map.SuperBigMapSurfacePostPipelineRevalidationComplete = true
+					-- TEMPORARY owner timing build (2026-09-24): one log line per expanded START.
+					do
+						local params, ticks, print_fn = Global("g_CurrentMapParams"), Global("GetPreciseTicks"), Global("print")
+						local start = type(params) == "table" and tonumber(params.SuperBigMapTimingStartTicks)
+						if start and type(ticks) == "function" and type(print_fn) == "function" then
+							local seating = map.SuperBigMapDecorationSeating
+							print_fn(string.format("[Super Big Map] Timing: START-to-T1 %d ms (rock seating %s ms, %s rocks corrected)",
+								ticks() - start, tostring(seating and seating.total_ms), tostring(seating and seating.corrected)))
+							params.SuperBigMapTimingStartTicks = nil
+						end
+					end
 					EndSurfaceExpansionLoading(map)
 					SignalExpansionReadinessChanged(map, "surface final entrance validation complete")
 				else
