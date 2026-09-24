@@ -470,6 +470,9 @@ do
 					sbm = rawget(mod.env, "SuperBigMap")
 				end
 			end
+			-- Pin the underground seed exactly like the harness case (61N136W) for a 1:1 comparison.
+			local pin_ok, pin_err = sbm.MapGeneration.SetTwinUndergroundSeedForTest(3838460155450369287, "owner release timing")
+			print("[Super Big Map] Timing autostart: underground seed pin " .. tostring(pin_ok) .. " " .. tostring(pin_err))
 			sbm.PregameToggle.SetStartArmed(true, "timing autostart START")
 			sbm.Lifecycle.BeginExpandedSession("timing autostart START")
 			WaitWarnAboutSkippedMods()
