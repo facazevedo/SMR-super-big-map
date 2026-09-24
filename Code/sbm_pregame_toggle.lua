@@ -479,12 +479,6 @@ local function InstallLandingDialogAction(dialog)
 		start_action.SuperBigMapStartOriginalOnAction = original_on_action
 		start_action.OnAction = function(action, host, source, ...)
 			local expand = IsSelected()
-			-- TEMPORARY owner timing build (2026-09-24): mark START for one START-to-T1 log line.
-			-- g_CurrentMapParams survives the new-game Lua reload.
-			local timing_params, timing_ticks = Global("g_CurrentMapParams"), Global("GetPreciseTicks")
-			if type(timing_params) == "table" then
-				timing_params.SuperBigMapTimingStartTicks = expand and type(timing_ticks) == "function" and timing_ticks() or nil
-			end
 			SetStartArmed(expand, "start")
 			-- START is the ownership boundary for every gameplay modification. Until this
 			-- exact moment only the pregame opt-in control exists; OFF explicitly keeps the
