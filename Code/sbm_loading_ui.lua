@@ -1028,6 +1028,11 @@ function SuperBigMap.ExpansionLoadingEnd(force_all)
 	loading_presentation = "surface"
 end
 
+-- Post-T1 rock seating runs behind the welcome popup when one exists (owner ruling 2026-09-24).
+function SuperBigMap.WelcomePopupPresent()
+	return WelcomeDialog() ~= nil
+end
+
 -- The welcome-popup, restart-notice, and loading-box entry points are published on the SuperBigMap
 -- namespace above for runtime callers (sbm_map_generation, sbm_terrain_copy).
 local LoadingUI = {}

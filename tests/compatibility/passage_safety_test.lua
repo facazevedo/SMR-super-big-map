@@ -196,6 +196,10 @@ surface.SuperBigMapSurfaceStretchScheduled=true
 good,reason,terminal=ready(ug)
 assert(not good and not terminal,'underground must wait for the final native grid validation')
 surface.SuperBigMapSurfacePostPipelineRevalidationComplete=true
+-- Rock seating runs right after T1 (owner ruling 2026-09-24); access still waits for it.
+good,reason,terminal=ready(ug)
+assert(not good and not terminal and reason:find('rock seating'),'underground must wait for post-T1 rock seating')
+surface.SuperBigMapSurfaceDecorationCorrectionComplete=true
 assert(ready(ug))
 surface.SuperBigMapSurfaceStretchScheduled=nil
 surface.SuperBigMapSurfaceStretchDone=false

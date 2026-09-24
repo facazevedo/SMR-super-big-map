@@ -1,5 +1,38 @@
 # Surface START-to-T1 — runtime acceptance and local checkpoint
 
+## Owner ruling 2026-09-24: rock seating runs right after T1
+
+The open-base foundation fix (floating cliff bases such as 14S36W J5/K5) seats many
+more native rocks: 122 at 61N136W versus 6 in build 462, about 11 s more seating.
+The owner requires rocks as close to vanilla as possible and all correctly placed, so
+placement-changing speedups were rejected. Instead the owner waived "all seating before
+T1": T1 is published after final entrance validation, then seating runs immediately as
+one non-yielding block behind the welcome popup (the loading cover stays up instead when
+no welcome popup exists). No frame shows a rock mid-move; at 17S11W the blurred overview
+background showed zero changed pixels across seating. A frozen screenshot backdrop was
+tried and removed because the translucent popup/HUD over their own copy changed opacity.
+Underground access and the validation census wait for seating completion; entrances are
+re-validated after seating; any failure still fails closed. The player's real wait until
+interaction is unchanged. `SuperBigMapSurfaceT1Ticks` and
+`SuperBigMapSurfaceRockSeatingDoneTicks` record both boundaries; the harness reports
+`start_to_seating_done_ms` and runs rule checks only after seating completes (its
+`seating_before_t1` field now means "seating complete before checks").
+
+Metadata 1098 harness results (same code, measured before the version-number bump; rock
+moves identical to the pre-change runs, 0 unresolved,
+clean flushed logs):
+
+| Case | START-to-T1 | START-to-seating-done | Notes |
+|---|---:|---:|---|
+| 61N136W (save/reload) | 65.588 s | 82.919 s | 17,690 rocks: 0 defect/inconclusive; underground 45.419 s; deferred mask exact after reload |
+| 61N136W | 65.258 s | 82.834 s | frame capture run |
+| 17S11W | 61.019 / 61.418 s | 77.849 / 78.313 s | |
+
+Not yet run on metadata 1098: 24S74W, 45S120W, 15S67E, 14S36W, 30S146E and the
+fresh-process load check. The build-462 section below is historical.
+
+## Build 462 (historical)
+
 Current build 462 / metadata 1093 (code checkpoint `494f7af`) passes six pinned
 RoughTerrain cases, including 14S36W / `nBJAgUn3`, across 30 fresh headless sessions.
 Worst of 18 expanded generations: **74.955s START-to-T1**, including completed
@@ -74,7 +107,7 @@ The hardest reference scenario, **15S67E with RoughTerrain**, completes surface 
 ## Measurement contract
 
 - START is immediately before `GenerateCurrentRandomMap()`, not process launch or pregame setup.
-- T1 requires `SuperBigMapSurfacePostPipelineRevalidationComplete` and completed, independently verified rock seating. Seating is not deferred until after T1.
+- T1 requires `SuperBigMapSurfacePostPipelineRevalidationComplete`. Until 2026-09-24 it also required completed rock seating; since the owner ruling above, seating runs right after T1 and is reported separately as START-to-seating-done.
 - Surface and underground dimensions remain 819200 × 819200 world units.
 - Surface seed: `-515742201377381600`; pinned underground seed: `411683085576098543`; Lua revision: 403908.
 - Only SuperBigMap is enabled in each fresh process. Release diagnostics stay disabled.
