@@ -12493,7 +12493,25 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				if type(pause_ild) == "function" then
 					SafeCall(pause_ild, "SuperBigMapSurfacePostPipelineRevalidation")
 				end
-				local function ValidateCommittedEntrances()
+				local revalidation_ok, revalidation_err = yield_protected_call(function()
+					if map.SuperBigMapRetainedNativeSourceUnloadFailed then
+						error("temporary source cleanup failed: "..tostring(map.SuperBigMapRetainedNativeSourceUnloadFailed))
+					end
+					-- Complete and verify rock seating under the loading cover, before publishing T1.
+					local validation = SuperBigMap.DecorationValidation
+					if validation then validation.Run("Validate", map, "surface final placement") end
+					local seating = SuperBigMap.DecorationSeating
+					if not seating or type(seating.Run) ~= "function" then
+						error("surface decoration correction service unavailable")
+					end
+					local result = seating.Run(map)
+					if not result or result.error or result.validation_error or (result.rejected or 0) > 0 then
+						map.SuperBigMapSurfaceDecorationCorrectionError = tostring(result
+							and (result.error or result.validation_error or "unresolved rock seating")
+							or "missing correction result")
+						error("surface decoration correction failed: " .. map.SuperBigMapSurfaceDecorationCorrectionError)
+					end
+					map.SuperBigMapSurfaceDecorationCorrectionComplete = true
 					local seen = {}
 					for _, underground in pairs(Global("Maps") or {}) do
 						if type(underground) == "table" and not seen[underground]
@@ -12503,12 +12521,6 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 							if not valid then error("final surface entrance validation failed: " .. tostring(reason)) end
 						end
 					end
-				end
-				local revalidation_ok, revalidation_err = yield_protected_call(function()
-					if map.SuperBigMapRetainedNativeSourceUnloadFailed then
-						error("temporary source cleanup failed: "..tostring(map.SuperBigMapRetainedNativeSourceUnloadFailed))
-					end
-					ValidateCommittedEntrances()
 				end)
 				if type(resume_ild) == "function" then
 					SafeCall(resume_ild, "SuperBigMapSurfacePostPipelineRevalidation")
@@ -12516,60 +12528,8 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				if revalidation_ok then
 					map.SuperBigMapSurfaceFinalGridRebuildPending = nil
 					map.SuperBigMapSurfacePostPipelineRevalidationComplete = true
-					-- Exact boundary ticks for observers; seating starts two frames after T1.
-					local ticks = Global("GetPreciseTicks")
-					map.SuperBigMapSurfaceT1Ticks = type(ticks) == "function" and ticks() or nil
-					-- Owner ruling 2026-09-24: rock seating runs right AFTER T1, behind the welcome
-					-- popup. It is one non-yielding block, so no frame ever shows a rock mid-move.
-					-- Measured at 17S11W, the blurred overview background shows no changed pixel
-					-- across the seating (only unrelated HUD/log text), so no frozen backdrop is used:
-					-- a frozen copy under the translucent popup visibly changed its opacity. Without
-					-- a welcome popup the loading cover stays up instead.
-					local behind_welcome = SuperBigMap.WelcomePopupPresent
-						and SuperBigMap.WelcomePopupPresent() == true
-					if behind_welcome then
-						EndSurfaceExpansionLoading(map)
-						-- Present the popup before the non-yielding seating block begins.
-						local wait_frame = Global("WaitNextFrame")
-						if type(wait_frame) == "function" then for _ = 1, 2 do pcall(wait_frame) end end
-					end
-					map.SuperBigMapSurfaceRockSeatingBehindWelcome = behind_welcome
-					local pause_fn, resume_fn = Global("Pause"), Global("Resume")
-					local paused = type(pause_fn) == "function" and type(resume_fn) == "function"
-						and pcall(pause_fn, "SuperBigMapSurfaceRockSeating")
-					if type(pause_ild) == "function" then SafeCall(pause_ild, "SuperBigMapSurfaceRockSeating") end
-					local seating_ok, seating_err = yield_protected_call(function()
-						local validation = SuperBigMap.DecorationValidation
-						if validation then validation.Run("Validate", map, "surface final placement") end
-						local seating = SuperBigMap.DecorationSeating
-						if not seating or type(seating.Run) ~= "function" then
-							error("surface decoration correction service unavailable")
-						end
-						local result = seating.Run(map)
-						if not result or result.error or result.validation_error or (result.rejected or 0) > 0 then
-							map.SuperBigMapSurfaceDecorationCorrectionError = tostring(result
-								and (result.error or result.validation_error or "unresolved rock seating")
-								or "missing correction result")
-							error("surface decoration correction failed: " .. map.SuperBigMapSurfaceDecorationCorrectionError)
-						end
-						-- Moved rocks must not have invalidated a committed entrance footprint.
-						ValidateCommittedEntrances()
-					end)
-					if type(resume_ild) == "function" then SafeCall(resume_ild, "SuperBigMapSurfaceRockSeating") end
-					if paused then SafeCall(resume_fn, "SuperBigMapSurfaceRockSeating") end
-					if seating_ok then
-						map.SuperBigMapSurfaceDecorationCorrectionComplete = true
-						map.SuperBigMapSurfaceRockSeatingDoneTicks = type(ticks) == "function" and ticks() or nil
-						if not behind_welcome then EndSurfaceExpansionLoading(map) end
-						SignalExpansionReadinessChanged(map, "surface rock seating complete")
-					else
-						map.SuperBigMapSurfacePostPipelineRevalidationError = tostring(seating_err)
-						SuperBigMap.GenerationReadiness.RecordSurfaceExpansionFailure(map, seating_err)
-						EndSurfaceExpansionLoading(map)
-						LoadingFinish("surface rock seating failed", map, {
-							error = tostring(seating_err),
-						}, false)
-					end
+					EndSurfaceExpansionLoading(map)
+					SignalExpansionReadinessChanged(map, "surface final entrance validation complete")
 				else
 					map.SuperBigMapSurfaceFinalGridRebuildPending = nil
 					map.SuperBigMapSurfacePostPipelineRevalidationError = tostring(revalidation_err)
@@ -12847,12 +12807,6 @@ local function UndergroundExpansionReadiness(map)
 		and cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true)
 		and surface.SuperBigMapSurfacePostPipelineRevalidationComplete ~= true then
 		return false, "surface final entrance validation has not completed"
-	end
-	-- Rock seating now runs right after T1; underground access still waits for it.
-	if surface.SuperBigMapSurfaceStretchScheduled == true
-		and cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true)
-		and surface.SuperBigMapSurfaceDecorationCorrectionComplete ~= true then
-		return false, "surface rock seating has not completed"
 	end
 	if not cfg_bool("SURFACE_STRETCH_AT_START", false) then
 		return true, "native generation complete; surface expansion disabled"

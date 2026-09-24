@@ -2475,9 +2475,7 @@ function Validator.Schedule(map,reason)
 	-- Never race source capture/transformation or pull underground checks into T1.
 	local underground=SBM.Engine.MapDataEnvironment(map.mapdata)=="Underground"
 	if underground and map.SuperBigMapUndergroundPrepared~=true then return end
-	-- Surface seating runs right after T1; a census must not race it.
-	if not underground and (map.SuperBigMapSurfacePostPipelineRevalidationComplete~=true
-		or map.SuperBigMapSurfaceDecorationCorrectionComplete~=true) and not loaded_maps[map] then return end
+	if not underground and map.SuperBigMapSurfacePostPipelineRevalidationComplete~=true and not loaded_maps[map] then return end
 	local create,sleep=Global("CreateRealTimeThread"),Global("Sleep")
 	if type(create)~="function" then return end
 	-- Events after the active census began need another census. Coalesce them,
