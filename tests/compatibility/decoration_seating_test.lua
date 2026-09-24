@@ -438,3 +438,23 @@ assert(grouped_calls==1 and report.corrected==2 and report.rejected==0 and not r
 assert(select(3,pos:xyz())==0 and select(3,rider_pos:xyz())==20,
  'grouped open-base partner moved again from its own stale evidence entry')
 print('floating open-base pair: one shared rigid move, no second move of the partner')
+
+-- NearbyOffsets sorts by packed integer keys; the order must equal the original
+-- squared-distance, then x, then y comparator order, with integer coordinates.
+local function comparator_offsets(step,rings)
+ local result={}
+ for x=-rings,rings do for y=-rings,rings do if x~=0 or y~=0 then result[#result+1]={x*step,y*step} end end end
+ table.sort(result,function(a,b)
+  local da,db=a[1]*a[1]+a[2]*a[2],b[1]*b[1]+b[2]*b[2]
+  if da~=db then return da<db end
+  if a[1]~=b[1] then return a[1]<b[1] end
+  return a[2]<b[2]
+ end)
+ return result
+end
+for _,c in ipairs({{100,1},{100,8},{200,16},{400,32},{3,5}}) do
+ local a,b=comparator_offsets(c[1],c[2]),S.NearbyOffsets(c[1],c[2])
+ assert(#a==#b,'offset count changed')
+ for i=1,#a do assert(a[i][1]==b[i][1] and a[i][2]==b[i][2] and math.type(a[i][1])==math.type(b[i][1]),'offset order changed at '..i) end
+end
+print('nearby offsets: packed-key order equals the comparator order')

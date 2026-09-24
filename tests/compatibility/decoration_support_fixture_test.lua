@@ -699,10 +699,31 @@ assert(V.FoundationEvidence(map,inspected).gap<=2,'threshold shortcut disagrees 
 for _,case in ipairs({{-5,-5,-5},{0,-10,0},{-3,-4,0}})do
  level=case[1];globals.terrain.GetMinMaxHeight=function()return case[2],case[3] end
  local exact=V.FoundationEvidence(map,inspected);local fast=V.FoundationEvidence(map,inspected,2)
- assert(not fast.below_threshold and fast.gap==exact.gap,'threshold mode changed an exact rim gap')
+ assert(fast.below_threshold and exact.gap<=2 or fast.gap==exact.gap,'threshold mode changed an exact rim gap')
  assert((fast.gap>2)==(exact.gap>2),'threshold mode changed the nomination decision')
 end
 print('foundation nomination threshold: bounded rims skip the crossing walk; all other gaps stay exact')
+
+-- Sloped ground: the whole-rim range fails, so each edge is bounded by its own
+-- terrain range, and only edges that still fail take their exact crossing walk.
+local range_calls=0
+local function ranges(first,rest)
+ range_calls=0
+ globals.terrain.GetMinMaxHeight=function()range_calls=range_calls+1;if range_calls==1 then return first,0 end;return rest,0 end
+end
+level=0;exact_queries=0;ranges(-10,-1)
+local edge_bounded=V.FoundationEvidence(map,inspected,2)
+assert(edge_bounded.below_threshold and edge_bounded.gap<=2 and exact_queries==0 and range_calls>1,
+ 'per-edge terrain ranges did not prove a sloped buried rim')
+level=0;exact_queries=0;ranges(-10,-10)
+local walked=V.FoundationEvidence(map,inspected,2)
+assert(walked.below_threshold and walked.gap<=2 and exact_queries>0,'failing edge bounds skipped the exact per-edge walk')
+level=-5;ranges(-10,-10)
+local exceeding=V.FoundationEvidence(map,inspected,2);ranges(-10,-10)
+local reference=V.FoundationEvidence(map,inspected)
+assert(not exceeding.below_threshold and exceeding.gap==reference.gap and exceeding.gap>2,
+ 'an edge above the threshold did not fall through to the exact rim measurement')
+print('foundation nomination threshold: per-edge ranges and exact edge walks keep the gap>2 decision exact')
 
 G.Entity=function()return open_asset end
 cliff.x,cliff.y,cliff.z=3000,3000,0;cliff.SuperBigMapSupportRepair=nil
@@ -710,8 +731,9 @@ list={cliff}
 globals.terrain.GetHeight=function()return -10 end
 globals.terrain.GetMinMaxHeight=function()return -11,-9 end
 local full_clearance=G.FoundationClearance;local rim_checks=0
-G.FoundationClearance=function(...)
- rim_checks=rim_checks+1;return full_clearance(...)
+G.FoundationClearance=function(points,edges,...)
+ -- Count complete rim proofs; single-edge nomination walks are not repeats.
+ if #edges>1 then rim_checks=rim_checks+1 end;return full_clearance(points,edges,...)
 end
 V.WithCorrectionEvidence(map,'Surface',function()
  assert(rim_checks==1,'unchanged preparation repeated the complete nomination rim proof')

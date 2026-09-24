@@ -14,16 +14,19 @@ local offset_cache={}
 function Seating.NearbyOffsets(step,rings)
 	local key=step..":"..rings;local cached=offset_cache[key]
 	if cached then return cached end
-	local result={}
+	-- Order: squared distance, then x, then y (all in lattice units, which
+	-- preserves the world-unit order for step>0). Packing that exact order into
+	-- one integer key lets the native sort run without a Lua comparator.
+	local span=2*rings+1;local keys={}
 	for x=-rings,rings do for y=-rings,rings do if x~=0 or y~=0 then
-		result[#result+1]={x*step,y*step}
+		keys[#keys+1]=((x*x+y*y)*span+(x+rings))*span+(y+rings)
 	end end end
-	table.sort(result,function(a,b)
-		local da,db=a[1]*a[1]+a[2]*a[2],b[1]*b[1]+b[2]*b[2]
-		if da~=db then return da<db end
-		if a[1]~=b[1] then return a[1]<b[1] end
-		return a[2]<b[2]
-	end)
+	table.sort(keys)
+	local result={}
+	for i,k in ipairs(keys) do
+		local y=k%span;local rest=math.floor((k-y)/span);local x=rest%span
+		result[i]={(x-rings)*step,(y-rings)*step}
+	end
 	offset_cache[key]=result;return result
 end
 

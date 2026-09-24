@@ -432,10 +432,31 @@ local function FoundationEvidence(map,obj,asset,threshold)
 		-- Only when EVERY rim is so bounded is the (discarded) answer returned
 		-- early; otherwise the exact measurement below runs unchanged.
 		local bound=-math.huge
-		for _,m in pairs(measured) do
+		for entry,m in pairs(measured) do
 			if not m.lower then bound=nil;break end
 			local rim_bound=m.bounds[6]-m.lower
-			if rim_bound>threshold then bound=nil;break end
+			if rim_bound>threshold then
+				-- Sloped ground defeats the whole-rim bound. Bound each edge by the
+				-- terrain minimum around that edge alone; an edge that still fails
+				-- gets its own exact crossing walk. Any edge above the threshold,
+				-- or any unavailable proof, falls through to the exact pass.
+				rim_bound=-math.huge
+				for _,e in ipairs(entry.rim.edges) do
+					local a,b=m.points[e[1]],m.points[e[2]]
+					if not a or not b then rim_bound=nil;break end
+					local x1,y1,x2,y2=min(a[1],b[1]),min(a[2],b[2]),max(a[1],b[1]),max(a[2],b[2])
+					if not (x1>=tile and y1>=tile and x2+tile<width and y2+tile<height) then rim_bound=nil;break end
+					local lower=terrain.GetMinMaxHeight(map,box(floor(x1)-tile,floor(y1)-tile,math.ceil(x2)+tile,math.ceil(y2)+tile))
+					if type(lower)~="number" then rim_bound=nil;break end
+					local edge_bound=max(a[3],b[3])-lower
+					if edge_bound>threshold then
+						edge_bound=Geometry.FoundationClearance(m.points,{e},height_at,tile,width,height)
+						if not edge_bound or edge_bound>threshold then rim_bound=nil;break end
+					end
+					rim_bound=max(rim_bound,edge_bound)
+				end
+				if not rim_bound then bound=nil;break end
+			end
 			bound=max(bound,rim_bound)
 		end
 		if bound then return {gap=bound,by_component={},below_threshold=true} end
