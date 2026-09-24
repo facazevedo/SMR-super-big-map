@@ -1,5 +1,40 @@
 # Surface START-to-T1 — runtime acceptance and local checkpoint
 
+## Metadata 1100 (`a152b05`), release-equivalent measurement
+
+Owner rulings 2026-09-24: rock seating must finish before T1 (a same-day post-T1
+waiver was reverted), START-to-T1 must stay below 75 s, rocks must stay as close to
+vanilla as possible, and the measurement must reflect what the published mod offers.
+The harness keeps a DAP socket open, so the engine gives every Lua thread the
+debugger's call/return/line hook, which players never have (about 8 s at 61N136W).
+The runner therefore defaults to `--debug-hooks release`: `_ralph/tmp/release_hooks.lua`
+makes `ResolveThreadDebugHook` skip only the debugger branch (release resolves to
+`SetInfiniteLoopDetectionHook`), a watchdog restores it after the engine's new-game
+Lua reload, and a run is rejected unless the hook is verified at the end with no
+reinstall after START. Only SuperBigMap is loaded; release diagnostics stay off.
+
+All eight cases below are accepted fresh processes with 0 unresolved rocks, seating
+completed before T1, clean flushed logs and the release hook verified:
+
+| Case | START-to-T1 | Seating | Rocks corrected | Notes |
+|---|---:|---:|---:|---|
+| 61N136W | 73.790 s | 15.122 s | 122 | save/in-process reload exact; underground 44.676 s; 0 census defects |
+| 24S74W | 71.528 s | 14.745 s | 106 | |
+| 17S11W | 71.258 s | 14.495 s | 127 | |
+| 30S146E / `x9pLZCNl` | 70.957 s | 11.870 s | 122 | owner's failing map, fixed in `2021166` |
+| 45S120W | 62.131 s | 8.060 s | 98 | |
+| 14S36W / `JXhzkS0O` | 60.459 s | 6.237 s | 56 | owner's J5/K5 floating-cliff map |
+| 14S36W / `nBJAgUn3` | 60.141 s | 6.199 s | 56 | |
+| 15S67E | 59.930 s | 4.044 s | 28 | |
+
+Evidence: `_ralph/runs/welcome-handoff-20260924/matrix_v1100`. Not yet repeated on
+this build: A/B/control pairs, fresh-process load, and underground runs for the
+faster cases. The narrowest margin (61N136W) is about 1.2 s on this machine; these
+are measurements, not a guarantee on slower hardware. Earlier sections use the
+debugger-hook harness and are historical.
+
+## Build 462 (historical, debugger-hook harness)
+
 Current build 462 / metadata 1093 (code checkpoint `494f7af`) passes six pinned
 RoughTerrain cases, including 14S36W / `nBJAgUn3`, across 30 fresh headless sessions.
 Worst of 18 expanded generations: **74.955s START-to-T1**, including completed
