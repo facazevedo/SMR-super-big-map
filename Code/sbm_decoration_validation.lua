@@ -47,7 +47,11 @@ function Validator.Index(size)
 	function index:Query(bounds,pad)
 		local out,seen={},{}
 		local function take(node)
-			if not seen[node] and Overlap(node.bounds,bounds,pad) then seen[node]=true;out[#out+1]=node end
+			if not seen[node] then
+				local a=node.bounds
+				if not (a[1]>bounds[4]+pad or bounds[1]>a[4]+pad or a[2]>bounds[5]+pad or bounds[2]>a[5]+pad
+					or a[3]>bounds[6]+pad or bounds[3]>a[6]+pad) then seen[node]=true;out[#out+1]=node end
+			end
 		end
 		for x=floor((bounds[1]-pad)/(size+0.0)),floor((bounds[4]+pad)/(size+0.0)) do
 			local column=self.buckets[x]
@@ -791,6 +795,8 @@ local function RawComponentContact(a,b,tolerance)
 		table.insert(bucket,1,hint);if #bucket>4 then table.remove(bucket) end
 	end
 	local function visit(at,bt)
+		-- Same padded leaf test as Overlap(aib,bb,tree_tolerance+1e-6); one addition.
+		local leaf_tolerance=tree_tolerance+1e-6
 		-- Explicit depth-first stack retains left-before-right traversal and every
 		-- bounds/triangle predicate, without a Lua call for every visited node.
 		-- Only pending right branches are retained; no result outlives this pose.
@@ -799,16 +805,23 @@ local function RawComponentContact(a,b,tolerance)
 		local ab,bb=ac[at],bc[bt]
 		if not ab then ab=WorldBounds(tree_ar,at.bounds);ac[at]=ab end
 		if not bb then bb=WorldBounds(tree_br,bt.bounds);bc[bt]=bb end
-		if Overlap(ab,bb,tree_tolerance) then
+		-- Overlap(ab,bb,tree_tolerance), inlined for this per-node-pair hot loop.
+		if not (ab[1]>bb[4]+tree_tolerance or bb[1]>ab[4]+tree_tolerance
+			or ab[2]>bb[5]+tree_tolerance or bb[2]>ab[5]+tree_tolerance
+			or ab[3]>bb[6]+tree_tolerance or bb[3]>ab[6]+tree_tolerance) then
 		if at.items and bt.items then
 			for _,ai in ipairs(at.items) do
 				local aib=ac[ai];if not aib then aib=WorldBounds(tree_ar,ai.bounds);ac[ai]=aib end
 				-- One triangle disjoint from the complete opposite leaf cannot
 				-- contact any of its triangles. Avoid up to twelve repeated pair
 				-- bounds checks, retaining conservative world-rounding slack.
-				if Overlap(aib,bb,tree_tolerance+1e-6) then for _,bi in ipairs(bt.items) do
+				if not (aib[1]>bb[4]+leaf_tolerance or bb[1]>aib[4]+leaf_tolerance
+					or aib[2]>bb[5]+leaf_tolerance or bb[2]>aib[5]+leaf_tolerance
+					or aib[3]>bb[6]+leaf_tolerance or bb[3]>aib[6]+leaf_tolerance) then for _,bi in ipairs(bt.items) do
 				local bib=bc[bi];if not bib then bib=WorldBounds(tree_br,bi.bounds);bc[bi]=bib end
-				if Overlap(aib,bib,tree_tolerance) then
+				if not (aib[1]>bib[4]+tree_tolerance or bib[1]>aib[4]+tree_tolerance
+					or aib[2]>bib[5]+tree_tolerance or bib[2]>aib[5]+tree_tolerance
+					or aib[3]>bib[6]+tree_tolerance or bib[3]>aib[6]+tree_tolerance) then
 					-- All pairs in this captured pose share the same transformed
 					-- triangle, just as they already share its exact vertex cache.
 					local x=atc[ai.triangle] or triangle(a,ar,av,ai.triangle,atc)
@@ -1911,13 +1924,29 @@ function Validator.BuildDecorPlacement(map,objects,center,factor)
 				local wx=ox+xx*vx+xy*vy+xz*vz
 				local wy=oy+yx*vx+yy*vy+yz*vz
 				local wz=oz+zx*vx+zy*vy+zz*vz
-				local h=source_flat or height_at(wx,wy)
+				-- height_at's cached in-bounds path, inlined for this per-vertex hot loop
+				-- (identical rounding/key/cache); every other case calls height_at.
+				local h=source_flat
+				if not h then
+					local qx,qy=floor(wx+.5),floor(wy+.5)
+					if linear_heights and qx>=0 and qy>=0 and qx<width and qy<height then
+						local key=qx+qy*width;h=heights[key]
+						if h==nil then h=terrain_height(map,qx,qy);heights[key]=h end
+					else h=height_at(wx,wy) end
+				end
 				if wz<low then low=wz end
 				if wz>high then high=wz end
 				local visible=wz-h;if visible>exposed then exposed=visible end
 				local tx,ty,tz=px+(wx-sx)*ratio,py+(wy-sy)*ratio,pz+(wz-sz)*ratio
 				if tx<0 or ty<0 or tx>=width or ty>=height then return {ok=false,reason="support-island terrain unavailable"} end
-				local target_height=target_flat or height_at(tx,ty)
+				local target_height=target_flat
+				if not target_height then
+					local qx,qy=floor(tx+.5),floor(ty+.5)
+					if linear_heights and qx>=0 and qy>=0 and qx<width and qy<height then
+						local key=qx+qy*width;target_height=heights[key]
+						if target_height==nil then target_height=terrain_height(map,qx,qy);heights[key]=target_height end
+					else target_height=height_at(tx,ty) end
+				end
 				if type(target_height)~="number" then return {ok=false,reason="support-island terrain unavailable"} end
 				local clearance=tz-target_height
 				if clearance<bottom then bottom=clearance end

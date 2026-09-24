@@ -1223,6 +1223,7 @@ end
 -- between X/Y grid lines and cell diagonals; inspect all crossings, not a sparse
 -- sample that can miss a valley midway along an otherwise buried bottom edge.
 function Geometry.FoundationClearance(points,edges,height,tile,width,map_height,maximum_allowed)
+	local huge=math.huge
 	local maximum=-math.huge
 	local cache,cells={},{}
 	local function h(x,y)
@@ -1239,7 +1240,9 @@ function Geometry.FoundationClearance(points,edges,height,tile,width,map_height,
 		local cell=column[gy]
 		if not cell then
 			local h00,h10,h01,h11=h(gx,gy),h(gx+tile,gy),h(gx,gy+tile),h(gx+tile,gy+tile)
-			if not Finite(h00) or not Finite(h10) or not Finite(h01) or not Finite(h11) then return false end
+			-- Finite(), inlined for this per-cell hot path.
+			if not (type(h00)=="number" and h00==h00 and h00>-huge and h00<huge) or not (type(h10)=="number" and h10==h10 and h10>-huge and h10<huge)
+				or not (type(h01)=="number" and h01==h01 and h01>-huge and h01<huge) or not (type(h11)=="number" and h11==h11 and h11>-huge and h11<huge) then return false end
 			cell={h00,h10-h00,h11-h10,h11-h01,h01-h00};column[gy]=cell
 		end
 		local fx,fy=(x-gx)/tile,(y-gy)/tile
@@ -1313,6 +1316,7 @@ function Geometry.FoundationTranslationClearance(f,dx,dy,height,maximum_allowed)
 		end
 		f.translation_stencil=stencil
 	end
+	local huge=math.huge
 	local maximum=-math.huge;local bounds=stencil.bounds
 	if bounds[1]+dx<0 or bounds[2]+dy<0 or bounds[3]+dx+tile>=f.width or bounds[4]+dy+tile>=f.height then return nil end
 	-- Group immutable crossings by terrain cell once, rather than rebuilding
@@ -1327,7 +1331,9 @@ function Geometry.FoundationTranslationClearance(f,dx,dy,height,maximum_allowed)
 		local cell=stencil.cells[index]
 		local gx,gy=cell.x+dx,cell.y+dy
 		local h00,h10,h01,h11=height(gx,gy),height(gx+tile,gy),height(gx,gy+tile),height(gx+tile,gy+tile)
-		if not Finite(h00) or not Finite(h10) or not Finite(h01) or not Finite(h11) then return nil end
+		-- Finite(), inlined for this per-cell hot path.
+		if not (type(h00)=="number" and h00==h00 and h00>-huge and h00<huge) or not (type(h10)=="number" and h10==h10 and h10>-huge and h10<huge)
+			or not (type(h01)=="number" and h01==h01 and h01>-huge and h01<huge) or not (type(h11)=="number" and h11==h11 and h11>-huge and h11<huge) then return nil end
 		local ax,ay,bx,by=h10-h00,h11-h10,h11-h01,h01-h00
 		for _,p in ipairs(cell) do
 			local fx,fy=p[4],p[5]
