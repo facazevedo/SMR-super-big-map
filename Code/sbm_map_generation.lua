@@ -12601,6 +12601,15 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								tostring(support.eligible), tostring(support.terrain), tostring(support.graph), tostring(support.unresolved),
 								tostring(seating and seating.candidates), tostring(seating and seating.nomination_ms),
 								tostring(seating and seating.evidence_ms), tostring(seating and seating.ms), objects, topups))
+							local d = map.SuperBigMapDecorEnginePassReport or {}
+							local keys = { "target", "placed_authored", "placed_synthetic", "decor_sites", "vanilla_decor_groups",
+								"unused_sites", "markers_resolved", "markers_unresolved", "decorated_circles", "obstruct_circles",
+								"fallback_sites", "synthetic_attempts", "synthetic_templates", "failed", "support_rejected",
+								"dropped_non_cosmetic", "skipped_by_decorated", "skipped_by_obstruct", "sites_prestretched",
+								"sites_relocated", "objects", "reason", "error" }
+							local parts = {}
+							for _, key in ipairs(keys) do parts[#parts + 1] = key .. "=" .. tostring(d[key]) end
+							print_fn("[Super Big Map] Timing decor: " .. table.concat(parts, " "))
 						end
 					end
 					EndSurfaceExpansionLoading(map)
