@@ -352,7 +352,7 @@ local function Local(record,p)
 	return {Dot(q,c[1])/(Dot(c[1],c[1])+0.0),Dot(q,c[2])/(Dot(c[2],c[2])+0.0),Dot(q,c[3])/(Dot(c[3],c[3])+0.0)}
 end
 
-local function FoundationEvidence(map,obj,asset)
+local function FoundationEvidence(map,obj,asset,threshold)
 	if not asset or not asset.complete or asset.animated or not Geometry.FoundationBoundary then return nil end
 	local found=asset.foundation_descriptors
 	if not found then
@@ -407,23 +407,48 @@ local function FoundationEvidence(map,obj,asset)
 		if col[y]==nil then col[y]=terrain.GetHeight(map,x,y) end
 		return col[y]
 	end
-	local result={gap=-math.huge,by_component={}}
-	for _,entry in ipairs(found) do
-		local shared=entry.equivalent and result.by_component[entry.equivalent.component]
-		if shared then result.by_component[entry.component]=shared else
+	-- Transformed rim points and the certified terrain range of each distinct rim.
+	-- Computed once; the threshold pre-check and the exact pass share them.
+	local box=Global("box")
+	local measured={}
+	for _,entry in ipairs(found) do if not entry.equivalent then
 		local points={};local b={math.huge,math.huge,math.huge,-math.huge,-math.huge,-math.huge}
 		for _,i in ipairs(entry.rim.vertices) do
 			local p=World(record,entry.geometry.vertices[i]);points[i]=p
 			for a=1,3 do b[a]=min(b[a],p[a]);b[a+3]=max(b[a+3],p[a]) end
 		end
-		local gap;local box=Global("box")
+		local lower,upper
 		if type(terrain.GetMinMaxHeight)=="function" and type(box)=="function"
 			and b[1]>=tile and b[2]>=tile and b[4]+tile<width and b[5]+tile<height then
-			local lower,upper=terrain.GetMinMaxHeight(map,box(floor(b[1])-tile,floor(b[2])-tile,math.ceil(b[4])+tile,math.ceil(b[5])+tile))
-			-- Over a certified flat rectangle, the rim's maximum Z is the exact
-			-- maximum clearance. No edge/cell crossings add another extremum.
-			if type(lower)=="number" and (lower==upper or lower>=b[6]) then gap=b[6]-lower end
+			lower,upper=terrain.GetMinMaxHeight(map,box(floor(b[1])-tile,floor(b[2])-tile,math.ceil(b[4])+tile,math.ceil(b[5])+tile))
+			if type(lower)~="number" then lower,upper=nil,nil end
 		end
+		measured[entry]={points=points,bounds=b,lower=lower,upper=upper}
+	end end
+	if threshold then
+		-- Nomination asks only whether any rim gap exceeds the threshold. Ground
+		-- under the rim is never below the covering terrain minimum, so a rim
+		-- whose highest point is within the threshold of it cannot exceed it.
+		-- Only when EVERY rim is so bounded is the (discarded) answer returned
+		-- early; otherwise the exact measurement below runs unchanged.
+		local bound=-math.huge
+		for _,m in pairs(measured) do
+			if not m.lower then bound=nil;break end
+			local rim_bound=m.bounds[6]-m.lower
+			if rim_bound>threshold then bound=nil;break end
+			bound=max(bound,rim_bound)
+		end
+		if bound then return {gap=bound,by_component={},below_threshold=true} end
+	end
+	local result={gap=-math.huge,by_component={}}
+	for _,entry in ipairs(found) do
+		local shared=entry.equivalent and result.by_component[entry.equivalent.component]
+		if shared then result.by_component[entry.component]=shared else
+		local m=measured[entry];local points,b,lower,upper=m.points,m.bounds,m.lower,m.upper
+		local gap
+		-- Over a certified flat rectangle, the rim's maximum Z is the exact
+		-- maximum clearance. No edge/cell crossings add another extremum.
+		if lower and (lower==upper or lower>=b[6]) then gap=b[6]-lower end
 		if not gap then gap=Geometry.FoundationClearance(points,entry.rim.edges,height_at,tile,width,height) end
 		if not gap then result.incomplete=true;return result end
 		result.gap=max(result.gap,gap)
@@ -433,8 +458,8 @@ local function FoundationEvidence(map,obj,asset)
 	return result
 end
 
-function Validator.FoundationEvidence(map,obj)
-	return FoundationEvidence(map,obj,Geometry.Instance(obj))
+function Validator.FoundationEvidence(map,obj,threshold)
+	return FoundationEvidence(map,obj,Geometry.Instance(obj),threshold)
 end
 
 local function WorldBounds(record,b)
@@ -3281,7 +3306,9 @@ function Validator.Correction(map,layer,apply,native_capture)
 				grounded_instance,asset=GroundedRigidInstance(obj,map,width,height,tolerance,native_asset,
 					near_cut and visible_terrain or nil,record.projected,terrain,unit)
 				if not native_capture then
-					local foundation=FoundationEvidence(map,obj,asset)
+					-- Only the gap>2 decision is needed for non-candidates; candidates
+					-- still receive the complete exact rim measurement.
+					local foundation=FoundationEvidence(map,obj,asset,2)
 					if foundation and (foundation.incomplete or foundation.gap>2) then
 						record.foundation=foundation;record.foundation_only=grounded_instance
 						candidate=true;grounded_instance=false

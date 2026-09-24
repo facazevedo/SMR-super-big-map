@@ -687,6 +687,23 @@ observed={};level=-5
 assert(V.FoundationEvidence(map,inspected).gap==5,'foundation terrain cache escaped its single-pose inspection')
 print('foundation LOD terrain cache: shared corners read once, later inspections always see fresh terrain')
 
+-- Nomination only needs gap>2. A rim within 2 of the covering terrain minimum
+-- is answered without the exact crossing walk; every other rim still gets the
+-- exact measurement, so the candidate decision and candidate gaps are unchanged.
+local exact_queries=0
+globals.terrain.GetHeight=function()exact_queries=exact_queries+1;return level end
+level=0;globals.terrain.GetMinMaxHeight=function()return -1,0 end
+local bounded=V.FoundationEvidence(map,inspected,2)
+assert(bounded.below_threshold and bounded.gap<=2 and exact_queries==0,'bounded rim still ran the exact crossing walk')
+assert(V.FoundationEvidence(map,inspected).gap<=2,'threshold shortcut disagrees with the exact non-candidate verdict')
+for _,case in ipairs({{-5,-5,-5},{0,-10,0},{-3,-4,0}})do
+ level=case[1];globals.terrain.GetMinMaxHeight=function()return case[2],case[3] end
+ local exact=V.FoundationEvidence(map,inspected);local fast=V.FoundationEvidence(map,inspected,2)
+ assert(not fast.below_threshold and fast.gap==exact.gap,'threshold mode changed an exact rim gap')
+ assert((fast.gap>2)==(exact.gap>2),'threshold mode changed the nomination decision')
+end
+print('foundation nomination threshold: bounded rims skip the crossing walk; all other gaps stay exact')
+
 G.Entity=function()return open_asset end
 cliff.x,cliff.y,cliff.z=3000,3000,0;cliff.SuperBigMapSupportRepair=nil
 list={cliff}
