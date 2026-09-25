@@ -2547,14 +2547,15 @@ function Validator.Validate(map,reason)
 			end
 			-- Vanilla often leaves a sliver of an open base showing on a slope. Keep that authored
 			-- gap scaled with the rock; a gap the expansion widened closes back to it, not to zero.
+			-- The planner always receives the vanilla allowance: a rock seated for another reason
+			-- (a piece that touched vanilla ground now floats) must not close its authored rim.
 			if row.foundation_unresolved and foundation and not foundation.incomplete then
 				local native=NativeGround(map,record)
 				if native and type(native.rim)=="number" then
 					local allowed=max(2,native.rim*native.ratio+NATIVE_MARGIN)
+					for _,entry in pairs(foundation.by_component or {}) do entry.allowed_gap=allowed-1 end
 					if foundation.gap<=allowed then
 						row.foundation_unresolved=false;row.native_rim_preserved=true;row.native_composition_verified=true
-					else
-						for _,entry in pairs(foundation.by_component or {}) do entry.allowed_gap=allowed-1 end
 					end
 				end
 			end

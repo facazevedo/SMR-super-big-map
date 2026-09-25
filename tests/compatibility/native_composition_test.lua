@@ -25,6 +25,10 @@ local rim=S.Plan({comp(-30,400,{foundation={gap=120}})},flat,{tile=100})
 assert(rim and rim.dz==-122,'an open base still closes fully without a vanilla gap')
 local vanilla_rim=S.Plan({comp(-30,400,{foundation={gap=120,allowed_gap=43}})},flat,{tile=100})
 assert(vanilla_rim and vanilla_rim.dz==-77,'a widened rim closes back to its vanilla gap')
+-- 61N136W Rocks_03_66: a piece that touched vanilla ground floats 3 units, its authored rim
+-- (42.7, vanilla allowance 43.4) is intact. Only the touch is restored, the rim stays open.
+local touch=S.Plan({comp(3,400,{foundation={gap=42.7,allowed_gap=43.4}})},flat,{tile=100})
+assert(touch and touch.dz==-3,'seating for a lost touch keeps the vanilla rim open')
 
 -- 2. Vanilla measurement and the authored rule on synthetic native / expanded terrain.
 local block=assert(code:match('(local NATIVE_GROUND_VERSION.-)\nlocal function WorldBounds'))
