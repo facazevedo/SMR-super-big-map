@@ -413,13 +413,14 @@ end
 SuperBigMap.Diagnostics = Diagnostics
 
 -- TEMPORARY owner release timing build (2026-09-24, owner-approved), release Mars.exe only.
--- When AppData/sbm_release_verify/case.txt names one of the five pinned cases (for example
--- "61N136W a"), start that RoughTerrain game the way the harness does (skipping only the
+-- When AppData/sbm_release_verify/case.txt lists pinned cases, one per line (for example
+-- "61N136W a"), start each RoughTerrain game in turn the way the harness does (skipping only the
 -- profile writes, telemetry and the planet-camera wait), measure START-to-T1, then open the
 -- underground the way a player does (Elevator placed on a passage, quick-built, map switch) and
--- measure first access until the underground is prepared and both covers are closed. Results go
--- to the game log only. The file is data (a case name), is emptied on start, and without it the
--- game behaves normally. Requires Super Big Map to be the only enabled mod.
+-- measure first access until the underground is prepared and both covers are closed; quit after
+-- the last case. One launch (one elevation prompt) covers the list. Results go to the game log
+-- only. The file is data (case names), is emptied on start, and without it the game behaves
+-- normally. Requires Super Big Map to be the only enabled mod.
 do
 	local create = rawget(_G, "CreateRealTimeThread")
 	local platform = rawget(_G, "Platform")
@@ -430,7 +431,6 @@ do
 			if type(read) ~= "function" or type(write) ~= "function" then return end
 			local read_err, text = read(path)
 			if read_err or type(text) ~= "string" then return end
-			local site, run = text:match("^%s*(%w+)%s+(%w+)")
 			local cases = {
 				["61N136W"] = { -3660, -8160, 3838460155450369287, "v932_sweep_14134_61n136w" },
 				["24S74W"] = { 1440, -4440, 7578917061178043875, "v932_sweep_14134_24s74w" },
@@ -438,8 +438,12 @@ do
 				["45S120W"] = { 2700, -7200, 3316517404621831948, "v932_sweep_14134_45s120w" },
 				["15S67E"] = { 900, 4020, 411683085576098543, "sbm_entrance_bottomless_24s97w_v999" },
 			}
-			local case = site and cases[site]
-			if not case or not (run == "a" or run == "b" or run == "control") then return end
+			local queue = {}
+			for site, run in text:gmatch("(%w+)[ 	]+(%w+)") do
+				if not cases[site] or not (run == "a" or run == "b" or run == "control") then return end
+				queue[#queue + 1] = { site, run }
+			end
+			if #queue == 0 then return end
 			local get_dialog = rawget(_G, "GetDialog")
 			local deadline = GetPreciseTicks() + 600000
 			while not (get_dialog and get_dialog("PGMainMenu")) or (rawget(_G, "GameState") or {}).loading do
@@ -450,15 +454,6 @@ do
 			if cfg.SuperBigMapTimingBegun then return end
 			cfg.SuperBigMapTimingBegun = true
 			write(path, "")
-			local function log(fmt, ...)
-				print(string.format("[Super Big Map] Release timing %s %s: " .. fmt, site, run, ...))
-			end
-			local function finish(outcome)
-				log("finished %s", tostring(outcome))
-				FlushLogFile()
-				Sleep(3000)
-				quit()
-			end
 			local function mod()
 				for _, m in ipairs(rawget(_G, "ModsLoaded") or {}) do
 					if m.id == "SuperBigMap" and type(m.env) == "table" and type(rawget(m.env, "SuperBigMap")) == "table" then
@@ -466,6 +461,16 @@ do
 					end
 				end
 				return SuperBigMap
+			end
+			local function run_case(site, run)
+			local case = cases[site]
+			local function log(fmt, ...)
+				print(string.format("[Super Big Map] Release timing %s %s: " .. fmt, site, run, ...))
+			end
+			local function finish(outcome)
+				log("finished %s", tostring(outcome))
+				FlushLogFile()
+				return outcome
 			end
 			local loaded = rawget(_G, "ModsLoaded") or {}
 			if not (#loaded == 1 and loaded[1].id == "SuperBigMap") then
@@ -639,7 +644,18 @@ do
 			log("error registry lua_errors=%d reported_mods=%d optimization_failures=%d", errors, reported,
 				#(state.optimization_failures or {}))
 			Sleep(2000)
-			finish("complete")
+			return finish("complete")
+			end
+			for _, entry in ipairs(queue) do
+				local ok, err = pcall(run_case, entry[1], entry[2])
+				if not ok then
+					print(string.format("[Super Big Map] Release timing %s %s: finished error %s", entry[1], entry[2], tostring(err)))
+				end
+				Sleep(3000)
+			end
+			FlushLogFile()
+			Sleep(3000)
+			quit()
 		end)
 	end
 end
