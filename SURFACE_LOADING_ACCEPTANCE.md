@@ -1,5 +1,70 @@
 # Surface START-to-T1 — runtime acceptance and local checkpoint
 
+## Metadata 1120 / build 469 (`c972f94`): vanilla rock compositions, five-site pass
+
+Owner ruling 2026-09-25 (reverses the 2026-09-23 "no floating rocks, including vanilla's own"):
+rocks keep vanilla's authored compositions, scaled with the rock. Only floats or open rims that
+the expansion creates or widens are corrected, and only back to the vanilla relationship. Mod
+top-up rocks and the underground keep the strict rule. A cause census of build 465 found about
+three quarters of its seating moves were "fixing" vanilla compositions, for example 17S11W
+StonesDarkGroup_03, whose long stone was buried
+(`_ralph/runs/allrules-1120/screens/17s11w_cluster_vanilla_1116_1120.jpg`).
+
+How it works: the surface stretch keeps a copy of the untouched native height grid, checked
+against the source terrain and re-checked when seating starts. Validation measures each native rock
+at its recorded vanilla pose (source position, scale, angle) against that grid and stores
+the per-component clearance and open-rim gap on the object (`SuperBigMapNativeGround`, version
+3), so later validations and reloaded saves use the same evidence without the grid. A component
+that floated in vanilla and stands no higher than that clearance x scale ratio + 4 units is
+accepted; one the expansion lifted further is lowered to its vanilla clearance. The planner
+always gets the vanilla rim allowance. The surface census reports accepted rocks as
+`native_composition_preserved`, which the judge accepts on the surface only.
+
+| Site | START-to-T1 A / B / save | Underground A / B / save | Seating | Corrected (1115) | Vanilla compositions kept |
+|---|---|---|---|---|---|
+| 61N136W | 71.041 / 70.664 / 73.414 s | 45.651 / 45.525 / 44.145 s | 7.6 s | 21 (56) | 39 |
+| 17S11W | 63.880 / 64.043 / 64.257 s | 55.590 / 54.974 / 53.526 s | 9.2 s | 45 (125) | 88 |
+| 24S74W | 63.863 / 64.695 / 66.145 s | 49.195 / 49.289 / 48.393 s | 7.4 s | 11 (51) | 34 |
+| 45S120W | 62.115 / 62.036 / 61.219 s | 44.071 / 43.536 / 42.255 s | 7.0 s | 39 (99) | 91 |
+| 15S67E | 58.107 / 57.955 / 58.096 s | 45.403 / 45.986 / 44.499 s | 3.4 s | 16 (27) | 16 |
+
+All gates pass at all five sites (A/B/unexpanded control), and every save / fresh-process load
+keeps all corrected rocks with positive support. Decor is placed in full at every site. 45S120W's first A run rolled
+`MirrorSphereMystery`, which stamps its building prefab into the terrain; its height and pass
+grids differed from B. That run is kept (`45s120w_a`, 60.462 s); the accepted pair uses a re-run
+A (`45s120w_a_rerun`, LightsMystery), recorded via `audit_five_candidate.py --use`.
+
+Per-rock check of every rock build 1116 corrected, against the vanilla twin census
+(`_ralph/runs/allrules-1116/seating_causes/*_vanilla`): every open vanilla rim equals the vanilla
+map's rim to within 0.5 units. A few fully covered (negative) rims differ from the census by up to
+about 220 units; any negative rim gives the same 2-unit allowance, so this has no effect. None of
+these rocks is left above its vanilla allowance, and no authored rim is closed. The two-stone
+groups' stored clearances match the census (17S11W #106: -395.2 / +115.8 against -397 / +117). Examples at 61N136W: a
+Rocks_03_33 that 1115 lowered 19 m now drops 0.84 m, to its vanilla gap (1545 = 1158.8 x 1.331 +
+4). A Rocks_03_66 that only lost a vanilla touch drops 5 units, not 45. The remaining large moves
+are real expansion damage: cliffs at 17S11W and 15S67E whose base was covered in vanilla and opened
+by 4-7.7 m in the expansion close to about +1 unit.
+
+Three defects in the first implementation, found by these checks:
+- 1117: `GridRepack` without its copy flag returned the stretch's own source grid, which the
+  stretch then freed. Every vanilla lookup read 0, so every rock looked vanilla-authored (fixed
+  in `3489e9b`, plus the start-of-seating re-check).
+- 1118: a rock seated for another reason (a lost vanilla touch) had its authored rim fully
+  closed (`bfbd7e0`).
+- 1119: rocks without a valid Z take their vanilla Z from the interpolated vanilla ground. The
+  engine divides int/int as integer, so integer source positions read the cell corner, up to about
+  160 units off on slopes. This was the StonesDarkGroup_03 case (`c972f94`).
+
+Timing note: a 1119 61N136W probe run measured **75.303 s** (`_ralph/runs/allrules-1119/seating/61n136w_rim`):
+the extra 3.8 s is entirely in vanilla map generation (`generate_returned_ms` 45.7 s vs 41-42 s),
+not in any sub-timer the mod records. It rolled MirrorSphereMystery, but two runs with the mystery
+pinned (new `VERIFY_MYSTERY` harness option) measured 71.415 and 71.556 s. It is recorded as a
+generation-time outlier; the margin at 61N136W is about 2-4 s.
+
+Evidence: `_ralph/runs/allrules-1120/harness` (`five_audit_1120.json`),
+`_ralph/runs/allrules-1120/lifecycle`, per-rock probes in `_ralph/runs/allrules-111[7-9]` and
+`allrules-1120/seating`. 86 compatibility tests and 18 judge tests pass.
+
 ## Metadata 1115 / build 465 (`c523d3b`): five-site full-rules pass
 
 Every standing rule gate passes at all five pinned RoughTerrain sites in fresh A/B runs with

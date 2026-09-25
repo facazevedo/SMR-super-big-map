@@ -1,6 +1,22 @@
 # Full-rules verification — 2026-09-23
 
-## Current: build 465 / metadata 1115-1116 — five-site PASS (2026-09-25)
+## Current: build 469 / metadata 1120 — five-site PASS with vanilla rock compositions (2026-09-25)
+
+Rock-support rule changed by the owner on 2026-09-25: vanilla's own compositions (a pebble
+resting on its stone, an overhang, a sliver of open base on a slope) stay as vanilla authored
+them, scaled with the rock. Only floats or rims the expansion creates or widens are corrected,
+and only back to the vanilla relationship. This reverses the 2026-09-23 "no floating rocks,
+including native vanilla gaps" clarification recorded further down. Mod top-up rocks and the
+underground keep the strict rule. The surface census now counts accepted rocks as
+`native_composition_preserved`, and the judge accepts that on the surface only.
+
+All gates pass at all five sites in fresh A/B runs with unexpanded controls. Every save /
+fresh-process load passes. Seating moves 132 rocks across the five sites instead of 358. The
+worst surface START-to-T1 in the matrix is 73.414 s (61N136W save run). One 61N136W probe run
+earlier the same day measured 75.303 s, with the extra time inside vanilla map generation.
+Details: SURFACE_LOADING_ACCEPTANCE.md, section "Metadata 1120 / build 469".
+
+## Build 465 / metadata 1115-1116 — five-site PASS (2026-09-25, superseded)
 
 All gates pass at 61N136W, 17S11W, 24S74W, 45S120W and 15S67E in fresh A/B runs with
 unexpanded controls, and every save / fresh-process load keeps all corrected rocks. This is
@@ -344,7 +360,7 @@ buttons work; closed-game log is clean. Surface timing still FAILS. The five-sit
 matrix, repeatability/source audit and lifecycle checks remain outstanding.
 427 tests a certified-flat terrain fast path; its45S surface timing was76.926s.
 Evidence: `_ralph/runs/strict-426-20260923/45s120w_a`.
-Owner clarified on 2026-09-23: no floating rocks, including native vanilla gaps.
+Owner clarified on 2026-09-23: no floating rocks, including native vanilla gaps (reversed 2026-09-25, see Current).
 Native-composition exemptions are therefore removed from readiness and the judge.
 Required five-site matrix: 15S67E (hardest reference), 24S74W, 45S120W,
 61N136W, 17S11W. Both strict timing limits, buttons, support, entrance/resource
