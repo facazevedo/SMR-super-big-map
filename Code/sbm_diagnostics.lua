@@ -411,3 +411,235 @@ function Diagnostics.LoadingFinish(reason, map, data, ok)
 end
 
 SuperBigMap.Diagnostics = Diagnostics
+
+-- TEMPORARY owner release timing build (2026-09-24, owner-approved), release Mars.exe only.
+-- When AppData/sbm_release_verify/case.txt names one of the five pinned cases (for example
+-- "61N136W a"), start that RoughTerrain game the way the harness does (skipping only the
+-- profile writes, telemetry and the planet-camera wait), measure START-to-T1, then open the
+-- underground the way a player does (Elevator placed on a passage, quick-built, map switch) and
+-- measure first access until the underground is prepared and both covers are closed. Results go
+-- to the game log only. The file is data (a case name), is emptied on start, and without it the
+-- game behaves normally. Requires Super Big Map to be the only enabled mod.
+do
+	local create = rawget(_G, "CreateRealTimeThread")
+	local platform = rawget(_G, "Platform")
+	if type(create) == "function" and not (platform and platform.debug) then
+		create(function()
+			local path = "AppData/sbm_release_verify/case.txt"
+			local read, write = rawget(_G, "AsyncFileToString"), rawget(_G, "AsyncStringToFile")
+			if type(read) ~= "function" or type(write) ~= "function" then return end
+			local read_err, text = read(path)
+			if read_err or type(text) ~= "string" then return end
+			local site, run = text:match("^%s*(%w+)%s+(%w+)")
+			local cases = {
+				["61N136W"] = { -3660, -8160, 3838460155450369287, "v932_sweep_14134_61n136w" },
+				["24S74W"] = { 1440, -4440, 7578917061178043875, "v932_sweep_14134_24s74w" },
+				["17S11W"] = { 1020, -660, 7671242446964682853, "v932_sweep_14134_17s11w" },
+				["45S120W"] = { 2700, -7200, 3316517404621831948, "v932_sweep_14134_45s120w" },
+				["15S67E"] = { 900, 4020, 411683085576098543, "sbm_entrance_bottomless_24s97w_v999" },
+			}
+			local case = site and cases[site]
+			if not case or not (run == "a" or run == "b" or run == "control") then return end
+			local get_dialog = rawget(_G, "GetDialog")
+			local deadline = GetPreciseTicks() + 600000
+			while not (get_dialog and get_dialog("PGMainMenu")) or (rawget(_G, "GameState") or {}).loading do
+				if GetPreciseTicks() > deadline then return end
+				Sleep(500)
+			end
+			local cfg = rawget(_G, "config")
+			if cfg.SuperBigMapTimingBegun then return end
+			cfg.SuperBigMapTimingBegun = true
+			write(path, "")
+			local function log(fmt, ...)
+				print(string.format("[Super Big Map] Release timing %s %s: " .. fmt, site, run, ...))
+			end
+			local function finish(outcome)
+				log("finished %s", tostring(outcome))
+				FlushLogFile()
+				Sleep(3000)
+				quit()
+			end
+			local function mod()
+				for _, m in ipairs(rawget(_G, "ModsLoaded") or {}) do
+					if m.id == "SuperBigMap" and type(m.env) == "table" and type(rawget(m.env, "SuperBigMap")) == "table" then
+						return rawget(m.env, "SuperBigMap")
+					end
+				end
+				return SuperBigMap
+			end
+			local loaded = rawget(_G, "ModsLoaded") or {}
+			if not (#loaded == 1 and loaded[1].id == "SuperBigMap") then
+				return finish("aborted: other mods are enabled")
+			end
+			local expand = run ~= "control"
+			local hook, loop_hook = rawget(_G, "GetThreadDebugHook"), rawget(_G, "SetInfiniteLoopDetectionHook")
+			log("build version=%s patch=%s debug=%s release_hook=%s", tostring(mod().Version or ""),
+				tostring(mod().GENERATOR_PATCH_VERSION), tostring(platform and platform.debug or false),
+				tostring(type(hook) == "function" and hook() == loop_hook))
+			Sleep(3000)
+			DoneGame()
+			NewGame({ seed_text = case[4] })
+			InitNewGameMissionParams()
+			LoadLastNewGameSettings("regular", { RoughTerrain = true })
+			ChangeMap("PreGame")
+			local params = g_CurrentMapParams
+			params.map = ""
+			GetOverlayValues(case[1], case[2])
+			params.rocket_name, params.rocket_name_base = GenerateRocketName(true)
+			params.SuperBigMapExpandMap = expand and true or nil
+			local sbm = mod()
+			local pin_ok, pin_err = sbm.MapGeneration.SetTwinUndergroundSeedForTest(case[3], "owner release timing")
+			log("underground seed pin %s %s", tostring(pin_ok), tostring(pin_err))
+			-- START press: the harness and START-action boundary.
+			local t0 = GetPreciseTicks()
+			if expand then
+				sbm.PregameToggle.SetStartArmed(true, "release timing START")
+				sbm.Lifecycle.BeginExpandedSession("release timing START")
+			else
+				sbm.PregameToggle.SetStartArmed(false, "release timing control START")
+				sbm.Lifecycle.BeginVanillaSession("release timing control START", false)
+			end
+			WaitWarnAboutSkippedMods()
+			LoadingScreenOpen("idLoadingScreen", "StartGame")
+			GenerateCurrentRandomMap()
+			local t_return = GetPreciseTicks()
+			LoadingScreenClose("idLoadingScreen", "StartGame")
+			local map, failed
+			local stop = t0 + 900000
+			while GetPreciseTicks() < stop do
+				for _, m in pairs(rawget(_G, "Maps") or {}) do
+					if type(m) == "table" then
+						if m.SuperBigMapSurfaceStretchFailed then failed = m.SuperBigMapSurfaceStretchFailed end
+						if expand and m.SuperBigMapSurfaceStretchDone == true
+							and m.SuperBigMapSurfacePostPipelineRevalidationComplete == true then map = m end
+					end
+				end
+				if not expand then
+					local city = CurrentMap and CurrentMap.City
+					if city and type(city.MapSectors) == "table" and #city.MapSectors > 0 then map = CurrentMap end
+				end
+				if map or failed then break end
+				Sleep(100)
+			end
+			local t1 = GetPreciseTicks()
+			if not map then
+				log("surface FAILED after %d ms: %s", t1 - t0, tostring(failed or "T1 timeout"))
+				return finish("surface failed")
+			end
+			sbm = mod()
+			local seating = map.SuperBigMapDecorationSeating or {}
+			local support = seating.support or {}
+			log("START-to-T1 %d ms (generation returned %d ms; seating %s ms, %s rocks corrected, %s rejected)",
+				t1 - t0, t_return - t0, tostring(seating.total_ms), tostring(seating.corrected), tostring(seating.rejected))
+			if expand then
+				log("rock census eligible=%s terrain=%s graph=%s unresolved=%s", tostring(support.eligible),
+					tostring(support.terrain), tostring(support.graph), tostring(support.unresolved))
+				local d = map.SuperBigMapDecorEnginePassReport or {}
+				log("decor target=%s placed_authored=%s placed_synthetic=%s objects=%s markers=%s/%s attempts=%s error=%s",
+					tostring(d.target), tostring(d.placed_authored), tostring(d.placed_synthetic), tostring(d.objects),
+					tostring(d.markers_resolved), tostring(d.markers_unresolved), tostring(d.synthetic_attempts), tostring(d.error))
+				local a = map.SuperBigMapOuterResourceTerrainAudit or {}
+				log("ring clusters=%s pads=%s resource_failures=%s rocket_failures=%s", tostring(a.resource_clusters),
+					tostring(a.rocket_pads), tostring(a.resource_failures), tostring(a.rocket_failures))
+			end
+			local keys2, keys3 = 0, 0
+			for key, value in pairs(rawget(_G, "PrefabMarkers") or {}) do
+				if type(key) == "string" and type(value) == "table" then
+					local _, dots = key:gsub("%.", "")
+					if dots == 1 then keys2 = keys2 + 1 elseif dots == 2 then keys3 = keys3 + 1 end
+				end
+			end
+			log("prefab registry keys: type.name=%d poi.type.name=%d", keys2, keys3)
+			-- First underground access, the player's route (rules probe first_access).
+			local ug
+			for _, m in pairs(rawget(_G, "Maps") or {}) do
+				if type(m) == "table" and m ~= map and m.mapdata and m.mapdata:GetEnvironment() == "Underground" then ug = m end
+			end
+			if not ug then log("underground map missing") return finish("no underground") end
+			local reasons = rawget(_G, "PauseReasons")
+			if type(reasons) == "table" then
+				local keys = {}
+				for k in pairs(reasons) do keys[#keys + 1] = k end
+				for _, k in ipairs(keys) do pcall(Resume, k) end
+			end
+			local phase_t0 = GetPreciseTicks()
+			local passage
+			map:MapForEach("map", "UndergroundPassage", function(o)
+				if not passage and IsValid(o) and rawget(o, "other") then passage = o end
+			end)
+			if not passage then log("no linked surface passage") return finish("no passage") end
+			pcall(UnlockBuilding, "Elevator")
+			local ctrl = GetDefaultConstructionController(map.City)
+			if not ctrl then log("construction controller unavailable") return finish("no controller") end
+			local cities, seen = {}, {}
+			for _, c in ipairs({ ctrl.city, rawget(_G, "UICity"), map.City }) do
+				if type(c) == "table" and not seen[c] and type(c.SetCableCascadeDeletion) == "function" then
+					seen[c] = true
+					cities[#cities + 1] = c
+				end
+			end
+			for _, c in ipairs(cities) do pcall(c.SetCableCascadeDeletion, c, false, "ConstructionModeDialog") end
+			local place_params = { pos = passage:GetPos(), angle = passage:GetAngle() }
+			local template = BuildingTemplates and BuildingTemplates.Elevator
+			if template and type(template.AddPlacementParams) == "function" then
+				place_params = template.AddPlacementParams(place_params) or place_params
+			end
+			local act_ok = pcall(ctrl.Activate, ctrl, "Elevator", place_params)
+			local place_ok, placed = false, nil
+			if act_ok then place_ok, placed = pcall(ctrl.Place, ctrl) end
+			local method = "cursor"
+			if not place_ok or not placed then
+				method = "external"
+				place_ok, placed = pcall(ctrl.Place, ctrl, "Elevator", passage:GetPos(), passage:GetAngle(), nil)
+			end
+			pcall(ctrl.Deactivate, ctrl)
+			for _, c in ipairs(cities) do pcall(c.SetCableCascadeDeletion, c, true, "ConstructionModeDialog") end
+			local site_obj = rawget(passage, "elevator_construction")
+			local group = site_obj and rawget(site_obj, "construction_group")
+			local leader = type(group) == "table" and group[1] or nil
+			if not (place_ok and placed and leader and IsValid(leader)) then
+				log("Elevator placement failed (%s)", method)
+				return finish("placement failed")
+			end
+			local built, build_err = false, nil
+			CreateGameTimeThread(function()
+				local ok_c, ce = pcall(leader.Complete, leader, "quick_build")
+				if not ok_c then build_err = tostring(ce) end
+				built = true
+			end)
+			local bdl = GetPreciseTicks() + 180000
+			while not built and GetPreciseTicks() < bdl do Sleep(100) end
+			local twin = rawget(passage, "other")
+			local ldl = GetPreciseTicks() + 120000
+			while GetPreciseTicks() < ldl and not (rawget(passage, "elevator") and twin and rawget(twin, "elevator")) do Sleep(100) end
+			local e1, e2 = rawget(passage, "elevator"), twin and rawget(twin, "elevator")
+			local linked = IsValid(e1) and IsValid(e2) and rawget(e1, "other") == e2
+			local state = sbm.State or {}
+			local change = rawget(state, "change_current_map_slot_wrapper") or ChangeCurrentMapSlot
+			local sw_ok, sw_err = pcall(change, ug.slot, true, "idChangeCurrentMapSlot")
+			local visible = rawget(sbm, "ExpansionLoadingVisible")
+			local loading_dialog = rawget(_G, "GetLoadingScreenDialog")
+			local function ready()
+				return CurrentMap == ug and (not expand or (ug.SuperBigMapUndergroundPrepared == true
+					and ug.SuperBigMapUndergroundStretchDone == true and ug.SuperBigMapForcedImpassDeferred ~= true
+					and not (type(visible) == "function" and visible())))
+					and not (type(loading_dialog) == "function" and loading_dialog())
+			end
+			local sdl = GetPreciseTicks() + 900000
+			while GetPreciseTicks() < sdl and not ready() do Sleep(10) end
+			local ug_ms = GetPreciseTicks() - phase_t0
+			local passages = 0
+			ug:MapForEach("map", "ElevatorPassage", function() passages = passages + 1 end)
+			log("underground first access %d ms ready=%s (placement=%s built=%s build_error=%s linked=%s switch=%s %s hex=%sx%s passages=%d)",
+				ug_ms, tostring(ready()), method, tostring(built), tostring(build_err), tostring(linked), tostring(sw_ok),
+				tostring(sw_err), tostring(ug.hex_width), tostring(ug.hex_height), passages)
+			local errors, reported = 0, 0
+			for _ in pairs(rawget(_G, "LuaErrors") or {}) do errors = errors + 1 end
+			for _ in pairs(rawget(_G, "ReportedMods") or {}) do reported = reported + 1 end
+			log("error registry lua_errors=%d reported_mods=%d optimization_failures=%d", errors, reported,
+				#(state.optimization_failures or {}))
+			Sleep(2000)
+			finish("complete")
+		end)
+	end
+end
