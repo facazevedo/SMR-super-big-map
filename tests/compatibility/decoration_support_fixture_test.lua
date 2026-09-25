@@ -464,7 +464,7 @@ assert(not V.SeatingPlacementClear(map,enclosed,{3999,3999,10,4001,4001,12}),'a 
 SuperBigMap.Config.DECORATION_VALIDATION_ENABLED=false
 G.Entity=original_entity
 dofile('Code/sbm_decoration_seating.lua')
-SuperBigMap.NativeHeightReferences=setmetatable({},{__index=function()return {} end}) -- no native grid: strict seating
+SuperBigMap.TerrainCopy={VerifyNativeHeightReference=function()return true end,ReleaseNativeHeightReference=function()end} -- no native grid: strict seating
 local first_bad,second_bad=object(920,3000,3000,20),object(921,8000,8000,20)
 first_bad.GetScale=first_bad.GetWorldScale;second_bad.GetScale=second_bad.GetWorldScale
 local make_index=V.Index;local queries=0

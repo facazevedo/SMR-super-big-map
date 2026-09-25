@@ -668,8 +668,10 @@ function Seating.Run(map)
 	if SBM.Engine.MapDataEnvironment(map.mapdata)~="Surface" then return nil end
 	-- Vanilla-authored compositions are judged against the stretch's native height reference.
 	-- Without it every such rock would silently fall back to full terrain contact.
-	local references=SBM.NativeHeightReferences
-	if not (references and references[map]) then error("native height reference unavailable for surface seating") end
+	local copy=SBM.TerrainCopy
+	if not (copy and copy.VerifyNativeHeightReference) then error("native height reference check unavailable") end
+	local valid,why=copy.VerifyNativeHeightReference(map)
+	if not valid then error(tostring(why).." for surface seating") end
 	local validator=SBM.DecorationValidation
 	local ok,result
 	if validator and validator.WithCorrectionEvidence then

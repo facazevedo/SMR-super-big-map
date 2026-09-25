@@ -529,7 +529,8 @@ end
 -- validations (the post-T1 census, a fresh-process load) read the same evidence without the
 -- grid. Mod top-ups, attached objects and rotated or unrecorded poses have no vanilla reference
 -- and keep the strict rule.
-local NATIVE_GROUND_VERSION,NATIVE_MARGIN=1,4
+-- Version 2: build 1117 stored evidence measured against a freed reference (flat ground).
+local NATIVE_GROUND_VERSION,NATIVE_MARGIN=2,4
 local function NativeGround(map,record)
 	local obj=record.obj
 	local stored=obj.SuperBigMapNativeGround

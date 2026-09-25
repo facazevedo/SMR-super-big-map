@@ -96,4 +96,29 @@ assert(classify({{supported=false,native_authored=true},{supported=true}},true)=
 assert(classify({{supported=false,defect=true,native_authored=true}},true)=='valid','authored float is not a defect')
 assert(classify({{supported=false,defect=true}},true)=='confirmed defect','real floats stay defects')
 assert(classify({{supported=false}},true)=='inconclusive','unproven support stays inconclusive')
-print('native compositions: planner targets, vanilla-pose measurement, authored/widened/strict cases, stored evidence, classification')
+-- 4. The native reference is a real copy and is re-checked when seating starts. GridRepack
+-- without its copy flag returned the source grid itself, which the stretch then freed: every
+-- vanilla lookup read 0 and every open rim looked vanilla-authored (61N136W, build 1117).
+local copy_code=read('Code/sbm_terrain_copy.lua')
+assert(copy_code:find('repack(src_sub, "U", 16, true)',1,true),'the native reference forces a new grid')
+assert(copy_code:find('rawequal(reference, src_sub)',1,true),'a reference aliasing src_sub is refused')
+local verify_env=setmetatable({TerrainCopy={},SuperBigMap={}},{__index=_G})
+local verify=assert(load(assert(copy_code:match('(function TerrainCopy%.VerifyNativeHeightReference.-\r?\nend)\r?\n'))
+ ..'\nreturn TerrainCopy.VerifyNativeHeightReference','verify','t',verify_env))()
+local live={get=function(_,x,y)return 180+x+y end}
+local vmap={}
+verify_env.SuperBigMap.NativeHeightReferences={[vmap]={grid=live,samples={{0,0,180},{5,7,192}}}}
+assert(verify(vmap)==true,'an unchanged reference verifies')
+local freed={get=function()return 0 end}
+verify_env.SuperBigMap.NativeHeightReferences[vmap].grid=freed
+local ok_freed,why_freed=verify(vmap)
+assert(not ok_freed and why_freed:find('changed'),'a freed reference that reads flat ground is refused')
+verify_env.SuperBigMap.NativeHeightReferences[vmap]={grid=live}
+assert(not verify(vmap),'a reference without samples is refused')
+assert(not verify({}),'a missing reference is refused')
+-- Seating refuses to run against a stale reference instead of accepting every vanilla float.
+SuperBigMap.Engine.MapDataEnvironment=function()return 'Surface' end
+SuperBigMap.TerrainCopy={VerifyNativeHeightReference=function()return false,'native height reference changed since the stretch' end}
+local ok_run,err_run=pcall(S.Run,{mapdata={}})
+assert(not ok_run and tostring(err_run):find('changed since the stretch'),'seating fails loudly on a stale reference')
+print('native compositions: planner targets, vanilla-pose measurement, authored/widened/strict cases, stored evidence, classification, reference copy and staleness')

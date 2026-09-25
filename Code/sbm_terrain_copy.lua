@@ -5268,18 +5268,24 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			-- each rock with its recorded vanilla pose; seating releases it. A missing or mismatched
 			-- reference fails the stretch rather than silently seating against the wrong ground.
 			if scale_values and environment ~= "Underground" then
+				-- The fourth argument forces a new grid: without it GridRepack returns src_sub itself
+				-- when it is already U16, and the stretch frees src_sub below.
 				local repack = Global("GridRepack")
-				local reference = type(repack) == "function" and repack(src_sub, "U", 16) or nil
+				local reference = type(repack) == "function" and repack(src_sub, "U", 16, true) or nil
 				if not reference then error("native height reference unavailable") end
+				if rawequal(reference, src_sub) then error("native height reference is not a copy") end
 				local const_tbl = Global("const")
 				local tile = const_tbl.HeightTileSize
 				local height_scale = const_tbl.TerrainHeightScale or 1
+				local samples = {}
 				for _, cell in ipairs({ { 0, 0 }, { scw // 2, sch // 2 }, { scw - 1, sch - 1 }, { scw // 3, (2 * sch) // 3 } }) do
 					local expected = terrain_api.GetHeight(terrain_source, point_fn(cell[1] * tile, cell[2] * tile))
-					if math.abs(reference:get(cell[1], cell[2]) * height_scale - expected) > 1 then
+					local value = reference:get(cell[1], cell[2])
+					if math.abs(value * height_scale - expected) > 1 then
 						free_grid(reference)
 						error("native height reference does not match the source terrain")
 					end
+					samples[#samples + 1] = { cell[1], cell[2], value }
 				end
 				local references = SuperBigMap.NativeHeightReferences
 				if not references then
@@ -5287,7 +5293,8 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 					SuperBigMap.NativeHeightReferences = references
 				end
 				if references[map] then free_grid(references[map].grid) end
-				references[map] = { grid = reference, w = scw, h = sch, tile = tile, height_scale = height_scale }
+				references[map] = { grid = reference, w = scw, h = sch, tile = tile, height_scale = height_scale,
+					samples = samples }
 			end
 			-- Detect and repair coherent perimeter defects while the grid is still at vanilla
 			-- resolution.  The engine's interpolation then carries the C2 surface into the expanded
@@ -9558,6 +9565,21 @@ local TerrainCopy = {
 	AuditOuterResourceTerrain = AuditOuterResourceTerrain,
 }
 SuperBigMap.TerrainCopy = TerrainCopy
+
+-- The reference must still hold the native heights it was checked against when surface seating
+-- starts; a freed or overwritten grid reads as flat ground and would accept every vanilla float.
+function TerrainCopy.VerifyNativeHeightReference(map)
+	local references = SuperBigMap.NativeHeightReferences
+	local reference = references and references[map]
+	if not reference or not reference.grid or type(reference.samples) ~= "table" or #reference.samples == 0 then
+		return false, "native height reference unavailable"
+	end
+	for _, sample in ipairs(reference.samples) do
+		local ok, value = pcall(reference.grid.get, reference.grid, sample[1], sample[2])
+		if not ok or value ~= sample[3] then return false, "native height reference changed since the stretch" end
+	end
+	return true
+end
 
 -- Surface seating has compared its rocks with vanilla once this is called; later validations
 -- read the per-rock native evidence stored on each object, never this grid.
