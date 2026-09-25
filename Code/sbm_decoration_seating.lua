@@ -211,7 +211,8 @@ function Seating.Plan(components,height,options)
 			-- Only explicitly size-qualified small fragments may become buried.
 			local visible=visibility[i]
 			lo=math.max(lo,visible-high)
-			if component.terrain_root~=false then hi=math.min(hi,-low) end
+			-- Terrain contact, or for a vanilla-authored float its vanilla clearance.
+			if component.terrain_root~=false then hi=math.min(hi,(component.allowed_clearance or 0)-low) end
 			local foundation=component.foundation
 			if foundation then
 				local gap=foundation.gap
@@ -224,8 +225,9 @@ function Seating.Plan(components,height,options)
 				end
 				if not gap then return nil end
 				-- Cover the entire open bottom edge, not just the first point that
-				-- touches ground. Retain a tiny integer/affine rounding margin.
-				hi=math.min(hi,-gap-2)
+				-- touches ground. Retain a tiny integer/affine rounding margin. A native
+				-- rock's widened rim closes back to its vanilla gap (allowed_gap) instead.
+				hi=math.min(hi,(foundation.allowed_gap or -2)-gap)
 			end
 			if lo>hi then return nil end
 		end
@@ -664,11 +666,19 @@ end
 
 function Seating.Run(map)
 	if SBM.Engine.MapDataEnvironment(map.mapdata)~="Surface" then return nil end
+	-- Vanilla-authored compositions are judged against the stretch's native height reference.
+	-- Without it every such rock would silently fall back to full terrain contact.
+	local references=SBM.NativeHeightReferences
+	if not (references and references[map]) then error("native height reference unavailable for surface seating") end
 	local validator=SBM.DecorationValidation
+	local ok,result
 	if validator and validator.WithCorrectionEvidence then
-		return validator.WithCorrectionEvidence(map,"Surface",RunSurface)
-	end
-	return RunSurface(map)
+		ok,result=pcall(validator.WithCorrectionEvidence,map,"Surface",RunSurface)
+	else ok,result=pcall(RunSurface,map) end
+	-- Seated rocks now carry their vanilla evidence; the grid is no longer needed.
+	if SBM.TerrainCopy and SBM.TerrainCopy.ReleaseNativeHeightReference then SBM.TerrainCopy.ReleaseNativeHeightReference(map) end
+	if not ok then error(result) end
+	return result
 end
 
 SBM.DecorationSeating=Seating

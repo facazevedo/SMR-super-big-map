@@ -48,8 +48,10 @@ class EvidenceJudgeTests(unittest.TestCase):
             evidence["observations"]={"report": {"support_census": value}}
             return judge_run(evidence)["rock-support"]["verdict"]
         self.assertEqual(verdict(census), "pass")
-        self.assertEqual(verdict(dict(census, support_graph_valid=15, native_composition_preserved=5)), "fail")
+        # Owner ruling 2026-09-25: surface vanilla-authored compositions count as support.
+        self.assertEqual(verdict(dict(census, support_graph_valid=15, native_composition_preserved=5)), "pass")
         for key, value in (("inconclusive", 1), ("incomplete", 1), ("defect", 1),
+                           ("native_composition_preserved", None), ("native_composition_preserved", 1),
                            ("eligible", 101), ("eligible", 0), ("support_graph_valid", None),
                            ("findings", [{}]), ("findings", None)):
             self.assertEqual(verdict(dict(census, **{key: value})), "fail")

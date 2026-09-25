@@ -5263,6 +5263,32 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 				native_sub = nil
 			end
 			local environment = type(map.mapdata) == "table" and Engine.MapDataEnvironment(map.mapdata) or nil
+			-- Owner ruling 2026-09-25: vanilla's own rock compositions stay as vanilla authored them.
+			-- Keep the untouched native heights (before any repair) so surface seating can compare
+			-- each rock with its recorded vanilla pose; seating releases it. A missing or mismatched
+			-- reference fails the stretch rather than silently seating against the wrong ground.
+			if scale_values and environment ~= "Underground" then
+				local repack = Global("GridRepack")
+				local reference = type(repack) == "function" and repack(src_sub, "U", 16) or nil
+				if not reference then error("native height reference unavailable") end
+				local const_tbl = Global("const")
+				local tile = const_tbl.HeightTileSize
+				local height_scale = const_tbl.TerrainHeightScale or 1
+				for _, cell in ipairs({ { 0, 0 }, { scw // 2, sch // 2 }, { scw - 1, sch - 1 }, { scw // 3, (2 * sch) // 3 } }) do
+					local expected = terrain_api.GetHeight(terrain_source, point_fn(cell[1] * tile, cell[2] * tile))
+					if math.abs(reference:get(cell[1], cell[2]) * height_scale - expected) > 1 then
+						free_grid(reference)
+						error("native height reference does not match the source terrain")
+					end
+				end
+				local references = SuperBigMap.NativeHeightReferences
+				if not references then
+					references = setmetatable({}, { __mode = "k" })
+					SuperBigMap.NativeHeightReferences = references
+				end
+				if references[map] then free_grid(references[map].grid) end
+				references[map] = { grid = reference, w = scw, h = sch, tile = tile, height_scale = height_scale }
+			end
 			-- Detect and repair coherent perimeter defects while the grid is still at vanilla
 			-- resolution.  The engine's interpolation then carries the C2 surface into the expanded
 			-- destination without fitting the already-repaired track a second time.
@@ -9532,3 +9558,13 @@ local TerrainCopy = {
 	AuditOuterResourceTerrain = AuditOuterResourceTerrain,
 }
 SuperBigMap.TerrainCopy = TerrainCopy
+
+-- Surface seating has compared its rocks with vanilla once this is called; later validations
+-- read the per-rock native evidence stored on each object, never this grid.
+function TerrainCopy.ReleaseNativeHeightReference(map)
+	local references = SuperBigMap.NativeHeightReferences
+	local reference = references and references[map]
+	if not reference then return end
+	references[map] = nil
+	if reference.grid and type(reference.grid.free) == "function" then pcall(reference.grid.free, reference.grid) end
+end

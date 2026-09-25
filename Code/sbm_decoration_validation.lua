@@ -173,8 +173,9 @@ function Validator.Classify(nodes,complete,attachment_changed)
 	if attachment_changed then return "confirmed defect","native attachment changed" end
 	local pending=false
 	for _,n in ipairs(nodes) do
-		if n.defect then return "confirmed defect",n.reason end
-		if not n.supported then pending=true end
+		-- A vanilla-authored float (MarkNativeAuthored) is vanilla's composition, not a defect.
+		if n.defect and not n.native_authored then return "confirmed defect",n.reason end
+		if not n.supported and not n.native_authored then pending=true end
 	end
 	if not complete or #nodes==0 or pending then return "inconclusive","geometry or support coverage incomplete" end
 	return "valid","all inspected rendered components have support witnesses"
@@ -519,6 +520,110 @@ local function TargetFoundationGap(record,old,p,ratio,height_at,width,height)
 		if not gap or g>gap then gap=g end
 	end end
 	return gap
+end
+
+-- Owner ruling 2026-09-25: vanilla's own rock compositions stay as vanilla authored them; only
+-- what the expansion made worse is corrected. Measure a native rock at its recorded vanilla pose
+-- against the untouched vanilla terrain (the stretch's native height reference), once, while
+-- surface seating holds that reference. The scalars are stored on the object, so later
+-- validations (the post-T1 census, a fresh-process load) read the same evidence without the
+-- grid. Mod top-ups, attached objects and rotated or unrecorded poses have no vanilla reference
+-- and keep the strict rule.
+local NATIVE_GROUND_VERSION,NATIVE_MARGIN=1,4
+local function NativeGround(map,record)
+	local obj=record.obj
+	local stored=obj.SuperBigMapNativeGround
+	if type(stored)=="table" and stored.version==NATIVE_GROUND_VERSION then return stored end
+	if record.native_ground_checked then return nil end
+	record.native_ground_checked=true
+	local references=SBM.NativeHeightReferences;local ref=references and references[map]
+	if not ref or not ref.grid or obj.SuperBigMapDecorEnginePass or not record.pose or record.pose.parent
+		or not record.nodes or #record.nodes==0 then return nil end
+	local sx,sy,sz,ss=obj.SuperBigMapNativeSourceX,obj.SuperBigMapNativeSourceY,obj.SuperBigMapNativeSourceZ,obj.SuperBigMapNativeSourceScale
+	if type(sx)~="number" or type(sy)~="number" or type(ss)~="number" or ss<=0 then return nil end
+	if obj.SuperBigMapNativeSourceAngle~=obj:GetAngle() then return nil end
+	local scale=obj:GetScale();if type(scale)~="number" or scale<=0 then return nil end
+	local grid,tile,hs,w,h=ref.grid,ref.tile,ref.height_scale,ref.w,ref.h
+	-- Terrain corners in native world units, then the engine's split-cell interpolation
+	-- (the same triangle choice as Geometry.FoundationClearance).
+	local function corner(x,y)
+		local gx,gy=floor(x/tile+.5),floor(y/tile+.5)
+		if gx<0 or gy<0 or gx>=w or gy>=h then return nil end
+		return grid:get(gx,gy)*hs
+	end
+	local function ground(x,y)
+		local gx,gy=floor(x/tile),floor(y/tile)
+		local h00,h10=corner(gx*tile,gy*tile),corner((gx+1)*tile,gy*tile)
+		local h01,h11=corner(gx*tile,(gy+1)*tile),corner((gx+1)*tile,(gy+1)*tile)
+		if not (h00 and h10 and h01 and h11) then return nil end
+		local fx,fy=x/tile-gx,y/tile-gy
+		if fx>=fy then return h00+(h10-h00)*fx+(h11-h10)*fy end
+		return h00+(h11-h01)*fx+(h01-h00)*fy
+	end
+	if type(sz)~="number" then sz=ground(sx,sy) end
+	if type(sz)~="number" then return nil end
+	-- A rigid rotation plus uniform scale: shape offsets from the transform origin shrink by the
+	-- scale ratio, independent of where the object has been moved since.
+	local m=Matrix(record);local s=record.pose.shift
+	local ox,oy,oz=m.origin[1]+s[1],m.origin[2]+s[2],m.origin[3]+s[3]
+	local inverse=ss/(scale+0.0)
+	local function native(p) return sx+(p[1]-ox)*inverse,sy+(p[2]-oy)*inverse,sz+(p[3]-oz)*inverse end
+	local result={version=NATIVE_GROUND_VERSION,ratio=(scale+0.0)/ss,nodes={}}
+	for _,node in ipairs(record.nodes) do
+		local lowest=math.huge
+		for _,vi in ipairs(Geometry.SupportVertices(node.geometry,node.component)) do
+			local x,y,z=native(World(node.transform_record or record,node.geometry.vertices[vi]))
+			local g=ground(x,y);if not g then return nil end
+			if z-g<lowest then lowest=z-g end
+		end
+		if lowest==math.huge then return nil end
+		result.nodes[node.key]=lowest
+	end
+	local found=FoundationDescriptors(record.asset)
+	if found and #found>0 then
+		local gap
+		for _,entry in ipairs(found) do if not entry.equivalent then
+			local points={}
+			for _,i in ipairs(entry.rim.vertices) do
+				local x,y,z=native(World(record,entry.geometry.vertices[i]));points[i]={x,y,z}
+			end
+			local g=Geometry.FoundationClearance(points,entry.rim.edges,corner,tile,w*tile,h*tile)
+			if not g then return nil end
+			if not gap or g>gap then gap=g end
+		end end
+		result.rim=gap
+	end
+	obj.SuperBigMapNativeGround=result
+	return result
+end
+
+-- A component that does not touch terrain now, and did not touch vanilla terrain at its vanilla
+-- pose either (a pebble resting on its stone, an authored overhang), is vanilla's composition as
+-- long as it stands no higher than that vanilla clearance scaled with the rock. It is then
+-- accepted as authored; one the expansion lifted further keeps its vanilla clearance as the
+-- planner's target instead of full terrain contact.
+local function MarkNativeAuthored(map,record)
+	local needs=false
+	for _,node in ipairs(record.nodes or {}) do
+		node.native_authored=nil;node.native_allowed=nil
+		if not node.supported or node.defect then needs=true end
+	end
+	if not needs then return end
+	local native=NativeGround(map,record);if not native then return end
+	local terrain=Global("terrain");local tolerance=min(2,Global("const").HeightTileSize/50.0)
+	for _,node in ipairs(record.nodes) do if not node.supported or node.defect then
+		local vanilla=native.nodes[node.key]
+		if type(vanilla)=="number" and vanilla>tolerance then
+			local allowed=vanilla*native.ratio+NATIVE_MARGIN
+			local lowest=math.huge
+			for _,vi in ipairs(Geometry.SupportVertices(node.geometry,node.component)) do
+				local p=World(node.transform_record or record,node.geometry.vertices[vi])
+				local d=p[3]-terrain.GetHeight(map,Point(p));if d<lowest then lowest=d end
+			end
+			node.native_allowed=allowed
+			if lowest<=allowed then node.native_authored=true end
+		end
+	end end
 end
 
 local function WorldBounds(record,b)
@@ -2381,6 +2486,7 @@ function Validator.Validate(map,reason)
 			for key in pairs(baseline.components) do if not present[key] then preserved=false end end
 			if baseline.entity~=record.obj:GetEntity() then complete=false end
 		end
+		if not context.native_capture then MarkNativeAuthored(map,record) end
 		local current_status=Validator.Classify(record.nodes or {},record.complete and not context.incomplete,changed)
 		if record.nonphysical and not context.incomplete and not changed then current_status="valid" end
 		local repair=record.obj.SuperBigMapSupportRepair
@@ -2416,7 +2522,10 @@ function Validator.Validate(map,reason)
 			effect_evidence=record.asset.effect,
 			native_baseline=baseline~=nil,components=#(record.nodes or {}),position=XYZ(record.obj:GetVisualPos())}
 		local proposal=false
-		for _,node in ipairs(record.nodes or {}) do if node.seating_proposal then proposal=true end end
+		for _,node in ipairs(record.nodes or {}) do
+			if node.seating_proposal and not node.native_authored then proposal=true end
+			if node.native_authored then row.native_composition_verified=true end
+		end
 		if record.foundation then
 			-- Nomination and preparation scans share one non-yielding, unchanged
 			-- terrain/pose snapshot. Nomination already measured this entire rim.
@@ -2434,6 +2543,19 @@ function Validator.Validate(map,reason)
 				row.foundation_unresolved=false;row.supported_overhang_preserved=true
 			elseif row.foundation_unresolved and FoundationCoveredBySupport(context,record,foundation) then
 				row.foundation_unresolved=false;row.foundation_support_covered=true
+			end
+			-- Vanilla often leaves a sliver of an open base showing on a slope. Keep that authored
+			-- gap scaled with the rock; a gap the expansion widened closes back to it, not to zero.
+			if row.foundation_unresolved and foundation and not foundation.incomplete then
+				local native=NativeGround(map,record)
+				if native and type(native.rim)=="number" then
+					local allowed=max(2,native.rim*native.ratio+NATIVE_MARGIN)
+					if foundation.gap<=allowed then
+						row.foundation_unresolved=false;row.native_rim_preserved=true;row.native_composition_verified=true
+					else
+						for _,entry in pairs(foundation.by_component or {}) do entry.allowed_gap=allowed-1 end
+					end
+				end
 			end
 			proposal=proposal or row.foundation_unresolved
 		end
@@ -2648,8 +2770,9 @@ function Validator.SeatingEvidence(map,bounds_only)
 				-- A complete open-base rim gap is itself the float proof. A pair of
 				-- such rocks resting only on each other has no rooted component and
 				-- no per-node negative proof, yet still needs terrain seating.
-				if not node.supported and not (node.defect or node.seating_proposal or record.foundation) then safe=false end
-				if not node.supported then unsupported=true end
+				local supported=node.supported or node.native_authored
+				if not supported and not (node.defect or node.seating_proposal or record.foundation) then safe=false end
+				if not supported then unsupported=true end
 				-- A grounded member does not forbid a rigid group correction by
 				-- itself. The planner must retain every component's visible extent;
 				-- attachment/object edges and dependents still veto movement here.
@@ -2673,6 +2796,10 @@ function Validator.SeatingEvidence(map,bounds_only)
 					c.volume=(b[4]-b[1])*(b[5]-b[2])*(b[6]-b[3])
 					c.lod=node.lod
 					c.foundation=record.foundation and record.foundation.by_component[node.component]
+					-- Vanilla-authored floats need no terrain contact; one the expansion lifted
+					-- further returns to its vanilla clearance, not to the ground.
+					if node.native_authored then c.terrain_root=false
+					elseif node.native_allowed then c.allowed_clearance=node.native_allowed-1 end
 					c.height=hi-lo;components[#components+1]=c
 				end
 				result[#result+1]={obj=obj,components=components,bounds=bounds,foundation=record.foundation~=nil,
@@ -2712,7 +2839,8 @@ function Validator.SeatingGroup(map,entry)
 		for _,candidate in ipairs(dependents[support] or {}) do if not member_set[candidate] then
 				if context.seated and context.seated[candidate.obj] then return nil end
 				local validation=candidate.obj.SuperBigMapSupportValidation
-				local covered=validation and (validation.foundation_support_covered or validation.supported_overhang_preserved)
+				local covered=validation and (validation.foundation_support_covered or validation.supported_overhang_preserved
+					or validation.native_rim_preserved)
 				-- An authored stack of open-base rocks that float together moves as
 				-- one rigid unit; each such member keeps its own complete rim-gap
 				-- constraint below, so every open base reaches terrain.
@@ -2725,7 +2853,8 @@ function Validator.SeatingGroup(map,entry)
 				if type(candidate.obj.ForEachAttach)=="function" then candidate.obj:ForEachAttach(function()attached=true end) end
 				if attached then return nil end
 				for _,node in ipairs(candidate.nodes) do
-					if node.partial or node.geometry.animated or (not node.supported and not floating_foundation) then return nil end
+					if node.partial or node.geometry.animated
+						or (not node.supported and not node.native_authored and not floating_foundation) then return nil end
 				end
 				if floating_foundation then floating[candidate]=true end
 				members[#members+1]=candidate;member_set[candidate]=true
@@ -2752,8 +2881,9 @@ function Validator.SeatingGroup(map,entry)
 			else
 				-- A floating open-base member is not held up by the root: it must
 				-- reach terrain itself and close its own complete rim gap.
-				c={vertices={},height=0,lod=node.lod,terrain_root=floating[record] or not rooted[node],
-					foundation=floating[record] and record.foundation.by_component[node.component] or nil}
+				c={vertices={},height=0,lod=node.lod,terrain_root=(floating[record] or not rooted[node]) and not node.native_authored,
+					foundation=floating[record] and record.foundation.by_component[node.component] or nil,
+					allowed_clearance=not node.native_authored and node.native_allowed and node.native_allowed-1 or nil}
 				local lo,hi=math.huge,-math.huge
 				for _,vi in ipairs(Geometry.SupportVertices(node.geometry,node.component)) do
 					local p=World(node.transform_record or record,node.geometry.vertices[vi]);c.vertices[#c.vertices+1]=p
@@ -2889,7 +3019,8 @@ function Validator.SurfaceSupportSummary(map)
 			result.terrain=result.terrain+1
 		elseif record.relevant and record.complete and row and row.geometry_complete and row.current_geometry_status=="valid"
 			and not row.foundation_unresolved then
-			result.graph=result.graph+1
+			if row.native_composition_verified then result.native_composition=result.native_composition+1
+			else result.graph=result.graph+1 end
 		else
 			result.unresolved=result.unresolved+1
 			result.findings[#result.findings+1]={entity=record.obj:GetEntity(),position=XYZ(record.obj:GetVisualPos()),

@@ -182,6 +182,7 @@ local sector={area={minx=function()return 0 end,miny=function()return 0 end,maxx
 globals.GetMapSectorXY=function()return sector end
 SuperBigMap={Engine={Global=function(n)return globals[n]end,MapDataEnvironment=function()return 'Surface'end},DecorationValidation=validator}
 dofile('Code/sbm_decoration_seating.lua');S=SuperBigMap.DecorationSeating
+SuperBigMap.NativeHeightReferences=setmetatable({},{__index=function()return {} end}) -- no native grid: strict seating
 local map={City={},mapdata={},GetMapSize=function()return 100000,100000 end}
 local report=S.Run(map)
 assert(report.corrected==1 and select(3,pos:xyz())==0 and checks==1,'independent proof accepts verified placement')

@@ -212,14 +212,15 @@ def judge_run(run, control=None):
         if census.get("boundary") != "T1 before player actions":
             missing("rock-support", "census was not taken at T1 before player actions")
         eligible = number(census.get("eligible"))
+        # Owner ruling 2026-09-25 (reverses 2026-09-23): vanilla-authored floats and rim gaps,
+        # measured at each rock's recorded vanilla pose, count as support; the expansion's own
+        # widening does not.
         good = [number(census.get(key)) for key in (
             "direct_terrain_witness", "support_graph_valid", "native_composition_preserved")]
         check("rock-support", eligible is not None and eligible > 0
               and all(value is not None and value >= 0 for value in good)
               and sum(value or 0 for value in good) == eligible,
               "eligible rocks are not fully accounted for by support proofs")
-        check("rock-support", number(census.get("native_composition_preserved")) == 0,
-              "native floating placements must be corrected, not exempted")
         for key in ("inconclusive", "incomplete", "defect"):
             check("rock-support", number(census.get(key)) == 0, "rock census " + key + " is nonzero or missing")
         check("rock-support", census.get("findings") == [], "rock census has unresolved or missing findings")
