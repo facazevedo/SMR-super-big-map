@@ -356,7 +356,7 @@ local function Local(record,p)
 	return {Dot(q,c[1])/(Dot(c[1],c[1])+0.0),Dot(q,c[2])/(Dot(c[2],c[2])+0.0),Dot(q,c[3])/(Dot(c[3],c[3])+0.0)}
 end
 
-local function FoundationEvidence(map,obj,asset,threshold)
+local function FoundationDescriptors(asset)
 	if not asset or not asset.complete or asset.animated or not Geometry.FoundationBoundary then return nil end
 	local found=asset.foundation_descriptors
 	if not found then
@@ -391,7 +391,12 @@ local function FoundationEvidence(map,obj,asset,threshold)
 	end
 	asset.foundation_descriptors=found
 	end
-	if #found==0 then return nil end
+	return found
+end
+
+local function FoundationEvidence(map,obj,asset,threshold)
+	local found=FoundationDescriptors(asset)
+	if not found or #found==0 then return nil end
 	if obj:GetParent() or Projected(obj) or obj:GetClipPlane()~=0
 		or obj:GetSkewX()~=0 or obj:GetSkewY()~=0 or obj:GetWarped() then return nil end
 	local distorted=obj:GetTerrainDistortedSupport()
@@ -485,6 +490,34 @@ end
 
 function Validator.FoundationEvidence(map,obj,threshold)
 	return FoundationEvidence(map,obj,Geometry.Instance(obj),threshold)
+end
+
+-- The same open-base rim measurement at a PROPOSED pose: the decor top-up's similarity
+-- p + (w - origin) * ratio about the stamp centre. It lets the planner reject a stamp the
+-- final seating could not seat; it is never support proof. nil: no measurable rim (the same
+-- frame exclusions as FoundationEvidence); false: terrain unavailable under the rim.
+local function TargetFoundationGap(record,p,ratio,height_at,width,height)
+	local obj=record.obj
+	local found=FoundationDescriptors(record.asset)
+	if not found or #found==0 then return nil end
+	if obj:GetParent() or Projected(obj) or obj:GetClipPlane()~=0
+		or obj:GetSkewX()~=0 or obj:GetSkewY()~=0 or obj:GetWarped() then return nil end
+	local distorted=obj:GetTerrainDistortedSupport()
+	if distorted~=false and distorted~="disabled" then return nil end
+	if Matrix(record).columns[3][3]<=0 then return nil end
+	local old,tile=record.pose.origin,Global("const").HeightTileSize
+	local gap
+	for _,entry in ipairs(found) do if not entry.equivalent then
+		local points={}
+		for _,i in ipairs(entry.rim.vertices) do
+			local w=World(record,entry.geometry.vertices[i])
+			points[i]={p[1]+(w[1]-old[1])*ratio,p[2]+(w[2]-old[2])*ratio,p[3]+(w[3]-old[3])*ratio}
+		end
+		local g=Geometry.FoundationClearance(points,entry.rim.edges,height_at,tile,width,height)
+		if not g then return false end
+		if not gap or g>gap then gap=g end
+	end end
+	return gap
 end
 
 local function WorldBounds(record,b)
@@ -1786,8 +1819,11 @@ function Validator.BuildDecorPlacement(map,objects,center,factor)
 		while parents[record]~=record do record=parents[record] end
 		return record
 	end
+	local rim_gaps={}
 	local function zero_offset(record,p,ratio)
 		if record.nonphysical then return true,0 end
+		-- An exposed open-base rim needs the full interval plan below.
+		if rim_gaps[record] then return false end
 		if #(record.nodes or {})==0 then return false,0 end
 		local old=record.pose.origin;local roots=0
 		for _,node in ipairs(record.nodes) do
@@ -1860,9 +1896,29 @@ function Validator.BuildDecorPlacement(map,objects,center,factor)
 		entries[record]=entry;parents[record]=record
 		if record.nonphysical then p[3]=terrain.GetHeight(map,Point(p)) end
 	end end
+	local on_rock={}
 	for record in pairs(entries) do for _,node in ipairs(record.nodes or {}) do for _,other in ipairs(node.edges or {}) do
-		if entries[other.record] then parents[root(record)]=root(other.record) end
+		if entries[other.record] then
+			parents[root(record)]=root(other.record)
+			-- A contact supports both ends, whichever side recorded it.
+			if other.record~=record then on_rock[record]=true;on_rock[other.record]=true end
+		end
 	end end end
+	-- Open-base rims (owner rule 2026-09-24): the final seating nominates a rock whose open
+	-- bottom edge stands more than 2 above terrain and, unless another rock supports it, lowers
+	-- its group until the whole rim is covered. Plan that same constraint for every stamp rock
+	-- without an authored contact to another stamp rock, so a stamp the final seating could not
+	-- seat is rejected here and the top-up tries another site.
+	for _,record in ipairs(context.list) do
+		local entry=entries[record]
+		if entry and not record.nonphysical then
+			if not on_rock[record] then
+				local gap=TargetFoundationGap(record,entry.position,entry.scale/(record.obj:GetScale()+0.0),height_at,width,height)
+				if gap==false then return {ok=false,reason="open-base rim terrain unavailable"} end
+				if gap and gap>2 then rim_gaps[record]=gap end
+			end
+		end
+	end
 	-- Zero is an exact plan for a CONNECTED island only when EVERY member's
 	-- visibility/contact interval contains zero and the island has a terrain root.
 	-- If one member fails this certificate, retain full intervals for ALL members;
@@ -1955,6 +2011,7 @@ function Validator.BuildDecorPlacement(map,objects,center,factor)
 			end
 			c.clearance={bottom,top}
 			c.visible=max(2,min(high-low,max(0,exposed))*.5)
+			if #entry.components==0 then c.foundation_gap=rim_gaps[record] end
 			entry.components[#entry.components+1]=c
 		end
 		end

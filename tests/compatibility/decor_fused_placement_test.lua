@@ -22,6 +22,8 @@ local validator={CaptureGroup=function()return context end}
 local env=setmetatable({Validator=validator,SBM={ObjectClone={ObjectScalesWithTerrain=function()return true end},DecorationSeating=seating},
  Global=function(n)return globals[n]end,Enabled=function()return true end,
  Matrix=function(r)return r.matrix end,min=math.min,max=math.max,abs=math.abs,floor=math.floor,
+ -- These fixtures have no open-base rim; decor_topup_rim_plan_test covers the rim rule.
+ TargetFoundationGap=function()return nil end,
  Geometry={SupportVertices=function(_,c)vertex_walks=vertex_walks+1;return c.vertices end}},{__index=_G})
 env.WorldBounds=assert(load(bounds..'\nreturn WorldBounds','production bounds','t',env))()
 env.World=assert(load(assert(code:match('(local function World%(.-\nend)\n'))..'\nreturn World','production world','t',env))()

@@ -141,6 +141,8 @@ function Seating.PlanSupportIsland(components,height)
 		end
 		low=math.max(low,component.visible-top)
 		if component.terrain then roots=roots+1;high=math.min(high,-bottom) end
+		-- Cover the whole exposed open bottom edge, as the final seating does.
+		if component.foundation_gap then high=math.min(high,-component.foundation_gap-2) end
 	end
 	if roots==0 then return nil,"support island has no verified terrain root" end
 	if low>math.floor(high) then return nil,"support island cannot retain contact and visibility" end
