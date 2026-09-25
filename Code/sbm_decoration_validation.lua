@@ -530,7 +530,8 @@ end
 -- grid. Mod top-ups, attached objects and rotated or unrecorded poses have no vanilla reference
 -- and keep the strict rule.
 -- Version 2: build 1117 stored evidence measured against a freed reference (flat ground).
-local NATIVE_GROUND_VERSION,NATIVE_MARGIN=2,4
+-- Version 3: build 1119 took the vanilla Z of rocks without a valid Z from a cell corner.
+local NATIVE_GROUND_VERSION,NATIVE_MARGIN=3,4
 local function NativeGround(map,record)
 	local obj=record.obj
 	local stored=obj.SuperBigMapNativeGround
@@ -553,6 +554,9 @@ local function NativeGround(map,record)
 		return grid:get(gx,gy)*hs
 	end
 	local function ground(x,y)
+		-- Promote first: the engine divides int/int as integer, which would drop the in-cell
+		-- fraction for integer source positions (the vanilla Z of rocks without a valid Z).
+		x,y=x+0.0,y+0.0
 		local gx,gy=floor(x/tile),floor(y/tile)
 		local h00,h10=corner(gx*tile,gy*tile),corner((gx+1)*tile,gy*tile)
 		local h01,h11=corner(gx*tile,(gy+1)*tile),corner((gx+1)*tile,(gy+1)*tile)

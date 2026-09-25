@@ -93,6 +93,20 @@ r2.asset={found={{geometry=g,rim={vertices={1,2,3,4},edges={{1,2},{2,3},{3,4},{4
 local native=NativeGround(map,r2)
 assert(native and math.abs(native.rim-30)<1e-6,'vanilla rim gap measured at the vanilla pose')
 
+-- Rocks without a valid Z take their vanilla Z from the vanilla ground at an integer source
+-- position. The engine divides int/int as integer, so ground() must promote before dividing or it
+-- reads the cell corner (17S11W StonesDarkGroup_03: 161 units low on a slope, build 1119).
+assert(block:find('x,y=x+0.0,y+0.0',1,true),'ground() promotes integer coordinates before dividing')
+local slope={get=function(_,x,y)return 1000+40*x+25*y end}
+refs[map]={grid=slope,w=200,h=200,tile=100,height_scale=1}
+local sloped,_,sloped_obj=rock(117,200,{SuperBigMapNativeSourceX=5037,SuperBigMapNativeSourceY=5071})
+sloped_obj.SuperBigMapNativeSourceZ=nil -- no valid Z in vanilla: the origin followed the ground
+local sloped_native=NativeGround(map,sloped)
+-- The origin sits on the interpolated plane at (5037,5071). The lowest vertex lies 10 native units
+-- back in x and y, where the plane (0.4 and 0.25 per unit) is 6.5 lower: 117 + 6.5 above ground.
+assert(sloped_native and math.abs(sloped_native.nodes['0:mesh:1']-123.5)<1e-6,'vanilla Z of a rock without valid Z interpolates in-cell')
+refs[map]={grid=grid,w=200,h=200,tile=100,height_scale=1}
+
 -- 3. Classify accepts vanilla-authored floats, still refuses real defects.
 local classify=assert(load(assert(code:match('(function Validator%.Classify.-\nend)\n'))..'\nreturn Validator.Classify','classify','t',
  setmetatable({Validator={}},{__index=_G})))()
