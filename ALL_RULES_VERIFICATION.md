@@ -1,6 +1,15 @@
 # Full-rules verification — 2026-09-23
 
-## Current: build 462 / metadata 1093 — six-case PASS
+## Current: build 465 / metadata 1115-1116 — five-site PASS (2026-09-25)
+
+All gates pass at 61N136W, 17S11W, 24S74W, 45S120W and 15S67E in fresh A/B runs with
+unexpanded controls, and every save / fresh-process load keeps all corrected rocks. This is
+the first round in which the harness places the release game's decoration top-up layout; that
+exposed and fixed two top-up placement defects. Details, timings and the 17S11W random-mystery
+note: SURFACE_LOADING_ACCEPTANCE.md, section "Metadata 1115 / build 465". The six-case build 462
+record below predates release-equivalent measurement and is historical.
+
+## Build 462 / metadata 1093 — six-case PASS (historical)
 
 Code checkpoint: `494f7af`. The general terrain-cutting support fix and exact-cut
 early terrain nomination pass six pinned RoughTerrain scenarios, including the

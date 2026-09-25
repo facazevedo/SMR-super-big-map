@@ -1,5 +1,61 @@
 # Surface START-to-T1 — runtime acceptance and local checkpoint
 
+## Metadata 1115 / build 465 (`c523d3b`): five-site full-rules pass
+
+Every standing rule gate passes at all five pinned RoughTerrain sites in fresh A/B runs with
+same-site unexpanded controls, and every save / fresh-process load check passes. Timings use
+the release-equivalent harness (release debug hook, and since this round release prefab names:
+see below). All times are strictly below 75 s surface and 60 s underground.
+
+| Site | START-to-T1 A / B / save | Underground A / B / save | Seating | Rocks corrected | Decor |
+|---|---|---|---|---|---|
+| 61N136W | 72.176 / 70.642 / 73.695 s | 46.071 / 45.749 / 44.331 s | 8.0 s | 56 | 190/190 |
+| 17S11W | 67.873 / 69.642 / 67.876 s | 54.341 / 53.846 / 53.450 s | 13.4 s | 125 | 72/72 |
+| 24S74W | 65.619 / 64.846 / 65.113 s | 49.310 / 49.371 / 47.822 s | 8.7 s | 51 | 171/171 |
+| 45S120W | 61.306 / 60.924 / 61.604 s | 43.223 / 43.225 / 42.270 s | 8.0 s | 99 | 53/53 |
+| 15S67E | 58.357 / 58.252 / 58.679 s | 45.512 / 45.607 / 44.269 s | 3.4 s | 27 | 99/99 |
+
+- **Release prefab names in the harness.** Debug `PrefabMarkers` keys carry a POI prefix
+  (`Decor.Red.CraterS_06`) while placed markers compose `Red.CraterS_06`, so the harness decor
+  top-up resolved ~190 markers against 1927 in release Mars.exe and tested a different layout.
+  `run_primary_headless.py --prefab-names release` (default) adds a fallback to the unique
+  POI-prefixed entry (`_ralph/tmp/release_prefab_names.lua`). At 61N136W (build 1111) the
+  harness then matched release exactly: 190/9/181 groups, 727,247 attempts, 5,456 objects, 80
+  corrections. Earlier harness decor results are not release-equivalent.
+- **Two top-up defects that release players would have hit, both fixed.** 24S74W failed with a
+  top-up `Rocks_03_33` whose open base stood ~12 m above a slope: the stamp planner now applies
+  the final seating's rim rule (`40a30a5`). 61N136W then failed with a top-up
+  `StonesRedSmall_05` 49 units above flat ground: the planner took the origin of invalid-Z
+  scatter from its visual Z, 81 units above its transform origin while pass edits were
+  suspended; it now plans from the transform origin and seats it on the destination terrain
+  (`c523d3b`). Vanilla objects are unaffected.
+- **17S11W paired state.** The first B run differed from A in height/pass grids (+23 rocks).
+  Its log shows vanilla picked `MirrorSphereMystery` for the "random" mystery; that mystery adds
+  map content. The mystery is re-rolled every run (about ten different mysteries in 21 runs);
+  20 of 21 runs, including a re-run of B (`DreamMystery`), are bit-identical. The failing B run
+  is retained (`17s11w_b`), the accepted pair uses `17s11w_b_rerun`. Future A/B pairs should pin
+  `Game.idMystery`.
+- Earlier this round, 61N136W B measured 77.893 s while a review agent ran the test suite on the
+  same machine; the quiet repeat was 73.653 s. Both are retained (build 1111 evidence).
+- Windows changed from 3840x2160 to 1024x768 during test launches; the tooling never calls a
+  display API and the runs guard the current 1024x768.
+
+Evidence: `_ralph/runs/allrules-1115/harness` (`five_audit_1115.json`, lifecycle verdicts),
+diagnostics in `_ralph/runs/allrules-1113` and `allrules-1115`. Source review since build 462:
+no new engine RNG draws, no scenario exceptions, seating before T1 enforced; 85 compatibility
+tests pass.
+
+Metadata 1116 (`9ff0082`) only removes the temporary release timing autostart that 1115 still
+carried (inert in the debug harness; release-only and gated on a case file); its generation is
+unchanged, confirmed by a fresh 61N136W run (`_ralph/runs/allrules-1116`).
+
+Release Mars.exe timings are still pending: on this machine every Mars.exe launch needs a UAC
+elevation approval (the owner's per-user RUNASADMIN compatibility flag; a non-elevated launch
+hangs at `Debug::Init()`), and the unattended prompts were cancelled. The one clean release
+measurement (build 1111, identical placement to the harness) was 61N136W 57.4 s against 74.6 s in
+the harness, a ratio of 0.77; applied to the table above that suggests roughly 45-57 s surface
+for players. This is an estimate, not a measurement; underground was not measured in release.
+
 ## Metadata 1100 (`a152b05`), release-equivalent measurement
 
 Owner rulings 2026-09-24: rock seating must finish before T1 (a same-day post-T1
