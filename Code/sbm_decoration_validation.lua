@@ -495,8 +495,9 @@ end
 -- The same open-base rim measurement at a PROPOSED pose: the decor top-up's similarity
 -- p + (w - origin) * ratio about the stamp centre. It lets the planner reject a stamp the
 -- final seating could not seat; it is never support proof. nil: no measurable rim (the same
--- frame exclusions as FoundationEvidence); false: terrain unavailable under the rim.
-local function TargetFoundationGap(record,p,ratio,height_at,width,height)
+-- frame exclusions as FoundationEvidence); false: terrain unavailable under the rim. `old` is
+-- the source origin the planner maps from (its transform origin).
+local function TargetFoundationGap(record,old,p,ratio,height_at,width,height)
 	local obj=record.obj
 	local found=FoundationDescriptors(record.asset)
 	if not found or #found==0 then return nil end
@@ -505,7 +506,7 @@ local function TargetFoundationGap(record,p,ratio,height_at,width,height)
 	local distorted=obj:GetTerrainDistortedSupport()
 	if distorted~=false and distorted~="disabled" then return nil end
 	if Matrix(record).columns[3][3]<=0 then return nil end
-	local old,tile=record.pose.origin,Global("const").HeightTileSize
+	local tile=Global("const").HeightTileSize
 	local gap
 	for _,entry in ipairs(found) do if not entry.equivalent then
 		local points={}
@@ -1819,13 +1820,13 @@ function Validator.BuildDecorPlacement(map,objects,center,factor)
 		while parents[record]~=record do record=parents[record] end
 		return record
 	end
-	local rim_gaps={}
+	local rim_gaps,origins={},{}
 	local function zero_offset(record,p,ratio)
 		if record.nonphysical then return true,0 end
 		-- An exposed open-base rim needs the full interval plan below.
 		if rim_gaps[record] then return false end
 		if #(record.nodes or {})==0 then return false,0 end
-		local old=record.pose.origin;local roots=0
+		local old=origins[record];local roots=0
 		for _,node in ipairs(record.nodes) do
 			if not node.supported or node.partial or node.geometry.animated then return false end
 			local b=WorldBounds(node.transform_record or record,node.component.bounds)
@@ -1890,11 +1891,22 @@ function Validator.BuildDecorPlacement(map,objects,center,factor)
 		end
 		local sc=obj:GetScale();local ns=SBM.ObjectClone.ObjectScalesWithTerrain(obj)
 			and min(500,max(1,floor(sc*factor+.5))) or sc
+		-- Map every vertex from the same origin World() transforms it with. Invalid-Z scatter
+		-- is terrain-bound (DecorTopUp.StretchedPosition): its transform origin is the ground,
+		-- while its visual Z can still differ while pass edits are suspended (81 units at
+		-- 61N136W, which left a planned-as-embedded stone floating). Resolve it on the
+		-- destination terrain rather than lifting it with the group's vertical similarity.
+		local bound=not record.nonphysical and not obj:IsValidZ()
 		local old=record.pose.origin
+		if bound then
+			local m,s=Matrix(record),record.pose.shift
+			old={m.origin[1]+s[1],m.origin[2]+s[2],m.origin[3]+s[3]}
+		end
+		origins[record]=old
 		local p={floor(cx+(old[1]-cx)*factor+.5),floor(cy+(old[2]-cy)*factor+.5),floor(cz+(old[3]-cz)*factor+.5)}
 		local entry={obj=obj,position=p,scale=ns,components={}}
 		entries[record]=entry;parents[record]=record
-		if record.nonphysical then p[3]=terrain.GetHeight(map,Point(p)) end
+		if record.nonphysical or bound then p[3]=terrain.GetHeight(map,Point(p)) end
 	end end
 	local on_rock={}
 	for record in pairs(entries) do for _,node in ipairs(record.nodes or {}) do for _,other in ipairs(node.edges or {}) do
@@ -1913,7 +1925,7 @@ function Validator.BuildDecorPlacement(map,objects,center,factor)
 		local entry=entries[record]
 		if entry and not record.nonphysical then
 			if not on_rock[record] then
-				local gap=TargetFoundationGap(record,entry.position,entry.scale/(record.obj:GetScale()+0.0),height_at,width,height)
+				local gap=TargetFoundationGap(record,origins[record],entry.position,entry.scale/(record.obj:GetScale()+0.0),height_at,width,height)
 				if gap==false then return {ok=false,reason="open-base rim terrain unavailable"} end
 				if gap and gap>2 then rim_gaps[record]=gap end
 			end
@@ -1935,7 +1947,7 @@ function Validator.BuildDecorPlacement(map,objects,center,factor)
 	end end
 	for _,record in ipairs(context.list) do if entries[record] then
 		local entry=entries[record];local p,ns=entry.position,entry.scale
-		local old,sc=record.pose.origin,record.obj:GetScale()
+		local old,sc=origins[record],record.obj:GetScale()
 		local px,py,pz=p[1],p[2],p[3]
 		local sx,sy,sz=old[1],old[2],old[3]
 		local ratio=ns/(sc+0.0)

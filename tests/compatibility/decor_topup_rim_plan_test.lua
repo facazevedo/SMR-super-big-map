@@ -79,23 +79,23 @@ for trial=1,300 do
   points[i]={p[1]+(w[1]-origin[1])*ratio,p[2]+(w[2]-origin[2])*ratio,p[3]+(w[3]-origin[3])*ratio}
  end
  local want=G.FoundationClearance(points,{{1,2},{2,3},{3,4},{4,1}},height_at,100,10000,10000)
- local gap=target(record,p,ratio,height_at,10000,10000)
+ local gap=target(record,origin,p,ratio,height_at,10000,10000)
  assert(want and gap and math.abs(gap-want)<1e-6,'proposed-pose rim gap differs from the transformed rim')
 end
 do
  local asset=box_asset();local origin={5000,5000,100}
  local record={obj=object(),asset=asset,pose={origin=origin,shift={0,0,0}},matrix={origin=origin,columns={{10,0,0},{0,10,0},{0,0,10}}}}
  terrain_height=function()return 50 end
- assert(math.abs(target(record,{5200,5100,120},1.5,height_at,10000,10000)-70)<1e-9,'flat rim gap')
- assert(target(record,{9990,5100,120},1.5,height_at,10000,10000)==false,'rim beyond the map must fail closed')
+ assert(math.abs(target(record,origin,{5200,5100,120},1.5,height_at,10000,10000)-70)<1e-9,'flat rim gap')
+ assert(target(record,origin,{9990,5100,120},1.5,height_at,10000,10000)==false,'rim beyond the map must fail closed')
  record.matrix.columns[3]={0,0,-10}
- assert(target(record,{5200,5100,120},1.5,height_at,10000,10000)==nil,'upside-down cap is not a ground rim')
+ assert(target(record,origin,{5200,5100,120},1.5,height_at,10000,10000)==nil,'upside-down cap is not a ground rim')
  record.matrix.columns[3]={0,0,10};record.obj=object({GetParent=function()return {} end})
- assert(target(record,{5200,5100,120},1.5,height_at,10000,10000)==nil,'attached object excluded like FoundationEvidence')
+ assert(target(record,origin,{5200,5100,120},1.5,height_at,10000,10000)==nil,'attached object excluded like FoundationEvidence')
  local closed=box_asset();local c=closed.parts[1].mesh.geometry.components[1]
  c.triangles[#c.triangles+1]={1,3,2};c.triangles[#c.triangles+1]={1,4,3}
  record.obj=object();record.asset=closed
- assert(target(record,{5200,5100,120},1.5,height_at,10000,10000)==nil,'closed rock has no rim')
+ assert(target(record,origin,{5200,5100,120},1.5,height_at,10000,10000)==nil,'closed rock has no rim')
 end
 
 -- 3. BuildDecorPlacement: rim gaps constrain, reject, fail closed, and spare rocks on rocks.
@@ -108,7 +108,7 @@ local validator={CaptureGroup=function()return context end}
 local penv=setmetatable({Validator=validator,SBM={ObjectClone={ObjectScalesWithTerrain=function()return true end},DecorationSeating=seating},
  Global=function(n)return pglobals[n]end,Enabled=function()return true end,
  Matrix=function(r)return r.matrix end,min=math.min,max=math.max,abs=math.abs,floor=math.floor,
- TargetFoundationGap=function(record)calls[#calls+1]=record;return gaps[record] end,
+ TargetFoundationGap=function(record)calls[#calls+1]=record;return gaps[record] end,Point=function(p)return p end,
  Geometry={SupportVertices=function(_,c)return c.vertices end}},{__index=_G})
 penv.WorldBounds=assert(load(bounds..'\nreturn WorldBounds','bounds','t',penv))()
 penv.World=assert(load(assert(code:match('(local function World%(.-\nend)\n'))..'\nreturn World','world','t',penv))()
@@ -116,7 +116,7 @@ assert(load(body,'planner','t',penv))()
 local map={GetMapSize=function()return 10000,10000 end}
 local vertices={{-10,-10,0},{10,-10,0},{10,10,300},{-10,10,300}}
 local function rock(x)
- local o={GetScale=function()return 100 end}
+ local o={GetScale=function()return 100 end,IsValidZ=function()return true end}
  local c={vertices={1,2,3,4},samples=vertices,bounds={-10,-10,0,10,10,300}}
  local r={obj=o,relevant=true,complete=true,pose={origin={x,5000,50},shift={0,0,0}},
   matrix={origin={x,5000,50},columns={{1,0,0},{0,1,0},{0,0,1}}}}
@@ -145,4 +145,20 @@ local o2,r2=rock(5015)
 r.nodes[1].edges={r2.nodes[1]};context={list={r,r2}};gaps={[r]=1238,[r2]=1238};calls={}
 local stacked=validator.BuildDecorPlacement(map,{o,o2},center,1)
 assert(stacked.ok and #calls==0,'rocks resting on stamp rocks keep the overhang exemption')
-print(string.format('decor top-up rims: 4000 island plans (%d constrained, %d rejected), 300 proposed-pose rims, planner accept/reject/fail-closed/overhang cases',constrained,rejected))
+-- 4. Invalid-Z scatter (61N136W): its visual Z stood 81 above its transform origin, so the old
+--    plan lifted it with the group and left a planned-as-embedded stone floating. Plan from the
+--    transform origin and seat that origin on the destination terrain.
+local zo={GetScale=function()return 111 end,IsValidZ=function()return false end}
+local zv={{-20,-20,-44},{20,-20,-44},{20,20,44},{-20,20,44}}
+local zc={vertices={1,2,3,4},samples=zv,bounds={-20,-20,-44,20,20,44}}
+local zr={obj=zo,relevant=true,complete=true,pose={origin={5000,5000,131},shift={0,0,0}},
+ matrix={origin={5000,5000,50},columns={{1.11,0,0},{0,1.11,0},{0,0,1.11}}}}
+zr.nodes={{record=zr,supported=true,geometry={vertices=zv},component=zc,contacts={terrain=true}}}
+context={list={zr}};gaps={};calls={}
+local zplan=validator.BuildDecorPlacement(map,{zo},{xyz=function()return 5000,5000,50 end},4/3)
+assert(zplan.ok and zplan.placements[zo].position[3]==50,'invalid-Z scatter must sit on the destination terrain')
+assert(zplan.placements[zo].zero_offset_proven,'embedded terrain-bound scatter keeps its exact zero plan')
+zo.IsValidZ=function()return true end
+local lifted=validator.BuildDecorPlacement(map,{zo},{xyz=function()return 5000,5000,50 end},4/3)
+assert(lifted.ok and lifted.placements[zo].position[3]==math.floor(50+(131-50)*4/3+.5),'explicit-Z objects keep the vertical similarity')
+print(string.format('decor top-up rims: 4000 island plans (%d constrained, %d rejected), 300 proposed-pose rims, planner accept/reject/fail-closed/overhang cases, terrain-bound invalid-Z origin',constrained,rejected))

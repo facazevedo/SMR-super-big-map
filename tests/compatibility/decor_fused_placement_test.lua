@@ -35,7 +35,7 @@ for trial=1,500 do
  local sc=math.random(30,490);local factor=1+math.random()/2
  local origin={5000+math.random(-300,300),5000+math.random(-300,300),math.random(-100,1300)}
  local center={xyz=function()return 5000,5000,300 end}
- local object={GetScale=function()return sc end}
+ local object={GetScale=function()return sc end,IsValidZ=function()return true end}
  local angle=math.random()*6;local tilt=trial%2==0 and 0 or math.random()*2
  local cs,sn,ct,st=math.cos(angle),math.sin(angle),math.cos(tilt),math.sin(tilt)
  local scale=sc/100
@@ -85,7 +85,7 @@ for trial=1,500 do
  assert(origin_reads<=48,'placement repeatedly loads the unchanged source origin per vertex')
 end
 flat=true
-local o={GetScale=function()return 100 end}
+local o={GetScale=function()return 100 end,IsValidZ=function()return true end}
 local vertices={{-10,-10,0},{10,-10,0},{10,10,100},{-10,10,100}}
 local c={vertices={1,2,3,4},bounds={-10,-10,0,10,10,100}}
 local r={obj=o,relevant=true,complete=true,pose={origin={5000,5000,0},shift={0,0,0}},
@@ -105,7 +105,7 @@ r.nodes[1].terrain_vertex=vertices[3]
 fast=validator.BuildDecorPlacement(map,{o},center,4/3)
 assert(fast.ok and not fast.placements[o].zero_offset_proven,'old source support status substituted for target proof')
 c.samples=vertices;r.nodes[1].terrain_vertex=nil
-local o2={GetScale=function()return 100 end}
+local o2={GetScale=function()return 100 end,IsValidZ=function()return true end}
 local r2={obj=o2,relevant=true,complete=true,pose={origin={5020,5000,0},shift={0,0,0}},
  matrix={origin={5020,5000,0},columns={{1,0,0},{0,1,0},{0,0,1}}}}
 r.nodes[1].record=r
@@ -144,7 +144,7 @@ local full=validator.BuildDecorPlacement
 for trial=1,700 do
  flat=trial%2==0;context={list={}};local objects={}
  for i=1,2+trial%5 do
-  local scale=math.random(80,150);local obj={GetScale=function()return scale end};objects[i]=obj
+  local scale=math.random(80,150);local obj={GetScale=function()return scale end,IsValidZ=function()return true end};objects[i]=obj
   local origin={5000+math.random(-80,80),5000+math.random(-80,80),math.random(-20,80)}
   local angle=math.random()*6;local cs,sn=math.cos(angle)*scale/100,math.sin(angle)*scale/100
   local record={obj=obj,relevant=true,complete=true,pose={origin=origin,shift={0,0,0}},
