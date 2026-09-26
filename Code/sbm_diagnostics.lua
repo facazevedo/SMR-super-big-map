@@ -429,8 +429,19 @@ do
 			local path = "AppData/sbm_release_verify/case.txt"
 			local read, write = rawget(_G, "AsyncFileToString"), rawget(_G, "AsyncStringToFile")
 			if type(read) ~= "function" or type(write) ~= "function" then return end
+			-- Progress and results also go to data files next to case.txt: release builds do not
+			-- route a mod environment's print to the game log.
+			local status_lines, result_lines = {}, {}
+			local function status(msg)
+				status_lines[#status_lines + 1] = string.format("%d %s", GetPreciseTicks(), msg)
+				write("AppData/sbm_release_verify/status.txt", table.concat(status_lines, "\n") .. "\n")
+			end
 			local read_err, text = read(path)
 			if read_err or type(text) ~= "string" then return end
+			if not text:find("%w") then return end
+			local names = {}
+			for _, m in ipairs(rawget(_G, "ModsLoaded") or {}) do names[#names + 1] = tostring(m.id) end
+			status("thread started; mods loaded: " .. table.concat(names, ","))
 			local cases = {
 				["61N136W"] = { -3660, -8160, 3838460155450369287, "v932_sweep_14134_61n136w" },
 				["24S74W"] = { 1440, -4440, 7578917061178043875, "v932_sweep_14134_24s74w" },
@@ -445,15 +456,22 @@ do
 			end
 			if #queue == 0 then return end
 			local get_dialog = rawget(_G, "GetDialog")
-			local deadline = GetPreciseTicks() + 600000
+			local deadline = GetPreciseTicks() + 1800000
+			local next_note = 0
 			while not (get_dialog and get_dialog("PGMainMenu")) or (rawget(_G, "GameState") or {}).loading do
-				if GetPreciseTicks() > deadline then return end
+				if GetPreciseTicks() > deadline then status("gave up waiting for the main menu") return end
+				if GetPreciseTicks() > next_note then
+					next_note = GetPreciseTicks() + 10000
+					status(string.format("waiting: main menu=%s loading=%s", tostring(get_dialog and get_dialog("PGMainMenu") ~= nil),
+						tostring((rawget(_G, "GameState") or {}).loading)))
+				end
 				Sleep(500)
 			end
 			local cfg = rawget(_G, "config")
-			if cfg.SuperBigMapTimingBegun then return end
+			if cfg.SuperBigMapTimingBegun then status("already begun in this process") return end
 			cfg.SuperBigMapTimingBegun = true
 			write(path, "")
+			status(string.format("begun: %d cases", #queue))
 			local function mod()
 				for _, m in ipairs(rawget(_G, "ModsLoaded") or {}) do
 					if m.id == "SuperBigMap" and type(m.env) == "table" and type(rawget(m.env, "SuperBigMap")) == "table" then
@@ -465,8 +483,13 @@ do
 			local function run_case(site, run)
 			local case = cases[site]
 			local function log(fmt, ...)
-				print(string.format("[Super Big Map] Release timing %s %s: " .. fmt, site, run, ...))
+				local line = string.format("[Super Big Map] Release timing %s %s: " .. fmt, site, run, ...)
+				local engine_print = Global("print")
+				if type(engine_print) == "function" then engine_print(line) else print(line) end
+				result_lines[#result_lines + 1] = line
+				write("AppData/sbm_release_verify/results.txt", table.concat(result_lines, "\n") .. "\n")
 			end
+			status("case " .. site .. " " .. run)
 			local function finish(outcome)
 				log("finished %s", tostring(outcome))
 				FlushLogFile()
@@ -649,10 +672,14 @@ do
 			for _, entry in ipairs(queue) do
 				local ok, err = pcall(run_case, entry[1], entry[2])
 				if not ok then
-					print(string.format("[Super Big Map] Release timing %s %s: finished error %s", entry[1], entry[2], tostring(err)))
+					local line = string.format("[Super Big Map] Release timing %s %s: finished error %s", entry[1], entry[2], tostring(err))
+					result_lines[#result_lines + 1] = line
+					write("AppData/sbm_release_verify/results.txt", table.concat(result_lines, "\n") .. "\n")
+					status("case error " .. tostring(err))
 				end
 				Sleep(3000)
 			end
+			status("all cases done; quitting")
 			FlushLogFile()
 			Sleep(3000)
 			quit()
