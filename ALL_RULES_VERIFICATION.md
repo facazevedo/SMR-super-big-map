@@ -16,6 +16,14 @@ worst surface START-to-T1 in the matrix is 73.414 s (61N136W save run). One 61N1
 earlier the same day measured 75.303 s, with the extra time inside vanilla map generation.
 In the real release Mars.exe (2026-09-26, same code) START-to-T1 is 44.8-53.1 s and underground
 first access 37.4-47.3 s at the five sites, with 0 unresolved rocks.
+
+Reviews complete (2026-09-26); `_ralph/runs/allrules-1120/complete_audit1120.json` records
+accepted = true with no pending checks.
+- RNG source audit (`SOURCE_REVIEW.md`): no engine or private RNG change and no scenario
+  exception in any production change since build 462. Seeds are identical across A/B/control.
+- Checkpoint/process review (`FINAL_CHECKPOINT.md`): 26 sessions on byte-identical `c972f94`
+  payloads with clean quits. Deployed 1124 differs only in its version line. Tests pass, commits
+  carry no AI attribution, the tree is clean, nothing is pushed.
 Details: SURFACE_LOADING_ACCEPTANCE.md, section "Metadata 1120 / build 469".
 
 ## Build 465 / metadata 1115-1116 — five-site PASS (2026-09-25, superseded)
