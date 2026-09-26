@@ -4647,7 +4647,6 @@ local function AuditOuterResourceTerrain(map)
 	rocket_sites = type(rocket_sites) == "table" and rocket_sites or {}
 	local terrain_api = Global("terrain")
 	local point_fn = Global("point")
-	local box_fn = Global("box")
 	local hex_to_world = Global("HexToWorld")
 	local buildable = map and map.buildable
 	local get_z = buildable and buildable.GetZ
@@ -4695,40 +4694,12 @@ local function AuditOuterResourceTerrain(map)
 		return offsets
 	end
 	local const_tbl = Global("const")
-	local hex_size = type(const_tbl) == "table" and tonumber(const_tbl.HexSize) or 1000
-	hex_size = type(hex_size) == "number" and hex_size > 0 and hex_size or 1000
-	local passability_clear_half = math.max(1, math.floor(hex_size * 1.05))
+	-- This audit is read-only. It once tried to "repair" a failed footprint with
+	-- terrain.SetPassability(map, box, value), a signature the engine rejects ("Grid expected"):
+	-- it never cleared anything and only logged a mod error, which surfaced as the game's "mod
+	-- problem detected" popup when a player's building blocked a footprint and the surface map
+	-- was re-entered (owner report 2026-09-26). A failed footprint is reported as a failure.
 	local passability_clears = 0
-	local function set_exact_offsets_passable(q, r, offsets)
-		if type(terrain_api.SetPassability) ~= "function"
-			or type(box_fn) ~= "function" then return false end
-		local areas = {}
-		local passable_values = { true, 1, false, 0 }
-		for _, offset in ipairs(offsets) do
-			local ok_xy, x, y = pcall(hex_to_world, q + offset[1], r + offset[2])
-			if ok_xy and type(x) == "number" and type(y) == "number" then
-				local ok_box, area = pcall(box_fn,
-					point_fn(x - passability_clear_half, y - passability_clear_half),
-					point_fn(x + passability_clear_half, y + passability_clear_half))
-				if ok_box and area then areas[#areas + 1] = area end
-			end
-		end
-		if #areas ~= #offsets then return false end
-		-- Set every overlapping footprint box with one consistent API value before observing the
-		-- result.  Selecting a value independently per hex allowed a later overlapping box to undo
-		-- an earlier one on some edge-facing extractor shapes.
-		for _, value in ipairs(passable_values) do
-			for _, area in ipairs(areas) do
-				pcall(terrain_api.SetPassability, map, area, value)
-			end
-			local ready = ready_offsets(q, r, offsets, false)
-			if ready then
-				passability_clears = passability_clears + #areas
-				return true
-			end
-		end
-		return false
-	end
 	local surface_offsets = { { 0, 0 } }
 	local extractor_radius = math.max(2,
 		math.floor(cfg_number("OUTER_RESOURCE_EXTRACTOR_CORE_RADIUS_HEXES", 3) + 0.5))
@@ -4763,14 +4734,6 @@ local function AuditOuterResourceTerrain(map)
 				and site.extractor_offsets or extractor_offsets) or surface_offsets
 		local ready, failure_reason = ready_offsets(
 			site.q, site.r, offsets, site.kind == "extractor")
-		-- Expanded maps intentionally have no artificial out-of-bounds passability border. If a
-		-- height-prepared resource footprint is buildable but retained a stale border bit, clear only
-		-- its exact live hexes and immediately rerun the full passability/buildability contract.
-		if not ready and failure_reason == "passability"
-			and set_exact_offsets_passable(site.q, site.r, offsets) then
-			ready, failure_reason = ready_offsets(
-				site.q, site.r, offsets, site.kind == "extractor")
-		end
 		site.verified = ready
 		site.failure_reason = ready and nil or failure_reason
 		if ready then

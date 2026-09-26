@@ -1100,17 +1100,17 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 		map.SuperBigMapSkipNextLifecycleBoundsRebuild = nil
 	end
 	Lifecycle.Apply(map, not defer_rebuild and not skip_final_underground_rebuild)
-	-- Lifecycle.Apply may rebuild passability after the surface generation pipeline has already
-	-- verified its resource footprints. Reassert the exact rover/extractor hexes at this final
-	-- boundary so PassBorder=0 remains true in gameplay even when stock terrain/object processing
-	-- restores a local blocked bit. The audit uses terrain.SetPassability only on a failed live
-	-- footprint; it neither changes heights nor opens unrelated mountain terrain.
+	-- Read-only audit of the outer resource footprints at the generation boundary only. Once the
+	-- surface pipeline has published T1, players build on those hexes, so a failed footprint means
+	-- nothing and re-auditing on every map switch (including after loads) only logged errors (owner
+	-- report 2026-09-26: the "mod problem detected" popup when returning to the surface).
 	local terrain_copy = SuperBigMap.TerrainCopy
 	if IsModMap(map) and terrain_copy
 		and type(terrain_copy.InitializeUndergroundRubbleRendering) == "function" then
 		terrain_copy.InitializeUndergroundRubbleRendering(map)
 	end
 	if IsModMap(map) and map and map.mapdata and Engine.MapDataEnvironment(map.mapdata) == "Surface"
+		and map.SuperBigMapSurfacePostPipelineRevalidationComplete ~= true
 		and type(map.SuperBigMapOuterResourceTerrainSites) == "table"
 		and terrain_copy and type(terrain_copy.AuditOuterResourceTerrain) == "function" then
 		local call_ok, audit_ok, audit_stats = pcall(
