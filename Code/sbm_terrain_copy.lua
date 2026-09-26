@@ -2209,6 +2209,7 @@ local function RepairNearEdgeSourceSeams(api, grid)
 		-- The seam usually fades rather than stops where the contrast test loses it, so keep the
 		-- full measured correction for one taper beyond each end, then blend it out over another.
 		local taper = math.min(32, math.max(16, math.floor(length / 6)))
+		piece.taper = taper
 		local full_first, full_last = piece.first - taper, piece.last + taper
 		local lo = math.max(0, full_first - taper)
 		local hi = math.min(piece.along_n - 1, full_last + taper)
@@ -2283,9 +2284,9 @@ local function RepairNearEdgeSourceSeams(api, grid)
 	-- grid-aligned steps perpendicular to the edge (15S67E bottom edge: up to 920 units at the
 	-- edge). Often the block inside the seam is tilted too, so the end step is a wedge: largest at
 	-- the physical edge, fading to nothing inside the band. A block end starts at the edge, ends
-	-- inside the band and sits at the end of a repaired seam piece; an ordinary cliff does not do
-	-- all of that on one grid line. Split each block-end step between its two sides and blend it
-	-- out over twelve cells, row by row.
+	-- inside the band and lies along a repaired seam piece; an ordinary cliff does not do all of
+	-- that on one grid line. Split each block-end step between its two sides and blend it out
+	-- over twelve cells, row by row.
 	local band = near_margin + 3
 	local end_runs = {}
 	local function scan_ends(edge)
@@ -2348,12 +2349,15 @@ local function RepairNearEdgeSourceSeams(api, grid)
 	for _, run in ipairs(end_runs) do
 		local span = run.far - run.near + 1
 		local average = (run.sum + 0.0) / run.count
-		-- Only the ends of seam pieces repaired above qualify, so a block end passes the same
-		-- seam-line gate. Destination-pass seams are translated later, ends included.
-		local function at_end_of(list)
+		-- Only block ends along a stretch whose seam was repaired above qualify (the contrast test
+		-- often finds a seam a few rows inside its block, and the repair covers those rows), so a
+		-- block end passes the same seam-line gate. Destination-pass seams are translated later,
+		-- ends included.
+		local function within(list, margin_of)
 			for _, piece in ipairs(list) do
-				if piece.edge == run.edge and (math.abs(run.pos - (piece.first - 1)) <= 3
-					or math.abs(run.pos - piece.last) <= 3) then
+				local margin = margin_of(piece)
+				if piece.edge == run.edge and run.pos >= piece.first - 1 - margin
+					and run.pos <= piece.last + margin then
 					return true
 				end
 			end
@@ -2361,8 +2365,9 @@ local function RepairNearEdgeSourceSeams(api, grid)
 		end
 		if run.near <= outer_guard + 2 and run.far <= near_margin - 2
 			and (run.count + 0.0) / span >= 0.9 and average >= threshold * 1.25
-			and run.max >= threshold * 1.75 and at_end_of(qualified)
-			and not at_end_of(destination_pieces) then
+			and run.max >= threshold * 1.75
+			and within(qualified, function(piece) return piece.taper end)
+			and not within(destination_pieces, function() return 3 end) then
 			run.average = math.floor(average + 0.5)
 			ends[#ends + 1] = run
 		end

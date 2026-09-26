@@ -107,6 +107,25 @@ local g=lazy(field("bottom",function(pos,depth) if pos>=1500 and depth<=60 then 
 local ok,report=near_edge(api,g)
 check(report.ends==0 and next(g.writes)==nil,"inland cliff was treated as a block end")
 
+-- 1b. The contrast test finds this seam only 10 cells inside its block (its step is weak there).
+-- The block end still lies within the repaired stretch and is blended out.
+local offset_block=function(pos,depth)
+	local z=0
+	if pos>=1300 and pos<=1359 then
+		if depth<=10 then z=z+(11-depth)*40 end
+		if depth<=6 then z=z+(pos<1310 and 60 or 300) end
+	end
+	if pos>=100 and pos<=400 and depth<=6 then z=z-1000 end
+	return z
+end
+g=lazy(field("bottom",offset_block))
+ok,report=near_edge(api,g)
+check(ok and report.qualified==1 and report.lines:find(":1310-1359:raised",1,true),"offset seam piece not found: "..tostring(report.lines))
+check(report.end_lines:find("bottom:1299:d0-",1,true)==1,"block end before the detected seam start missed: "..tostring(report.end_lines))
+for depth=0,10 do
+	check(math.abs(excess(g,"bottom",1299,depth))<=12,"offset block end remains at depth "..depth..": "..excess(g,"bottom",1299,depth))
+end
+
 -- 2b. Even at the end of a repaired seam piece, a cliff that carries on inland is terrain.
 g=lazy(field("bottom",function(pos,depth)
 	local z=0
