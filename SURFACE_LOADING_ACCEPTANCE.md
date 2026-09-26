@@ -65,6 +65,34 @@ Evidence: `_ralph/runs/allrules-1120/harness` (`five_audit_1120.json`),
 `_ralph/runs/allrules-1120/lifecycle`, per-rock probes in `_ralph/runs/allrules-111[7-9]` and
 `allrules-1120/seating`. 86 compatibility tests and 18 judge tests pass.
 
+### Release Mars.exe timings (what players get), build 469 code
+
+Measured 2026-09-26 in the real release game with the owner present (one UAC approval). A
+temporary, owner-approved build (1123, `a02fbea`, reverted in 1124 `684df24`, code identical to
+1120) ran all fifteen cases in one process: the same pinned seeds, Super Big Map as the only mod.
+Only the first case (61N136W A) is a fresh process; later cases reuse the warm process.
+
+| Site | START-to-T1 A / B | Underground A / B | Unexpanded vanilla: surface / underground | Harness A / B |
+|---|---|---|---|---|
+| 61N136W | 53.078 / 50.920 s | 39.757 / 39.351 s | 21.247 / 4.197 s | 71.041 / 70.664 s |
+| 24S74W | 50.295 / 46.312 s | 42.999 / 42.715 s | 20.074 / 4.198 s | 63.863 / 64.695 s |
+| 17S11W | 47.640 / 46.840 s | 47.326 / 47.240 s | 19.677 / 4.200 s | 63.880 / 64.043 s |
+| 45S120W | 46.298 / 46.809 s | 37.590 / 37.427 s | 19.828 / 4.197 s | 62.115 / 62.036 s |
+| 15S67E | 45.166 / 44.820 s | 39.216 / 39.143 s | 20.880 / 1.003 s | 58.107 / 57.955 s |
+
+Every case finished with 0 rejected and 0 unresolved rocks, the underground ready, 0 Lua errors,
+0 reported mods, 0 optimization failures, a clean log and an unchanged payload. (The runner's
+`accepted` flag is false only because it still expects the old case-file build to empty
+`case.txt`.) Release is about 0.72-0.78 of the harness time. Rock corrections and decor top-up
+match the harness exactly at four sites. At 45S120W release placed 2704 top-up objects (3999
+attempts) against 2935 (4089) in the harness, so 28,844 rocks were eligible against 29,082, with 37
+corrections against 39. The harness gave 2935 under three different mysteries, so this is a
+remaining harness/release decor difference at that site, not a player-facing defect.
+
+Release builds refused file I/O from the autostart: the 1121/1122 case-file variants never
+started a case. They also do not route a mod environment's `print` to the log. The working build
+logs through the engine's global `print`. Evidence: `_ralph/runs/release-1123/batch`.
+
 ## Metadata 1115 / build 465 (`c523d3b`): five-site full-rules pass
 
 Every standing rule gate passes at all five pinned RoughTerrain sites in fresh A/B runs with
@@ -114,6 +142,7 @@ Metadata 1116 (`9ff0082`) only removes the temporary release timing autostart th
 carried (inert in the debug harness; release-only and gated on a case file); its generation is
 unchanged, confirmed by a fresh 61N136W run (`_ralph/runs/allrules-1116`).
 
+(Superseded 2026-09-26: release Mars.exe timings for build 469 are in the metadata 1120 section.)
 Release Mars.exe timings are still pending: on this machine every Mars.exe launch needs a UAC
 elevation approval (the owner's per-user RUNASADMIN compatibility flag; a non-elevated launch
 hangs at `Debug::Init()`), and the unattended prompts were cancelled. The one clean release
