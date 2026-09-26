@@ -6362,6 +6362,11 @@ local function FillOasisClusterAnomalies(map)
 				marker.SuperBigMapOuterRingRedistributed = true
 				marker.SuperBigMapOasisClusterAnomaly = true
 				marker.SuperBigMapResourceClusterIndex = cluster.index
+				local pad = pads[cluster.index]
+				if type(pad) == "table" then
+					pad.SuperBigMapClusterAnomalyTopUps = math.max(0,
+						math.floor(tonumber(pad.SuperBigMapClusterAnomalyTopUps) or 0)) + 1
+				end
 				source.q, source.r, source.cluster = target.q, target.r, cluster
 				for _, other in ipairs(enrichments) do
 					if other.marker == marker then other.q, other.r = target.q, target.r end

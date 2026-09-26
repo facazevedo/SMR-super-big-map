@@ -31,6 +31,9 @@ assert(config:find('config.OuterResourceClusterMaximumAnomalies = 1',1,true),'at
 assert(config:find('config.TopUpAnomalyOuterRingSectors = 0',1,true),'anomaly top-ups are whole-map, not ring-only')
 assert(config:find('config.OuterResourceClusterDomeBonusPercent = 33',1,true),'about a third of clusters get a dome bonus')
 assert(config:find('config.OuterResourceClusterAnomalyPercent = 75',1,true))
+-- Unplanned rocket-pad dome effects filled clusters' anomaly slots and overfilled them (1126).
+assert(config:find('config.MountainRocketPadsAllowDomeEffects = false',1,true),
+  'dome effects enter clusters only as the planned oasis dome bonus')
 
 -- 3. The wiring that enforces the rule stays in place.
 assert(deposits:find('active_cluster_badges[DepositRules.ClusterBadgeKey(template)]',1,true),

@@ -352,9 +352,11 @@ config.OuterResourceClusterDomeBonusPercent = 33
 config.OuterResourceClusterDomeBonusTypes = { "BeautyEffectDeposit", "ResearchEffectDeposit" }
 config.OuterResourceRocketPadExtraFeatherHexes = 6
 config.OuterResourceRocketPadMaximumCount = 12
--- A dome-effect top-up may enter the otherwise excluded perimeter only at a newly modified,
--- engine-verified mountain rocket pad.  Ordinary perimeter terrain remains excluded.
-config.MountainRocketPadsAllowDomeEffects = true
+-- A dome-effect top-up could once enter the otherwise excluded perimeter at a newly modified,
+-- engine-verified mountain rocket pad. Owner ruling 2026-09-26: off. Dome effects in clusters are
+-- now the planned oasis dome bonus (OuterResourceClusterDomeBonusPercent); unplanned pad effects
+-- would overfill clusters and could repeat a badge. Ordinary perimeter terrain remains excluded.
+config.MountainRocketPadsAllowDomeEffects = false
 
 -- RESOURCE TOP-UP (sbm_deposits.lua TopUpDeposits). The generator places the native (Big) deposit
 -- count; over the larger 20x20 that is below vanilla density. When true, extra source resource
