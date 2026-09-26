@@ -412,33 +412,28 @@ end
 
 SuperBigMap.Diagnostics = Diagnostics
 
--- TEMPORARY owner release timing build (2026-09-24, owner-approved), release Mars.exe only.
--- When AppData/sbm_release_verify/case.txt lists pinned cases, one per line (for example
--- "61N136W a"), start each RoughTerrain game in turn the way the harness does (skipping only the
--- profile writes, telemetry and the planet-camera wait), measure START-to-T1, then open the
--- underground the way a player does (Elevator placed on a passage, quick-built, map switch) and
--- measure first access until the underground is prepared and both covers are closed; quit after
--- the last case. One launch (one elevation prompt) covers the list. Results go to the game log
--- only. The file is data (case names), is emptied on start, and without it the game behaves
--- normally. Requires Super Big Map to be the only enabled mod.
+-- TEMPORARY owner release timing build (2026-09-26, owner-approved "do number 1", supervised),
+-- release Mars.exe only. On launch, from the main menu, run the pinned RoughTerrain cases below in
+-- turn the way the harness does (skipping only the profile writes, telemetry and the planet-camera
+-- wait): measure START-to-T1, then open the underground the way a player does (Elevator placed on
+-- a passage, quick-built, map switch) and measure first access until the underground is prepared
+-- and both covers are closed; quit after the last case. One launch (one elevation prompt) covers
+-- the list. No file is read or written (release builds refused the case-file variant); progress
+-- and results go to the game log through the engine's print, flushed after every line. This build
+-- starts the batch on EVERY release launch, so it is deployed only while the owner supervises
+-- the run and reverted right after. Requires Super Big Map to be the only enabled mod.
 do
 	local create = rawget(_G, "CreateRealTimeThread")
 	local platform = rawget(_G, "Platform")
 	if type(create) == "function" and not (platform and platform.debug) then
 		create(function()
-			local path = "AppData/sbm_release_verify/case.txt"
-			local read, write = rawget(_G, "AsyncFileToString"), rawget(_G, "AsyncStringToFile")
-			if type(read) ~= "function" or type(write) ~= "function" then return end
-			-- Progress and results also go to data files next to case.txt: release builds do not
-			-- route a mod environment's print to the game log.
-			local status_lines, result_lines = {}, {}
-			local function status(msg)
-				status_lines[#status_lines + 1] = string.format("%d %s", GetPreciseTicks(), msg)
-				write("AppData/sbm_release_verify/status.txt", table.concat(status_lines, "\n") .. "\n")
+			local function emit(line)
+				local engine_print = Global("print")
+				if type(engine_print) == "function" then engine_print(line) else print(line) end
+				local flush = rawget(_G, "FlushLogFile")
+				if type(flush) == "function" then flush() end
 			end
-			local read_err, text = read(path)
-			if read_err or type(text) ~= "string" then return end
-			if not text:find("%w") then return end
+			local function status(msg) emit("[Super Big Map] Release timing status: " .. msg) end
 			local names = {}
 			for _, m in ipairs(rawget(_G, "ModsLoaded") or {}) do names[#names + 1] = tostring(m.id) end
 			status("thread started; mods loaded: " .. table.concat(names, ","))
@@ -449,12 +444,11 @@ do
 				["45S120W"] = { 2700, -7200, 3316517404621831948, "v932_sweep_14134_45s120w" },
 				["15S67E"] = { 900, 4020, 411683085576098543, "sbm_entrance_bottomless_24s97w_v999" },
 			}
+			-- Slowest first (AGENTS.md metadata 1120 order).
 			local queue = {}
-			for site, run in text:gmatch("(%w+)[ 	]+(%w+)") do
-				if not cases[site] or not (run == "a" or run == "b" or run == "control") then return end
-				queue[#queue + 1] = { site, run }
+			for _, site in ipairs({ "61N136W", "24S74W", "17S11W", "45S120W", "15S67E" }) do
+				for _, run in ipairs({ "a", "b", "control" }) do queue[#queue + 1] = { site, run } end
 			end
-			if #queue == 0 then return end
 			local get_dialog = rawget(_G, "GetDialog")
 			local deadline = GetPreciseTicks() + 1800000
 			local next_note = 0
@@ -470,7 +464,6 @@ do
 			local cfg = rawget(_G, "config")
 			if cfg.SuperBigMapTimingBegun then status("already begun in this process") return end
 			cfg.SuperBigMapTimingBegun = true
-			write(path, "")
 			status(string.format("begun: %d cases", #queue))
 			local function mod()
 				for _, m in ipairs(rawget(_G, "ModsLoaded") or {}) do
@@ -483,11 +476,7 @@ do
 			local function run_case(site, run)
 			local case = cases[site]
 			local function log(fmt, ...)
-				local line = string.format("[Super Big Map] Release timing %s %s: " .. fmt, site, run, ...)
-				local engine_print = Global("print")
-				if type(engine_print) == "function" then engine_print(line) else print(line) end
-				result_lines[#result_lines + 1] = line
-				write("AppData/sbm_release_verify/results.txt", table.concat(result_lines, "\n") .. "\n")
+				emit(string.format("[Super Big Map] Release timing %s %s: " .. fmt, site, run, ...))
 			end
 			status("case " .. site .. " " .. run)
 			local function finish(outcome)
@@ -672,10 +661,7 @@ do
 			for _, entry in ipairs(queue) do
 				local ok, err = pcall(run_case, entry[1], entry[2])
 				if not ok then
-					local line = string.format("[Super Big Map] Release timing %s %s: finished error %s", entry[1], entry[2], tostring(err))
-					result_lines[#result_lines + 1] = line
-					write("AppData/sbm_release_verify/results.txt", table.concat(result_lines, "\n") .. "\n")
-					status("case error " .. tostring(err))
+					emit(string.format("[Super Big Map] Release timing %s %s: finished error %s", entry[1], entry[2], tostring(err)))
 				end
 				Sleep(3000)
 			end
