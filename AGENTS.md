@@ -16,10 +16,11 @@ way release Mars.exe does, so the decor top-up places the players' layout;
 decor results from before it are not release-equivalent. Keep the machine idle
 during timed runs (no agents or test suites in parallel).
 
-The metadata 1120 order is 61N136W, 24S74W, 17S11W, 45S120W, then 15S67E
-(worst release-mode surface times 73.414, 66.145, 64.257, 62.115, 58.107
-seconds in the matrix; a 61N136W probe run also measured 75.303 s from a
-vanilla-generation outlier; 14S36W was not in this round). Refresh this ranking from current evidence before a new round;
+The metadata 1131 order is 61N136W, 24S74W, 17S11W, 45S120W, then 15S67E
+(worst release-mode surface times 73.412, 69.508, 65.818, 63.630, 59.325
+seconds in the matrix; 14S36W was not in this round). A/B pairs whose random
+mystery is MirrorSphereMystery differ by design (its prefab stamps terrain);
+re-run that slot with `VERIFY_MYSTERY` pinned to the twin's mystery. Refresh this ranking from current evidence before a new round;
 do not keep a stale order when newer measurements change it. Include save/reload
 qualification of the slowest case before moving on to faster cases.
 
