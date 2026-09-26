@@ -709,21 +709,6 @@ local function IsEnrichmentMarker(obj)
 		or IsKindOfSafe(obj, "EffectDepositMarker")
 end
 
--- The map badge a marker shows: one per resource kind and layer, one for anomalies, one per
--- dome-effect type. Owner ruling 2026-09-26: no badge repeats inside an outer "oasis" cluster.
-function DepositRules.ClusterBadgeKey(marker)
-	if not marker then return nil end
-	if IsKindOfSafe(marker, "SubsurfaceAnomalyMarker") then return "anomaly" end
-	if IsKindOfSafe(marker, "EffectDepositMarker") then
-		return "effect:" .. tostring(marker.deposit_type or marker.class or "?")
-	end
-	local resource = tostring(marker.resource or "?")
-	if IsKindOfSafe(marker, "SurfaceDepositMarker") then return "surface:" .. resource end
-	if IsKindOfSafe(marker, "SubsurfaceDepositMarker") then return "subsurface:" .. resource end
-	if IsKindOfSafe(marker, "TerrainDepositMarker") then return "terrain:" .. resource end
-	return "other:" .. tostring(marker.class or "?")
-end
-
 local function IsNativeEnrichmentMarker(marker)
 	return IsEnrichmentMarker(marker)
 		and marker.SuperBigMapResourceTopUp ~= true
@@ -1259,6 +1244,21 @@ local function ValleyScore(map, pt)
 end
 
 local DepositRules = {}
+
+-- The map badge a marker shows: one per resource kind and layer, one for anomalies, one per
+-- dome-effect type. Owner ruling 2026-09-26: no badge repeats inside an outer "oasis" cluster.
+function DepositRules.ClusterBadgeKey(marker)
+	if not marker then return nil end
+	if IsKindOfSafe(marker, "SubsurfaceAnomalyMarker") then return "anomaly" end
+	if IsKindOfSafe(marker, "EffectDepositMarker") then
+		return "effect:" .. tostring(marker.deposit_type or marker.class or "?")
+	end
+	local resource = tostring(marker.resource or "?")
+	if IsKindOfSafe(marker, "SurfaceDepositMarker") then return "surface:" .. resource end
+	if IsKindOfSafe(marker, "SubsurfaceDepositMarker") then return "subsurface:" .. resource end
+	if IsKindOfSafe(marker, "TerrainDepositMarker") then return "terrain:" .. resource end
+	return "other:" .. tostring(marker.class or "?")
+end
 -- Hex coordinates on an expanded map span roughly -1024..1024. The offset keeps the packed key
 -- positive and the stride exceeds any reachable row, so the mapping remains collision-free.
 local HEX_KEY_OFFSET = 32768

@@ -5,6 +5,12 @@ local function read(path) local f=assert(io.open(path,'rb'));local s=f:read('*a'
 local deposits=read('Code/sbm_deposits.lua')
 local config=read('Code/sbm_config.lua')
 
+-- 0. Load order: DepositRules.* can only be defined after the module table exists (build 1125
+-- first defined ClusterBadgeKey above it and the whole deposits module failed to load).
+local table_at=assert(deposits:find('\nlocal DepositRules = {}',1,true),'DepositRules table not found')
+local first_method=assert(deposits:find('\nfunction DepositRules%.'))
+assert(first_method>table_at,'a DepositRules method is defined before the DepositRules table')
+
 -- 1. The badge a marker shows: resource kind and layer, the anomaly, the dome-effect type.
 local block=assert(deposits:match('(function DepositRules%.ClusterBadgeKey.-\r?\nend)\r?\n'),'badge key not found')
 local function kind_of(obj,class) return obj.kinds[class]==true end
