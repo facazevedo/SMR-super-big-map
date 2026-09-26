@@ -6937,7 +6937,14 @@ function DepositRules.TopUpAnomalies(map)
 			local base_cap = math.max(1, math.min(32,
 				math.floor(cfg().TOPUP_ANOMALY_MOUNTAIN_BASE_CANDIDATES_PER_SECTOR or 8)))
 			for _ in pairs(all_sector_keys) do total_sectors = total_sectors + 1 end
-			for _, sector_candidates in pairs(base_by_sector) do
+			-- Visit sectors in key order: pairs() order over string keys differs between processes,
+			-- which reordered this candidate list and made the seeded selector pick different spots
+			-- on identical seeds (61N136W A/B, build 1128).
+			local base_keys = {}
+			for key in pairs(base_by_sector) do base_keys[#base_keys + 1] = key end
+			table.sort(base_keys)
+			for _, base_key in ipairs(base_keys) do
+				local sector_candidates = base_by_sector[base_key]
 				base_sectors = base_sectors + 1
 				table.sort(sector_candidates, function(a, b)
 					if (a.valley_score or 0) ~= (b.valley_score or 0) then

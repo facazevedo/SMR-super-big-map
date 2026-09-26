@@ -42,5 +42,12 @@ assert(deposits:find('outside_oasis_clusters(candidate) and repulsion.CanPlace(c
   'whole-map anomaly top-ups keep out of cluster areas')
 assert(deposits:find('and (stats.cluster_badge_repeats or 0) == 0',1,true),'the census fails on a repeated badge')
 assert(deposits:find('local function FillOasisClusterAnomalies(map)',1,true))
+-- Seed parity on the whole-map anomaly path: pairs() order over string sector keys differs between
+-- processes, so the mountain-base candidate list must be built in sorted sector-key order (1128
+-- gave different anomaly spots on identical seeds and the same mystery).
+assert(not deposits:find('in pairs(base_by_sector) do\n\t\t\t\tbase_sectors',1,true)
+  and not deposits:find('for _, sector_candidates in pairs(base_by_sector)',1,true),
+  'mountain-base sectors are visited in key order, never pairs() order')
+assert(deposits:find('table.sort(base_keys)',1,true))
 assert(deposits:find('clone.SuperBigMapClusterDomeBonus = true',1,true))
 print('oasis clusters: badge keys, settings, and rule wiring')
