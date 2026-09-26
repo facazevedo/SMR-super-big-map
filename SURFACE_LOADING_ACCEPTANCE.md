@@ -1,5 +1,60 @@
 # Surface START-to-T1 — runtime acceptance and local checkpoint
 
+## Metadata 1131 / build 474 (`60e5b0f`): oasis clusters, five-site pass
+
+Owner request 2026-09-26: top-up anomalies were bunched together in the outer clusters. All anomaly
+top-ups were confined to the two-sector perimeter (10 hexes apart, up to 3 per cluster), so they
+formed anomaly-only clumps of 3-4. Deposit top-ups were ~80% interior, and cluster badges
+repeated (typically surface metals x3). Owner ruling: each outer cluster is an "oasis". It holds
+distinct resource kinds, usually one anomaly, and in about a third of clusters one dome bonus
+(vista or research site) to draw a dome there. No badge repeats inside a cluster, and clusters
+differ. Anomaly top-ups outside clusters use the same whole-map, sector-balanced placement (with
+vanilla repulsion) as the deposit top-ups, and keep out of cluster areas.
+
+| Site | START-to-T1 A / B / save | Underground A / B / save | Corrected | Oasis anomalies | Dome bonuses |
+|---|---|---|---|---|---|
+| 61N136W | 72.283 / 71.520* / 73.412 s | 46.321 / 46.610 / 45.542 s | 21 | 7/7 | 2 of 11 |
+| 24S74W | 69.508 / 65.727* / 65.474 s | 51.239 / 50.180 / 48.026 s | 11 | 9/9 | 2 of 11 |
+| 17S11W | 65.317 / 65.818 / 65.427 s | 55.303 / 54.827 / 54.324 s | 45 | 9/9 | 4 of 12 |
+| 45S120W | 61.608* / 61.614 / 62.241 s | 44.058 / 44.325 / 43.383 s | 39 | 10/10 | 2 of 12 |
+| 15S67E | 58.758* / 59.081 / 59.325 s | 45.903 / 46.260 / 44.903 s | 16 | 9/9 | 2 of 10 |
+
+\* Re-run slots. Four original runs rolled MirrorSphereMystery, whose building prefab stamps the
+terrain (and, at 24S74W, shifted top-up placement). All four are kept (`24s74w_b_mirrorsphere`,
+`61n136w_b`, `45s120w_a`, `15s67e_a`). The 24S74W B re-run (TheMarsBug) and three re-runs pinned
+to the twin's mystery (`VERIFY_MYSTERY`) match their twins exactly, including terrain grids. So
+pinning does not disturb generation. MirrorSphere comes up often because vanilla's "random"
+mystery prefers mysteries not yet played on the account.
+
+All gates pass at all five sites, including the new rule: `ring-content` requires
+`ring_cluster_badge_repeats == 0`. Every save / fresh-process load passes, and
+`complete_audit1131.json` records accepted = true with no pending checks. Top-up anomalies at
+61N136W are now a median 82.5 hexes apart (18 before; vanilla anomalies 46.6), and no other top-up
+lands inside a cluster area. Totals of every anomaly kind, deposit type and dome bonus are
+unchanged; only placement changed. Map: `_ralph/runs/oasis1128/61n136w_before_after.png`.
+
+Defects found on the way, each with a regression test:
+- 1125: `DepositRules.ClusterBadgeKey` was defined above the module table, so the deposits module
+  failed to load.
+- 1126: the old rocket-pad dome-effect exception filled clusters' anomaly slots with 5 unplanned
+  effects. It is now off; the planned dome bonus replaces it.
+- 1128: whole-map anomaly placement sampled 64 candidates per sector (2.4 s). It now samples 8
+  (0.4 s).
+- 1128: the whole-map path built its mountain-base candidates in `pairs()` order over string keys,
+  which differs between processes. Identical seeds then gave different anomaly spots. It now visits
+  sectors in sorted order. This latent bug dates from before the 2026-08-23 ring rule.
+- 1129 (owner report): switching back to the surface after play raised the game's "mod problem
+  detected" popup. The map-switch terrain audit "repaired" footprints blocked by the player's
+  buildings with `terrain.SetPassability(map, box, value)`, which the engine rejects. The audit is
+  now read-only and runs only before T1.
+
+Release Mars.exe timings (below, 2026-09-26) were measured on build 1120 code. The oasis change adds
+about 1 s after generation in the harness; release was not re-measured.
+
+Evidence: `_ralph/runs/allrules-1131` (harness, lifecycle, `five_audit_1131.json`,
+`complete_audit1131.json`), `oasis1125`-`oasis1128`, `determinism1129`/`1130`, `timing1131`.
+88 compatibility tests and 18 judge tests pass.
+
 ## Metadata 1120 / build 469 (`c972f94`): vanilla rock compositions, five-site pass
 
 Owner ruling 2026-09-25 (reverses the 2026-09-23 "no floating rocks, including vanilla's own"):

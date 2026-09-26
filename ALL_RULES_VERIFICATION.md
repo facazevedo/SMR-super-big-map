@@ -1,6 +1,23 @@
 # Full-rules verification — 2026-09-23
 
-## Current: build 469 / metadata 1120 — five-site PASS with vanilla rock compositions (2026-09-25)
+## Current: build 474 / metadata 1131 — five-site PASS with oasis clusters (2026-09-26)
+
+Owner ruling 2026-09-26: each outer resource cluster is an "oasis". It holds distinct resource
+kinds, usually one anomaly, and in about a third of clusters one dome bonus (vista or research).
+No badge repeats inside a cluster. Anomaly top-ups outside clusters use the whole-map placement of
+the deposit top-ups. This replaces the 2026-08-23 "all anomaly top-ups in the outer ring" rule and
+adds a cluster exception to the rule keeping dome effects out of the perimeter. The judge's
+`ring-content` gate now also requires no repeated badge in any cluster.
+
+All gates pass at all five sites in A/B/control runs, and every save / fresh-process load passes.
+Worst START-to-T1: 73.412 s (61N136W save run). Four MirrorSphereMystery runs are set aside and
+re-run; the re-runs match their twins exactly. The RNG source and checkpoint reviews pass
+(`_ralph/runs/allrules-1131/complete_audit1131.json`: accepted, no pending checks). Also fixed this
+round: the "mod problem detected" popup on returning to the surface (map-switch audit wrote
+passability), and a pairs()-order nondeterminism in whole-map anomaly placement. Details:
+SURFACE_LOADING_ACCEPTANCE.md, section "Metadata 1131 / build 474".
+
+## Build 469 / metadata 1120 — five-site PASS with vanilla rock compositions (2026-09-25, superseded)
 
 Rock-support rule changed by the owner on 2026-09-25: vanilla's own compositions (a pebble
 resting on its stone, an overhang, a sliver of open base on a slope) stay as vanilla authored
