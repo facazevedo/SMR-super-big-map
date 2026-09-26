@@ -755,6 +755,10 @@ config.StretchAdaptiveZScale = true
 -- interpolation. Outer relief survives without flat shelves, caps, or synthetic smooth strips; the
 -- central 16 x 16 sectors and ordinary broken mountain cliffs are untouched.
 config.StretchRepairInternalHeightStep = true
+-- The destination pass above leaves short pieces and raised edge strips on vanilla's near-edge
+-- seam lines (they read as straight ridges now the border is playable). Bend only the narrow
+-- edge-side strip of those pieces onto the inner surface, at vanilla resolution, before resampling.
+config.StretchRepairNearEdgeSeams = true
 -- INVALIDATE BEFORE EVERY FINAL PASSABILITY REBUILD, on the surface and the underground alike
 -- (sbm_map_generation, expansion step 11). The engine rebuilds passability only over regions that
 -- were INVALIDATED first -- its own generator always calls terrain.InvalidateHeight +
@@ -1193,6 +1197,7 @@ C.UNDERGROUND_MARK_GRID_BACKING_SCALE = expansion_step_01
 C.STRETCH_SHIFT_HEIGHTS_DOWN = as_bool(config.StretchShiftHeightsDown)
 C.STRETCH_ADAPTIVE_Z_SCALE = as_bool(config.StretchAdaptiveZScale)
 C.STRETCH_REPAIR_INTERNAL_HEIGHT_STEP = as_bool(config.StretchRepairInternalHeightStep)
+C.STRETCH_REPAIR_NEAR_EDGE_SEAMS = as_bool(config.StretchRepairNearEdgeSeams)
 C.FINAL_PASSABILITY_INVALIDATE = expansion_step_11
 	and as_bool(config.FinalPassabilityInvalidate)
 C.STRETCH_HEIGHT_GRID_DUMP_PATH = type(config.StretchHeightGridDumpPath) == "string"

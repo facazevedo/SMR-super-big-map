@@ -2066,6 +2066,200 @@ local function RepairQualifiedSourceHeightSteps(grid, source_tracks)
 	}
 end
 
+-- Vanilla keeps a 1,024-cell unplayable border, and some vanilla height fields carry a straight
+-- one-cell seam a few cells inside the physical edge. The expanded map is playable to its edge.
+-- The destination pass translates only long seams whose low side faces the edge, so shorter pieces
+-- and raised edge strips on the same seam lines stayed as straight ridges (49N28E, sector A0: a
+-- strip 300 units proud at depth 7 over 52 rows, on the line of a 1,650-row lowered seam).
+-- Find those pieces at vanilla resolution, where the seam is still one cell wide, and bend only
+-- the narrow edge-side strip onto the inner surface: height and slope match at the seam, the
+-- slope change fades out by the physical edge, and every inner cell stays exactly vanilla. A
+-- piece qualifies only on an exactly grid-aligned line that also carries a long seam, so ordinary
+-- cliffs never match. Seams the destination pass already repairs are left to it unchanged.
+local function RepairNearEdgeSourceSeams(api, grid)
+	local math, type, ipairs, pairs, table = math, type, ipairs, pairs, table
+	if type(api) ~= "table" or type(api.GridMinMax) ~= "function" or not grid
+		or type(grid.size) ~= "function" or type(grid.get) ~= "function"
+		or type(grid.set) ~= "function" then
+		return false, { reason = "height-grid access unavailable" }
+	end
+	local w, h = grid:size()
+	local mn, mx = api.GridMinMax(grid)
+	if type(w) ~= "number" or type(h) ~= "number" or math.min(w, h) < 64
+		or type(mn) ~= "number" or type(mx) ~= "number" or mx <= mn then
+		return false, { reason = "height grid unavailable" }
+	end
+	local relief = mx - mn
+	-- The limits of RepairInternalHeightStep: its source-pass contrast threshold, its destination
+	-- threshold and span (to recognise seams that pass repairs), its guard and near band.
+	local threshold = math.max(128, math.floor(relief * 0.002 + 0.5))
+	local destination_threshold = math.max(256, math.floor(relief * 0.005 + 0.5))
+	local outer_guard = math.min(8, math.max(2, math.floor(math.min(w, h) / 1024)))
+	local near_margin = math.min(64, math.max(8, math.floor(math.min(w, h) / 192)))
+	local min_rows, max_gap = 16, 4
+	local report = { threshold = threshold, candidates = 0, pieces = 0, qualified = 0,
+		rows = 0, modified = 0 }
+	local pieces, line_hits = {}, {}
+	local function scan(axis, edge, perp0, perp1)
+		local along_n = axis == "x" and h or w
+		local rows, detail, offers = BuildHeightStepDiscoveryIndex(api, grid, axis, perp0, perp1,
+			along_n, 1, 1, threshold, true)
+		if not rows then return tostring(detail) end
+		report.candidates = report.candidates + (detail.candidates or 0)
+		local alongs, open = {}, {}
+		for along in pairs(offers) do alongs[#alongs + 1] = along end
+		table.sort(alongs)
+		local function close(run)
+			-- Isolated hits are ordinary relief; only coherent runs support a seam line.
+			if run.count >= 4 then
+				local key = edge .. ":" .. run.perp
+				line_hits[key] = (line_hits[key] or 0) + run.count
+			end
+			if run.count >= min_rows then pieces[#pieces + 1] = run end
+		end
+		for _, along in ipairs(alongs) do
+			local perps = {}
+			for perp in pairs(offers[along]) do perps[#perps + 1] = perp end
+			table.sort(perps)
+			for _, perp in ipairs(perps) do
+				local jump = offers[along][perp][1]
+				if jump then
+					local run = open[perp]
+					if run and (along - run.last > max_gap or (jump > 0) ~= run.low_before) then
+						close(run); run = nil
+					end
+					if not run then
+						run = { axis = axis, edge = edge, perp = perp, along_n = along_n,
+							perp_n = axis == "x" and w or h, first = along, last = along,
+							count = 0, sum = 0, max = 0, low_before = jump > 0 }
+						open[perp] = run
+					end
+					run.last, run.count = along, run.count + 1
+					run.sum = run.sum + math.abs(jump)
+					run.max = math.max(run.max, math.abs(jump))
+				end
+			end
+		end
+		local keys = {}
+		for perp in pairs(open) do keys[#keys + 1] = perp end
+		table.sort(keys)
+		for _, perp in ipairs(keys) do close(open[perp]) end
+	end
+	for _, band in ipairs({
+		{ "x", "left", outer_guard, near_margin },
+		{ "x", "right", w - near_margin - 2, w - outer_guard - 3 },
+		{ "y", "top", outer_guard, near_margin },
+		{ "y", "bottom", h - near_margin - 2, h - outer_guard - 3 },
+	}) do
+		local failure = scan(band[1], band[2], band[3], band[4])
+		if failure then
+			report.reason, report.error = "near-edge seam discovery failed", failure
+			return false, report
+		end
+	end
+	report.pieces = #pieces
+
+	local qualified, lines = {}, {}
+	for _, piece in ipairs(pieces) do
+		local span = piece.last - piece.first + 1
+		local dense = (piece.count + 0.0) / span
+		local average = (piece.sum + 0.0) / piece.count
+		local before_edge = piece.edge == "left" or piece.edge == "top"
+		local low_faces_edge = piece.low_before == before_edge
+		local min_span = math.max(96, math.floor(piece.along_n / 50))
+		local destination_repairs = low_faces_edge and span >= min_span
+			and average >= destination_threshold * 1.25
+		if dense >= 0.9 and average >= threshold * 1.25 and piece.max >= threshold * 1.75
+			and (line_hits[piece.edge .. ":" .. piece.perp] or 0) >= min_span
+			and not destination_repairs then
+			piece.average = math.floor(average + 0.5)
+			qualified[#qualified + 1] = piece
+		end
+	end
+	local edge_order = { left = 1, right = 2, top = 3, bottom = 4 }
+	table.sort(qualified, function(a, b)
+		if a.edge ~= b.edge then return edge_order[a.edge] < edge_order[b.edge] end
+		if a.perp ~= b.perp then return a.perp < b.perp end
+		return a.first < b.first
+	end)
+	report.qualified = #qualified
+
+	local function at(axis, perp, along)
+		if axis == "x" then return grid:get(perp, along) end
+		return grid:get(along, perp)
+	end
+	local function put(axis, perp, along, value)
+		if axis == "x" then grid:set(perp, along, value) else grid:set(along, perp, value) end
+	end
+	local function clamp(value, lo, hi) return math.max(lo, math.min(hi, value)) end
+	local function quintic(t)
+		t = clamp(t, 0, 1)
+		return t * t * t * (t * (t * 6 - 15) + 10)
+	end
+	for _, piece in ipairs(qualified) do
+		local axis = piece.axis
+		local before_edge = piece.edge == "left" or piece.edge == "top"
+		local outward = before_edge and -1 or 1
+		local edge_perp = before_edge and piece.perp or piece.perp + 1
+		local inner_perp = edge_perp - outward
+		-- Cells from the edge-side seam cell to the physical edge cell.
+		local reach = before_edge and edge_perp or piece.perp_n - 1 - edge_perp
+		local length = piece.last - piece.first + 1
+		-- The seam usually fades rather than stops where the contrast test loses it, so keep the
+		-- full measured correction for one taper beyond each end, then blend it out over another.
+		local taper = math.min(32, math.max(16, math.floor(length / 6)))
+		local full_first, full_last = piece.first - taper, piece.last + taper
+		local lo = math.max(0, full_first - taper)
+		local hi = math.min(piece.along_n - 1, full_last + taper)
+		local limit = piece.max * 3 / 2
+		local offsets, bends = {}, {}
+		for along = lo, hi do
+			local inner = at(axis, inner_perp, along)
+			local inner_slope = inner - at(axis, inner_perp - outward, along)
+			local edge_value = at(axis, edge_perp, along)
+			local edge_slope = at(axis, edge_perp + outward, along) - edge_value
+			-- Continue the inner surface one cell across the seam.
+			offsets[along] = clamp(inner + inner_slope - edge_value, -limit, limit)
+			bends[along] = inner_slope - edge_slope
+		end
+		local rows = 0
+		for along = lo, hi do
+			-- Each row is corrected from its own four cells around the seam. Their noise is the
+			-- terrain's own detail (about ten units on 49N28E), while smoothing along the edge would
+			-- smear an abrupt piece end into neighbouring rows and leave a crease there.
+			local offset = offsets[along]
+			local bend = bends[along]
+			-- The slope change must not move the physical edge farther than the seam itself.
+			local bend_limit = math.max(math.abs(offset), threshold) * 3.0 / reach
+			bend = clamp(bend, -bend_limit, bend_limit)
+			local alpha = 1
+			if along < full_first then alpha = quintic((along - (full_first - taper)) / (taper + 0.0))
+			elseif along > full_last then alpha = quintic(((full_last + taper) - along) / (taper + 0.0)) end
+			local changed = false
+			for distance = 0, reach do
+				local perp = edge_perp + outward * distance
+				local original = at(axis, perp, along)
+				local t = distance / (reach + 0.0)
+				-- Height and slope match at the seam; zero slope change and curvature at the edge.
+				local correction = offset + bend * reach * (t - t * t + t * t * t / 3)
+				local value = clamp(math.floor(original + correction * alpha + 0.5), 0, 65535)
+				if value ~= original then
+					put(axis, perp, along, value)
+					report.modified, changed = report.modified + 1, true
+				end
+			end
+			if changed then rows = rows + 1 end
+		end
+		report.rows = report.rows + rows
+		lines[#lines + 1] = string.format("%s:%d:%d-%d:%s:%d", piece.edge, piece.perp, piece.first,
+			piece.last, piece.low_before == before_edge and "low" or "raised", piece.average)
+	end
+	report.lines = table.concat(lines, ",")
+	report.reason = report.modified > 0 and "near-edge seam pieces bent onto the inner surface"
+		or "no near-edge seam piece outside the destination pass"
+	return report.modified > 0, report
+end
+
 -- Reserve genuinely buildable foothill opportunities without drawing artificial platforms into
 -- the terrain. This runs on the final destination height grid, AFTER the exact v738 affine Z
 -- transform has been captured/dumped and BEFORE the authoritative passability and buildable-grid
@@ -5287,6 +5481,32 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 					TerrainCreaseAudit(repaired and "SOURCE_REPAIRED"
 						or "SOURCE_REPAIR_SKIPPED", source_report, map)
 					merge_step_report(source_report)
+				end
+				if cfg_bool("STRETCH_REPAIR_NEAR_EDGE_SEAMS", true) then
+					local seam_api = {}
+					for _, key in ipairs({ "IsComputeGrid", "GridRepack", "GridMulDivAdd", "GridAdd",
+						"GridAbs", "GridMask", "GridCount", "GridForeach", "NewComputeGrid", "box",
+						"point", "GridMinMax" }) do
+						seam_api[key] = Global(key)
+					end
+					local ticks = Global("GetPreciseTicks") or function() return 0 end
+					local seam_started = ticks()
+					local bent, seam_report = RepairNearEdgeSourceSeams(seam_api, src_sub)
+					map.SuperBigMapCreaseSamplingStats.near_edge = {
+						candidates = seam_report.candidates, pieces = seam_report.pieces,
+						qualified = seam_report.qualified, rows = seam_report.rows,
+						modified = seam_report.modified, lines = seam_report.lines,
+						ms = ticks() - seam_started,
+					}
+					if seam_report.error then
+						OptimizationFailure("near-edge seam discovery", seam_report.error, map)
+						free_grid(src_sub)
+						if full_c ~= raw and full_c ~= src_sub then free_grid(full_c) end
+						return false
+					end
+					TerrainCreaseAudit(bent and "NEAR_EDGE_REPAIRED" or "NEAR_EDGE_SKIPPED",
+						seam_report, map)
+					if bent then merge_step_report(seam_report) end
 				end
 				LoadingEnd(repair_token)
 			end
