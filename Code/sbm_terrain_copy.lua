@@ -2222,16 +2222,32 @@ local function RepairNearEdgeSourceSeams(api, grid)
 			offsets[along] = clamp(inner + inner_slope - edge_value, -limit, limit)
 			bends[along] = inner_slope - edge_slope
 		end
+		-- Per-row offsets and bends are differences of 8-unit quantised heights; applied per row
+		-- they roughened the strip threefold along the edge (1132 harness). A running median
+		-- removes that noise but, unlike a mean, keeps an abrupt piece end sharp instead of
+		-- smearing its correction into the neighbouring rows.
+		local radius = math.min(12, math.max(6, math.floor(length / 16)))
+		local function median(values, along)
+			local window = {}
+			for q = math.max(lo, along - radius), math.min(hi, along + radius) do
+				window[#window + 1] = values[q]
+			end
+			table.sort(window)
+			local n = #window
+			local middle = math.floor((n + 1) / 2)
+			if n % 2 == 1 then return window[middle] + 0.0 end
+			return (window[middle] + window[middle + 1]) / 2.0
+		end
+		local collar = math.min(3, reach)
 		local rows = 0
 		for along = lo, hi do
-			-- Each row is corrected from its own four cells around the seam. Their noise is the
-			-- terrain's own detail (about ten units on 49N28E), while smoothing along the edge would
-			-- smear an abrupt piece end into neighbouring rows and leave a crease there.
-			local offset = offsets[along]
-			local bend = bends[along]
+			local offset = median(offsets, along)
+			-- The seam cell still lands exactly on the continued inner surface in its own row: this
+			-- residual fades out within three cells with zero slope at both ends.
+			local residual = offsets[along] - offset
 			-- The slope change must not move the physical edge farther than the seam itself.
 			local bend_limit = math.max(math.abs(offset), threshold) * 3.0 / reach
-			bend = clamp(bend, -bend_limit, bend_limit)
+			local bend = clamp(median(bends, along), -bend_limit, bend_limit)
 			local alpha = 1
 			if along < full_first then alpha = quintic((along - (full_first - taper)) / (taper + 0.0))
 			elseif along > full_last then alpha = quintic(((full_last + taper) - along) / (taper + 0.0)) end
@@ -2242,6 +2258,10 @@ local function RepairNearEdgeSourceSeams(api, grid)
 				local t = distance / (reach + 0.0)
 				-- Height and slope match at the seam; zero slope change and curvature at the edge.
 				local correction = offset + bend * reach * (t - t * t + t * t * t / 3)
+				if distance < collar then
+					local u = distance / (collar + 0.0)
+					correction = correction + residual * (1 - u * u * (3 - 2 * u))
+				end
 				local value = clamp(math.floor(original + correction * alpha + 0.5), 0, 65535)
 				if value ~= original then
 					put(axis, perp, along, value)

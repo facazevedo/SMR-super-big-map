@@ -156,7 +156,9 @@ check(same,"repair is not deterministic");a:free();b:free()
 -- 9. A strip tilted against the inner slope is bent to match it: no crease line at the seam, and
 -- the bend fades to the strip's own slope by the physical edge.
 grid=fixture({{6,100,255,-1000}},function(x,y,z)
-	if y<=39 and x>=N-7 then return z+300+45*(x-(N-7)) end
+	-- Real slope mismatches change gradually along the edge; this one fades out over rows 40-69.
+	local tilt=y<=39 and 45 or math.max(0,math.floor(45*(69-y)/30))
+	if y<=69 and x>=N-7 then return z+(y<=39 and 300 or 0)+tilt*(x-(N-7)) end
 	return z
 end)
 before=snapshot(grid)
@@ -172,7 +174,30 @@ for y=0,39 do
 end
 grid:free()
 
--- 10. Real seams fade rather than stop (49N28E: 300 units at row 50, zero near row 69). The
+-- 10. Vanilla heights are 8-unit quantised with cell-scale detail. The repaired strip must stay as
+-- smooth along the edge as the terrain inside it (per-row slope bends made it three times rougher).
+local function noisy(x,y,z)
+	local r=((x*7919+y*104729)%97)/97
+	return z+8*math.floor(r*4-2)
+end
+grid=fixture({{6,0,63,300},{6,100,255,-1000}},function(x,y,z)
+	z=noisy(x,y,z)
+	return z-z%8
+end)
+ok,report=near_edge(api,grid)
+check(ok and report.qualified==1,"noisy raised piece must be repaired: "..tostring(report.lines))
+local function roughness(x0,x1)
+	local total,n=0,0
+	for y=1,62 do for x=x0,x1 do
+		total=total+math.abs(grid:get(x,y+1)-2*grid:get(x,y)+grid:get(x,y-1));n=n+1
+	end end
+	return total/n
+end
+local inside,strip=roughness(N-20,N-9),roughness(N-7,N-1)
+check(strip<=inside*1.5+4,"repaired strip is rougher along the edge: "..strip.." vs "..inside)
+grid:free()
+
+-- 11. Real seams fade rather than stop (49N28E: 300 units at row 50, zero near row 69). The
 -- contrast test loses the tail first; the hold region must still flatten all of it.
 grid=fixture({{6,100,255,-1000}},function(x,y,z)
 	if x>=N-7 and y<=69 then return z+(y<=39 and 300 or math.floor(300*(69-y)/30)) end
@@ -183,7 +208,7 @@ check(ok and report.qualified==1,"fading piece must be repaired: "..tostring(rep
 for y=0,75 do check(seam_error(grid,6,y)<=2,"fading seam tail remains at row "..y..": "..seam_error(grid,6,y)) end
 grid:free()
 
--- 11. Missing native API fails loudly without writing.
+-- 12. Missing native API fails loudly without writing.
 local missing={};for k,v in pairs(api) do missing[k]=v end;missing.GridMask=nil
 grid=fixture({{6,0,39,300},{6,100,255,-1000}})
 before=snapshot(grid)
