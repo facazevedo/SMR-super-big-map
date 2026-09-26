@@ -2098,7 +2098,7 @@ local function RepairNearEdgeSourceSeams(api, grid)
 	local near_margin = math.min(64, math.max(8, math.floor(math.min(w, h) / 192)))
 	local min_rows, max_gap = 16, 4
 	local report = { threshold = threshold, candidates = 0, pieces = 0, qualified = 0,
-		rows = 0, modified = 0 }
+		ends = 0, rows = 0, modified = 0 }
 	local pieces, line_hits = {}, {}
 	local function scan(axis, edge, perp0, perp1)
 		local along_n = axis == "x" and h or w
@@ -2159,7 +2159,7 @@ local function RepairNearEdgeSourceSeams(api, grid)
 	end
 	report.pieces = #pieces
 
-	local qualified, lines = {}, {}
+	local qualified, lines, destination_pieces = {}, {}, {}
 	for _, piece in ipairs(pieces) do
 		local span = piece.last - piece.first + 1
 		local dense = (piece.count + 0.0) / span
@@ -2169,6 +2169,7 @@ local function RepairNearEdgeSourceSeams(api, grid)
 		local min_span = math.max(96, math.floor(piece.along_n / 50))
 		local destination_repairs = low_faces_edge and span >= min_span
 			and average >= destination_threshold * 1.25
+		if destination_repairs then destination_pieces[#destination_pieces + 1] = piece end
 		if dense >= 0.9 and average >= threshold * 1.25 and piece.max >= threshold * 1.75
 			and (line_hits[piece.edge .. ":" .. piece.perp] or 0) >= min_span
 			and not destination_repairs then
@@ -2228,8 +2229,10 @@ local function RepairNearEdgeSourceSeams(api, grid)
 		-- smearing its correction into the neighbouring rows.
 		local radius = math.min(12, math.max(6, math.floor(length / 16)))
 		local function median(values, along)
+			-- A centred window: a one-sided one near lo/hi would shift a sloping offset there.
+			local r = math.min(radius, along - lo, hi - along)
 			local window = {}
-			for q = math.max(lo, along - radius), math.min(hi, along + radius) do
+			for q = along - r, along + r do
 				window[#window + 1] = values[q]
 			end
 			table.sort(window)
@@ -2275,6 +2278,168 @@ local function RepairNearEdgeSourceSeams(api, grid)
 			piece.last, piece.low_before == before_edge and "low" or "raised", piece.average)
 	end
 	report.lines = table.concat(lines, ",")
+
+	-- The same vanilla border is built from offset blocks, so seam pieces also end in short
+	-- grid-aligned steps perpendicular to the edge (15S67E bottom edge: up to 920 units at the
+	-- edge). Often the block inside the seam is tilted too, so the end step is a wedge: largest at
+	-- the physical edge, fading to nothing inside the band. A block end starts at the edge, ends
+	-- inside the band and sits at the end of a repaired seam piece; an ordinary cliff does not do
+	-- all of that on one grid line. Split each block-end step between its two sides and blend it
+	-- out over twelve cells, row by row.
+	local band = near_margin + 3
+	local end_runs = {}
+	local function scan_ends(edge)
+		local across = edge == "left" or edge == "right"
+		local axis = across and "y" or "x"
+		local n = across and h or w
+		local sub = grid:new_instance(across and band or w, across and h or band)
+		if not sub then return "near-edge block-end band allocation failed" end
+		local origin = (edge == "right" and w - band) or (edge == "bottom" and h - band) or 0
+		local bounds = across and api.box(origin, 0, origin + band, h)
+			or api.box(0, origin, w, origin + band)
+		local ok, rows, detail, offers = pcall(function()
+			sub:copyrect(grid, bounds, api.point(0, 0))
+			return BuildHeightStepDiscoveryIndex(api, sub, axis, 1, n - 3, band, 1, 1, threshold, true)
+		end)
+		pcall(sub.free, sub)
+		if not ok then return tostring(rows) end
+		if not rows then return tostring(detail) end
+		report.candidates = report.candidates + (detail.candidates or 0)
+		local open = {}
+		local function close(run)
+			if run.count >= 8 then end_runs[#end_runs + 1] = run end
+		end
+		for index = 0, band - 1 do
+			-- Depth counted inward from the physical edge.
+			local depth = (edge == "right" or edge == "bottom") and band - 1 - index or index
+			local row = offers[index] or {}
+			local positions = {}
+			for pos in pairs(row) do positions[#positions + 1] = pos end
+			table.sort(positions)
+			for _, pos in ipairs(positions) do
+				local jump = row[pos][1]
+				local run = open[pos]
+				if run and (index - run.last_index > 2 or (jump > 0) ~= run.rising) then
+					close(run); run = nil
+				end
+				if not run then
+					run = { edge = edge, pos = pos, n = n, rising = jump > 0, count = 0, sum = 0,
+						max = 0, near = depth, far = depth, last_index = index }
+					open[pos] = run
+				end
+				run.last_index, run.count = index, run.count + 1
+				run.near, run.far = math.min(run.near, depth), math.max(run.far, depth)
+				run.sum, run.max = run.sum + math.abs(jump), math.max(run.max, math.abs(jump))
+			end
+		end
+		local keys = {}
+		for pos in pairs(open) do keys[#keys + 1] = pos end
+		table.sort(keys)
+		for _, pos in ipairs(keys) do close(open[pos]) end
+	end
+	for _, edge in ipairs({ "left", "right", "top", "bottom" }) do
+		local failure = scan_ends(edge)
+		if failure then
+			report.reason, report.error = "near-edge block-end discovery failed", failure
+			return false, report
+		end
+	end
+	local ends = {}
+	for _, run in ipairs(end_runs) do
+		local span = run.far - run.near + 1
+		local average = (run.sum + 0.0) / run.count
+		-- Only the ends of seam pieces repaired above qualify, so a block end passes the same
+		-- seam-line gate. Destination-pass seams are translated later, ends included.
+		local function at_end_of(list)
+			for _, piece in ipairs(list) do
+				if piece.edge == run.edge and (math.abs(run.pos - (piece.first - 1)) <= 3
+					or math.abs(run.pos - piece.last) <= 3) then
+					return true
+				end
+			end
+			return false
+		end
+		if run.near <= outer_guard + 2 and run.far <= near_margin - 2
+			and (run.count + 0.0) / span >= 0.9 and average >= threshold * 1.25
+			and run.max >= threshold * 1.75 and at_end_of(qualified)
+			and not at_end_of(destination_pieces) then
+			run.average = math.floor(average + 0.5)
+			ends[#ends + 1] = run
+		end
+	end
+	table.sort(ends, function(a, b)
+		if a.edge ~= b.edge then return edge_order[a.edge] < edge_order[b.edge] end
+		return a.pos < b.pos
+	end)
+	report.ends = #ends
+	local width = 12
+	local end_lines = {}
+	for _, run in ipairs(ends) do
+		local across = run.edge == "left" or run.edge == "right"
+		local depth_n = across and w or h
+		local far_side = run.edge == "right" or run.edge == "bottom"
+		local function height(pos, depth)
+			local d = far_side and depth_n - 1 - depth or depth
+			if across then return grid:get(d, pos) end
+			return grid:get(pos, d)
+		end
+		local function set_height(pos, depth, value)
+			local d = far_side and depth_n - 1 - depth or depth
+			if across then grid:set(d, pos, value) else grid:set(pos, d, value) end
+		end
+		-- The wedge fades below the contrast test before it ends; keep the measured correction for
+		-- one taper beyond the detected inner end, then blend it out over another.
+		local taper = math.max(8, math.min(16, math.floor((run.far - run.near + 1) / 2)))
+		local full_far = run.far + taper
+		local last_depth = math.min(depth_n - 1, full_far + taper)
+		local c = run.pos
+		local limit = run.max * 3 / 2
+		local excess = {}
+		for depth = 0, last_depth do
+			local v0, a = height(c - 1, depth), height(c, depth)
+			local b, v3 = height(c + 1, depth), height(c + 2, depth)
+			-- The step beyond the average slope of the cells on either side.
+			excess[depth] = clamp((b - a) - ((a - v0) + (v3 - b)) / 2.0, -limit, limit)
+		end
+		local radius = 3
+		local rows = 0
+		for depth = 0, last_depth do
+			-- Centred, so the wedge's slope does not bias the value at either end of the range.
+			local r = math.min(radius, depth, last_depth - depth)
+			local window = {}
+			for q = depth - r, depth + r do
+				window[#window + 1] = excess[q]
+			end
+			table.sort(window)
+			local middle = math.floor((#window + 1) / 2)
+			local e = #window % 2 == 1 and window[middle]
+				or (window[middle] + window[middle + 1]) / 2.0
+			local alpha = 1
+			if depth > full_far then alpha = quintic((last_depth - depth) / (taper + 0.0)) end
+			local changed = false
+			for i = 0, width - 1 do
+				local g = 1 - quintic(i / (width + 0.0))
+				for side = -1, 1, 2 do
+					local pos = side < 0 and c - i or c + 1 + i
+					if pos >= 0 and pos < run.n then
+						local original = height(pos, depth)
+						-- Raise the low side and lower the high side by half the excess each.
+						local value = clamp(math.floor(original - side * e / 2 * g * alpha + 0.5),
+							0, 65535)
+						if value ~= original then
+							set_height(pos, depth, value)
+							report.modified, changed = report.modified + 1, true
+						end
+					end
+				end
+			end
+			if changed then rows = rows + 1 end
+		end
+		report.rows = report.rows + rows
+		end_lines[#end_lines + 1] = string.format("%s:%d:d%d-%d:%d", run.edge, run.pos, run.near,
+			run.far, run.average)
+	end
+	report.end_lines = table.concat(end_lines, ",")
 	report.reason = report.modified > 0 and "near-edge seam pieces bent onto the inner surface"
 		or "no near-edge seam piece outside the destination pass"
 	return report.modified > 0, report
@@ -5516,6 +5681,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 						candidates = seam_report.candidates, pieces = seam_report.pieces,
 						qualified = seam_report.qualified, rows = seam_report.rows,
 						modified = seam_report.modified, lines = seam_report.lines,
+						ends = seam_report.ends, end_lines = seam_report.end_lines,
 						ms = ticks() - seam_started,
 					}
 					if seam_report.error then
