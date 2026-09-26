@@ -269,9 +269,9 @@ config.TopUpAnomalyMountainBaseMinimumPercent = 75
 -- hit those bands by chance. Only the strongest few base candidates per sector enter the reserved
 -- mountain-base selector, preventing broad central flats from overwhelming narrow mountain feet.
 -- Owner ruling 2026-09-26 put anomaly top-ups back on this whole-map path; 64 samples in each of
--- ~400 sectors cost 2.4 s of START-to-T1 at 61N136W for ~28 placements. 16 still gives every sector
--- several candidates (thousands in total) at a quarter of the cost.
-config.TopUpAnomalySurfaceSamplesPerSector = 16
+-- ~400 sectors cost 2.4 s of START-to-T1 at 61N136W for ~28 placements; 16 still cost 0.76 s. 8
+-- (the minimum) still gives every sector candidates (a few thousand in total).
+config.TopUpAnomalySurfaceSamplesPerSector = 8
 config.TopUpAnomalyMountainBaseCandidatesPerSector = 8
 -- Ignore tiny rolling-ground height differences: at least one surrounding sample must rise this
 -- many metres above the flat candidate, and relief must appear in at least two ring samples.
