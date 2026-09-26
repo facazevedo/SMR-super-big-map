@@ -842,6 +842,27 @@ CreateRealTimeThread(function()
 		else
 			R.ring_audit_resource_clusters = "no outer resource terrain audit on map"
 		end
+		-- Owner ruling 2026-09-26, "oasis" clusters: no repeated badge among a cluster's members,
+		-- anomaly top-ups placed over the whole map with one moved into each cluster slot, and a dome
+		-- bonus in about a third of the clusters.
+		local orc = map.SuperBigMapOuterResourceCensusPreGameInit
+		if type(orc) == "table" then
+			R.ring_cluster_badge_repeats = tostring(orc.cluster_badge_repeats)
+			R.ring_cluster_area_intruders = tostring(orc.cluster_area_intruders)
+			R.ring_cluster_compositions = tostring(orc.cluster_compositions)
+			R.ring_oasis_dome_bonus_topups = tostring(orc.oasis_dome_bonus_topups or 0)
+			R.ring_anomaly_topups_outside_ring = tostring(orc.anomaly_topups_outside_ring)
+		else
+			R.ring_cluster_badge_repeats = "no outer resource census on map"
+		end
+		local ets = map.SuperBigMapEnrichmentTopUpStatus
+		local anomaly_status = type(ets) == "table" and ets.anomalies or nil
+		local effect_status = type(ets) == "table" and ets.effects or nil
+		R.ring_oasis_anomaly_slots = tostring(anomaly_status and anomaly_status.oasis_cluster_slots)
+		R.ring_oasis_anomaly_moved = tostring(anomaly_status and anomaly_status.oasis_cluster_moved)
+		R.ring_oasis_anomaly_unfilled = tostring(anomaly_status and anomaly_status.oasis_cluster_unfilled)
+		R.ring_oasis_dome_bonus_placed = tostring(effect_status and effect_status.oasis_dome_bonus_placed)
+		R.ring_oasis_dome_bonus_unfilled = tostring(effect_status and effect_status.oasis_dome_bonus_unfilled)
 		local orp = map.SuperBigMapResourceClusterPlanDiagnostic
 		if type(orp) == "table" then
 			R.ring_plan_static_rejection_reasons = orp.static_rejection_reasons

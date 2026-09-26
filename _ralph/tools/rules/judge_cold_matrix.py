@@ -100,6 +100,9 @@ def judge_run(run, control=None):
           "full-map playability or ring enrichment missing")
     check("ring-content", "error= " in r.get("apron_report", "") and "ring_sectors=2" in r.get("apron_report", ""),
           "apron completion report missing or failed")
+    # Owner ruling 2026-09-26, "oasis" clusters: no badge repeats among a cluster's members.
+    check("ring-content", number(r.get("ring_cluster_badge_repeats")) == 0,
+          "an outer resource cluster repeats a badge (or the cluster census is missing)")
     snap = run["snapshot"]
     audit = snap and snap.get("maps", {}).get("Surface", {}).get("audit")
     if audit is None:

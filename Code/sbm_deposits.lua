@@ -709,6 +709,21 @@ local function IsEnrichmentMarker(obj)
 		or IsKindOfSafe(obj, "EffectDepositMarker")
 end
 
+-- The map badge a marker shows: one per resource kind and layer, one for anomalies, one per
+-- dome-effect type. Owner ruling 2026-09-26: no badge repeats inside an outer "oasis" cluster.
+function DepositRules.ClusterBadgeKey(marker)
+	if not marker then return nil end
+	if IsKindOfSafe(marker, "SubsurfaceAnomalyMarker") then return "anomaly" end
+	if IsKindOfSafe(marker, "EffectDepositMarker") then
+		return "effect:" .. tostring(marker.deposit_type or marker.class or "?")
+	end
+	local resource = tostring(marker.resource or "?")
+	if IsKindOfSafe(marker, "SurfaceDepositMarker") then return "surface:" .. resource end
+	if IsKindOfSafe(marker, "SubsurfaceDepositMarker") then return "subsurface:" .. resource end
+	if IsKindOfSafe(marker, "TerrainDepositMarker") then return "terrain:" .. resource end
+	return "other:" .. tostring(marker.class or "?")
+end
+
 local function IsNativeEnrichmentMarker(marker)
 	return IsEnrichmentMarker(marker)
 		and marker.SuperBigMapResourceTopUp ~= true
@@ -4495,6 +4510,7 @@ function DepositRules.BuildDirectSeededSurfaceClusterPlans(options)
 			local plan = {
 				id = spec_index, target = target, extractor_target = spec.extractor_target,
 				strength = spec.strength, anomaly_capacity = spec.anomaly_capacity,
+				dome_bonus = spec.dome_bonus == true,
 				reward_capacity = spec.reward_capacity, candidates = chosen,
 				outermost = band == "outer",
 			}
@@ -4648,50 +4664,52 @@ function DepositRules.TopUpDeposits(map)
 		and math.max(resource_cluster_maximum_deposits,
 			math.floor(cfg().OUTER_RESOURCE_CLUSTER_MAXIMUM_TOTAL_MEMBERS or 5)) or 0
 	local maximum_cluster_anomalies = not IsUndergroundMap(map)
-		and math.max(0, math.floor(cfg().OUTER_RESOURCE_CLUSTER_MAXIMUM_ANOMALIES or 3)) or 0
+		and math.max(0, math.floor(cfg().OUTER_RESOURCE_CLUSTER_MAXIMUM_ANOMALIES or 1)) or 0
+	local cluster_anomaly_percent = math.floor(cfg().OUTER_RESOURCE_CLUSTER_ANOMALY_PERCENT or 75)
+	local cluster_dome_bonus_percent = math.floor(cfg().OUTER_RESOURCE_CLUSTER_DOME_BONUS_PERCENT or 33)
+	local CLUSTER_SURFACE_BADGES = 2
 	local planned_resource_cluster_specs = {}
 	local surface_mountain_base_minimum = 0
 	for cluster_index = 1, desired_resource_cluster_count do
 		local strength_roll = RandInt(100)
-		local strength, reward_target, extractor_target, minimum_resource_target
+		local strength, reward_target, extractor_target
 		if strength_roll < 70 then
 			strength = "standard"
 			reward_target = 3 + RandInt(2)
 			extractor_target = 1
-			minimum_resource_target = 3
 		elseif strength_roll < 95 then
 			strength = "strong"
 			reward_target = 4 + RandInt(2)
 			extractor_target = 2
-			minimum_resource_target = 4
 		else
 			strength = "rare_three_extractor"
 			reward_target = 4 + RandInt(2)
 			extractor_target = 3
-			minimum_resource_target = 4
 		end
-		local anomaly_roll = RandInt(1000)
-		local anomaly_capacity = anomaly_roll < 550 and 0
-			or anomaly_roll < 930 and 1 or anomaly_roll < 990 and 2 or 3
-		-- Choose the total reward budget first. Anomalies consume that budget instead of being
-		-- appended to it: standard groups stay at 3..4 total rewards, strong/rare groups at 4..5,
-		-- and the exceptional group reserves two deposit slots plus three anomaly slots.
-		if anomaly_capacity == 3 then
-			strength, reward_target, extractor_target, minimum_resource_target =
-				"exceptional_anomaly", 5, 1, 2
-		end
+		-- Owner ruling 2026-09-26, "oasis" clusters: resources, usually one anomaly, and sometimes
+		-- one dome bonus, with no badge repeated inside the cluster. The anomaly and the dome bonus
+		-- consume the reward budget instead of being appended to it. At least two resources remain.
+		local anomaly_capacity = RandInt(100) < cluster_anomaly_percent and 1 or 0
+		local dome_bonus = RandInt(100) < cluster_dome_bonus_percent
 		reward_target = math.max(1, math.min(resource_cluster_maximum_total, reward_target))
-		anomaly_capacity = math.max(0, math.min(maximum_cluster_anomalies,
-			reward_target - minimum_resource_target, anomaly_capacity))
-		local resource_target = reward_target - anomaly_capacity
+		anomaly_capacity = math.max(0, math.min(maximum_cluster_anomalies, anomaly_capacity))
+		local bonus_slots = dome_bonus and 1 or 0
+		local resource_target = math.max(2, reward_target - anomaly_capacity - bonus_slots)
 		resource_target = math.max(resource_cluster_minimum_deposits,
 			math.min(resource_cluster_maximum_deposits, resource_target))
-		extractor_target = math.max(1, math.min(3, resource_target, extractor_target))
-		reward_target = resource_target + anomaly_capacity
+		-- Only two surface badges exist (metals, polymers), so any further distinct resource must
+		-- be an extractor deposit (subsurface metals, water, rare metals, concrete).
+		extractor_target = math.max(1, math.min(3, resource_target,
+			math.max(extractor_target, resource_target - CLUSTER_SURFACE_BADGES)))
+		if resource_target + anomaly_capacity + bonus_slots > resource_cluster_maximum_total then
+			bonus_slots = math.max(0, resource_cluster_maximum_total - resource_target - anomaly_capacity)
+			dome_bonus = bonus_slots > 0
+		end
+		reward_target = resource_target + anomaly_capacity + bonus_slots
 		planned_resource_cluster_specs[#planned_resource_cluster_specs + 1] = {
 			index = cluster_index, strength = strength,
 			resource_target = resource_target, extractor_target = extractor_target,
-			anomaly_capacity = anomaly_capacity,
+			anomaly_capacity = anomaly_capacity, dome_bonus = dome_bonus,
 			reward_capacity = reward_target,
 		}
 		surface_mountain_base_minimum = surface_mountain_base_minimum + resource_target
@@ -5354,6 +5372,7 @@ function DepositRules.TopUpDeposits(map)
 					candidate._sbm_resource_cluster_resource_target = plan.target
 					candidate._sbm_resource_cluster_extractor_target = plan.extractor_target
 					candidate._sbm_resource_cluster_anomaly_capacity = plan.anomaly_capacity
+					candidate._sbm_resource_cluster_dome_bonus = plan.dome_bonus == true
 					candidate._sbm_resource_cluster_reward_capacity = plan.reward_capacity
 					plan.candidates[member_index] = candidate
 					surface_resource_quota_candidates = surface_resource_quota_candidates + 1
@@ -5399,6 +5418,10 @@ function DepositRules.TopUpDeposits(map)
 			return take(nil, profile)
 		end
 
+		-- Oasis clusters (owner ruling 2026-09-26): the badges of the cluster being placed, and how
+		-- often each badge has been used by clusters so far. Nil outside cluster placement.
+		local active_cluster_badges
+		local cluster_badge_totals = {}
 		local function choose_needed_type()
 			local deficit_total = 0
 			for _, res in ipairs(target_keys) do
@@ -5428,19 +5451,55 @@ function DepositRules.TopUpDeposits(map)
 		end
 		local function select_needed_placement(allow_any_terrain, require_extractor,
 			forbid_extractor, template_policy)
-			local preferred = choose_needed_type()
-			if not preferred then return nil end
-			local order, others = { preferred }, {}
-			for _, res in ipairs(target_keys) do
-				local deficit = math.max(0,
-					(target_by_type[res] or 0) - (current_by_type[res] or 0) - (added_by_type[res] or 0))
-				if deficit > 0 and res ~= preferred then others[#others + 1] = res end
+			local order
+			if active_cluster_badges then
+				-- Oasis cluster: only badges this cluster does not show yet, the badge the other
+				-- clusters use least first, so clusters vary instead of all showing metals.
+				local ranked = {}
+				for _, res in ipairs(target_keys) do
+					local deficit = math.max(0,
+						(target_by_type[res] or 0) - (current_by_type[res] or 0) - (added_by_type[res] or 0))
+					if deficit > 0 then
+						local best_use
+						for _, template in ipairs(templates_by_type[res] or {}) do
+							local is_extractor = extractor_template(template)
+							local key = DepositRules.ClusterBadgeKey(template)
+							if (require_extractor ~= true or is_extractor)
+								and (forbid_extractor ~= true or not is_extractor)
+								and key and not active_cluster_badges[key] then
+								local use = cluster_badge_totals[key] or 0
+								if not best_use or use < best_use then best_use = use end
+							end
+						end
+						if best_use then
+							ranked[#ranked + 1] = { res = res, use = best_use, tie = RandInt(1000000) }
+						end
+					end
+				end
+				table.sort(ranked, function(a, b)
+					if a.use ~= b.use then return a.use < b.use end
+					if a.tie ~= b.tie then return a.tie < b.tie end
+					return a.res < b.res
+				end)
+				order = {}
+				for _, entry in ipairs(ranked) do order[#order + 1] = entry.res end
+				if #order == 0 then return nil end
+			else
+				local preferred = choose_needed_type()
+				if not preferred then return nil end
+				local others = {}
+				order = { preferred }
+				for _, res in ipairs(target_keys) do
+					local deficit = math.max(0,
+						(target_by_type[res] or 0) - (current_by_type[res] or 0) - (added_by_type[res] or 0))
+					if deficit > 0 and res ~= preferred then others[#others + 1] = res end
+				end
+				for i = #others, 2, -1 do
+					local j = RandInt(i) + 1
+					others[i], others[j] = others[j], others[i]
+				end
+				for _, res in ipairs(others) do order[#order + 1] = res end
 			end
-			for i = #others, 2, -1 do
-				local j = RandInt(i) + 1
-				others[i], others[j] = others[j], others[i]
-			end
-			for _, res in ipairs(others) do order[#order + 1] = res end
 			for _, res in ipairs(order) do
 				local type_templates = templates_by_type[res] or {}
 				local start = #type_templates > 0 and (RandInt(#type_templates) + 1) or 1
@@ -5449,7 +5508,10 @@ function DepositRules.TopUpDeposits(map)
 					local template = type_templates[((start + offset - 1) % #type_templates) + 1]
 					local is_extractor = extractor_template(template)
 					local is_premium = premium_template(template)
-					local option = (require_extractor ~= true or is_extractor)
+					local badge_free = not active_cluster_badges
+						or not active_cluster_badges[DepositRules.ClusterBadgeKey(template)]
+					local option = badge_free
+						and (require_extractor ~= true or is_extractor)
 						and (forbid_extractor ~= true or not is_extractor)
 						and (template_policy ~= "premium" or is_premium)
 						and (template_policy ~= "nonpremium" or not is_premium)
@@ -5496,6 +5558,13 @@ function DepositRules.TopUpDeposits(map)
 						if extractor_template(template) then extractor_placed = extractor_placed + 1 end
 						if premium_template(template) then premium_placed = premium_placed + 1 end
 						local res = tostring(template.resource or template.class or "?")
+						if active_cluster_badges then
+							local badge = DepositRules.ClusterBadgeKey(template)
+							if badge then
+								active_cluster_badges[badge] = true
+								cluster_badge_totals[badge] = (cluster_badge_totals[badge] or 0) + 1
+							end
+						end
 						clone.SuperBigMapResourceTopUp = true
 						local selected_mountain_base = mountain_base_resource == "candidate"
 							and c._sbm_mountain_base_apron == true or mountain_base_resource == true
@@ -5514,6 +5583,8 @@ function DepositRules.TopUpDeposits(map)
 							c._sbm_resource_cluster_anomaly_capacity
 						clone.SuperBigMapResourceClusterRewardCapacity =
 							c._sbm_resource_cluster_reward_capacity
+						clone.SuperBigMapResourceClusterDomeBonus =
+							c._sbm_resource_cluster_dome_bonus == true or nil
 						clone.SuperBigMapResourceClusterAnchor = cluster_anchor == true or nil
 						clone.SuperBigMapResourceClusterPremium = premium_template(template) or nil
 						if selected_mountain_base then
@@ -5789,6 +5860,7 @@ function DepositRules.TopUpDeposits(map)
 				cluster_plan_diagnostic.cluster = plan.id
 				cluster_plan_diagnostic.cluster_target = plan.target
 				local before = surface_resource_quota_added
+				active_cluster_badges = {}
 				local selector = new_planned_cluster_selector(plan.candidates)
 				local available_before = selector.Remaining()
 				local placeable_before = available_before
@@ -5831,15 +5903,23 @@ function DepositRules.TopUpDeposits(map)
 						.. tostring(plan.id) .. " extractors=" .. tostring(extractors_added)
 						.. " total=" .. tostring(cluster_added))
 				end
-				if extractors_added ~= plan.extractor_target or cluster_added ~= plan.target then
+				-- A surface badge that has run out is replaced by a distinct extractor badge, so the
+				-- extractor count may exceed its target (never its cap); the total must be exact.
+				if extractors_added < plan.extractor_target or cluster_added ~= plan.target then
 					cluster_plan_fail(tostring(label) .. " weighted composition failed: cluster="
 						.. tostring(plan.id) .. " resources=" .. tostring(cluster_added)
 						.. "/" .. tostring(plan.target) .. " extractors="
 						.. tostring(extractors_added) .. "/" .. tostring(plan.extractor_target))
 				end
+				local badge_list = {}
+				for badge in pairs(active_cluster_badges or {}) do badge_list[#badge_list + 1] = badge end
+				table.sort(badge_list)
+				active_cluster_badges = nil
 				local result = table.concat({
 					tostring(plan.id), outermost and "outer" or "inner",
 					"target=" .. tostring(plan.target),
+					"badges=" .. table.concat(badge_list, "+"),
+					"dome_bonus=" .. tostring(plan.dome_bonus == true),
 					"reward_budget=" .. tostring(plan.reward_capacity),
 					"strength=" .. tostring(plan.strength),
 					"extractors=" .. tostring(extractors_added),
@@ -6115,6 +6195,185 @@ end
 -- shuffle of the complete ring-sector list, then a random reachable point inside the chosen
 -- sector. Native anomalies remain at their exact proportional vanilla coordinates and participate
 -- only as fixed obstacles in the vanilla repulsion tracker.
+-- Owner ruling 2026-09-26, "oasis" clusters: anomaly top-ups are placed over the whole map like
+-- the deposit top-ups; then every outer resource cluster with an anomaly slot receives exactly one,
+-- moved from the nearest whole-map top-up so the overall spread barely changes. The moved marker
+-- keeps the outer-ring top-up rules (unique valid hex, at least 10 hexes from every other anomaly,
+-- the minimum enrichment clearance) and is exempt from vanilla repulsion like the cluster deposits.
+-- Idempotent: a cluster that already holds its anomaly is left alone.
+local OASIS_ANOMALY_MIN_HEX_DISTANCE = 10
+local function FillOasisClusterAnomalies(map)
+	local stats = { clusters = 0, slots = 0, already_filled = 0, moved = 0, unfilled = 0 }
+	if not map or IsUndergroundMap(map) or type(map.MapForEach) ~= "function" then
+		return true, stats
+	end
+	local pads = map.SuperBigMapOuterResourceRocketPads
+	if type(pads) ~= "table" or #pads == 0 then return true, stats end
+	local world_to_hex, hex_to_world, point_fn = Global("WorldToHex"), Global("HexToWorld"), Global("point")
+	if type(world_to_hex) ~= "function" or type(hex_to_world) ~= "function"
+		or type(point_fn) ~= "function" then
+		stats.error = "hex API unavailable for oasis anomalies"
+		return false, stats
+	end
+	local radius = math.max(1, math.floor(cfg().OUTER_RESOURCE_CLUSTER_RADIUS_HEXES or 12))
+	local minimum_enrichment = TopUpEnrichmentMinimumHexDistance()
+	local function hex_of(obj)
+		local pos = obj and ObjectPos(obj)
+		if not (pos and type(pos.xy) == "function") then return nil end
+		local ok, q, r = pcall(world_to_hex, pos)
+		if ok and type(q) == "number" and type(r) == "number" then return q, r end
+		return nil
+	end
+	local clusters = {}
+	for index, pad in ipairs(pads) do
+		local q, r = pad.cluster_q or pad.q, pad.cluster_r or pad.r
+		local capacity = math.max(0, math.floor(tonumber(pad.anomaly_capacity) or 0))
+		if type(q) == "number" and type(r) == "number" then
+			clusters[#clusters + 1] = { index = index, q = q, r = r, capacity = capacity, held = 0 }
+		end
+	end
+	stats.clusters = #clusters
+	local enrichments, anomalies = {}, {}
+	pcall(map.MapForEach, map, "map", "SubsurfaceAnomalyMarker", function(marker)
+		local q, r = hex_of(marker)
+		if q then anomalies[#anomalies + 1] = { marker = marker, q = q, r = r } end
+	end)
+	for _, class in ipairs({ "SubsurfaceDepositMarker", "SurfaceDepositMarker", "TerrainDepositMarker",
+		"EffectDepositMarker", "SubsurfaceAnomalyMarker" }) do
+		pcall(map.MapForEach, map, "map", class, function(marker)
+			local q, r = hex_of(marker)
+			if q then enrichments[#enrichments + 1] = { marker = marker, q = q, r = r } end
+		end)
+	end
+	local function nearest_cluster(q, r)
+		local best, best_distance
+		for _, cluster in ipairs(clusters) do
+			local distance = AxialHexDistance(q, r, cluster.q, cluster.r)
+			if distance and distance <= radius and (not best_distance or distance < best_distance) then
+				best, best_distance = cluster, distance
+			end
+		end
+		return best
+	end
+	for _, item in ipairs(anomalies) do
+		local cluster = nearest_cluster(item.q, item.r)
+		if cluster then cluster.held = cluster.held + 1; item.cluster = cluster end
+	end
+	local validation_context = NewDepositValidationContext(map)
+	local offsets = DepositRules.BuildDirectSeededClusterOffsets(radius)
+	for _, cluster in ipairs(clusters) do
+		stats.slots = stats.slots + cluster.capacity
+		if cluster.held >= cluster.capacity then
+			stats.already_filled = stats.already_filled + math.min(cluster.held, cluster.capacity)
+		else
+			-- The nearest whole-map top-up that is not already part of a cluster.
+			local source, source_distance
+			for _, item in ipairs(anomalies) do
+				if not item.cluster and item.marker.SuperBigMapAnomalyTopUp == true
+					and not item.marker.placed_obj then
+					local distance = AxialHexDistance(item.q, item.r, cluster.q, cluster.r)
+					if distance and (not source_distance or distance < source_distance) then
+						source, source_distance = item, distance
+					end
+				end
+			end
+			local target
+			-- Only enrichments that can be within the required clearance of a cluster hex matter.
+			local nearby = {}
+			local reach = radius + math.max(OASIS_ANOMALY_MIN_HEX_DISTANCE, minimum_enrichment)
+			for _, other in ipairs(enrichments) do
+				local distance = AxialHexDistance(other.q, other.r, cluster.q, cluster.r)
+				if distance and distance <= reach then nearby[#nearby + 1] = other end
+			end
+			if source then
+				local order = {}
+				for i = 1, #offsets do order[i] = i end
+				for i = #order, 2, -1 do
+					local j = RandInt(i) + 1
+					order[i], order[j] = order[j], order[i]
+				end
+				for _, offset_index in ipairs(order) do
+					local offset = offsets[offset_index]
+					local q, r = cluster.q + offset.dq, cluster.r + offset.dr
+					local clear = true
+					for _, other in ipairs(nearby) do
+						if other.marker ~= source.marker then
+							local distance = AxialHexDistance(q, r, other.q, other.r)
+							local required = IsAnomalyMarker(other.marker)
+								and OASIS_ANOMALY_MIN_HEX_DISTANCE or minimum_enrichment
+							if distance and distance < required then clear = false; break end
+						end
+					end
+					if clear then
+						local ok_world, x, y = pcall(hex_to_world, q, r)
+						if ok_world and type(x) == "number" and type(y) == "number" then
+							local pt = point_fn(x, y)
+							local can_receive = CanReceiveDeposit(map, pt, validation_context, false)
+							local sector = can_receive and SectorAtPoint(map, x, y) or nil
+							if sector and type(sector.RegisterDeposit) == "function" then
+								target = { q = q, r = r, x = x, y = y, pt = pt, sector = sector }
+								break
+							end
+						end
+					end
+				end
+			end
+			if not target then
+				stats.unfilled = stats.unfilled + 1
+			else
+				local marker = source.marker
+				local old_sector = SectorAtPoint(map, ObjectPos(marker):xy())
+				if old_sector and type(old_sector.UnregisterDeposit) == "function" then
+					pcall(old_sector.UnregisterDeposit, old_sector, marker)
+				else
+					UnregisterNativeMarker(map, marker)
+				end
+				local pt = target.pt
+				if type(pt.SetTerrainZ) == "function" then
+					local ok_z, snapped = pcall(pt.SetTerrainZ, pt, map)
+					if ok_z and snapped then pt = snapped end
+				end
+				local move_ok, move_error = pcall(marker.SetPos, marker, pt)
+				if not move_ok then
+					stats.error = "oasis anomaly SetPos failed: " .. tostring(move_error)
+					return false, stats
+				end
+				local register_ok, register_error = pcall(target.sector.RegisterDeposit, target.sector, marker)
+				if not register_ok then
+					stats.error = "oasis anomaly sector registration failed: " .. tostring(register_error)
+					return false, stats
+				end
+				marker.is_placed = false
+				marker.placed_obj = false
+				SetRevealedState(marker, false)
+				if SectorIsScanned(target.sector) then
+					local reveal = Global("RevealDeposits")
+					if type(reveal) ~= "function" then
+						stats.error = "RevealDeposits unavailable for scanned oasis sector"
+						return false, stats
+					end
+					local reveal_ok, reveal_error = pcall(reveal, { marker })
+					if not reveal_ok then
+						stats.error = "oasis anomaly reveal failed: " .. tostring(reveal_error)
+						return false, stats
+					end
+				end
+				marker.SuperBigMapEdgeRedistributed = true
+				marker.SuperBigMapOuterRingRedistributed = true
+				marker.SuperBigMapOasisClusterAnomaly = true
+				marker.SuperBigMapResourceClusterIndex = cluster.index
+				source.q, source.r, source.cluster = target.q, target.r, cluster
+				for _, other in ipairs(enrichments) do
+					if other.marker == marker then other.q, other.r = target.q, target.r end
+				end
+				cluster.held = cluster.held + 1
+				stats.moved = stats.moved + 1
+			end
+		end
+	end
+	return true, stats
+end
+
 function DepositRules.TopUpAnomalies(map)
 	if cfg().TOPUP_ANOMALIES ~= true then return end
 	if not ExpansionAdditionStagesReady("anomaly top-up") then return end
@@ -6262,8 +6521,18 @@ function DepositRules.TopUpAnomalies(map)
 	-- This is a live-sector policy, not a coordinate or scenario exception.
 	local ring_sectors = math.max(0, math.floor(cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 2))
 	local surface_edge_ring = not IsUndergroundMap(map) and ring_sectors > 0
-	local redistribution_stats
+	local redistribution_stats, oasis_stats
+	local function fill_oasis_clusters()
+		if IsUndergroundMap(map) or surface_edge_ring then return end
+		local fill_ok, fill_error = RunPaused("SuperBigMapOasisClusterAnomalies", function()
+			local ok, fill_stats = FillOasisClusterAnomalies(map)
+			oasis_stats = fill_stats
+			if not ok then error(fill_stats and fill_stats.error or "unknown oasis anomaly failure") end
+		end)
+		if not fill_ok then error("oasis cluster anomaly placement failed: " .. tostring(fill_error)) end
+	end
 	if shortfall <= 0 or #templates == 0 then
+		fill_oasis_clusters()
 		if surface_edge_ring then
 			local redistribution_ok, redistribution_error = RunPaused(
 				"SuperBigMapOuterRingAnomalyRedistribution", function()
@@ -6283,6 +6552,9 @@ function DepositRules.TopUpAnomalies(map)
 			outer_ring_placed = redistribution_stats and redistribution_stats.outer_planned or 0,
 			inner_ring_fallback = redistribution_stats and redistribution_stats.inner_fallback or 0,
 			outer_ring_sector_count = redistribution_stats and redistribution_stats.ring_sectors or 0,
+			oasis_cluster_slots = oasis_stats and oasis_stats.slots or 0,
+			oasis_cluster_moved = oasis_stats and oasis_stats.moved or 0,
+			oasis_cluster_unfilled = oasis_stats and oasis_stats.unfilled or 0,
 		})
 		return
 	end
@@ -6688,13 +6960,45 @@ function DepositRules.TopUpAnomalies(map)
 			}
 		end
 		rebuild_surface_candidate_preference()
+		-- Oasis clusters (owner ruling 2026-09-26): whole-map anomaly top-ups keep out of every
+		-- outer resource cluster, so the only anomaly in a cluster is the one FillOasisClusterAnomalies
+		-- moves there and no cluster shows the anomaly badge twice.
+		local oasis_cluster_centers = {}
+		if not underground and not surface_edge_ring then
+			for _, pad in ipairs(type(map.SuperBigMapOuterResourceRocketPads) == "table"
+				and map.SuperBigMapOuterResourceRocketPads or {}) do
+				local cq, cr = pad.cluster_q or pad.q, pad.cluster_r or pad.r
+				if type(cq) == "number" and type(cr) == "number" then
+					oasis_cluster_centers[#oasis_cluster_centers + 1] = { q = cq, r = cr }
+				end
+			end
+		end
+		local oasis_cluster_radius = math.max(1, math.floor(cfg().OUTER_RESOURCE_CLUSTER_RADIUS_HEXES or 12))
+		local function outside_oasis_clusters(candidate)
+			if #oasis_cluster_centers == 0 then return true end
+			local q, r = candidate.q, candidate.r
+			if type(q) ~= "number" or type(r) ~= "number" then
+				local world_to_hex, point_fn = Global("WorldToHex"), Global("point")
+				if type(world_to_hex) ~= "function" or type(point_fn) ~= "function" then return false end
+				local ok
+				ok, q, r = pcall(world_to_hex, point_fn(candidate.x, candidate.y))
+				if not ok or type(q) ~= "number" or type(r) ~= "number" then return false end
+			end
+			for _, center in ipairs(oasis_cluster_centers) do
+				local distance = AxialHexDistance(q, r, center.q, center.r)
+				if distance and distance <= oasis_cluster_radius then return false end
+			end
+			return true
+		end
 		-- Both surface and underground extras use the shared capacity-normalized whole-map selector.
 		local function new_whole_map_selector(label, selector_candidates)
 			selector_candidates = selector_candidates or candidates
 			return not surface_edge_ring
 				and NewSectorBalancedCandidateSelector(map, selector_candidates,
 					label or (underground and "underground anomalies" or "surface anomalies"),
-					function(candidate, profile) return repulsion.CanPlace(candidate, profile) end) or nil
+					function(candidate, profile)
+						return outside_oasis_clusters(candidate) and repulsion.CanPlace(candidate, profile)
+					end) or nil
 		end
 		local mountain_base_selector = not underground and #mountain_base_surface_candidates > 0
 			and new_whole_map_selector("surface anomaly mountain-base quota",
@@ -7152,6 +7456,7 @@ function DepositRules.TopUpAnomalies(map)
 		surface_mountain_base_quota_shortfall = math.max(0,
 			surface_mountain_base_target - surface_mountain_base_added)
 	end
+	fill_oasis_clusters()
 	local final_by_kind, remaining_shortfall = {}, 0
 	pcall(map.MapForEach, map, "map", "SubsurfaceAnomalyMarker", function(marker)
 		if not marker then return end
@@ -7227,6 +7532,9 @@ function DepositRules.TopUpAnomalies(map)
 		outer_ring_placed = redistribution_stats and redistribution_stats.outer_planned or 0,
 		inner_ring_fallback = redistribution_stats and redistribution_stats.inner_fallback or 0,
 		outer_ring_sector_count = redistribution_stats and redistribution_stats.ring_sectors or 0,
+		oasis_cluster_slots = oasis_stats and oasis_stats.slots or 0,
+		oasis_cluster_moved = oasis_stats and oasis_stats.moved or 0,
+		oasis_cluster_unfilled = oasis_stats and oasis_stats.unfilled or 0,
 		candidate_pool_size = candidate_pool_size,
 		candidate_samples = candidate_samples_total,
 		sequential_placement = sequential_underground,
@@ -8287,6 +8595,7 @@ function DepositRules.TopUpEffectDeposits(map)
 	local reachability_checks, reachability_rejections = 0, 0
 	local wall_free_density_suite = underground
 		and rubble_wall_suite_token_by_map[map] ~= nil
+	local oasis_bonus_placed, oasis_bonus_unfilled, oasis_bonus_by_type = 0, 0, {}
 	RunPaused("SuperBigMapEffectDepositTopUp", function()
 		local repulsion = NewTopUpRepulsionTracker(map, "effects")
 		local candidates, mountain_pad_candidates, mountain_pad_hexes = {}, {}, {}
@@ -8454,6 +8763,144 @@ function DepositRules.TopUpEffectDeposits(map)
 			end
 			return true
 		end
+		-- Owner ruling 2026-09-26, "oasis" clusters: clusters planned with a dome bonus receive one
+		-- vista or research site inside the cluster, from this same top-up budget (totals do not
+		-- change). It must be a valid, unscanned deposit hex clear of every enrichment by the minimum
+		-- clearance, and keep vanilla effect repulsion from everything except its own cluster's
+		-- members, which are exempt from vanilla repulsion like the cluster deposits.
+		if not underground then
+			local world_to_hex, hex_to_world = Global("WorldToHex"), Global("HexToWorld")
+			local radius = math.max(1, math.floor(cfg().OUTER_RESOURCE_CLUSTER_RADIUS_HEXES or 12))
+			local minimum_enrichment = TopUpEnrichmentMinimumHexDistance()
+			local bonus_types = {}
+			for _, deposit_type in ipairs(cfg().OUTER_RESOURCE_CLUSTER_DOME_BONUS_TYPES or {}) do
+				if templates_by_type[deposit_type] and #templates_by_type[deposit_type] > 0 then
+					bonus_types[#bonus_types + 1] = deposit_type
+				end
+			end
+			local enrichments = {}
+			local function hex_of(obj)
+				local pos = obj and ObjectPos(obj)
+				if not (pos and type(pos.xy) == "function") or type(world_to_hex) ~= "function" then return nil end
+				local ok, q, r = pcall(world_to_hex, pos)
+				if ok and type(q) == "number" and type(r) == "number" then return q, r end
+				return nil
+			end
+			for _, class in ipairs({ "SubsurfaceDepositMarker", "SurfaceDepositMarker", "TerrainDepositMarker",
+				"EffectDepositMarker", "SubsurfaceAnomalyMarker" }) do
+				pcall(map.MapForEach, map, "map", class, function(marker)
+					local q, r = hex_of(marker)
+					if q then enrichments[#enrichments + 1] = { marker = marker, q = q, r = r } end
+				end)
+			end
+			local offsets = DepositRules.BuildDirectSeededClusterOffsets(radius)
+			for pad_index, pad in ipairs(type(map.SuperBigMapOuterResourceRocketPads) == "table"
+				and map.SuperBigMapOuterResourceRocketPads or {}) do
+				local cq, cr = pad.cluster_q or pad.q, pad.cluster_r or pad.r
+				if pad.dome_bonus == true and type(cq) == "number" and type(cr) == "number"
+					and type(hex_to_world) == "function" and #bonus_types > 0 then
+					local deposit_type
+					local best_use, best_tie
+					for _, candidate_type in ipairs(bonus_types) do
+						local remaining = (target_by_type[candidate_type] or 0)
+							- (current_by_type[candidate_type] or 0) - (added_by_type[candidate_type] or 0)
+						if remaining > 0 then
+							local use, tie = oasis_bonus_by_type[candidate_type] or 0, RandInt(1000000)
+							if not best_use or use < best_use or (use == best_use and tie < best_tie) then
+								deposit_type, best_use, best_tie = candidate_type, use, tie
+							end
+						end
+					end
+					local ignored, nearby = {}, {}
+					local reach = radius + minimum_enrichment
+					for _, other in ipairs(enrichments) do
+						local distance = AxialHexDistance(other.q, other.r, cq, cr)
+						if distance and distance <= reach then
+							nearby[#nearby + 1] = other
+							if distance <= radius and (other.marker.SuperBigMapOuterRingResourceQuotaTopUp == true
+								or other.marker.SuperBigMapOasisClusterAnomaly == true) then
+								ignored[other.marker] = true
+							end
+						end
+					end
+					local chosen
+					if deposit_type then
+						local bonus_repulsion = NewTopUpRepulsionTracker(map, "oasis dome bonus", ignored)
+						local order = {}
+						for i = 1, #offsets do order[i] = i end
+						for i = #order, 2, -1 do
+							local j = RandInt(i) + 1
+							order[i], order[j] = order[j], order[i]
+						end
+						for _, offset_index in ipairs(order) do
+							local q, r = cq + offsets[offset_index].dq, cr + offsets[offset_index].dr
+							local clear = true
+							for _, other in ipairs(nearby) do
+								local distance = AxialHexDistance(q, r, other.q, other.r)
+								if distance and distance < minimum_enrichment then clear = false; break end
+							end
+							if clear then
+								local ok_world, x, y = pcall(hex_to_world, q, r)
+								if ok_world and type(x) == "number" and type(y) == "number" then
+									local pt = point(x, y)
+									local sector = SectorAtPoint(map, x, y)
+									if sector and not SectorIsScanned(sector)
+										and CanReceiveDeposit(map, pt, validation_context, false) then
+										local key = tostring(q) .. ":" .. tostring(r)
+										local candidate = {
+											x = x, y = y, q = q, r = r, sector = sector, sector_id = sector.id,
+											terrain_type = TerrainTypeAt(map, pt, validation_context) or -1,
+											_sbm_terrain_valid = true, _sbm_repulsion_hex = key,
+										}
+										if bonus_repulsion.CanPlace(candidate, effect_profile) then
+											chosen = candidate
+											break
+										end
+									end
+								end
+							end
+						end
+					end
+					local templates = deposit_type and templates_by_type[deposit_type]
+					local template = chosen and templates[RandInt(#templates) + 1]
+					local tpos = template and ObjectPos(template)
+					local clone
+					if tpos and type(tpos.xy) == "function" then
+						local tx, ty = tpos:xy()
+						clone = clone_fn(map, template, point(chosen.x - tx, chosen.y - ty, 0))
+					end
+					if clone and type(clone) == "table" then
+						clone.SuperBigMapEffectTopUp = true
+						clone.SuperBigMapEffectTopUpType = deposit_type
+						clone.SuperBigMapClusterDomeBonus = true
+						clone.SuperBigMapResourceClusterIndex = pad_index
+						added_by_type[deposit_type] = (added_by_type[deposit_type] or 0) + 1
+						oasis_bonus_by_type[deposit_type] = (oasis_bonus_by_type[deposit_type] or 0) + 1
+						oasis_bonus_placed = oasis_bonus_placed + 1
+						if type(clone.SetPos) == "function" then
+							local pt = point(chosen.x, chosen.y)
+							if type(pt.SetTerrainZ) == "function" then
+								local ok, snapped = pcall(pt.SetTerrainZ, pt, map)
+								if ok and snapped then pt = snapped end
+							end
+							pcall(clone.SetPos, clone, pt)
+						end
+						repulsion.Commit(chosen, effect_profile, clone)
+						clone.is_placed = false
+						clone.placed_obj = false
+						SetRevealedState(clone, false)
+						if type(chosen.sector.RegisterDeposit) == "function" then
+							pcall(chosen.sector.RegisterDeposit, chosen.sector, clone)
+						end
+						enrichments[#enrichments + 1] = { marker = clone, q = chosen.q, r = chosen.r }
+						pad.SuperBigMapClusterEffectTopUps = math.max(0,
+							math.floor(tonumber(pad.SuperBigMapClusterEffectTopUps) or 0)) + 1
+					else
+						oasis_bonus_unfilled = oasis_bonus_unfilled + 1
+					end
+				end
+			end
+		end
 		for _, deposit_type in ipairs(types) do
 			local templates = templates_by_type[deposit_type]
 			local shortfall = math.max(0,
@@ -8607,6 +9054,9 @@ function DepositRules.TopUpEffectDeposits(map)
 		area_factor = area_factor, source_counts = CountMapString(source_by_type),
 		target_counts = CountMapString(target_by_type), final_counts = CountMapString(final_by_type),
 		added_counts = CountMapString(added_by_type),
+		oasis_dome_bonus_placed = oasis_bonus_placed,
+		oasis_dome_bonus_unfilled = oasis_bonus_unfilled,
+		oasis_dome_bonus_types = CountMapString(oasis_bonus_by_type),
 		underground_density_fallback_added = density_fallback_added,
 		underground_fallback_strategy = fallback_selector_stats and fallback_selector_stats.strategy or "none",
 		underground_fallback_eligible_sectors = fallback_selector_stats
@@ -8794,9 +9244,12 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 			and marker.SuperBigMapUndergroundDensityFallback == true
 		local well_spaced_fallback = density_fallback
 			and marker.SuperBigMapUndergroundWellSpacedFallback == true
+		-- An oasis cluster's dome bonus is a planned cluster member like its deposits (owner ruling
+		-- 2026-09-26); its placement already kept vanilla effect repulsion from non-members.
 		local surface_quota_resource = not underground
-			and marker.SuperBigMapResourceTopUp == true
-			and marker.SuperBigMapOuterRingResourceQuotaTopUp == true
+			and (marker.SuperBigMapResourceTopUp == true
+				and marker.SuperBigMapOuterRingResourceQuotaTopUp == true
+				or marker.SuperBigMapClusterDomeBonus == true)
 		local profile = VanillaRepulsionProfileForMarker(map, marker)
 		if topup and not outer_ring_topup and not profile then
 			stats.missing_topup_profiles = stats.missing_topup_profiles + 1
@@ -9202,6 +9655,9 @@ function DepositRules.CensusFinalOuterResourceTopUps(map, phase, require_placed)
 		math.floor(cfg().OUTER_RESOURCE_CLUSTER_MAXIMUM_TOTAL_MEMBERS or 5))
 	local anomaly_resource_clusters, anomaly_cluster_counts, effect_cluster_counts = {}, {}, {}
 	local resource_cluster_index_by_pad = {}
+	-- Owner ruling 2026-09-26: anomaly top-ups are whole-map again; only a configured anomaly ring
+	-- makes an anomaly outside it a violation.
+	local anomaly_ring_rule = math.floor(cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 0) > 0
 	for _, pad in ipairs(type(map.SuperBigMapOuterResourceRocketPads) == "table"
 		and map.SuperBigMapOuterResourceRocketPads or {}) do
 		local q, r = pad.cluster_q or pad.q, pad.cluster_r or pad.r
@@ -9249,7 +9705,7 @@ function DepositRules.CensusFinalOuterResourceTopUps(map, phase, require_placed)
 					end
 				end
 			end
-		else
+		elseif anomaly_ring_rule then
 			stats.anomaly_topups_outside_ring = stats.anomaly_topups_outside_ring + 1
 		end
 	end)
@@ -9268,11 +9724,75 @@ function DepositRules.CensusFinalOuterResourceTopUps(map, phase, require_placed)
 				local pad = VerifiedMountainRocketPadAt(map, x, y)
 				local index = resource_cluster_index_by_pad[pad]
 				if index then effect_cluster_counts[index] = (effect_cluster_counts[index] or 0) + 1 end
+			elseif marker.SuperBigMapClusterDomeBonus == true
+				and type(marker.SuperBigMapResourceClusterIndex) == "number" then
+				stats.oasis_dome_bonus_topups = (stats.oasis_dome_bonus_topups or 0) + 1
+				local pads = map.SuperBigMapOuterResourceRocketPads or {}
+				local index = resource_cluster_index_by_pad[pads[marker.SuperBigMapResourceClusterIndex]]
+				if index then effect_cluster_counts[index] = (effect_cluster_counts[index] or 0) + 1 end
 			else
 				stats.unverified_outer_effect_topups = stats.unverified_outer_effect_topups + 1
 			end
 		end
 	end)
+	-- Owner ruling 2026-09-26, "oasis" clusters: no badge repeats among a cluster's members (its
+	-- planned deposits, its anomaly and its dome bonus). Other top-ups that land inside a cluster
+	-- area are reported separately.
+	do
+		local pads = type(map.SuperBigMapOuterResourceRocketPads) == "table"
+			and map.SuperBigMapOuterResourceRocketPads or {}
+		local pad_by_plan, badges_by_pad = {}, {}
+		for index, pad in ipairs(pads) do
+			if pad.cluster_plan ~= nil then pad_by_plan[tonumber(pad.cluster_plan)] = index end
+		end
+		local function add_badge(index, marker)
+			if not index then return end
+			local badges = badges_by_pad[index]
+			if not badges then badges = {}; badges_by_pad[index] = badges end
+			local key = DepositRules.ClusterBadgeKey(marker)
+			if key then badges[key] = (badges[key] or 0) + 1 end
+		end
+		local intruders = 0
+		local function in_cluster_area(marker)
+			local pos = ObjectPos(marker)
+			if not (pos and type(world_to_hex) == "function") then return false end
+			local ok, q, r = pcall(world_to_hex, pos)
+			if not ok or type(q) ~= "number" then return false end
+			for _, cluster in ipairs(anomaly_resource_clusters) do
+				local distance = AxialHexDistance(q, r, cluster.q, cluster.r)
+				if distance and distance <= anomaly_cluster_radius then return true end
+			end
+			return false
+		end
+		for _, class in ipairs({ "SubsurfaceDepositMarker", "SurfaceDepositMarker", "TerrainDepositMarker",
+			"SubsurfaceAnomalyMarker", "EffectDepositMarker" }) do
+			pcall(map.MapForEach, map, "map", class, function(marker)
+				local plan = tonumber(marker.SuperBigMapResourceClusterPlan)
+				if marker.SuperBigMapResourceTopUp == true and plan and pad_by_plan[plan] then
+					add_badge(pad_by_plan[plan], marker)
+				elseif (marker.SuperBigMapOasisClusterAnomaly == true or marker.SuperBigMapClusterDomeBonus == true)
+					and type(marker.SuperBigMapResourceClusterIndex) == "number" then
+					add_badge(marker.SuperBigMapResourceClusterIndex, marker)
+				elseif (marker.SuperBigMapResourceTopUp == true or marker.SuperBigMapAnomalyTopUp == true
+					or marker.SuperBigMapEffectTopUp == true) and in_cluster_area(marker) then
+					intruders = intruders + 1
+				end
+			end)
+		end
+		local repeats, compositions = 0, {}
+		for index = 1, #pads do
+			local badges, keys = badges_by_pad[index] or {}, {}
+			for key, count in pairs(badges) do
+				keys[#keys + 1] = count > 1 and (key .. "x" .. tostring(count)) or key
+				repeats = repeats + math.max(0, count - 1)
+			end
+			table.sort(keys)
+			compositions[#compositions + 1] = tostring(index) .. ":" .. table.concat(keys, "+")
+		end
+		stats.cluster_badge_repeats = repeats
+		stats.cluster_area_intruders = intruders
+		stats.cluster_compositions = table.concat(compositions, " ")
+	end
 	for index, cluster in ipairs(anomaly_resource_clusters) do
 		local total = cluster.resource_members + (anomaly_cluster_counts[index] or 0)
 			+ (effect_cluster_counts[index] or 0)
@@ -9322,6 +9842,9 @@ function DepositRules.CensusFinalOuterResourceTopUps(map, phase, require_placed)
 			.. " anomaly_topups_total=" .. tostring(stats.anomaly_topups_total)
 			.. " anomaly_topups_placed=" .. tostring(stats.anomaly_topups_placed)
 			.. " anomaly_topups_outside_ring=" .. tostring(stats.anomaly_topups_outside_ring)
+			.. " cluster_badge_repeats=" .. tostring(stats.cluster_badge_repeats)
+			.. " cluster_area_intruders=" .. tostring(stats.cluster_area_intruders)
+			.. " cluster_compositions=" .. tostring(stats.cluster_compositions)
 			.. " maximum_anomalies_in_resource_cluster="
 			.. tostring(stats.maximum_anomalies_in_resource_cluster)
 			.. " anomaly_resource_cluster_overflow="
@@ -9355,6 +9878,7 @@ function DepositRules.CensusFinalOuterResourceTopUps(map, phase, require_placed)
 		and stats.anomaly_resource_cluster_overflow == 0
 		and stats.cluster_total_member_overflow == 0
 		and stats.unverified_outer_effect_topups == 0
+		and (stats.cluster_badge_repeats or 0) == 0
 		and (not stats.require_placed or stats.anomaly_unplaced == 0), stats
 end
 
@@ -9511,6 +10035,9 @@ function DepositRules.AuditSurfaceTopUpPlacement(map)
 		local verified_mountain_pad_effect = family == "effect"
 			and marker.SuperBigMapMountainRocketPadEffectTopUp == true
 			and has_position and VerifiedMountainRocketPadAt(map, x, y) ~= nil or false
+		-- Owner ruling 2026-09-26: an oasis cluster's dome bonus is a planned cluster member.
+		local oasis_dome_bonus = family == "effect" and marker.SuperBigMapClusterDomeBonus == true
+			and type(marker.SuperBigMapResourceClusterIndex) == "number" or false
 		local inner_fallback = family == "anomaly"
 			and marker.SuperBigMapInnerRingFallback == true
 		local reachable = has_position and PassableAt(map, pt, validation_context) or false
@@ -9596,6 +10123,14 @@ function DepositRules.AuditSurfaceTopUpPlacement(map)
 					effect_resource_cluster_counts[index] =
 						(effect_resource_cluster_counts[index] or 0) + 1
 				end
+			elseif oasis_dome_bonus then
+				stats.effect_oasis_dome_bonus = (stats.effect_oasis_dome_bonus or 0) + 1
+				local pads = map.SuperBigMapOuterResourceRocketPads or {}
+				local index = resource_cluster_index_by_pad[pads[marker.SuperBigMapResourceClusterIndex]]
+				if index then
+					effect_resource_cluster_counts[index] =
+						(effect_resource_cluster_counts[index] or 0) + 1
+				end
 			else
 				stats.effect_unverified_outer = stats.effect_unverified_outer + 1
 			end
@@ -9628,7 +10163,7 @@ function DepositRules.AuditSurfaceTopUpPlacement(map)
 			stats.anomaly_outside_ring = stats.anomaly_outside_ring + 1
 			violation = "anomaly_topup_outside_final_ring"
 		elseif family == "effect" and in_effect_exclusion_ring
-			and not verified_mountain_pad_effect then
+			and not verified_mountain_pad_effect and not oasis_dome_bonus then
 			violation = "dome_effect_topup_inside_excluded_outer_ring"
 		elseif reserved_mountain_base and not in_ring then
 			violation = "mountain_base_resource_topup_outside_final_ring"

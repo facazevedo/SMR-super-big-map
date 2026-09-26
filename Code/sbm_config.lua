@@ -253,9 +253,11 @@ config.TopUpSectorBalancedPlacement = true
 -- every fallback marker a meaningful distance from every other enrichment. Candidate sampling
 -- continues until this hard axial-hex clearance is met; it never drops to adjacent unique hexes.
 config.UndergroundFallbackMinimumHexDistance = 6
--- Surface anomaly density additions use the final physical perimeter. The placement code derives
--- that band from the live final sector geometry; this value is only its general width.
-config.TopUpAnomalyOuterRingSectors = 2
+-- Width of the perimeter band that surface anomaly top-ups were once confined to (2026-08-23).
+-- Owner ruling 2026-09-26: 0, so anomaly top-ups use the whole-map, sector-balanced placement of
+-- the deposit top-ups with vanilla repulsion; one per "oasis" cluster slot is then moved into its
+-- cluster (OuterResourceClusterAnomalyPercent).
+config.TopUpAnomalyOuterRingSectors = 0
 config.TopUpAnomalyLowAreaPercent = 35
 -- Emphasize mountain bases in the added population rather than treating them as a rare tie-breaker.
 -- This percentage of each surface anomaly shortfall is selected first from strict flat/buildable
@@ -338,7 +340,16 @@ config.OuterResourceClusterRadiusHexes = 12
 -- must cover the cluster maximum.
 config.OuterResourceClusterMinimumCount = 8
 config.OuterResourceClusterMaximumCount = 12
-config.OuterResourceClusterMaximumAnomalies = 3
+-- Owner ruling 2026-09-26: every cluster is an "oasis" of varied rewards. No badge repeats inside
+-- a cluster (each resource kind, the anomaly and the dome bonus appear at most once), so a cluster
+-- holds at most one anomaly. This share of clusters gets one; the rest of the anomaly top-ups use
+-- the whole-map, sector-balanced placement of the deposit top-ups (TopUpAnomalyOuterRingSectors=0).
+config.OuterResourceClusterMaximumAnomalies = 1
+config.OuterResourceClusterAnomalyPercent = 75
+-- This share of clusters also gets one dome bonus (vista or research site) from the dome-effect
+-- top-up budget, placed inside the cluster so players are drawn to build a dome there.
+config.OuterResourceClusterDomeBonusPercent = 33
+config.OuterResourceClusterDomeBonusTypes = { "BeautyEffectDeposit", "ResearchEffectDeposit" }
 config.OuterResourceRocketPadExtraFeatherHexes = 6
 config.OuterResourceRocketPadMaximumCount = 12
 -- A dome-effect top-up may enter the otherwise excluded perimeter only at a newly modified,
@@ -988,7 +999,13 @@ C.OUTER_RESOURCE_CLUSTER_MAXIMUM_COUNT = math.max(
 	C.OUTER_RESOURCE_CLUSTER_MINIMUM_COUNT,
 	math.floor(as_number(config.OuterResourceClusterMaximumCount, 12)))
 C.OUTER_RESOURCE_CLUSTER_MAXIMUM_ANOMALIES = math.max(0,
-	math.floor(as_number(config.OuterResourceClusterMaximumAnomalies, 3)))
+	math.floor(as_number(config.OuterResourceClusterMaximumAnomalies, 1)))
+C.OUTER_RESOURCE_CLUSTER_ANOMALY_PERCENT = math.max(0, math.min(100,
+	math.floor(as_number(config.OuterResourceClusterAnomalyPercent, 75))))
+C.OUTER_RESOURCE_CLUSTER_DOME_BONUS_PERCENT = math.max(0, math.min(100,
+	math.floor(as_number(config.OuterResourceClusterDomeBonusPercent, 33))))
+C.OUTER_RESOURCE_CLUSTER_DOME_BONUS_TYPES = type(config.OuterResourceClusterDomeBonusTypes) == "table"
+	and config.OuterResourceClusterDomeBonusTypes or { "BeautyEffectDeposit", "ResearchEffectDeposit" }
 C.OUTER_RESOURCE_ROCKET_PAD_EXTRA_FEATHER_HEXES = math.max(3,
 	as_number(config.OuterResourceRocketPadExtraFeatherHexes, 6))
 -- One pad per cluster: the pad ceiling can never sit below the cluster ceiling.

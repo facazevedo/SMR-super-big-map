@@ -3053,6 +3053,7 @@ local function PrepareOuterResourceTerrain(map)
 				marker.SuperBigMapResourceClusterAnomalyCapacity),
 			cluster_reward_capacity = tonumber(
 				marker.SuperBigMapResourceClusterRewardCapacity),
+			cluster_dome_bonus = marker.SuperBigMapResourceClusterDomeBonus == true,
 			cluster_anchor = marker.SuperBigMapResourceClusterAnchor == true,
 			cluster_premium = marker.SuperBigMapResourceClusterPremium == true,
 		}
@@ -3505,6 +3506,7 @@ local function PrepareOuterResourceTerrain(map)
 					resource_target = entry.cluster_resource_target,
 					extractor_target = entry.cluster_extractor_target,
 					anomaly_capacity = entry.cluster_anomaly_capacity,
+					dome_bonus = entry.cluster_dome_bonus == true,
 					reward_capacity = entry.cluster_reward_capacity,
 					anchors = 0, premiums = 0,
 				}
@@ -3574,6 +3576,7 @@ local function PrepareOuterResourceTerrain(map)
 					best.resource_target = group.resource_target
 					best.extractor_target = group.extractor_target
 					best.anomaly_capacity = group.anomaly_capacity
+					best.dome_bonus = group.dome_bonus == true
 					best.reward_capacity = group.reward_capacity
 					best.anchor_members = group.anchors
 					best.premium_members = group.premiums
@@ -4855,8 +4858,10 @@ local function AuditOuterResourceTerrain(map)
 			+ math.max(0, cluster_extractor_minimum - count)
 		cluster_extractor_excess = cluster_extractor_excess
 			+ math.max(0, count - cluster_extractor_maximum)
+		-- Oasis clusters (owner ruling 2026-09-26): a surface badge that has run out is replaced by
+		-- a distinct extractor badge, so extractors may exceed their target up to the cap above.
 		if resources ~= math.max(0, math.floor(tonumber(site.resource_target) or -1))
-			or count ~= math.max(0, math.floor(tonumber(site.extractor_target) or -1)) then
+			or count < math.max(0, math.floor(tonumber(site.extractor_target) or -1)) then
 			cluster_weighted_composition_failures = cluster_weighted_composition_failures + 1
 		end
 		if math.max(0, math.floor(tonumber(site.anchor_members) or 0)) ~= 1 then

@@ -12374,6 +12374,10 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 									.. tostring(quota_stats and quota_stats.anomaly_topups_total)
 									.. " anomaly_topups_outside_ring="
 									.. tostring(quota_stats and quota_stats.anomaly_topups_outside_ring)
+									.. " cluster_badge_repeats="
+									.. tostring(quota_stats and quota_stats.cluster_badge_repeats)
+									.. " cluster_compositions="
+									.. tostring(quota_stats and quota_stats.cluster_compositions)
 									.. " effect_topups=" .. tostring(quota_stats and quota_stats.effect_topups)
 									.. " native_resources=" .. tostring(quota_stats and quota_stats.native_resources)
 									.. " shortfall=" .. tostring(quota_stats and quota_stats.shortfall)

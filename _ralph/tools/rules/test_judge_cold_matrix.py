@@ -83,7 +83,7 @@ class EvidenceJudgeTests(unittest.TestCase):
                  'ring_plan_placed_clusters': 8, 'ring_plan_desired_clusters': 10,
                  'ring_plan_cluster_count_stream': 'deposits:1:seed=123',
                  'full_map_playable': True, 'enrichment_in_ring': 1,
-                 'apron_report': 'error= ring_sectors=2'}
+                 'apron_report': 'error= ring_sectors=2', 'ring_cluster_badge_repeats': '0'}
         audit = dict.fromkeys(('resource_failures', 'rocket_failures', 'cluster_anchor_failures',
                               'cluster_shortfall', 'cluster_excess', 'cluster_premium_excess',
                               'cluster_extractor_shortfall', 'cluster_extractor_excess',
@@ -97,7 +97,9 @@ class EvidenceJudgeTests(unittest.TestCase):
         for field, value in (('ring_audit_resource_clusters', 7), ('ring_audit_resource_clusters', 13),
                              ('ring_audit_rocket_pads', 9), ('ring_plan_placed_clusters', 9),
                              ('ring_plan_desired_clusters', 7), ('ring_plan_desired_clusters', 13),
-                             ('ring_plan_desired_clusters', None), ('ring_plan_cluster_count_stream', 'engine')):
+                             ('ring_plan_desired_clusters', None), ('ring_plan_cluster_count_stream', 'engine'),
+                             ('ring_cluster_badge_repeats', '1'), ('ring_cluster_badge_repeats', None),
+                             ('ring_cluster_badge_repeats', 'no outer resource census on map')):
             with self.subTest(field=field, value=value):
                 changed = dict(rules, **{field: value})
                 self.assertEqual(judge_run(run(changed, snapshot=snapshot))['ring-content']['verdict'], 'fail')
