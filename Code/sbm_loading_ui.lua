@@ -27,6 +27,30 @@ local function WelcomeDialog()
 	return nil
 end
 
+-- Hiding a dialog hands its modality and keyboard focus to other windows
+-- (XWindow:SetVisibleInstant(false) -> RestoreModalWindow / RestoreFocus), and showing it again
+-- restores neither. A mouse still reaches the popup's button, but gamepad shortcuts are routed
+-- through the modal window's keyboard-focus chain, so the re-shown welcome popup ignored A
+-- (owner report 2026-09-27 on Xbox: "Welcome to Mars, Commander!" could not be closed). Give
+-- the dialog back exactly what XDialog:Open gave it. Both calls respect a window genuinely on top:
+-- SetModalWindow requires the dialog to be on top of the current modal window, and
+-- SetKeyboardFocus ignores a window outside the current modal one.
+local function RestoreDialogInput(dlg)
+	if not dlg or dlg.window_state == "destroying" or dlg.window_state == "destroyed" then
+		return false
+	end
+	if dlg.IsModal and type(dlg.SetModal) == "function" then
+		pcall(dlg.SetModal, dlg, dlg.IsModal)
+	end
+	if type(dlg.SetFocus_OnOpen) == "function" then
+		pcall(dlg.SetFocus_OnOpen, dlg, dlg.FocusOnOpen)
+	elseif type(dlg.SetFocus) == "function" then
+		pcall(dlg.SetFocus, dlg)
+	end
+	return true
+end
+SuperBigMap.RestoreDialogInput = RestoreDialogInput
+
 local function ShowMessageOverWelcome(title, text)
 	local create_thread = Global("CreateRealTimeThread")
 	local create_box = Global("CreateMessageBox")
@@ -65,6 +89,7 @@ local function ShowMessageOverWelcome(title, text)
 		local w = welcome and welcome.window_state ~= "destroyed" and welcome or WelcomeDialog()
 		if w and type(w.SetVisibleInstant) == "function" then
 			pcall(function() w:SetVisibleInstant(true) end)
+			RestoreDialogInput(w)
 		end
 	end)
 end
@@ -883,7 +908,10 @@ local function SetWelcomeLoading(active)
 		local dlg = WelcomeDialog()
 		if dlg and type(dlg.SetVisibleInstant) == "function" then
 			local shown = pcall(function() dlg:SetVisibleInstant(true) end)
-			if shown then PlayDeferredWelcomeVoice(dlg) end
+			if shown then
+				RestoreDialogInput(dlg)
+				PlayDeferredWelcomeVoice(dlg)
+			end
 		end
 		LoadingUiAudit("TEARDOWN_DONE")
 		return true
