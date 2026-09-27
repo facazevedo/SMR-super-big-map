@@ -459,28 +459,44 @@ end
 -- file environment. Patch the class method itself and reproduce its short vanilla implementation,
 -- changing only the two calls to explicitly pass no_flatten=true. This is the authoritative
 -- boundary and cannot be bypassed by Elevator.lua's environment.
-local ELEVATOR_METHOD_PATCH_VERSION = 2
+--
+-- BuildingTemplates.Elevator is not patched: it has no PlaceConstructionSite of its own and its
+-- metatable resolves methods through g_Classes.Elevator (measured 2026-09-27), so the construction
+-- controller's template_obj:PlaceConstructionSite already reaches the patched class. A function
+-- stored on the template broke saves: every construction site keeps the template as
+-- building_class_proto, the savegame persists it by value, and persisting the wrapper's closure
+-- fails on its C-function upvalues ("Fatal persist errors" while an Elevator was being built).
+local ELEVATOR_METHOD_PATCH_VERSION = 3
+local function ElevatorTemplateTable()
+	local templates = Global("BuildingTemplates")
+	local template = type(templates) == "table" and templates.Elevator or nil
+	return type(template) == "table" and template or nil
+end
+
+-- Remove a wrapper an earlier build of this process stored on the template itself.
+local function RemoveElevatorTemplateWrapper(wrapper)
+	local template = ElevatorTemplateTable()
+	if template and wrapper ~= nil and rawget(template, "PlaceConstructionSite") == wrapper then
+		rawset(template, "PlaceConstructionSite", nil)
+	end
+end
+
 local function PatchElevatorBasePlaceConstructionSite()
 	local State = SuperBigMap.State or {}
 	local ElevatorBase = Engine.ClassTable("ElevatorBase")
 	local ElevatorClass = Engine.ClassTable("Elevator")
-	local templates = Global("BuildingTemplates")
-	local ElevatorTemplate = type(templates) == "table" and templates.Elevator or nil
 	local current = type(ElevatorBase) == "table" and ElevatorBase.PlaceConstructionSite or nil
 	local class_current = type(ElevatorClass) == "table" and ElevatorClass.PlaceConstructionSite or nil
-	local template_current = type(ElevatorTemplate) == "table" and ElevatorTemplate.PlaceConstructionSite or nil
 	if type(current) ~= "function" then
 		return false
 	end
 	local stored_wrapper = State.elevator_base_place_construction_site_wrapper
+	RemoveElevatorTemplateWrapper(stored_wrapper)
 	local class_verified = type(ElevatorClass) ~= "table" or ElevatorClass == ElevatorBase
 		or class_current == stored_wrapper
-	local template_verified = type(ElevatorTemplate) ~= "table"
-		or ElevatorTemplate == ElevatorBase or ElevatorTemplate == ElevatorClass
-		or template_current == stored_wrapper
 	if current == stored_wrapper
 		and State.elevator_base_place_construction_site_version == ELEVATOR_METHOD_PATCH_VERSION
-		and class_verified and template_verified then
+		and class_verified then
 		return true
 	end
 	-- Hot reload of a newer patch version: peel off our older wrapper before capturing the
@@ -545,24 +561,19 @@ local function PatchElevatorBasePlaceConstructionSite()
 		return site1
 	end
 	-- Classes are method-flattened during ClassesBuilt, so changing ElevatorBase alone may not
-	-- affect the already-built Elevator class. The construction controller dispatches through
-	-- BuildingTemplates.Elevator; install the same wrapper on every distinct runtime target.
+	-- affect the already-built Elevator class; install the same wrapper on both. The construction
+	-- controller dispatches through BuildingTemplates.Elevator, which resolves to the class.
 	local original_class = class_current == stored_wrapper
 		and State.original_elevator_class_place_construction_site or class_current
-	local original_template = template_current == stored_wrapper
-		and State.original_elevator_template_place_construction_site or template_current
 	ElevatorBase.PlaceConstructionSite = wrapper
 	if type(ElevatorClass) == "table" and ElevatorClass ~= ElevatorBase then
 		ElevatorClass.PlaceConstructionSite = wrapper
 	end
-	if type(ElevatorTemplate) == "table" and ElevatorTemplate ~= ElevatorBase and ElevatorTemplate ~= ElevatorClass then
-		ElevatorTemplate.PlaceConstructionSite = wrapper
-	end
 	State.original_elevator_base_place_construction_site = original
 	State.original_elevator_class_place_construction_site = original_class
-	State.original_elevator_template_place_construction_site = original_template
+	State.original_elevator_template_place_construction_site = nil
 	State.elevator_class_place_construction_site_target = ElevatorClass
-	State.elevator_template_place_construction_site_target = ElevatorTemplate
+	State.elevator_template_place_construction_site_target = nil
 	State.elevator_base_place_construction_site_wrapper = wrapper
 	State.elevator_base_place_construction_site_version = ELEVATOR_METHOD_PATCH_VERSION
 	return true
@@ -810,13 +821,10 @@ function RocketRules.RestoreVanillaBehavior()
 	State.universal_rocket_cmd_land_token = nil
 	local ElevatorBase = Engine.ClassTable("ElevatorBase")
 	local ElevatorClass = State.elevator_class_place_construction_site_target
-	local ElevatorTemplate = State.elevator_template_place_construction_site_target
 	local elevator_wrapper = State.elevator_base_place_construction_site_wrapper
-	if type(ElevatorTemplate) == "table" and ElevatorTemplate ~= ElevatorBase and ElevatorTemplate ~= ElevatorClass
-		and ElevatorTemplate.PlaceConstructionSite == elevator_wrapper
-		and type(State.original_elevator_template_place_construction_site) == "function" then
-		ElevatorTemplate.PlaceConstructionSite = State.original_elevator_template_place_construction_site
-	end
+	-- Never write a method onto the template (see ELEVATOR_METHOD_PATCH_VERSION); only remove one
+	-- an earlier build left there.
+	RemoveElevatorTemplateWrapper(elevator_wrapper)
 	if type(ElevatorClass) == "table" and ElevatorClass ~= ElevatorBase
 		and ElevatorClass.PlaceConstructionSite == elevator_wrapper
 		and type(State.original_elevator_class_place_construction_site) == "function" then
