@@ -295,10 +295,17 @@ local function Install()
 						end
 					end
 				end
+				-- The percentage would tell how much open cave a dark sector holds, so it waits until
+				-- about half of the sector's reachable ground has been lit (sbm_underground_survey).
+				local survey = SuperBigMap.UndergroundSurvey
+				local surveyed = not (survey and type(survey.ShowsBuildableArea) == "function")
+					or survey.ShowsBuildableArea(sector) ~= false
 				local old = self.rollover_context_cache
 				self.rollover_context_cache = {
 					RolloverTitle = T_fn{4063, "Sector <u(display_name)>", sector},
-					RolloverText = T_fn{4051, "Buildable area: <em><percent(number)></em>", number = ratio},
+					RolloverText = surveyed
+						and T_fn{4051, "Buildable area: <em><percent(number)></em>", number = ratio}
+						or untranslated(survey.UNKNOWN_TEXT),
 					RolloverAnchor = "smart",
 				}
 				return self.rollover_context_cache, old

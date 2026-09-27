@@ -14,7 +14,7 @@ return PlaceObj('ModDef', {
 	},
 	'id', "SuperBigMap",
 	'author', "fredware",
-	'version', 1142,
+	'version', 1143,
 	'lua_revision', 350453,
 	'saved_with_revision', 403908,
 	'code', {
@@ -51,6 +51,7 @@ return PlaceObj('ModDef', {
 		"Code/sbm_deposits.lua",
 		"Code/sbm_rocket_rules.lua",
 		"Code/sbm_heat_safety.lua",
+		"Code/sbm_underground_survey.lua",
 		"Code/sbm_loading_ui.lua",
 		"Code/sbm_lifecycle.lua",
 		"Code/SuperBigMap.lua",

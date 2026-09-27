@@ -132,6 +132,10 @@ return {
 		'CodeFileName', "Code/sbm_heat_safety.lua",
 	}),
 	PlaceObj('ModItemCode', {
+		'name', "sbm_underground_survey",
+		'CodeFileName', "Code/sbm_underground_survey.lua",
+	}),
+	PlaceObj('ModItemCode', {
 		'name', "sbm_loading_ui",
 		'CodeFileName', "Code/sbm_loading_ui.lua",
 	}),

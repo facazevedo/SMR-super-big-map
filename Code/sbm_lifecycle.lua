@@ -529,9 +529,11 @@ local APPLY_ORDER = {
 	"RocketRules",
 	"HeatSafety",
 	"UndergroundDarkness",
+	"UndergroundSurvey",
 }
 
 local RESTORE_ORDER = {
+	"UndergroundSurvey",
 	"UndergroundDarkness",
 	"HeatSafety",
 	"RocketRules",
@@ -1538,6 +1540,10 @@ RegisterOnce("ClassesBuilt", function()
 	if elevator_debug and type(elevator_debug.ApplyModBehavior) == "function" then
 		SafeCall(elevator_debug.ApplyModBehavior)
 	end
+	local survey = SuperBigMap.UndergroundSurvey
+	if survey and type(survey.ApplyModBehavior) == "function" then
+		SafeCall(survey.ApplyModBehavior)
+	end
 end)
 
 -- The engine sends ModUnloadLua just before it unloads a mod's Lua (the mod was disabled or
@@ -1573,6 +1579,10 @@ RegisterOnce("ModsReloaded", function()
 	local elevator_debug = SuperBigMap.ElevatorDebug
 	if elevator_debug and type(elevator_debug.ApplyModBehavior) == "function" then
 		SafeCall(elevator_debug.ApplyModBehavior)
+	end
+	local survey = SuperBigMap.UndergroundSurvey
+	if survey and type(survey.ApplyModBehavior) == "function" then
+		SafeCall(survey.ApplyModBehavior)
 	end
 	local sectors = SuperBigMap.SectorExploration
 	if sectors then

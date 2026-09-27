@@ -508,6 +508,12 @@ config.UndergroundCompleteDarkness = true
 -- (LuaRevision / AssetsRevision as the game reports them). Any other build disables the override.
 config.UndergroundCompleteDarknessLuaRevision = 405907
 config.UndergroundCompleteDarknessAssetsRevision = 33225
+-- The complete darkness would be pointless if the overview rollover still told how much open cave
+-- a dark sector holds. On expanded undergrounds the rollover's "Buildable area" reads "?" until
+-- this share of the sector's reachable ground has been lit at least once (by vehicles, buildings,
+-- cables or pipes); the survey is kept per sector in the save. See Code/sbm_underground_survey.lua.
+config.UndergroundBuildableAreaNeedsSurvey = true
+config.UndergroundSurveyFraction = 0.5
 -- TEMP test aid: after underground stretching, top-ups, and reachability correction, invoke
 -- vanilla RevealDeposits for every final underground enrichment.
 config.RevealAllUndergroundEnrichmentsForTesting = false
@@ -1142,6 +1148,8 @@ C.UNDERGROUND_REVEAL_ALL_DARKNESS = as_bool(config.UndergroundRevealAllDarkness)
 C.UNDERGROUND_COMPLETE_DARKNESS = as_bool(config.UndergroundCompleteDarkness)
 C.UNDERGROUND_COMPLETE_DARKNESS_LUA_REVISION = config.UndergroundCompleteDarknessLuaRevision
 C.UNDERGROUND_COMPLETE_DARKNESS_ASSETS_REVISION = config.UndergroundCompleteDarknessAssetsRevision
+C.UNDERGROUND_BUILDABLE_AREA_NEEDS_SURVEY = as_bool(config.UndergroundBuildableAreaNeedsSurvey)
+C.UNDERGROUND_SURVEY_FRACTION = config.UndergroundSurveyFraction
 C.UNDERGROUND_REVEAL_ALL_ENRICHMENTS_FOR_TESTING =
 	as_bool(config.RevealAllUndergroundEnrichmentsForTesting)
 C.UNDERGROUND_OVERVIEW_ENABLED = as_bool(config.UndergroundOverviewEnabled)
