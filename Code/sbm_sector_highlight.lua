@@ -305,7 +305,8 @@ local function Install()
 					RolloverTitle = T_fn{4063, "Sector <u(display_name)>", sector},
 					RolloverText = surveyed
 						and T_fn{4051, "Buildable area: <em><percent(number)></em>", number = ratio}
-						or untranslated(survey.UNKNOWN_TEXT),
+						or untranslated(type(survey.UnknownBuildableText) == "function"
+							and survey.UnknownBuildableText() or survey.UNKNOWN_TEXT),
 					RolloverAnchor = "smart",
 				}
 				return self.rollover_context_cache, old

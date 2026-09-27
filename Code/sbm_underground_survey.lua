@@ -40,6 +40,9 @@ SuperBigMap.UndergroundSurvey = Survey
 Survey.VERSION = 1
 Survey.CELLS = 16
 Survey.SAMPLE_MS = 1000
+-- The game's line for a known sector (text id 4051, OverviewModeDialog.lua).
+Survey.BUILDABLE_TEXT_ID = 4051
+Survey.BUILDABLE_TEMPLATE = "Buildable area: <em><percent(number)></em>"
 Survey.UNKNOWN_TEXT = "Buildable area: <em>?</em>"
 
 -- Persisted per map: { version, cells, sectors = { ["col:row"] = record } }. Guarded against the
@@ -305,6 +308,20 @@ function Survey.ShowsBuildableArea(sector)
 	local rec = Records(map, false)
 	local s = rec and rec.sectors[SectorKey(sector)]
 	return s ~= nil and s.done == true
+end
+
+-- The rollover line for a sector that has not qualified, in the player's language: the game's own
+-- translation of the known-sector line (TranslationTable[4051], read on every call because a
+-- language change replaces the table) with "?" in place of the percentage. All nine shipped
+-- translations keep the "<em><percent(number)></em>" slot (checked 2026-09-27), so the "?" lands
+-- where the number would be; a translation without the slot falls back to the English line.
+function Survey.UnknownBuildableText()
+	local translations = Global("TranslationTable")
+	local template = type(translations) == "table" and translations[Survey.BUILDABLE_TEXT_ID] or nil
+	if type(template) ~= "string" or template == "" then template = Survey.BUILDABLE_TEMPLATE end
+	local text, replaced = template:gsub("<percent%(number%)>", "?", 1)
+	if replaced ~= 1 then return Survey.UNKNOWN_TEXT end
+	return text
 end
 
 function Survey.StartSampling()

@@ -153,8 +153,22 @@ SuperBigMap.Config.UNDERGROUND_BUILDABLE_AREA_NEEDS_SURVEY = true
 -- 7. The mod's underground rollover asks the survey before showing the percentage.
 local highlight = read("Code/sbm_sector_highlight.lua")
 check(highlight:find("survey.ShowsBuildableArea(sector) ~= false", 1, true), "the underground rollover must ask the survey")
-check(highlight:find("or untranslated(survey.UNKNOWN_TEXT)", 1, true), "an unsurveyed sector must read ?")
+check(highlight:find("and survey.UnknownBuildableText() or survey.UNKNOWN_TEXT", 1, true), "an unsurveyed sector must read ?")
 check(S.UNKNOWN_TEXT == "Buildable area: <em>?</em>", "unknown text")
+
+-- 7b. The "?" line uses the game's own translation of the known-sector line (id 4051).
+globals.TranslationTable = nil
+check(S.UnknownBuildableText() == "Buildable area: <em>?</em>", "without a translation table the line is English")
+globals.TranslationTable = { [4051] = "Zone constructible\194\160: <em><percent(number)></em>" }
+check(S.UnknownBuildableText() == "Zone constructible\194\160: <em>?</em>", "French: the translated label with ?")
+globals.TranslationTable = { [4051] = "\229\143\175\229\187\186\231\173\145\231\154\132\229\140\186\229\159\159\239\188\154<em><percent(number)></em>" }
+check(S.UnknownBuildableText() == "\229\143\175\229\187\186\231\173\145\231\154\132\229\140\186\229\159\159\239\188\154<em>?</em>",
+	"Chinese: the translated label with ?")
+globals.TranslationTable = { [4051] = "Buildable area" }
+check(S.UnknownBuildableText() == "Buildable area: <em>?</em>", "a translation without the number slot falls back to English")
+globals.TranslationTable = { [4051] = "" }
+check(S.UnknownBuildableText() == "Buildable area: <em>?</em>", "an empty translation falls back to English")
+globals.TranslationTable = nil
 
 -- 8. Wiring.
 local lifecycle = read("Code/sbm_lifecycle.lua")
