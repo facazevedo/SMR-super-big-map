@@ -1,5 +1,57 @@
 # Surface START-to-T1 — runtime acceptance and local checkpoint
 
+## Metadata 1135 / build 474 (`789da09`): near-edge seam repair, five-site pass
+
+Owner report 2026-09-26: at 49N28E, sector A0, a straight raised ridge ran along the map edge.
+Owner ruling: the fix must be general, not scenario-specific. Cause: vanilla's near-edge border
+(the outer ~30 source cells, hidden behind vanilla's unplayable 1,024-cell border) is built from
+offset, sometimes tilted blocks. It carries grid-aligned seams parallel to the edge at fixed depths
+(source depth 7, 14 and 22 on the maps seen so far) and short block-end steps perpendicular to it.
+The expanded map is playable to its edge. The destination crease pass only translates long seams
+whose low side faces the edge; the 49N28E ridge was a 52-row piece standing ~300 units proud at
+depth 7, on the line of a 1,650-row lowered seam.
+
+`RepairNearEdgeSourceSeams` (sbm_terrain_copy.lua) runs on every expanded surface map, on the
+vanilla grid before resampling, with thresholds from each map's relief and no scenario data:
+- Seam pieces: one-cell steps on an exactly grid-aligned line that also carries a long seam. Seams
+  the destination pass repairs are left to it. Only the edge-side strip moves: height and slope
+  continue the inner surface, the slope change fades out by the physical edge, and inner cells
+  stay vanilla. Offsets and bends use running medians along the edge (per-row values roughened
+  the strip threefold in 1132, because vanilla heights are 8-unit quantised).
+- Block ends (1134-1135): a perpendicular step that starts at the edge, ends inside the band and
+  lies along a repaired seam stretch is split between its two sides and blended out over 12 cells.
+
+What it repaired: 49N28E 5 pieces (including the A0 ridge); 15S67E 4 pieces and 3 block ends;
+17S11W 2 pieces and 1 block end; 24S74W, 45S120W and 61N136W nothing. Cost 76-161 ms.
+Before/after images: `_ralph/runs/ridge49n28e/edge_zoom_1135.png`,
+`_ralph/runs/seam15s67e/bottom_edge_1131_1135.png`. Remaining, both faint: block ends below the
+contrast threshold (~80 source units, against 350-920 before), and 49N28E's lowered seam where it
+crosses steep slopes, where it reads as a slope change rather than a step.
+
+| Site | START-to-T1 A / B / save | Underground A / B / save | Corrected | Seam repair |
+|---|---|---|---|---|
+| 61N136W | 73.226 / 73.473 / 71.647 s | 46.063 / 46.666 / 44.705 s | 21 | none |
+| 24S74W | 71.337 / 65.561 / 65.981 s | 49.669 / 49.693 / 47.898 s | 11 | none |
+| 45S120W | 63.343 / 62.992* / 62.369 s | 44.128 / 44.068 / 42.644 s | 39 | none |
+| 17S11W | 65.368 / 65.617 / 65.519 s | 55.219 / 54.919 / 54.695 s | 45 | 2 pieces, 1 end |
+| 15S67E | 59.590 / 59.449 / 59.634 s | 45.670 / 45.774 / 44.714 s | 16 | 4 pieces, 3 ends |
+
+\* Re-run pinned to A's mystery. The original B (65.783 s) rolled MirrorSphereMystery, which stamps
+terrain; it is kept as `45s120w_b`. `45s120w_b_startup_death` died at engine init, before any mod
+code, and is kept too.
+
+All gates pass at all five sites, every save / fresh-process load passes, and
+`complete_audit1135.json` records accepted = true (RNG source audit: no RNG or seed calls added, no
+scenario data in code; checkpoint review: 27 sessions on one payload, clean quits, no display
+violations). The build 1133 matrix (`_ralph/runs/allrules-1133`) also passed on an idle machine.
+Its first 61N136W runs (83.0 s, 75.3 s) overlapped a Codex session, and one (`_a_rerun2`) took an
+external mid-run Lua reload; those are set aside as invalid measurements.
+
+Evidence: `_ralph/runs/allrules-1135` (harness, lifecycle, `five_audit_1135.json`,
+`complete_audit1135.json`), `allrules-1133`, `ridge49n28e`, `seam15s67e`. 88 compatibility tests,
+18 judge tests and 9 crease parity tests pass, including `crease_near_edge_seam_test.lua` and
+`crease_near_edge_block_end_test.lua`.
+
 ## Metadata 1131 / build 474 (`60e5b0f`): oasis clusters, five-site pass
 
 Owner request 2026-09-26: top-up anomalies were bunched together in the outer clusters. All anomaly

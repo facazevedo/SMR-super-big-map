@@ -16,11 +16,13 @@ way release Mars.exe does, so the decor top-up places the players' layout;
 decor results from before it are not release-equivalent. Keep the machine idle
 during timed runs (no agents or test suites in parallel).
 
-The metadata 1131 order is 61N136W, 24S74W, 17S11W, 45S120W, then 15S67E
-(worst release-mode surface times 73.412, 69.508, 65.818, 63.630, 59.325
-seconds in the matrix; 14S36W was not in this round). A/B pairs whose random
-mystery is MirrorSphereMystery differ by design (its prefab stamps terrain);
-re-run that slot with `VERIFY_MYSTERY` pinned to the twin's mystery. Refresh this ranking from current evidence before a new round;
+The metadata 1135 order is 61N136W, 24S74W, 45S120W, 17S11W, then 15S67E
+(worst release-mode surface times 73.473, 71.337, 65.783, 65.617, 59.634
+seconds in the matrix; 45S120W's worst is its set-aside MirrorSphere run; 14S36W was not in
+this round). A/B pairs whose random mystery is MirrorSphereMystery differ by design (its prefab
+stamps terrain); re-run that slot with `VERIFY_MYSTERY` pinned to the twin's mystery. Runs that
+overlap other agents' activity (build 1133: a Codex session added up to 10 s) are not valid
+timings; set them aside and re-run on an idle machine. Refresh this ranking from current evidence before a new round;
 do not keep a stale order when newer measurements change it. Include save/reload
 qualification of the slowest case before moving on to faster cases.
 

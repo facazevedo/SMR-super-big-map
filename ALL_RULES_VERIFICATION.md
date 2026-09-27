@@ -1,6 +1,20 @@
 # Full-rules verification — 2026-09-23
 
-## Current: build 474 / metadata 1131 — five-site PASS with oasis clusters (2026-09-26)
+## Current: build 474 / metadata 1135 — five-site PASS with near-edge seam repair (2026-09-26)
+
+Owner report 2026-09-26: a straight ridge along the map edge at 49N28E, sector A0; the owner asked
+for a general fix. Vanilla's near-edge border is built from offset blocks with grid-aligned seams
+that the playable expanded edge exposes. A new source-resolution pass repairs seam pieces and
+block ends the destination crease pass leaves, on every map, with no scenario data (it acted on
+49N28E, 15S67E and 17S11W, and found nothing to do on the other three matrix maps).
+
+All gates pass at all five sites in A/B/control runs, and every save / fresh-process load passes.
+Worst START-to-T1: 73.473 s (61N136W B). One MirrorSphereMystery run is set aside and re-run; the
+re-run matches its twin exactly. The RNG source and checkpoint reviews pass
+(`_ralph/runs/allrules-1135/complete_audit1135.json`: accepted, no pending checks). Details:
+SURFACE_LOADING_ACCEPTANCE.md, section "Metadata 1135 / build 474".
+
+## Build 474 / metadata 1131 — five-site PASS with oasis clusters (2026-09-26, superseded)
 
 Owner ruling 2026-09-26: each outer resource cluster is an "oasis". It holds distinct resource
 kinds, usually one anomaly, and in about a third of clusters one dome bonus (vista or research).
