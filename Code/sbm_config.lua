@@ -497,6 +497,11 @@ config.DeferUndergroundExpansionUntilFirstAccess = true
 -- TEMP test aid: remove the underground darkness blanket on any underground gameplay map,
 -- including vanilla-mode tests, and restore the previous value on surface/menu transitions.
 config.UndergroundRevealAllDarkness = false
+-- Expanded undergrounds paint the unexplored area completely black: darkness strength 100 plus
+-- the shipped reflection shaders (Shaders/, ShaderCache/) that keep the reflection composite
+-- from adding wall glints there while leaving explored pixels untouched. Falls back to the
+-- vanilla strength when the shaders cannot be mounted. See Code/sbm_underground_darkness.lua.
+config.UndergroundCompleteDarkness = true
 -- TEMP test aid: after underground stretching, top-ups, and reachability correction, invoke
 -- vanilla RevealDeposits for every final underground enrichment.
 config.RevealAllUndergroundEnrichmentsForTesting = false
@@ -1128,6 +1133,7 @@ C.STRETCH_UNDERGROUND = expansion_step_07
 	and as_bool(config.StretchUnderground)
 C.DEFER_UNDERGROUND_EXPANSION_UNTIL_FIRST_ACCESS = as_bool(config.DeferUndergroundExpansionUntilFirstAccess)
 C.UNDERGROUND_REVEAL_ALL_DARKNESS = as_bool(config.UndergroundRevealAllDarkness)
+C.UNDERGROUND_COMPLETE_DARKNESS = as_bool(config.UndergroundCompleteDarkness)
 C.UNDERGROUND_REVEAL_ALL_ENRICHMENTS_FOR_TESTING =
 	as_bool(config.RevealAllUndergroundEnrichmentsForTesting)
 C.UNDERGROUND_OVERVIEW_ENABLED = as_bool(config.UndergroundOverviewEnabled)

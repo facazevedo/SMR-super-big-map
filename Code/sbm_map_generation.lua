@@ -699,7 +699,12 @@ function SuperBigMap.EnsureVanillaDarknessReady(map)
 	if environment ~= "Surface" and environment ~= "Underground" then
 		return true, "environment does not use underground darkness"
 	end
-	local expected = environment == "Underground" and 90 or 0
+	local darkness = SuperBigMap.UndergroundDarkness
+	local grid = SuperBigMap.SectorGrid
+	local is_mod_map = grid and type(grid.IsModMap) == "function" and grid.IsModMap(map) == true
+	local underground_strength = darkness and type(darkness.RevealStrength) == "function"
+		and darkness.RevealStrength(map, is_mod_map) or 90
+	local expected = environment == "Underground" and underground_strength or 0
 	local platform = Global("Platform")
 	local is_editor_active = Global("IsEditorActive")
 	if type(platform) == "table" and platform.editor == true

@@ -1,0 +1,23 @@
+#ifndef __SBM_REFLECTION_MARK_FH
+#define __SBM_REFLECTION_MARK_FH
+// Super Big Map: pixels fully covered by the underground darkness are exactly black in the scene
+// color. Their reflection entries keep the vanilla value (so every blurred mip an explored pixel
+// samples is unchanged), scaled by an exact power of two so the final composite can recognise
+// them and add nothing to those pixels. Scaling by 2^14 is exact in r11g11b10 for values in
+// [2^-8, 3.9]; smaller channels are floored and larger ones clamped before the scale.
+#define SBM_MARK_SCALE 16384.0f
+#define SBM_MARK_INV (1.0f / 16384.0f)
+#define SBM_MARK_THRESHOLD 64.0f
+float3 SbmEncodeMark(float3 v)
+{
+	return clamp(v, broadcast3(0.00390625f), broadcast3(3.9f)) * SBM_MARK_SCALE;
+}
+bool SbmIsMarked(float3 v)
+{
+	return max(v.x, max(v.y, v.z)) >= SBM_MARK_THRESHOLD;
+}
+float3 SbmDecodeMark(float3 v)
+{
+	return SbmIsMarked(v) ? v * SBM_MARK_INV : v;
+}
+#endif

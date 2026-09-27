@@ -25,7 +25,7 @@ RELEASE_PROJECT = PROJECT
 DEST = Path(
     r"C:\Users\fazevedo\AppData\Roaming\Surviving Mars Relaunched\Mods\super-big-map"
 )
-PAYLOAD_DIRS = ("Code", "Images")
+PAYLOAD_DIRS = ("Code", "Images", "Shaders", "ShaderCache")
 PAYLOAD_FILES = ("metadata.lua", "items.lua")
 
 

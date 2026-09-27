@@ -130,6 +130,12 @@ local function ApplyUndergroundDarknessState(map)
 		local update_reveal = Global("UpdateRevealDarkness")
 		if map and type(update_reveal) == "function" then
 			SafeCall(update_reveal, map)
+			-- Expanded undergrounds use the complete strength (sbm_underground_darkness).
+			local darkness = SuperBigMap.UndergroundDarkness
+			if environment == "Underground" and darkness and type(darkness.RevealStrength) == "function"
+				and tonumber(hr.EnableDarknessReveal) == darkness.VANILLA_STRENGTH then
+				hr.EnableDarknessReveal = darkness.RevealStrength(map, IsModMap(map))
+			end
 		else
 			-- No gameplay map means no underground darkness reveal.
 			hr.EnableDarknessReveal = 0

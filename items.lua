@@ -16,6 +16,10 @@ return {
 		'CodeFileName', "Code/sbm_diagnostics.lua",
 	}),
 	PlaceObj('ModItemCode', {
+		'name', "sbm_underground_darkness",
+		'CodeFileName', "Code/sbm_underground_darkness.lua",
+	}),
+	PlaceObj('ModItemCode', {
 		'name', "sbm_legacy_pathfinder",
 		'CodeFileName', "Code/sbm_legacy_pathfinder.lua",
 	}),
