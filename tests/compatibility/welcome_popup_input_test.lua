@@ -85,8 +85,12 @@ desktop.modal_window = root
 local hud = new_window("hud", { parent = root }); hud:SetFocus()
 local popup = new_window("PopupNotification", { parent = root, IsModal = true, FocusOnOpen = "self", z = 10,
 	context = { id = "WelcomeGameInfo", voiced_text = "Welcome to Mars!" } })
-popup:SetModal(popup.IsModal); popup:SetFocus_OnOpen()
-check(desktop.modal_window == popup and desktop.keyboard_focus == popup, "fixture: popup must open modal and focused")
+-- Vanilla: the popup becomes modal, then its choice list takes focus (XList:SetInitialSelection).
+local choices = new_window("XList", { parent = popup })
+function desktop:GetKeyboardFocus() return self.keyboard_focus end
+function desktop:GetModalWindow() return self.modal_window end
+popup:SetModal(popup.IsModal); popup:SetFocus_OnOpen(); choices:SetFocus()
+check(desktop.modal_window == popup and desktop.keyboard_focus == choices, "fixture: popup must open modal with its choice list focused")
 
 local dialogs = { PopupNotification = popup }
 local boxes = {}
@@ -122,7 +126,7 @@ SuperBigMap.ExpansionLoadingEnd(true)
 check(boxes[1].window_state == "destroyed", "loading box must close at the end")
 check(popup.visible == true, "popup must be visible again")
 check(desktop.modal_window == popup, "re-shown popup must be the modal window again (gamepad input target)")
-check(desktop.keyboard_focus == popup, "re-shown popup must hold keyboard focus (gamepad A reaches its Close)")
+check(desktop.keyboard_focus == choices, "re-shown popup must focus its choice list again, as vanilla does (A presses Close there)")
 
 -- 2. A window genuinely on top keeps its input: re-showing under it must not steal focus.
 popup:SetVisibleInstant(false)
@@ -132,7 +136,15 @@ SuperBigMap.RestoreDialogInput(popup)
 check(desktop.modal_window == top and desktop.keyboard_focus == top, "a higher modal window must keep modality and focus")
 top:Close()
 popup:SetVisibleInstant(true); SuperBigMap.RestoreDialogInput(popup)
-check(desktop.modal_window == popup and desktop.keyboard_focus == popup, "after the higher window closes the popup regains input")
+check(desktop.modal_window == popup and desktop.keyboard_focus == choices, "after the higher window closes the popup regains input on its list")
+
+-- 2b. If nothing inside the popup is in the focus log, fall back to its open-time focus rule.
+for i = #desktop.focus_log, 1, -1 do
+	if desktop.focus_log[i]:IsWithin(popup) then table.remove(desktop.focus_log, i) end
+end
+popup:SetVisibleInstant(false); hud:SetFocus(); popup:SetVisibleInstant(true)
+SuperBigMap.RestoreDialogInput(popup)
+check(desktop.modal_window == popup and desktop.keyboard_focus == popup, "without a logged child the popup itself must take focus")
 
 -- 3. Destroyed dialogs are ignored.
 popup.window_state = "destroyed"

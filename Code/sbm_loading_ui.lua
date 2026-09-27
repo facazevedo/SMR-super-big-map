@@ -42,10 +42,30 @@ local function RestoreDialogInput(dlg)
 	if dlg.IsModal and type(dlg.SetModal) == "function" then
 		pcall(dlg.SetModal, dlg, dlg.IsModal)
 	end
-	if type(dlg.SetFocus_OnOpen) == "function" then
-		pcall(dlg.SetFocus_OnOpen, dlg, dlg.FocusOnOpen)
-	elseif type(dlg.SetFocus) == "function" then
-		pcall(dlg.SetFocus, dlg)
+	-- Becoming modal again re-focuses the window the popup last focused, from the engine's focus
+	-- log: normally its choice list, whose selected item A presses. Only when nothing inside the
+	-- popup was restored fall back to the dialog's own open-time focus rule; focusing the popup
+	-- window itself would route A to its shortcut handler, which swallows it.
+	-- A window genuinely on top keeps input; its own close later restores the popup's modality and
+	-- list focus. Calling the fallback then would log the popup window itself as the latest focus.
+	local desktop = dlg.desktop
+	local function within(win)
+		return win and type(win.IsWithin) == "function" and win:IsWithin(dlg) or false
+	end
+	local ok_modal, modal = false, nil
+	if desktop and type(desktop.GetModalWindow) == "function" then
+		ok_modal, modal = pcall(desktop.GetModalWindow, desktop)
+	end
+	local ok_focus, focus = false, nil
+	if desktop and type(desktop.GetKeyboardFocus) == "function" then
+		ok_focus, focus = pcall(desktop.GetKeyboardFocus, desktop)
+	end
+	if ok_modal and within(modal) and not (ok_focus and within(focus)) then
+		if type(dlg.SetFocus_OnOpen) == "function" then
+			pcall(dlg.SetFocus_OnOpen, dlg, dlg.FocusOnOpen)
+		elseif type(dlg.SetFocus) == "function" then
+			pcall(dlg.SetFocus, dlg)
+		end
 	end
 	return true
 end
