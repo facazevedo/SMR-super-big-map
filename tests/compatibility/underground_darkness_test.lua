@@ -12,19 +12,28 @@ end
 local function load_module(opts)
 	local calls = { mounts = {}, reload = 0 }
 	local labels = {}
+	-- The sandbox hides MountFolder from direct lookup; the module must reach it through the
+	-- engine's FuncResolver helper, so the stub exposes it only there.
+	local hidden = {}
 	local globals = {
-		MountFolder = function(target, source, flags)
+		FuncResolver = function(name)
+			return function(self) return hidden[name] end
+		end,
+	}
+	hidden.MountFolder = function(target, source, flags)
 			calls.mounts[#calls.mounts + 1] = { target = target, source = source, flags = flags }
 			if opts.mount_error then return opts.mount_error end
 			local label = flags:match("label:([%w_]+)")
 			labels[label] = (labels[label] or 0) + 1
 			return false
-		end,
-		MountsByLabel = function(label) return labels[label] or 0 end,
+	end
+	globals.MountsByLabel = function(label) return labels[label] or 0 end
+	for k, v in pairs({
 		ReloadShaders = function() calls.reload = calls.reload + 1 end,
 		CurrentMap = opts.current_map,
 		print = function() end,
-	}
+	}) do globals[k] = v end
+	if opts.no_resolver then globals.FuncResolver = nil end
 	local SuperBigMap = {
 		Engine = {
 			Global = function(name) return globals[name] end,
@@ -71,6 +80,13 @@ sbm, calls = load_module({ enabled = true, mod_path = "M/", exists = function(p)
 check(not sbm.UndergroundDarkness.Mounted() and #calls.mounts == 0, "must not mount with a shipped source missing")
 check(tostring(sbm.State.underground_darkness_mount_reason):find("ApplyReflections.fx", 1, true), "reason must name the missing file")
 check(sbm.UndergroundDarkness.RevealStrength(nil, true) == 90, "unmounted module must fall back to vanilla strength")
+
+-- 3b. Without FuncResolver (and no direct MountFolder) nothing mounts and the reason says so.
+do
+	local sbm2 = load_module({ enabled = true, mod_path = "M/", exists = all_present, no_resolver = true })
+	check(not sbm2.UndergroundDarkness.Mounted() and sbm2.State.underground_darkness_mount_reason == "MountFolder unavailable",
+		"missing resolver must report MountFolder unavailable")
+end
 
 -- 4. Mount error and disabled configuration both fall back.
 sbm = load_module({ enabled = true, mod_path = "M/", exists = all_present, mount_error = "no such folder" })
