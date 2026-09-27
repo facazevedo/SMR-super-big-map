@@ -9,7 +9,8 @@ that carry the "fully covered" mark through the reflection map without changing 
 plus zero-byte bypass entries for their 47 compiled-cache names, mounted from Lua at load. The
 sandbox blacklists the mount call; the owner ruled the mod may reach it via `FuncResolver`.
 Measured through the mod at 49N28E: unexplored 0/255 everywhere, explored within 0.06/255 of the
-same run at strength 90. Five-site matrix on 1137 and the release build confirmation are pending;
+same run at strength 90. Release Mars.exe confirmed by the owner (2026-09-27). The five-site
+matrix on 1137 is pending (61N136W B over time in vanilla generation, to be re-run);
 the 1135 five-site pass below stands for every other rule. Details: SURFACE_LOADING_ACCEPTANCE.md,
 section "Metadata 1137".
 

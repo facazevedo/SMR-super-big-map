@@ -50,7 +50,12 @@ sandbox and fell back to vanilla strength (1137 fixes it).
 Tests: `underground_darkness_test.lua` (23 checks, stub engine: mounts, fallbacks, resolver),
 `underground_darkness_payload_test.lua` (35 checks: shipped sources carry every stage, LF endings,
 all trace stores marked, 47 zero-byte entries, darkness shader entry untouched). 92 compatibility
-tests pass. The five-site matrix on 1137 and a release Mars.exe confirmation are pending.
+tests pass. Release Mars.exe confirmed by the owner on 2026-09-27: an expanded game's underground
+showed only the revealed area, with no cave distinguishable elsewhere (had the sandboxed mount
+failed, the module would have fallen back to strength 90 and the floors would show). The
+five-site matrix on 1137 is pending: 61N136W A passed at 73.858 s; B measured 76.416 s, with the
+whole excess inside vanilla generation (45.967 s against 43.5-43.9 s) and the 81 shader compiles
+at 0:15 in the main menu, before START; it is to be re-run on an idle machine.
 
 ## Metadata 1135 / build 474 (`789da09`): near-edge seam repair, five-site pass
 
