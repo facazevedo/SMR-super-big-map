@@ -130,8 +130,13 @@ local function ApplyUndergroundDarknessState(map)
 		local update_reveal = Global("UpdateRevealDarkness")
 		if map and type(update_reveal) == "function" then
 			SafeCall(update_reveal, map)
-			-- Expanded undergrounds use the complete strength (sbm_underground_darkness).
+			-- Expanded undergrounds use the complete strength (sbm_underground_darkness), with the
+			-- mounted shaders switched in first.
 			local darkness = SuperBigMap.UndergroundDarkness
+			if environment == "Underground" and IsModMap(map) and darkness
+				and type(darkness.EnsureShadersActive) == "function" then
+				SafeCall(darkness.EnsureShadersActive)
+			end
 			if environment == "Underground" and darkness and type(darkness.RevealStrength) == "function"
 				and tonumber(hr.EnableDarknessReveal) == darkness.VANILLA_STRENGTH then
 				hr.EnableDarknessReveal = darkness.RevealStrength(map, IsModMap(map))
@@ -519,9 +524,11 @@ local APPLY_ORDER = {
 	"MapBounds",
 	"RocketRules",
 	"HeatSafety",
+	"UndergroundDarkness",
 }
 
 local RESTORE_ORDER = {
+	"UndergroundDarkness",
 	"HeatSafety",
 	"RocketRules",
 	"MapBounds",
@@ -1527,6 +1534,21 @@ RegisterOnce("ClassesBuilt", function()
 	if elevator_debug and type(elevator_debug.ApplyModBehavior) == "function" then
 		SafeCall(elevator_debug.ApplyModBehavior)
 	end
+end)
+
+-- The engine sends ModUnloadLua just before it unloads a mod's Lua (the mod was disabled or
+-- removed without restarting the game). Leave nothing of the shader override behind: unmount,
+-- reload the game's own shaders and restore vanilla's darkness strength for the current map.
+RegisterOnce("ModUnloadLua", function(mod_id)
+	local own_id = rawget(_G, "CurrentModId") or "SuperBigMap"
+	if mod_id ~= own_id then return end
+	local darkness = SuperBigMap.UndergroundDarkness
+	if darkness and type(darkness.Unmount) == "function" then
+		SafeCall(darkness.Unmount, "mod unloaded")
+	end
+	local update_reveal = Global("UpdateRevealDarkness")
+	local map = Global("CurrentMap")
+	if map and type(update_reveal) == "function" then SafeCall(update_reveal, map) end
 end)
 
 RegisterOnce("ModsReloaded", function()

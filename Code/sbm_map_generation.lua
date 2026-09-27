@@ -702,6 +702,10 @@ function SuperBigMap.EnsureVanillaDarknessReady(map)
 	local darkness = SuperBigMap.UndergroundDarkness
 	local grid = SuperBigMap.SectorGrid
 	local is_mod_map = grid and type(grid.IsModMap) == "function" and grid.IsModMap(map) == true
+	if environment == "Underground" and is_mod_map and darkness
+		and type(darkness.EnsureShadersActive) == "function" then
+		pcall(darkness.EnsureShadersActive)
+	end
 	local underground_strength = darkness and type(darkness.RevealStrength) == "function"
 		and darkness.RevealStrength(map, is_mod_map) or 90
 	local expected = environment == "Underground" and underground_strength or 0

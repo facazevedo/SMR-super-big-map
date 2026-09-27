@@ -21,6 +21,10 @@
 -- Measured at 49N28E: unexplored pixels 0/255 in every channel; explored pixels differ from
 -- the same run at strength 90 by 0.05/255 on average, the darkness change itself.
 --
+-- Scope: mounted only during an expanded session (lifecycle ApplyModBehavior), swapped in just
+-- before an expanded underground is first shown, and removed again for a vanilla session, the main
+-- menu, or when the mod is unloaded (ModUnloadLua); those all run the game's own shaders.
+--
 -- The compiled-shader cache (ShaderCache/<hash>) is keyed by shader name and defines, never by
 -- source, so the mod also ships zero-byte files under the 47 cache entries of these shaders.
 -- Mounted over the pack, they make the cache load fail for exactly those entries and the engine
@@ -83,9 +87,10 @@ function Darkness.GameBuildMatches()
 end
 
 -- The reveal strength vanilla's UpdateRevealDarkness would set for an underground map, or the
--- complete strength when this module is active and mounted for a mod map.
+-- complete strength when the shipped shaders are mounted AND in use for a mod map. Strength 100
+-- without the reflection marks would still show the wall glints, so both are required.
 function Darkness.RevealStrength(map, is_mod_map)
-	if Darkness.Enabled() and is_mod_map == true and Darkness.Mounted() then
+	if Darkness.Enabled() and is_mod_map == true and Darkness.Active() then
 		return Darkness.COMPLETE_STRENGTH
 	end
 	return Darkness.VANILLA_STRENGTH
@@ -94,6 +99,12 @@ end
 function Darkness.Mounted()
 	local State = SuperBigMap.State or {}
 	return State.underground_darkness_mounted == true
+end
+
+-- True once the renderer has been told to rebuild the four programs from the mounted sources.
+function Darkness.Active()
+	local State = SuperBigMap.State or {}
+	return State.underground_darkness_mounted == true and State.underground_darkness_shaders_active == true
 end
 
 -- The mod sandbox blacklists MountFolder (and debug/io/load). The owner ruled on 2026-09-27 that
@@ -162,19 +173,70 @@ function Darkness.Mount()
 		end
 	end
 	State.underground_darkness_mounted = true
-	-- Shaders already compiled by an earlier map in this process keep their cached program;
-	-- ReloadShaders re-checks every program and recompiles the ones whose cache entry is now
-	-- hidden (measured 0.9 s). At boot nothing is loaded yet and the lazy path compiles them.
-	local current = Global("CurrentMap")
-	local reload = real_global_function("ReloadShaders")
-	if current and type(reload) == "function" then SafeCall(reload) end
+	-- Mounting compiles nothing: programs the main menu already loaded from the cache stay in use
+	-- until EnsureShadersActive, so starting an expanded game costs no START-to-T1 time.
 	return true, "mounted"
+end
+
+-- Switch the renderer to the mounted sources, once per mount. Called by the lifecycle just
+-- before an expanded underground is shown (behind its loading cover): ReloadShaders re-checks
+-- every program and recompiles only the 81 reflection variants whose cache entries are hidden
+-- (1.6-1.8 s real, in parallel on worker threads).
+function Darkness.EnsureShadersActive()
+	local State = SuperBigMap.State
+	if not State or State.underground_darkness_mounted ~= true then return false end
+	if State.underground_darkness_shaders_active == true then return true end
+	local reload = real_global_function("ReloadShaders")
+	if type(reload) ~= "function" then return false end
+	local ok = pcall(reload)
+	if not ok then return false end
+	State.underground_darkness_shaders_active = true
+	return true
+end
+
+-- Remove both mounts and, if the renderer used the mounted sources, reload so every program
+-- comes from the game's own cache again. Safe to call when nothing is mounted.
+function Darkness.Unmount(reason)
+	local State = SuperBigMap.State or {}
+	local unmount = real_global_function("UnmountByLabel")
+	local removed = 0
+	for _, label in ipairs({ Darkness.SHADER_LABEL, Darkness.CACHE_LABEL }) do
+		if (count_mounts(label) or 0) > 0 and type(unmount) == "function" then
+			if pcall(unmount, label) then removed = removed + 1 end
+		end
+	end
+	local was_active = State.underground_darkness_shaders_active == true
+	State.underground_darkness_mounted = false
+	State.underground_darkness_shaders_active = false
+	State.underground_darkness_mount_reason = "unmounted: " .. tostring(reason or "vanilla session")
+	if was_active then
+		local reload = real_global_function("ReloadShaders")
+		if type(reload) == "function" then pcall(reload) end
+	end
+	return removed, was_active
+end
+
+-- Lifecycle phases: the override exists only during an expanded session. A vanilla session, the
+-- main menu and a disabled mod all run the game's own shaders at vanilla strength.
+function Darkness.ApplyModBehavior()
+	local ok, why = Darkness.Mount()
+	SuperBigMap.State.underground_darkness_mount_reason = why
+	local print_fn = Global("print")
+	if type(print_fn) == "function" then
+		print_fn("[SuperBigMap] underground darkness shaders " .. (ok and "mounted" or "not mounted") .. ": " .. tostring(why))
+	end
+	return ok
+end
+
+function Darkness.RestoreVanillaBehavior()
+	Darkness.Unmount("vanilla session")
+	return true
 end
 
 -- Test hook: the mounted state is process-wide, so tests that run on a fresh State can query it.
 function Darkness.Status()
 	return {
-		enabled = Darkness.Enabled(), mounted = Darkness.Mounted(),
+		enabled = Darkness.Enabled(), mounted = Darkness.Mounted(), active = Darkness.Active(),
 		shader_mounts = count_mounts(Darkness.SHADER_LABEL),
 		cache_mounts = count_mounts(Darkness.CACHE_LABEL),
 		reveal_strength_mod = Darkness.RevealStrength(nil, true),
@@ -182,11 +244,4 @@ function Darkness.Status()
 	}
 end
 
-do
-	local ok, why = Darkness.Mount()
-	SuperBigMap.State.underground_darkness_mount_reason = why
-	local print_fn = Global("print")
-	if type(print_fn) == "function" then
-		print_fn("[SuperBigMap] underground darkness shaders " .. (ok and "mounted" or "not mounted") .. ": " .. tostring(why))
-	end
-end
+-- Nothing is mounted at load: the lifecycle's apply phase mounts for an expanded session only.
