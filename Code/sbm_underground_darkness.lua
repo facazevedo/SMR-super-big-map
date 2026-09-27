@@ -65,6 +65,23 @@ function Darkness.Enabled()
 	return cfg_bool("UNDERGROUND_COMPLETE_DARKNESS", true)
 end
 
+-- The bypass entries name the compiled-cache files of one exact game build. A game update
+-- changes them, and then the shipped sources would never be compiled while the module still
+-- reported itself mounted. Mount only for the build the entries were taken from; on any other
+-- build the module stays off and the underground keeps vanilla's strength.
+function Darkness.GameBuildMatches()
+	local config = SuperBigMap.Config or {}
+	local want_lua, want_assets = config.UNDERGROUND_COMPLETE_DARKNESS_LUA_REVISION,
+		config.UNDERGROUND_COMPLETE_DARKNESS_ASSETS_REVISION
+	if type(want_lua) ~= "number" or type(want_assets) ~= "number" then return false, "no known game build" end
+	local lua, assets = Global("LuaRevision"), Global("AssetsRevision")
+	if lua ~= want_lua or assets ~= want_assets then
+		return false, "game build " .. tostring(lua) .. "/" .. tostring(assets)
+			.. " differs from the shader cache build " .. want_lua .. "/" .. want_assets
+	end
+	return true
+end
+
 -- The reveal strength vanilla's UpdateRevealDarkness would set for an underground map, or the
 -- complete strength when this module is active and mounted for a mod map.
 function Darkness.RevealStrength(map, is_mod_map)
@@ -112,6 +129,8 @@ function Darkness.Mount()
 	if not State then return false, "state unavailable" end
 	if State.underground_darkness_mounted == true then return true, "already mounted" end
 	if not Darkness.Enabled() then return false, "disabled by configuration" end
+	local build_ok, build_why = Darkness.GameBuildMatches()
+	if not build_ok then return false, build_why end
 	local mod_path = rawget(_G, "CurrentModPath")
 	if type(mod_path) ~= "string" or mod_path == "" then
 		return false, "mod content path unavailable"

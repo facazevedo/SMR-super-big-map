@@ -32,6 +32,8 @@ local function load_module(opts)
 		ReloadShaders = function() calls.reload = calls.reload + 1 end,
 		CurrentMap = opts.current_map,
 		print = function() end,
+		LuaRevision = opts.lua_revision or 405907,
+		AssetsRevision = opts.assets_revision or 33225,
 	}) do globals[k] = v end
 	if opts.no_resolver then globals.FuncResolver = nil end
 	local SuperBigMap = {
@@ -39,7 +41,9 @@ local function load_module(opts)
 			Global = function(name) return globals[name] end,
 			SafeCall = function(fn, ...) return pcall(fn, ...) end,
 		},
-		Config = { UNDERGROUND_COMPLETE_DARKNESS = opts.enabled },
+		Config = { UNDERGROUND_COMPLETE_DARKNESS = opts.enabled,
+			UNDERGROUND_COMPLETE_DARKNESS_LUA_REVISION = 405907,
+			UNDERGROUND_COMPLETE_DARKNESS_ASSETS_REVISION = 33225 },
 		State = opts.state,
 	}
 	local env = setmetatable({
@@ -86,6 +90,16 @@ do
 	local sbm2 = load_module({ enabled = true, mod_path = "M/", exists = all_present, no_resolver = true })
 	check(not sbm2.UndergroundDarkness.Mounted() and sbm2.State.underground_darkness_mount_reason == "MountFolder unavailable",
 		"missing resolver must report MountFolder unavailable")
+end
+
+-- 3c. Another game build (updated shader cache) must not mount, and must say why.
+do
+	local sbm3 = load_module({ enabled = true, mod_path = "M/", exists = all_present, lua_revision = 405907 + 1 })
+	check(not sbm3.UndergroundDarkness.Mounted(), "a different game build must not mount")
+	check(tostring(sbm3.State.underground_darkness_mount_reason):find("differs from the shader cache build", 1, true), "reason must name the build mismatch")
+	check(sbm3.UndergroundDarkness.RevealStrength(nil, true) == 90, "build mismatch must fall back to vanilla strength")
+	local sbm4 = load_module({ enabled = true, mod_path = "M/", exists = all_present, assets_revision = 1 })
+	check(not sbm4.UndergroundDarkness.Mounted(), "a different assets build must not mount")
 end
 
 -- 4. Mount error and disabled configuration both fall back.

@@ -502,6 +502,10 @@ config.UndergroundRevealAllDarkness = false
 -- from adding wall glints there while leaving explored pixels untouched. Falls back to the
 -- vanilla strength when the shaders cannot be mounted. See Code/sbm_underground_darkness.lua.
 config.UndergroundCompleteDarkness = true
+-- The game build whose compiled-shader cache the shipped ShaderCache/ bypass entries name
+-- (LuaRevision / AssetsRevision as the game reports them). Any other build disables the override.
+config.UndergroundCompleteDarknessLuaRevision = 405907
+config.UndergroundCompleteDarknessAssetsRevision = 33225
 -- TEMP test aid: after underground stretching, top-ups, and reachability correction, invoke
 -- vanilla RevealDeposits for every final underground enrichment.
 config.RevealAllUndergroundEnrichmentsForTesting = false
@@ -1134,6 +1138,8 @@ C.STRETCH_UNDERGROUND = expansion_step_07
 C.DEFER_UNDERGROUND_EXPANSION_UNTIL_FIRST_ACCESS = as_bool(config.DeferUndergroundExpansionUntilFirstAccess)
 C.UNDERGROUND_REVEAL_ALL_DARKNESS = as_bool(config.UndergroundRevealAllDarkness)
 C.UNDERGROUND_COMPLETE_DARKNESS = as_bool(config.UndergroundCompleteDarkness)
+C.UNDERGROUND_COMPLETE_DARKNESS_LUA_REVISION = config.UndergroundCompleteDarknessLuaRevision
+C.UNDERGROUND_COMPLETE_DARKNESS_ASSETS_REVISION = config.UndergroundCompleteDarknessAssetsRevision
 C.UNDERGROUND_REVEAL_ALL_ENRICHMENTS_FOR_TESTING =
 	as_bool(config.RevealAllUndergroundEnrichmentsForTesting)
 C.UNDERGROUND_OVERVIEW_ENABLED = as_bool(config.UndergroundOverviewEnabled)

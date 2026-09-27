@@ -50,7 +50,17 @@ sandbox and fell back to vanilla strength (1137 fixes it).
 Tests: `underground_darkness_test.lua` (23 checks, stub engine: mounts, fallbacks, resolver),
 `underground_darkness_payload_test.lua` (35 checks: shipped sources carry every stage, LF endings,
 all trace stores marked, 47 zero-byte entries, darkness shader entry untouched). 92 compatibility
-tests pass. Release Mars.exe confirmed by the owner on 2026-09-27: an expanded game's underground
+tests pass.
+
+Distribution (2026-09-27): the mod manager delivers a packed archive, so the payload was packed
+with the game's own packer (`AsyncPack`, 101 entries; `Shaders/`, `ShaderCache/` and all 47
+zero-byte bypass entries survive) and installed as a packed mod beside the folder install with a
+higher version. The game loaded it (`v0.00-1138 packed`), the module mounted its subfolders from
+inside the pack, and the underground check matched the folder install (unexplored 0/255, explored
+within 0.07-0.11/255 of strength 90, 81 compiles). Build 1138 adds a game-build guard: the bypass
+entries name the compiled cache of LuaRevision 405907 / AssetsRevision 33225; on any other build
+the module stays off and the underground keeps vanilla's strength (unit-tested).
+Release Mars.exe confirmed by the owner on 2026-09-27: an expanded game's underground
 showed only the revealed area, with no cave distinguishable elsewhere (had the sandboxed mount
 failed, the module would have fallen back to strength 90 and the floors would show). The
 five-site matrix on 1137 is pending: 61N136W A passed at 73.858 s; B measured 76.416 s, with the
