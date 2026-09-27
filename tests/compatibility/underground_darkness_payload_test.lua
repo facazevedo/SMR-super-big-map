@@ -8,12 +8,21 @@ local function read(path)
 	local s = f:read("*a"); f:close(); return s
 end
 
+-- Every stage is gated on the per-frame flag (hr.MeshDebugParam2 == SBM_MARK_FLAG): with the flag
+-- off, no store is marked, SbmIsMarked is false (so every decode is the identity), and the two
+-- manual samplings fall back to the vanilla hardware sample expressions.
 local files = {
-	["SbmReflectionMark.fh"] = { "SbmEncodeMark", "SbmDecodeMark", "SbmIsMarked", "16384.0f", "64.0f" },
-	["Reflections.fx"] = { '#include "SbmReflectionMark.fh"', "SbmStoreValue(pixPos", "all(equal(own_color, broadcast3(0.0f)))" },
+	["SbmReflectionMark.fh"] = { "SbmEncodeMark", "SbmDecodeMark", "SbmIsMarked", "16384.0f", "64.0f",
+		"#define SBM_MARK_FLAG 1396853041", "return MeshDebugParam2 == SBM_MARK_FLAG;",
+		"return SbmMarkingOn() && max(v.x, max(v.y, v.z)) >= SBM_MARK_THRESHOLD;" },
+	["Reflections.fx"] = { '#include "SbmReflectionMark.fh"', "SbmStoreValue(pixPos", "all(equal(own_color, broadcast3(0.0f)))",
+		"\tBRANCH\n\tif (!SbmMarkingOn())\n\t\treturn rgb;" },
 	["ReflectionDenoising.fx"] = { '#include "SbmReflectionMark.fh"', "own_marked", "SbmDecodeMark(tex2DFetch(ReflectionMap" },
-	["ReflectionConvolution.fx"] = { '#include "SbmReflectionMark.fh"', "SbmSample2x2", "SbmDecodeMark(tex2DFetch(Input" },
-	["ApplyReflections.fx"] = { '#include "SbmReflectionMark.fh"', "if (SbmIsMarked(tex2DFetchLod(ReflectionMap, sbm_own, 0).xyz))", "DISCARD", "lod < 1.0f" },
+	["ReflectionConvolution.fx"] = { '#include "SbmReflectionMark.fh"', "SbmSample2x2", "SbmDecodeMark(tex2DFetch(Input",
+		"if (!SbmMarkingOn())\n\t\t\treturn tex2DLod(Input, uv, 0, LinearClampCS).xyz;" },
+	["ApplyReflections.fx"] = { '#include "SbmReflectionMark.fh"', "if (SbmIsMarked(tex2DFetchLod(ReflectionMap, sbm_own, 0).xyz))", "DISCARD",
+		"SbmMarkingOn() && lod < 1.0f",
+		"SbmMarkingOn() ? sbm_l0 : tex2DLod(ReflectionMap, screen, 0, TrilinearClampPS).xyz" },
 }
 for name, needles in pairs(files) do
 	local s = read("Shaders/" .. name)

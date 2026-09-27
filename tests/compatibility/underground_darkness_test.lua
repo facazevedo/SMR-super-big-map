@@ -1,7 +1,8 @@
 -- Complete underground darkness: the shipped shader sources and cache-bypass entries are mounted
--- only during an expanded session, switched in only before an expanded underground is shown, and
--- removed again for a vanilla session or when the mod is unloaded. The complete strength is
--- reported only while the shaders are mounted and in use, and only for mod maps.
+-- when the mod loads, before any map is shown (the renderer builds the reflection programs once per
+-- process and never reloads them). Every shader stage is gated on hr.MeshDebugParam2, which the
+-- module sets to its flag together with strength 100 only for an expanded underground; everywhere
+-- else the flag is 0 and the strength is vanilla's.
 local checks = 0
 local function check(ok, message) assert(ok, message); checks = checks + 1 end
 
@@ -35,11 +36,16 @@ local function load_module(opts)
 	end
 	hidden.ReloadShaders = function() calls.reload = calls.reload + 1 end
 	hidden.MountsByLabel = function(label) return labels[label] or 0 end
+	local hr = opts.hr or { MeshDebugParam2 = 0 }
 	for k, v in pairs({
 		CurrentMap = opts.current_map,
+		LoadedMaps = opts.loaded_maps,
 		print = function() end,
 		LuaRevision = opts.lua_revision or 405907,
 		AssetsRevision = opts.assets_revision or 33225,
+		Platform = opts.platform or { pc = true },
+		config = opts.config or { GraphicsApi = "d3d12" },
+		hr = hr,
 	}) do globals[k] = v end
 	if opts.no_resolver then globals.FuncResolver = nil end
 	local SuperBigMap = {
@@ -50,7 +56,7 @@ local function load_module(opts)
 		Config = { UNDERGROUND_COMPLETE_DARKNESS = opts.enabled,
 			UNDERGROUND_COMPLETE_DARKNESS_LUA_REVISION = 405907,
 			UNDERGROUND_COMPLETE_DARKNESS_ASSETS_REVISION = 33225 },
-		State = opts.state,
+		State = opts.state or {},
 	}
 	local env = setmetatable({
 		SuperBigMap = SuperBigMap,
@@ -60,106 +66,127 @@ local function load_module(opts)
 	env._G = env
 	local chunk = assert(loadfile("Code/sbm_underground_darkness.lua", "t", env))
 	chunk()
-	return SuperBigMap, calls
+	return SuperBigMap, calls, hr
 end
 
 local all_present = function() return true end
+local FLAG = 1396853041
 
--- 1. Loading the module changes nothing: the main menu and vanilla sessions keep the game's shaders.
-local sbm, calls = load_module({ enabled = true, mod_path = "AppData/Mods/super-big-map/", exists = all_present })
+-- 1. Loading the module (no map shown yet) mounts both folders, seethrough with priority, and
+-- compiles or reloads nothing itself. The mark flag stays off.
+local sbm, calls, hr = load_module({ enabled = true, mod_path = "AppData/Mods/super-big-map/", exists = all_present })
 local D = sbm.UndergroundDarkness
-check(not D.Mounted() and #calls.mounts == 0 and calls.reload == 0, "loading the module must not mount or reload anything")
-check(D.RevealStrength(nil, true) == 90, "before an expanded session the strength must stay vanilla")
-
--- 2. Expanded session: mount both folders, seethrough with priority, but compile nothing yet.
-check(D.ApplyModBehavior() == true, "expanded session must mount: " .. tostring(sbm.State.underground_darkness_mount_reason))
-check(D.Mounted() and not D.Active(), "mounted but not yet switched in")
+check(D.MARK_FLAG == FLAG, "module flag must be SBM1")
+check(D.Mounted() and D.Active(), "loading before any map must mount and be active: " .. tostring(sbm.State.underground_darkness_mount_reason))
 check(#calls.mounts == 2, "expected two mounts, got " .. #calls.mounts)
 check(calls.mounts[1].target == "Shaders" and calls.mounts[1].source == "AppData/Mods/super-big-map/Shaders/", "shader source mount wrong")
 check(calls.mounts[2].target == "ShaderCache" and calls.mounts[2].source == "AppData/Mods/super-big-map/ShaderCache/", "cache bypass mount wrong")
 for _, m in ipairs(calls.mounts) do
 	check(m.flags:find("seethrough", 1, true) and m.flags:find("priority:high", 1, true), "mount must be seethrough with priority: " .. m.flags)
 end
-check(calls.reload == 0, "mounting must not reload shaders (no START-to-T1 cost)")
-check(D.RevealStrength(nil, true) == 90, "strength 100 requires the shaders to be in use")
+check(calls.reload == 0, "the module must never call ReloadShaders (it cannot swap built programs)")
+check(hr.MeshDebugParam2 == 0, "loading must leave the mark flag off")
 
--- 3. First expanded underground: switch the shaders in once, then report strength 100 for mod maps.
-check(D.EnsureShadersActive() == true and calls.reload == 1, "switching in must reload shaders once")
-check(D.EnsureShadersActive() == true and calls.reload == 1, "a second switch must be a no-op")
-check(D.Active() and D.RevealStrength(nil, true) == 100, "mod underground must use strength 100 once active")
+-- 2. The per-map decision: only an expanded underground gets strength 100 with the flag on.
+check(D.ApplyForMap(nil, "Underground", true) == 100 and hr.MeshDebugParam2 == FLAG, "expanded underground: strength 100 and flag on")
+check(D.ApplyForMap(nil, "Surface", true) == 90 and hr.MeshDebugParam2 == 0, "expanded surface: flag off")
+check(D.ApplyForMap(nil, "Underground", true) == 100 and hr.MeshDebugParam2 == FLAG, "back underground: flag on again")
+check(D.ApplyForMap(nil, "Underground", false) == 90 and hr.MeshDebugParam2 == 0, "vanilla underground: strength 90, flag off")
 check(D.RevealStrength(nil, false) == 90, "a vanilla map must keep strength 90")
+D.ApplyForMap(nil, "Underground", true)
+check(D.RestoreVanillaBehavior() == true and hr.MeshDebugParam2 == 0, "a vanilla session must clear the flag")
+check(D.ApplyModBehavior() == true and hr.MeshDebugParam2 == 0, "starting an expanded session sets nothing until a map needs it")
 local ok, why = D.Mount()
 check(ok and why == "already mounted" and #calls.mounts == 2, "a second mount must be a no-op")
 
--- 4. Vanilla session: unmount both folders and reload so the game's own programs come back.
-check(D.RestoreVanillaBehavior() == true, "restore must succeed")
-check(#calls.unmounts == 2 and calls.reload == 2, "restore must unmount both folders and reload once")
-check(not D.Mounted() and not D.Active() and D.RevealStrength(nil, true) == 90, "after restore everything is vanilla")
-D.RestoreVanillaBehavior()
-check(#calls.unmounts == 2 and calls.reload == 2, "restoring twice must be a no-op")
+-- 3. A value someone else put in hr.MeshDebugParam2 is never clobbered; no flag, no strength 100.
+hr.MeshDebugParam2 = 7
+check(D.ApplyForMap(nil, "Underground", true) == 90 and hr.MeshDebugParam2 == 7, "a foreign value must be kept and complete darkness refused")
+D.SetMarking(false)
+check(hr.MeshDebugParam2 == 7, "switching off must not clear a foreign value")
+hr.MeshDebugParam2 = 0
 
--- 4b. A session that never reached the underground unmounts without reloading.
-sbm, calls = load_module({ enabled = true, mod_path = "M/", exists = all_present })
-sbm.UndergroundDarkness.ApplyModBehavior()
-sbm.UndergroundDarkness.RestoreVanillaBehavior()
-check(#calls.unmounts == 2 and calls.reload == 0, "an unswitched mount must unmount without a shader reload")
-
--- 4c. Switching in is refused when nothing is mounted.
-sbm, calls = load_module({ enabled = true, mod_path = "M/", exists = all_present })
-check(sbm.UndergroundDarkness.EnsureShadersActive() == false and calls.reload == 0, "no switch without a mount")
-
--- 5. Missing shipped source: nothing mounted, vanilla strength everywhere.
-sbm, calls = load_module({ enabled = true, mod_path = "M/", exists = function(p) return not p:find("ApplyReflections", 1, true) end })
-sbm.UndergroundDarkness.ApplyModBehavior()
-check(not sbm.UndergroundDarkness.Mounted() and #calls.mounts == 0, "must not mount with a shipped source missing")
-check(tostring(sbm.State.underground_darkness_mount_reason):find("ApplyReflections.fx", 1, true), "reason must name the missing file")
-check(sbm.UndergroundDarkness.RevealStrength(nil, true) == 90, "unmounted module must fall back to vanilla strength")
-
--- 5b. Without FuncResolver (and no direct MountFolder) nothing mounts and the reason says so.
+-- 4. An hr that does not keep the flag (engine without the variable) refuses strength 100.
 do
-	local sbm2 = load_module({ enabled = true, mod_path = "M/", exists = all_present, no_resolver = true })
-	sbm2.UndergroundDarkness.ApplyModBehavior()
-	check(not sbm2.UndergroundDarkness.Mounted() and sbm2.State.underground_darkness_mount_reason == "MountFolder unavailable",
-		"missing resolver must report MountFolder unavailable")
+	local sink = setmetatable({}, { __index = function(_, k) if k == "MeshDebugParam2" then return 0 end end,
+		__newindex = function() end })
+	local s = load_module({ enabled = true, mod_path = "M/", exists = all_present, hr = sink })
+	check(s.UndergroundDarkness.Active(), "mounting only needs the variable to read as a number")
+	check(s.UndergroundDarkness.ApplyForMap(nil, "Underground", true) == 90, "a flag that does not read back must refuse strength 100")
+	check(s.State.underground_darkness_marking_reason == "hr.MeshDebugParam2 did not keep the flag", "reason must say the flag did not hold")
 end
 
--- 5c. Another game build (updated shader cache) must not mount, and must say why.
-do
-	local sbm3 = load_module({ enabled = true, mod_path = "M/", exists = all_present, lua_revision = 405907 + 1 })
-	sbm3.UndergroundDarkness.ApplyModBehavior()
-	check(not sbm3.UndergroundDarkness.Mounted(), "a different game build must not mount")
-	check(tostring(sbm3.State.underground_darkness_mount_reason):find("differs from the shader cache build", 1, true), "reason must name the build mismatch")
-	check(sbm3.UndergroundDarkness.RevealStrength(nil, true) == 90, "build mismatch must fall back to vanilla strength")
-	local sbm4 = load_module({ enabled = true, mod_path = "M/", exists = all_present, assets_revision = 1 })
-	sbm4.UndergroundDarkness.ApplyModBehavior()
-	check(not sbm4.UndergroundDarkness.Mounted(), "a different assets build must not mount")
+-- 5. Mod unloaded: flag off, both folders unmounted, vanilla strength from then on.
+D.ApplyForMap(nil, "Underground", true)
+check(D.Unmount("mod unloaded") == 2 and hr.MeshDebugParam2 == 0, "unmount must remove both mounts and clear the flag")
+check(not D.Mounted() and not D.Active() and D.ApplyForMap(nil, "Underground", true) == 90, "after unmount everything is vanilla")
+check(calls.reload == 0, "unmounting must not call ReloadShaders either")
+
+-- 6. A map already shown when the mod loads: the renderer may hold the game's programs, so the
+-- module mounts but never reports strength 100 (a restart is needed).
+for _, case in ipairs({ { current_map = { name = "PreGame" } }, { loaded_maps = { { name = "PreGame" } } } }) do
+	local s = load_module({ enabled = true, mod_path = "M/", exists = all_present,
+		current_map = case.current_map, loaded_maps = case.loaded_maps })
+	check(s.UndergroundDarkness.Mounted() and not s.UndergroundDarkness.Active(), "a late mount must not be active")
+	check(tostring(s.State.underground_darkness_mount_reason):find("restart", 1, true), "late mount reason must ask for a restart")
+	check(s.UndergroundDarkness.ApplyForMap(nil, "Underground", true) == 90, "a late mount must keep strength 90")
 end
 
--- 6. Mount error and disabled configuration both fall back.
-sbm = load_module({ enabled = true, mod_path = "M/", exists = all_present, mount_error = "no such folder" })
-sbm.UndergroundDarkness.ApplyModBehavior()
-check(not sbm.UndergroundDarkness.Mounted() and sbm.UndergroundDarkness.RevealStrength(nil, true) == 90, "mount error must fall back")
-sbm, calls = load_module({ enabled = false, mod_path = "M/", exists = all_present })
-sbm.UndergroundDarkness.ApplyModBehavior()
-check(#calls.mounts == 0 and sbm.UndergroundDarkness.RevealStrength(nil, true) == 90, "disabled configuration must not mount")
+-- 7. A re-executed module keeps the process's mount and verdict.
+do
+	local state = { underground_darkness_mounted = true, underground_darkness_programs_from_mount = true }
+	local s, c = load_module({ enabled = true, mod_path = "M/", exists = all_present, state = state,
+		current_map = { name = "Surface" } })
+	check(#c.mounts == 0 and s.UndergroundDarkness.Active(), "re-execution must not remount or lose the verdict")
+end
 
--- 7. Wiring: lifecycle phases, the mod-unload hook, the switch before each underground strength.
+-- 8. Every refusal to mount falls back to vanilla strength and says why.
+local function refused(opts, needle, message)
+	opts.enabled = opts.enabled ~= false
+	opts.mod_path = opts.mod_path or "M/"
+	opts.exists = opts.exists or all_present
+	local s, c = load_module(opts)
+	check(not s.UndergroundDarkness.Mounted(), message .. ": must not mount")
+	check(tostring(s.State.underground_darkness_mount_reason):find(needle, 1, true),
+		message .. ": reason " .. tostring(s.State.underground_darkness_mount_reason))
+	check(s.UndergroundDarkness.ApplyForMap(nil, "Underground", true) == 90, message .. ": strength 90")
+	return c
+end
+refused({ exists = function(p) return not p:find("ApplyReflections", 1, true) end }, "ApplyReflections.fx", "missing source")
+refused({ no_resolver = true }, "MountFolder unavailable", "no resolver")
+refused({ lua_revision = 405908 }, "differs from the shader cache build", "other Lua build")
+refused({ assets_revision = 1 }, "differs from the shader cache build", "other assets build")
+refused({ platform = { pc = false, xbox = true } }, "not the PC build", "console")
+refused({ config = { GraphicsApi = "vulkan" } }, "is not d3d12", "other graphics API")
+refused({ hr = {} }, "hr.MeshDebugParam2 unavailable", "no flag variable")
+refused({ mount_error = "no such folder" }, "mount failed", "mount error")
+local c = refused({ enabled = false }, "disabled by configuration", "disabled")
+check(#c.mounts == 0, "disabled configuration must not mount")
+
+-- 9. Wiring: lifecycle phases, the mod-unload hook, the per-map decision at both darkness sites,
+-- and the shader flag.
 local lifecycle = read("Code/sbm_lifecycle.lua")
 local apply = lifecycle:match("local APPLY_ORDER = (%b{})")
 local restore = lifecycle:match("local RESTORE_ORDER = (%b{})")
-check(apply and apply:find('"UndergroundDarkness"', 1, true), "the expanded-session apply phase must mount")
-check(restore and restore:find('"UndergroundDarkness"', 1, true), "the vanilla restore phase must unmount")
+check(apply and apply:find('"UndergroundDarkness"', 1, true), "the expanded-session apply phase must include the module")
+check(restore and restore:find('"UndergroundDarkness"', 1, true), "the vanilla restore phase must clear the flag")
 check(restore:find('"UndergroundDarkness"', 1, true) < restore:find('"HeatSafety"', 1, true), "restore must run in reverse order")
 check(lifecycle:find('RegisterOnce("ModUnloadLua"', 1, true) and lifecycle:find('darkness.Unmount, "mod unloaded"', 1, true),
 	"unloading the mod must unmount")
-check(lifecycle:find("darkness.RevealStrength(map, IsModMap(map))", 1, true), "lifecycle darkness state must use RevealStrength")
-check(lifecycle:find("SafeCall(darkness.EnsureShadersActive)", 1, true), "lifecycle must switch the shaders in before the underground strength")
+check(lifecycle:find("SafeCall(darkness.ApplyForMap, map, environment, IsModMap(map))", 1, true), "lifecycle darkness state must use ApplyForMap")
+check(lifecycle:find("SafeCall(darkness.SetMarking, false)", 1, true), "lifecycle must clear the flag whenever the map is not a complete-darkness underground")
 local generation = read("Code/sbm_map_generation.lua")
-check(generation:find("darkness.RevealStrength(map, is_mod_map)", 1, true), "EnsureVanillaDarknessReady must use RevealStrength")
-check(generation:find("pcall(darkness.EnsureShadersActive)", 1, true), "EnsureVanillaDarknessReady must switch the shaders in")
+check(generation:find("pcall(darkness.ApplyForMap, map, environment, is_mod_map)", 1, true), "EnsureVanillaDarknessReady must use ApplyForMap")
 check(not generation:find('local expected = environment == "Underground" and 90 or 0', 1, true), "hard-coded strength 90 must be gone")
+for _, path in ipairs({ "Code/sbm_lifecycle.lua", "Code/sbm_map_generation.lua", "Code/sbm_underground_darkness.lua" }) do
+	local src = read(path)
+	check(not src:find("EnsureShadersActive", 1, true), path .. " must not keep the ReloadShaders switch")
+	check(not src:find('real_global_function("ReloadShaders")', 1, true), path .. " must not call ReloadShaders")
+end
 local module = read("Code/sbm_underground_darkness.lua")
-check(not module:find("\ndo\n\tlocal ok, why = Darkness.Mount()", 1, true), "the module must not mount at load")
+check(module:find("\ndo\n\tlocal State = SuperBigMap.State\n\tif State.underground_darkness_mounted ~= true then", 1, true), "the module must mount at load")
+local header = read("Shaders/SbmReflectionMark.fh")
+check(header:find("#define SBM_MARK_FLAG " .. FLAG, 1, true), "shader flag must match the module flag")
 local config = read("Code/sbm_config.lua")
 check(config:find("config.UndergroundCompleteDarkness = true", 1, true), "complete darkness must default on")
 check(config:find("C.UNDERGROUND_COMPLETE_DARKNESS = as_bool(config.UndergroundCompleteDarkness)", 1, true), "config key missing")

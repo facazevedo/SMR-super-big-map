@@ -86,8 +86,8 @@ BEGIN_FRAG_SHADER
 	lod = max(0, lod - ReflectionMipBias);
 	float2 screen = CalculateAdjustedTexCoord(FRAG_POS, RenderTargetParams);
 	// SBM: a pixel whose own reflection entry is marked is fully covered by the underground
-	// darkness; reflections must add nothing to it. Level 0 keeps marked entries, so any
-	// sampling that touches level 0 decodes the four texels itself.
+	// darkness; reflections must add nothing to it. Level 0 keeps marked entries, so while marks
+	// can exist any sampling that touches level 0 decodes the four texels itself.
 	int2 sbm_size = tex2DSize(ReflectionMap, 0).xy;
 	float2 sbm_p = screen * sbm_size - 0.5f;
 	int2 sbm_p0 = clamp(int2(floor(sbm_p)), int2(0, 0), sbm_size - 1);
@@ -101,14 +101,14 @@ BEGIN_FRAG_SHADER
 			SbmDecodeMark(tex2DFetchLod(ReflectionMap, int2(sbm_p1.x, sbm_p0.y), 0).xyz), sbm_f.x),
 		lerp(SbmDecodeMark(tex2DFetchLod(ReflectionMap, int2(sbm_p0.x, sbm_p1.y), 0).xyz),
 			SbmDecodeMark(tex2DFetchLod(ReflectionMap, int2(sbm_p1.x, sbm_p1.y), 0).xyz), sbm_f.x), sbm_f.y);
-	float3 new_env_specular_0 = lod < 1.0f
+	float3 new_env_specular_0 = SbmMarkingOn() && lod < 1.0f
 		? lerp(sbm_l0, tex2DLod(ReflectionMap, screen, 1, TrilinearClampPS).xyz, lod)
 		: tex2DLod(ReflectionMap, screen, lod, TrilinearClampPS).xyz;
 #ifdef NRD_UNPACK
 	new_env_specular_0 = REBLUR_BackEnd_UnpackRadianceAndNormHitDist(float4(new_env_specular_0, 0)).xyz;
 #endif
 	if (EnvMip0Weight > 0) {
-		float3 new_env_specular_lod_0 = sbm_l0;
+		float3 new_env_specular_lod_0 = SbmMarkingOn() ? sbm_l0 : tex2DLod(ReflectionMap, screen, 0, TrilinearClampPS).xyz;
 #ifdef NRD_UNPACK
 		new_env_specular_lod_0 = REBLUR_BackEnd_UnpackRadianceAndNormHitDist(float4(new_env_specular_lod_0, 0)).xyz;
 #endif

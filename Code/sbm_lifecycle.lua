@@ -124,27 +124,31 @@ local function ApplyUndergroundDarknessState(map)
 	-- vanilla UpdateRevealDarkness(map), not by whichever process-global value happened to be live.
 	State.original_enable_darkness_reveal = nil
 	State.original_enable_darkness_reveal_captured = nil
+	local darkness = SuperBigMap.UndergroundDarkness
+	local complete = false
 	if should_reveal then
 		hr.EnableDarknessReveal = 0
 	else
 		local update_reveal = Global("UpdateRevealDarkness")
 		if map and type(update_reveal) == "function" then
 			SafeCall(update_reveal, map)
-			-- Expanded undergrounds use the complete strength (sbm_underground_darkness), with the
-			-- mounted shaders switched in first.
-			local darkness = SuperBigMap.UndergroundDarkness
-			if environment == "Underground" and IsModMap(map) and darkness
-				and type(darkness.EnsureShadersActive) == "function" then
-				SafeCall(darkness.EnsureShadersActive)
-			end
-			if environment == "Underground" and darkness and type(darkness.RevealStrength) == "function"
+			-- Expanded undergrounds use the complete strength with the reflection marks on
+			-- (sbm_underground_darkness); every other map keeps vanilla's value with the marks off.
+			if environment == "Underground" and darkness and type(darkness.ApplyForMap) == "function"
 				and tonumber(hr.EnableDarknessReveal) == darkness.VANILLA_STRENGTH then
-				hr.EnableDarknessReveal = darkness.RevealStrength(map, IsModMap(map))
+				local strength = SafeCall(darkness.ApplyForMap, map, environment, IsModMap(map))
+				if strength == darkness.COMPLETE_STRENGTH then
+					hr.EnableDarknessReveal = strength
+					complete = true
+				end
 			end
 		else
 			-- No gameplay map means no underground darkness reveal.
 			hr.EnableDarknessReveal = 0
 		end
+	end
+	if not complete and darkness and type(darkness.SetMarking) == "function" then
+		SafeCall(darkness.SetMarking, false)
 	end
 	LoadingLifecycle("UndergroundDarknessState", map, {
 		environment = tostring(environment), before = tostring(before),
@@ -1537,8 +1541,8 @@ RegisterOnce("ClassesBuilt", function()
 end)
 
 -- The engine sends ModUnloadLua just before it unloads a mod's Lua (the mod was disabled or
--- removed without restarting the game). Leave nothing of the shader override behind: unmount,
--- reload the game's own shaders and restore vanilla's darkness strength for the current map.
+-- removed without restarting the game). Leave nothing of the shader override active: switch the
+-- reflection marks off, unmount, and restore vanilla's darkness strength for the current map.
 RegisterOnce("ModUnloadLua", function(mod_id)
 	local own_id = rawget(_G, "CurrentModId") or "SuperBigMap"
 	if mod_id ~= own_id then return end

@@ -31,10 +31,14 @@ float3 BlurPixel(in uint2 pixel)
 		DECL_UNIFORM(float2, InputTexelSize)
 	END_CBUFFER
 
-	// SBM: the vanilla linear sample sits on a texel corner, so it averages a 2x2 block. Fetch the
-	// four texels, decode marked ones, and average them ourselves.
+	// SBM: the vanilla linear sample sits on a texel corner, so it averages a 2x2 block. While
+	// marks can exist, fetch the four texels, decode marked ones, and average them ourselves;
+	// otherwise take the vanilla hardware sample.
 	float3 SbmSample2x2(float2 uv, float2 texelSize)
 	{
+		BRANCH
+		if (!SbmMarkingOn())
+			return tex2DLod(Input, uv, 0, LinearClampCS).xyz;
 		int2 size = tex2DSize(Input, 0).xy;
 		float2 p = uv / texelSize - 0.5f;
 		int2 p0 = clamp(int2(floor(p)), int2(0, 0), size - 1);

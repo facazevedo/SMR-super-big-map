@@ -702,12 +702,12 @@ function SuperBigMap.EnsureVanillaDarknessReady(map)
 	local darkness = SuperBigMap.UndergroundDarkness
 	local grid = SuperBigMap.SectorGrid
 	local is_mod_map = grid and type(grid.IsModMap) == "function" and grid.IsModMap(map) == true
-	if environment == "Underground" and is_mod_map and darkness
-		and type(darkness.EnsureShadersActive) == "function" then
-		pcall(darkness.EnsureShadersActive)
+	-- Sets the reflection mark flag to match: on only for an expanded underground at strength 100.
+	local ok_strength, underground_strength = false, 90
+	if darkness and type(darkness.ApplyForMap) == "function" then
+		ok_strength, underground_strength = pcall(darkness.ApplyForMap, map, environment, is_mod_map)
 	end
-	local underground_strength = darkness and type(darkness.RevealStrength) == "function"
-		and darkness.RevealStrength(map, is_mod_map) or 90
+	if not ok_strength or type(underground_strength) ~= "number" then underground_strength = 90 end
 	local expected = environment == "Underground" and underground_strength or 0
 	local platform = Global("Platform")
 	local is_editor_active = Global("IsEditorActive")

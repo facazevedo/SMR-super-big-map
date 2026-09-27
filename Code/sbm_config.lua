@@ -500,7 +500,9 @@ config.UndergroundRevealAllDarkness = false
 -- Expanded undergrounds paint the unexplored area completely black: darkness strength 100 plus
 -- the shipped reflection shaders (Shaders/, ShaderCache/) that keep the reflection composite
 -- from adding wall glints there while leaving explored pixels untouched. Falls back to the
--- vanilla strength when the shaders cannot be mounted. See Code/sbm_underground_darkness.lua.
+-- vanilla strength when the shaders cannot be mounted. Everywhere else (vanilla sessions, the
+-- surface, the menus) those shaders run their vanilla code paths. See
+-- Code/sbm_underground_darkness.lua.
 config.UndergroundCompleteDarkness = true
 -- The game build whose compiled-shader cache the shipped ShaderCache/ bypass entries name
 -- (LuaRevision / AssetsRevision as the game reports them). Any other build disables the override.

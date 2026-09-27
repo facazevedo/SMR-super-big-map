@@ -225,6 +225,9 @@ float3 ImportanceSampleReflectionRay(int2 frag_pos, float roughness, float3 csRa
 // SBM: see SbmReflectionMark.fh.
 float3 SbmStoreValue(const int2 pixPos, float3 rgb)
 {
+	BRANCH
+	if (!SbmMarkingOn())
+		return rgb;
 	float3 own_color = tex2DFetch(ColorMap, int2(pixPos * ScaleCoef)).xyz;
 	return all(equal(own_color, broadcast3(0.0f))) ? SbmEncodeMark(rgb) : rgb;
 }
