@@ -1,5 +1,57 @@
 # Surface START-to-T1 — runtime acceptance and local checkpoint
 
+## Metadata 1137 / build 474 (`c430156`): complete underground darkness on expanded maps
+
+Owner report 2026-09-26: on the expanded underground the unexplored cave passages were faintly
+readable through the darkness. Vanilla behaves the same (measured: unexplored floor ~3/255,
+solid rock 0/255, in both a vanilla and an expanded 49N28E game), because vanilla paints its
+darkness at strength 90 (`hr.EnableDarknessReveal`), letting 10% of the lit cave through. Owner
+ruling 2026-09-27: on expanded maps every unexplored pixel must be 100% black and explored pixels
+must stay exactly as they are, reflections included; "darkness 100 only" was rejected because at
+strength 100 the screen-space reflection composite, which runs after the darkness pass, still adds
+the environment glint of the cave walls (brightest 8/255 on ~7% of the dark area).
+
+The composite cannot tell covered pixels apart (the reveal spheres are bound to the darkness pass
+alone; depth/stencil cannot be written by that pass, which reads the depth buffer as a texture;
+the composite's own blend is plain additive into an unsigned target). The one per-pixel channel
+written after the darkness pass is the reflection map, and rough surfaces sample its top mip (the
+screen average), so any change to the dark pixels' entries changes explored pixels (measured
+-2.4/255 uniform dimming with zeroed entries). The shipped solution (Shaders/, mounted over the
+game's shader path by `Code/sbm_underground_darkness.lua`):
+- `Reflections.fx` stores a fully covered pixel's vanilla reflection scaled by 2^14 when its scene
+  color is exactly black; the scale is exact in r11g11b10 for values in [2^-8, 3.9];
+- `ReflectionDenoising.fx` and `ReflectionConvolution.fx` undo the scale before blending, so
+  every mip an explored pixel samples is the vanilla value bit for bit, and re-encode a marked
+  pixel's own entry (the convolution replaces its corner-centred linear samples by a decoded 2x2
+  average);
+- `ApplyReflections.fx` discards a pixel whose own unblurred entry is marked and decodes the four
+  texels of any sampling that touches level 0.
+The compiled-shader cache is keyed by shader name and defines, never by source, so
+`ShaderCache/` ships zero-byte files under the 47 cache entries those 81 variants resolve to;
+mounted seethrough over the pack they make exactly those entries fail to load and the engine
+compiles the mounted sources (`hr.EnableShaderCompilation = 1` in the shipped config;
+`dxcompiler.dll` ships with the game). All other shaders stay cached; nothing in the game install
+is modified. The mod sandbox blacklists `MountFolder`; the owner ruled the mod may reach it through
+the engine's exposed `FuncResolver(name)` helper (module header documents this).
+
+Measured through the deployed mod at 49N28E (`_ralph/runs/ug_darkness/mod1137`): unexplored
+0/255 in every channel at both zoom levels; explored pixels differ from the same run forced to
+strength 90 by 0.055-0.059/255 on average (the unmodified game's own 90->100 difference is 0.04);
+exactly the 81 reflection-chain variants compiled, 1.56 s real in parallel on first use, no other
+compiles, no errors. A vanilla-mode control (`vanilla1137`) keeps strength 90 and the vanilla look.
+Dead ends kept as evidence: `override_zero2` (zeroed entries: dark exact, explored -2.4/255),
+`depthmark`/`depthmark2` (depth marking: no effect), `variants`/`ssr`/`levels` (render settings).
+
+Defects found on the way: `hr.ForceShaderCacheReload` with the whole cache hidden recompiles all
+3,446 cached shaders and hits a fatal assert on a `D3DCopyDSV` variant that already fails to load
+from the cache on this GPU (targeted bypass avoids it); build 1136 could not mount inside the
+sandbox and fell back to vanilla strength (1137 fixes it).
+
+Tests: `underground_darkness_test.lua` (23 checks, stub engine: mounts, fallbacks, resolver),
+`underground_darkness_payload_test.lua` (35 checks: shipped sources carry every stage, LF endings,
+all trace stores marked, 47 zero-byte entries, darkness shader entry untouched). 92 compatibility
+tests pass. The five-site matrix on 1137 and a release Mars.exe confirmation are pending.
+
 ## Metadata 1135 / build 474 (`789da09`): near-edge seam repair, five-site pass
 
 Owner report 2026-09-26: at 49N28E, sector A0, a straight raised ridge ran along the map edge.

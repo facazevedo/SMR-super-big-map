@@ -1,6 +1,19 @@
 # Full-rules verification — 2026-09-23
 
-## Current: build 474 / metadata 1135 — five-site PASS with near-edge seam repair (2026-09-26)
+## Current: build 474 / metadata 1137 — complete underground darkness (2026-09-27)
+
+Owner ruling 2026-09-27: on expanded maps the unexplored underground must be completely black,
+with explored pixels exactly unchanged. Vanilla shows the passages faintly at darkness 90; at 100
+the reflection composite still adds wall glints. The mod now ships four reflection shader sources
+that carry the "fully covered" mark through the reflection map without changing explored mips,
+plus zero-byte bypass entries for their 47 compiled-cache names, mounted from Lua at load. The
+sandbox blacklists the mount call; the owner ruled the mod may reach it via `FuncResolver`.
+Measured through the mod at 49N28E: unexplored 0/255 everywhere, explored within 0.06/255 of the
+same run at strength 90. Five-site matrix on 1137 and the release build confirmation are pending;
+the 1135 five-site pass below stands for every other rule. Details: SURFACE_LOADING_ACCEPTANCE.md,
+section "Metadata 1137".
+
+## Build 474 / metadata 1135 — five-site PASS with near-edge seam repair (2026-09-26)
 
 Owner report 2026-09-26: a straight ridge along the map edge at 49N28E, sector A0; the owner asked
 for a general fix. Vanilla's near-edge border is built from offset blocks with grid-aligned seams
