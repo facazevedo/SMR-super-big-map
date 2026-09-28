@@ -1333,6 +1333,62 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		return changed
 	end
 
+	local function join_range(track, perp, width, low_perp)
+		local join_lo, join_hi
+		if track.edge == "left" or track.edge == "top" then
+			join_lo = math.max(outer_guard + 1, perp - 6)
+			-- The guard is a detection/preferred-join limit, not a no-write
+			-- border: translation above already reaches the physical edge.
+			-- Never stop inside the ramp and leave a notch next to the
+			-- translated low endpoint. Retain every non-clipped join.
+			join_lo = math.min(join_lo, low_perp)
+			join_hi = math.min(track.perp_n - 2, perp + width + 12)
+		else
+			join_lo = math.max(1, perp - 12)
+			join_hi = math.min(track.perp_n - outer_guard - 2, perp + width + 6)
+			join_hi = math.max(join_hi, low_perp)
+		end
+		return join_lo, join_hi
+	end
+
+	local function quintic(t)
+		t = math.max(0, math.min(1, t))
+		return t * t * t * (t * (t * 6 - 15) + 10)
+	end
+
+	-- The seam's jump in another row, measured at a translated row's low and high cells.
+	local function live_jump(track, row, along)
+		local low = at(track.axis, row.low_perp, along)
+		local high = at(track.axis, row.high_perp, along)
+		if type(low) ~= "number" or type(high) ~= "number" then return 0 end
+		return high - low
+	end
+
+	-- Repair one row outside a track's translated rows as a translated row would be repaired
+	-- (low region raised by offset, then the same join), and keep alpha of that change.
+	local function blend_row(track, along, row, offset, alpha)
+		local axis, perp, width = track.axis, row.perp, row.width
+		local before_edge = track.edge == "left" or track.edge == "top"
+		local perp0 = before_edge and 0 or perp + width
+		local perp1 = before_edge and perp or track.perp_n - 1
+		local join_lo, join_hi = join_range(track, perp, width, row.low_perp)
+		local lo, hi = math.min(perp0, join_lo), math.max(perp1, join_hi)
+		local original = {}
+		for p = lo, hi do original[p] = at(axis, p, along) end
+		for p = perp0, perp1 do put(axis, p, along, math.min(mx, original[p] + offset)) end
+		feather_join(axis, along, join_lo, join_hi)
+		local changed = 0
+		for p = lo, hi do
+			local full = at(axis, p, along)
+			local value = math.floor(original[p] + (full - original[p]) * alpha + 0.5)
+			if value ~= full then put(axis, p, along, value) end
+			if value ~= original[p] then changed = changed + 1 end
+		end
+		refinement_guide.RegisterWrite(axis, along, math.min(perp0, join_lo + 1),
+			math.max(perp1, join_hi - 1))
+		return changed
+	end
+
 	local function offer_candidate(row, axis, perp, width, edge, low_before, jump)
 		-- Collapse several adjacent samples from the same cliff face to its strongest edge.
 		for i = 1, #row do
@@ -1728,7 +1784,33 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		end
 		discovery_stats.qualification_ms = ticks() - phase_started
 		if #qualified == 0 then return end
-		table.sort(qualified, function(a, b) return a.score > b.score end)
+		if not wide_ring_only then
+			-- Where two vanilla seam lines run side by side (about eleven cells apart), repair the
+			-- one deeper inside the map first. Its translation lifts both sides of the outer seam
+			-- and its join stops short of it; the outer join then only smooths an inner seam
+			-- that is already repaired. The other way round, the outer join ramped the inner seam
+			-- in some rows and the inner track lifted it in the next (17S11W: 569 units).
+			for _, track in ipairs(qualified) do
+				local counts, perps, line, best = {}, {}, nil, -1
+				for _, point in ipairs(track.points) do
+					if not counts[point.perp] then perps[#perps + 1] = point.perp end
+					counts[point.perp] = (counts[point.perp] or 0) + 1
+				end
+				table.sort(perps)
+				for _, perp in ipairs(perps) do
+					local pair = counts[perp] + (counts[perp + 1] or 0)
+					if pair > best then line, best = perp, pair end
+				end
+				track.depth = (track.edge == "left" or track.edge == "top") and line
+					or track.perp_n - 1 - line
+			end
+			table.sort(qualified, function(a, b)
+				if a.depth ~= b.depth then return a.depth > b.depth end
+				return a.score > b.score
+			end)
+		else
+			table.sort(qualified, function(a, b) return a.score > b.score end)
+		end
 		-- The length/density/average/max gate above reduces the first multi-cell attempt's 1,249
 		-- fragments to a small coherent boundary cohort. Keep all of those tracks: a
 		-- second relative-score cutoff discarded a real bottom segment and left a 1,171-cell wall.
@@ -1779,7 +1861,7 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 				end
 			end
 
-			local modified, detected = 0, 0
+			local modified, detected, extended = 0, 0, 0
 			local translation_rows = {}
 			local min_offset, max_offset
 			for _, point in ipairs(points) do
@@ -1808,27 +1890,41 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 							-- resampling ramp and a few samples on both sides with a slope-matched join.
 							local perp0 = before_edge and 0 or perp + width
 							local perp1 = before_edge and perp or selected.perp_n - 1
-							local row = { along = along, lo = perp0, hi = perp1, offset = offset }
+							local row = { along = along, lo = perp0, hi = perp1, offset = offset,
+								perp = perp, width = width, low_perp = low_perp, high_perp = high_perp }
 							translation_rows[#translation_rows + 1] = row
-							local join_lo, join_hi
-							if before_edge then
-								join_lo = math.max(outer_guard + 1, perp - 6)
-								-- The guard is a detection/preferred-join limit, not a no-write
-								-- border: translation above already reaches the physical edge.
-								-- Never stop inside the ramp and leave a notch next to the
-								-- translated low endpoint. Retain every non-clipped join.
-								join_lo = math.min(join_lo, low_perp)
-								join_hi = math.min(selected.perp_n - 2, perp + width + 12)
-							else
-								join_lo = math.max(1, perp - 12)
-								join_hi = math.min(selected.perp_n - outer_guard - 2,
-									perp + width + 6)
-								join_hi = math.max(join_hi, low_perp)
-							end
-							row.join_lo, row.join_hi = join_lo, join_hi
+							row.join_lo, row.join_hi = join_range(selected, perp, width, low_perp)
 						end
 					end
 				end
+			end
+			-- A vanilla seam stays on one grid line, which resampling spreads over two adjacent cells.
+			-- A steep natural slope passes the three-cell contrast test too (its jump is three
+			-- flanks), so a track can wander off its seam onto one, and some short tracks follow
+			-- nothing else. At 39S130W's right edge the off-line tail of a 3,797-row seam also
+			-- smeared the stronger seam beside it in alternate rows: walls of up to 1,873 units.
+			-- Translate only the rows on the track's dominant line pair; the rows between them are
+			-- filled below, and a track whose line alone no longer qualifies is left untouched.
+			if not wide_ring_only and #translation_rows > 0 then
+				local counts, perps, line, best = {}, {}, nil, -1
+				for _, row in ipairs(translation_rows) do
+					if not counts[row.perp] then perps[#perps + 1] = row.perp end
+					counts[row.perp] = (counts[row.perp] or 0) + 1
+				end
+				table.sort(perps)
+				for _, perp in ipairs(perps) do
+					local pair = counts[perp] + (counts[perp + 1] or 0)
+					if pair > best then line, best = perp, pair end
+				end
+				local kept = {}
+				for _, row in ipairs(translation_rows) do
+					if row.perp >= line - 1 and row.perp <= line + 2 then kept[#kept + 1] = row end
+				end
+				local min_count = math.max(8, math.max(96, math.floor(selected.along_n / 50)))
+				local span = #kept > 0 and kept[#kept].along - kept[1].along + 1 or 0
+				if #kept < min_count or (#kept + 0.0) / span < 0.95 then kept = {} end
+				selected.line, selected.off_line = line, #translation_rows - #kept
+				translation_rows = kept
 			end
 			if #translation_rows > 0 then
 				-- Refinement and joins read only their own along-row. Batch translations
@@ -1847,8 +1943,43 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 					refinement_guide.RegisterWrite(selected.axis, row.along,
 						math.min(row.lo, row.join_lo + 1), math.max(row.hi, row.join_hi - 1))
 				end
+				-- The contrast test loses a fading seam while it is still about a threshold high, and
+				-- skips rows where it dips inside the track (as does the line test above). Stopping
+				-- the translation there left a perpendicular wall across the edge strip (39S130W A0:
+				-- 289 units, every track end on that map 190-280). Follow the seam's live jump at the
+				-- nearest translated row's position instead: repair skipped rows fully; beyond each
+				-- end keep the full repair while the seam stays above half the threshold (one taper
+				-- at most), then blend it out over another taper. Away from the track the offset
+				-- only ever shrinks; where it reaches zero the join still fades out on schedule, as
+				-- stopping there left a wall of its own.
+				local first, last = translation_rows[1], translation_rows[#translation_rows]
+				local taper = math.min(32, math.max(16, math.floor((last.along - first.along + 1) / 6)))
+				for i = 2, #translation_rows do
+					local a, b = translation_rows[i - 1], translation_rows[i]
+					for along = a.along + 1, b.along - 1 do
+						local near = along - a.along <= b.along - along and a or b
+						local offset = math.min(live_jump(selected, near, along), math.max(a.offset, b.offset))
+						modified = modified + blend_row(selected, along, near, math.max(0, offset), 1)
+						extended = extended + 1
+					end
+				end
+				for _, dir in ipairs({ -1, 1 }) do
+					local row = dir < 0 and first or last
+					local offset, fade_from = row.offset, nil
+					for k = 1, 2 * taper do
+						local along = row.along + dir * k
+						if along < 0 or along >= selected.along_n then break end
+						offset = math.min(offset, math.max(0, live_jump(selected, row, along)))
+						if not fade_from and (k > taper or offset * 2 < threshold) then fade_from = k - 1 end
+						local alpha = fade_from and 1 - quintic((k - fade_from) / (taper + 0.0)) or 1
+						if alpha <= 0 then break end
+						modified = modified + blend_row(selected, along, row, offset, alpha)
+						extended = extended + 1
+					end
+				end
 			end
 			selected.modified = modified
+			selected.extended = extended
 			selected.detected = detected
 			selected.min_offset = min_offset
 			selected.max_offset = max_offset
@@ -1868,12 +1999,14 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		return false, { reason = tostring(repair_err), threshold = threshold, min = mn, max = mx }
 	end
 
-	local modified, detected = 0, 0
+	local modified, detected, extended, off_line = 0, 0, 0, 0
 	local edges, axes = {}, {}
 	local min_offset, max_offset
 	for _, selected in ipairs(selected_tracks) do
 		modified = modified + (selected.modified or 0)
 		detected = detected + (selected.detected or 0)
+		extended = extended + (selected.extended or 0)
+		off_line = off_line + (selected.off_line or 0)
 		edges[#edges + 1] = selected.edge
 		axes[#axes + 1] = selected.axis
 		if selected.min_offset then
@@ -1904,7 +2037,7 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		first_along = primary.first_along, last_along = primary.last_along,
 		edge_perp = primary.last_perp, rows = primary.count,
 		repairs = #selected_tracks, qualified = primary.qualified,
-		modified = modified, detected = detected,
+		modified = modified, detected = detected, extended = extended, off_line = off_line,
 		min_offset = min_offset, max_offset = max_offset,
 		left_tracks = track_counts.left, right_tracks = track_counts.right,
 		top_tracks = track_counts.top, bottom_tracks = track_counts.bottom,
