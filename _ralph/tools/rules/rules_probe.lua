@@ -625,6 +625,47 @@ CreateRealTimeThread(function()
 			local cx, cy = (sfx0 + sfx1) / 2, (sfy0 + sfy1) / 2
 			R.start_center = tostring(cx) .. "," .. tostring(cy)
 			local s = sector_at(cx, cy)
+			-- Owner rule 2026-09-28: among the sectors the stretched vanilla start sector covers,
+			-- the one holding vanilla's Concrete, else the most resources, then the most deposits,
+			-- then closest to the stretched centre, then top-most, left-most. Recompute that choice
+			-- from the per-sector tally the mod publishes rather than trusting its verdict.
+			local tally = map.SuperBigMapStartSectorTally
+			R.start_rule = tostring(map.SuperBigMapStartSectorRule)
+			R.start_tally = tostring(tally)
+			if type(tally) == "string" and tally ~= "" then
+				local entries, any_concrete = {}, false
+				for part in tally:gmatch("[^;]+") do
+					local id, amount, count, concrete, ex0, ey0, ex1, ey1 =
+						part:match("^(.-):([^:]+):(%d+):([^:]+):([%-%d]+),([%-%d]+),([%-%d]+),([%-%d]+)$")
+					if id then
+						local e = { id = id, amount = tonumber(amount) or 0, count = tonumber(count) or 0,
+							concrete = concrete == "concrete", x0 = tonumber(ex0), y0 = tonumber(ey0),
+							x1 = tonumber(ex1), y1 = tonumber(ey1) }
+						entries[#entries + 1] = e
+						if e.concrete then any_concrete = true end
+					end
+				end
+				local best, best_key
+				for _, e in ipairs(entries) do
+					if not any_concrete or e.concrete then
+						local ex, ey = (e.x0 + e.x1) / 2.0, (e.y0 + e.y1) / 2.0
+						local key = { e.amount, e.count, -((ex - cx) ^ 2 + (ey - cy) ^ 2), -e.y0, -e.x0 }
+						local better = not best_key
+						if not better then
+							for k = 1, #key do
+								if key[k] ~= best_key[k] then better = key[k] > best_key[k]; break end
+							end
+						end
+						if better then best, best_key = e, key end
+					end
+				end
+				s = nil
+				if best then
+					for _, rec in ipairs(sectors) do
+						if rec.x0 == best.x0 and rec.y0 == best.y0 then s = rec; break end
+					end
+				end
+			end
 			R.start_sector = s and (s.id .. "(" .. s.col .. "," .. s.row .. "):" .. s.status) or "not_found"
 		else
 			R.start_center = "unavailable"

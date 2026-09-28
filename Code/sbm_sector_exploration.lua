@@ -1236,10 +1236,17 @@ local function StageNativeStartSpawns(map, revealed, spawn_positions)
 					local ok_xy, vx, vy = pcall(spawn.xy, spawn)
 					if ok_xy then spawn_x, spawn_y = tonumber(vx), tonumber(vy) end
 				end
+				-- Vanilla's own measure of a deposit (InitialReveal ranks sectors by it); the start
+				-- sector choice on the expanded map ranks the stretched footprint's sectors by it too.
+				local amount
+				if (marker.resource or "") ~= "" and type(marker.GetEstimatedAmount) == "function" then
+					local ok_amount, value = pcall(marker.GetEstimatedAmount, marker)
+					if ok_amount then amount = tonumber(value) end
+				end
 				local record = {
 					sector = tostring(sec.id), winner = wi, depth = depth, order = i,
 					class = tostring(marker.class or "?"),
-					resource = tostring(marker.resource or ""),
+					resource = tostring(marker.resource or ""), amount = amount,
 					depth_layer = tonumber(rawget(marker, "depth_layer")),
 					source_x = sx, source_y = sy, source_z = sz,
 					source_hash = rawget(marker, "SuperBigMapNativeSourceHash"),
@@ -1766,11 +1773,65 @@ local function SelectTransformedStartAnchor(overlaps, x0, y0, x1, y1)
 end
 -- START_ANCHOR_HELPER_END
 
+-- START_SECTOR_RULE_BEGIN
+-- Owner rule 2026-09-28. Vanilla's start sector stretches over exactly four expanded sectors and
+-- vanilla never starts in an empty one, but the sector under the stretched centre can be. Choose
+-- among the overlapped sectors by vanilla's own opening deposits at their expanded positions: if
+-- vanilla's sector had a Concrete deposit, only the sectors holding one qualify; then the most
+-- resources (vanilla's estimated amounts), then the most deposits, then the sector closest to the
+-- stretched centre, then the top-most, left-most - a fixed order, so a seed always gives one answer.
+-- `deposits` holds { x, y, amount, concrete } in expanded coordinates. Returns the chosen overlap
+-- entry's sector, the rule that decided, and a per-sector tally, or nil without deposits.
+local function ChooseStartSector(overlaps, deposits, cx, cy)
+	if type(deposits) ~= "table" or #deposits == 0 then return nil end
+	local tallies, had_concrete = {}, false
+	for i = 1, #overlaps do tallies[i] = { amount = 0, count = 0, concrete = false } end
+	for _, deposit in ipairs(deposits) do
+		if deposit.concrete then had_concrete = true end
+		for i = 1, #overlaps do
+			local entry = overlaps[i]
+			if deposit.x >= entry.x0 and deposit.x < entry.x1
+				and deposit.y >= entry.y0 and deposit.y < entry.y1 then
+				local tally = tallies[i]
+				tally.amount = tally.amount + (tonumber(deposit.amount) or 0)
+				tally.count = tally.count + 1
+				if deposit.concrete then tally.concrete = true end
+				break
+			end
+		end
+	end
+	local function pick(concrete_only)
+		local best_i, best
+		for i = 1, #overlaps do
+			local entry, tally = overlaps[i], tallies[i]
+			if not concrete_only or tally.concrete then
+				local ex, ey = (entry.x0 + entry.x1) / 2.0, (entry.y0 + entry.y1) / 2.0
+				local d2 = (ex - cx) * (ex - cx) + (ey - cy) * (ey - cy)
+				local key = { tally.amount, tally.count, -d2, -entry.y0, -entry.x0 }
+				local better = not best
+				if not better then
+					for k = 1, #key do
+						if key[k] ~= best[k] then better = key[k] > best[k]; break end
+					end
+				end
+				if better then best_i, best = i, key end
+			end
+		end
+		return best_i
+	end
+	local rule = "most resources"
+	local chosen = had_concrete and pick(true) or nil
+	if chosen then rule = "concrete" else chosen = pick(false) end
+	if not chosen then return nil end
+	return overlaps[chosen].sector, rule, tallies
+end
+-- START_SECTOR_RULE_END
+
 -- Post-stretch reveal: transform the annotated vanilla winner box and collect every live expanded
 -- sector with positive-area overlap. Keep vanilla's InitialReveal over that complete candidate set
--- for its spawn-position decisions and seeded draws, but reveal only the sector containing the
--- transformed start center. A second resource-quality choice can prefer a neighbouring sector;
--- it must not displace the single geometric anchor. Then replicate InitialExplore's tail.
+-- for its spawn-position decisions and seeded draws, but reveal only one of those sectors, chosen
+-- by ChooseStartSector from vanilla's opening deposits (the stretched centre only when there are
+-- none). Then replicate InitialExplore's tail.
 local function RevealVanillaStartSectors(map)
 	local State = SuperBigMap.State or {}
 	map = map or Global("MainMap")
@@ -1867,8 +1928,44 @@ local function RevealVanillaStartSectors(map)
 		and candidates[revealed[1]] == true) then
 		error("vanilla InitialReveal failed for transformed start candidates: " .. tostring(revealed))
 	end
-	local selected = SelectTransformedStartAnchor(overlaps, x0, y0, x1, y1)
+	-- Vanilla's own opening deposits (the staged set), at the positions the replay below gives them.
+	local start_deposits = {}
+	if type(data.staged) == "table" and #data.staged > 0 then
+		local marker_index = BuildNativeSourceMarkerIndex(map)
+		local geom = { origin_x = origin_x, origin_y = origin_y, scale_x = scale_x, scale_y = scale_y }
+		for _, record in ipairs(data.staged) do
+			if record.can_place == true and record.resource ~= ""
+				and (record.depth == "surface" or record.depth == "subsurface") then
+				local marker = marker_index[tostring(record.class) .. ":" .. tostring(record.source_x)
+					.. ":" .. tostring(record.source_y)]
+				local spawn = marker and StagedDestinationSpawnPoint(record, marker, geom)
+				if spawn then
+					local sx, sy = spawn:xy()
+					start_deposits[#start_deposits + 1] = { x = sx, y = sy,
+						amount = tonumber(record.amount) or 0, concrete = record.resource == "Concrete" }
+				end
+			end
+		end
+	end
+	local selected, start_rule, tallies = ChooseStartSector(overlaps, start_deposits,
+		(x0 + x1) / 2.0, (y0 + y1) / 2.0)
+	if not selected then
+		-- No opening deposit to rank by (vanilla always has one): keep the stretched centre.
+		selected, start_rule = SelectTransformedStartAnchor(overlaps, x0, y0, x1, y1), "centre"
+	end
 	if not selected then return 0 end -- Do not clear existing reveals after a failed lookup.
+	-- Evidence for the rules probe: the decision and every candidate's tally.
+	local tally_parts = {}
+	for i = 1, #overlaps do
+		local t = tallies and tallies[i] or {}
+		tally_parts[#tally_parts + 1] = string.format("%s:%s:%s:%s:%s,%s,%s,%s",
+			tostring(overlaps[i].sector.id), tostring(t.amount or 0), tostring(t.count or 0),
+			t.concrete and "concrete" or "-", tostring(overlaps[i].x0), tostring(overlaps[i].y0),
+			tostring(overlaps[i].x1), tostring(overlaps[i].y1))
+	end
+	map.SuperBigMapStartSectorRule = start_rule
+	map.SuperBigMapStartSectorChosen = tostring(selected.id)
+	map.SuperBigMapStartSectorTally = table.concat(tally_parts, ";")
 	-- The expanded-map rule contract permits exactly one initial reveal. InitialReveal may return
 	-- multiple candidates or a neighbouring winner, but only the start anchor is scanned here.
 	local reveal_targets = { selected }
