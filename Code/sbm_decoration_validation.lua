@@ -631,6 +631,29 @@ local function MarkNativeAuthored(map,record)
 	end end
 end
 
+-- The planner measures a vertex's terrain height at point(x,y), which truncates fractional
+-- coordinates; MarkNativeAuthored above rounds them half-up. On a steep slope the two samplings
+-- differ by several units, more than the planner's one-unit margin, and a rock lowered exactly to
+-- its vanilla allowance was then refused by the verifier (39S130W, 2026-09-28). Give the planner
+-- a target the verifier's own sampling will accept: the allowance less that measured difference.
+-- A vertical move keeps XY, so the difference after the move is exactly the one measured here.
+local function NativeAllowedTarget(map,record,node)
+	local allowed=node.native_allowed
+	if type(allowed)~="number" then return nil end
+	local terrain=Global("terrain");local point=native_point or Global("point")
+	local lowest_rounded,lowest_truncated=math.huge,math.huge
+	for _,vi in ipairs(Geometry.SupportVertices(node.geometry,node.component)) do
+		local p=World(node.transform_record or record,node.geometry.vertices[vi])
+		local rounded=terrain.GetHeight(map,Point(p))
+		local truncated=terrain.GetHeight(map,point(p[1],p[2]))
+		if type(rounded)~="number" or type(truncated)~="number" then return allowed-1 end
+		if p[3]-rounded<lowest_rounded then lowest_rounded=p[3]-rounded end
+		if p[3]-truncated<lowest_truncated then lowest_truncated=p[3]-truncated end
+	end
+	if lowest_rounded==math.huge then return allowed-1 end
+	return allowed-1-max(0,lowest_rounded-lowest_truncated)
+end
+
 local function WorldBounds(record,b)
 	if record.pose.asset_local then return b end
 	local m=Matrix(record);local c=m.columns
@@ -2805,7 +2828,7 @@ function Validator.SeatingEvidence(map,bounds_only)
 					-- Vanilla-authored floats need no terrain contact; one the expansion lifted
 					-- further returns to its vanilla clearance, not to the ground.
 					if node.native_authored then c.terrain_root=false
-					elseif node.native_allowed then c.allowed_clearance=node.native_allowed-1 end
+					elseif node.native_allowed then c.allowed_clearance=NativeAllowedTarget(map,record,node) end
 					c.height=hi-lo;components[#components+1]=c
 				end
 				result[#result+1]={obj=obj,components=components,bounds=bounds,foundation=record.foundation~=nil,
@@ -2889,7 +2912,7 @@ function Validator.SeatingGroup(map,entry)
 				-- reach terrain itself and close its own complete rim gap.
 				c={vertices={},height=0,lod=node.lod,terrain_root=(floating[record] or not rooted[node]) and not node.native_authored,
 					foundation=floating[record] and record.foundation.by_component[node.component] or nil,
-					allowed_clearance=not node.native_authored and node.native_allowed and node.native_allowed-1 or nil}
+					allowed_clearance=not node.native_authored and node.native_allowed and NativeAllowedTarget(map,record,node) or nil}
 				local lo,hi=math.huge,-math.huge
 				for _,vi in ipairs(Geometry.SupportVertices(node.geometry,node.component)) do
 					local p=World(node.transform_record or record,node.geometry.vertices[vi]);c.vertices[#c.vertices+1]=p
@@ -3009,6 +3032,8 @@ end
 -- A successful correction count is not proof that every rock was checked.
 -- Account for untouched positive witnesses as well as current support graphs;
 -- missing or inconclusive evidence must keep surface readiness closed.
+Validator.NativeAllowedTarget=NativeAllowedTarget
+
 function Validator.SurfaceSupportSummary(map)
 	local context=contexts[map]
 	if not context then return nil,"surface support context unavailable" end
