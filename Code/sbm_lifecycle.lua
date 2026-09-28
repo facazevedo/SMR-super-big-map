@@ -1225,6 +1225,12 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 	-- process-global renderer value to 90. The player-facing map is current again now, so derive
 	-- the final value from it exactly as vanilla does: Surface=0 and Underground=90.
 	ApplyUndergroundDarknessState(ResolveLiveMap(Global("CurrentMap")) or map)
+	-- The game's eye-adaptation reset lands on a pre-scene frame on expanded maps; re-issue it
+	-- once the new map renders (sbm_overview_render).
+	local render = SuperBigMap.OverviewRender
+	if IsModMap(map) and render and type(render.ResyncExposureAfterMapSwitch) == "function" then
+		SafeCall(render.ResyncExposureAfterMapSwitch, map)
+	end
 	local validation=SuperBigMap.DecorationValidation
 	if validation and IsModMap(map) then validation.Schedule(map,"map switch") end
 	local elevator_debug = SuperBigMap.ElevatorDebug

@@ -85,6 +85,33 @@ function OverviewRender.Apply(enable)
 	end
 end
 
+-- The game resets eye adaptation (hr.AutoExposureReset) inside ChangeCurrentMapSlot so the new
+-- map appears correctly exposed at once. On expanded maps that reset is consumed on a frame
+-- before the new scene is rendering, so adaptation starts from a wrong value and eases in over
+-- about two seconds: the surface came back washed out or too dark (owner report 2026-09-28;
+-- vanilla shows no ramp). Re-issue the same reset once the scene renders. A reset on a settled
+-- scene changes nothing (measured), so the second one only covers slow first frames.
+OverviewRender.EXPOSURE_RESYNC_FRAMES = { 6, 10 }
+
+function OverviewRender.ResyncExposureAfterMapSwitch(map)
+	local hr = Global("hr")
+	if type(hr) ~= "table" or type(hr.AutoExposureReset) ~= "number" then return false end
+	-- Eye adaptation off: the game's own reset is a no-op too.
+	if hr.AutoExposureMode ~= nil and hr.AutoExposureMode ~= 1 then return false end
+	local create_thread = Global("CreateRealTimeThread")
+	local wait_frame = Global("WaitNextFrame")
+	if type(create_thread) ~= "function" or type(wait_frame) ~= "function" then return false end
+	create_thread(function()
+		for _, frames in ipairs(OverviewRender.EXPOSURE_RESYNC_FRAMES) do
+			wait_frame(frames)
+			-- Another switch started or finished meanwhile: the game resets for that one.
+			if Global("CurrentMap") ~= map or Global("ChangingMap") then return end
+			hr.AutoExposureReset = 1
+		end
+	end)
+	return true
+end
+
 -- Enabling the mod does not force the extended render distance on; that is driven
 -- by entering overview mode. Disabling the mod restores the vanilla render distance.
 function OverviewRender.ApplyModBehavior()
