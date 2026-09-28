@@ -1801,6 +1801,7 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 					local pair = counts[perp] + (counts[perp + 1] or 0)
 					if pair > best then line, best = perp, pair end
 				end
+				track.line = line
 				track.depth = (track.edge == "left" or track.edge == "top") and line
 					or track.perp_n - 1 - line
 			end
@@ -1808,6 +1809,44 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 				if a.depth ~= b.depth then return a.depth > b.depth end
 				return a.score > b.score
 			end)
+			-- Resampling puts a vanilla seam in the same destination cells in every row, but the
+			-- contrast test picks among equally good cells: about half the rows chose 8159-8162 and
+			-- half 8160-8163, which shifted the translated strip and the join band by a cell from
+			-- row to row and left streaks of up to 255 units across repaired strips. Translate and
+			-- join every row of a seam line with one span, the smallest one containing the spans
+			-- that at least a tenth of its on-line detections use (tracks on one line share it).
+			local groups, order = {}, {}
+			for _, track in ipairs(qualified) do
+				local key = track.axis .. ":" .. track.edge .. ":" .. track.line
+				local group = groups[key]
+				if not group then
+					group = { n = 0, starts = {}, ends = {} }
+					groups[key] = group
+					order[#order + 1] = key
+				end
+				for _, point in ipairs(track.points) do
+					if point.perp >= track.line - 1 and point.perp <= track.line + 2 then
+						local e = point.perp + point.width
+						group.n = group.n + 1
+						group.starts[point.perp] = (group.starts[point.perp] or 0) + 1
+						group.ends[e] = (group.ends[e] or 0) + 1
+					end
+				end
+				track.span_group = group
+			end
+			for _, key in ipairs(order) do
+				local group = groups[key]
+				for perp, count in pairs(group.starts) do
+					if count * 10 >= group.n and (not group.first or perp < group.first) then
+						group.first = perp
+					end
+				end
+				for e, count in pairs(group.ends) do
+					if count * 10 >= group.n and (not group.last or e > group.last) then
+						group.last = e
+					end
+				end
+			end
 		else
 			table.sort(qualified, function(a, b) return a.score > b.score end)
 		end
@@ -1923,25 +1962,51 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 				local min_count = math.max(8, math.max(96, math.floor(selected.along_n / 50)))
 				local span = #kept > 0 and kept[#kept].along - kept[1].along + 1 or 0
 				if #kept < min_count or (#kept + 0.0) / span < 0.95 then kept = {} end
-				selected.line, selected.off_line = line, #translation_rows - #kept
+				selected.off_line = #translation_rows - #kept
 				translation_rows = kept
+				local group = selected.span_group
+				if #translation_rows > 0 and group and group.first and group.last then
+					local perp, width = group.first, group.last - group.first
+					local before_edge = selected.edge == "left" or selected.edge == "top"
+					local low_perp = selected.low_before and perp or perp + width
+					local high_perp = selected.low_before and perp + width or perp
+					local join_lo, join_hi = join_range(selected, perp, width, low_perp)
+					for i, row in ipairs(translation_rows) do
+						local low = at(selected.axis, low_perp, row.along)
+						local high = at(selected.axis, high_perp, row.along)
+						translation_rows[i] = { along = row.along,
+							lo = before_edge and 0 or perp + width,
+							hi = before_edge and perp or selected.perp_n - 1,
+							offset = (type(low) == "number" and type(high) == "number") and high - low or 0,
+							perp = perp, width = width, low_perp = low_perp, high_perp = high_perp,
+							join_lo = join_lo, join_hi = join_hi }
+					end
+				end
 			end
 			if #translation_rows > 0 then
 				-- Refinement and joins read only their own along-row. Batch translations
 				-- within this selected track, then finish every original join before the
 				-- next track can refine against the live, already-repaired grid.
+				-- A row whose span is not a step there (rare) keeps the join alone, below.
+				local raised, level = {}, {}
+				for _, row in ipairs(translation_rows) do
+					if row.offset > 0 then raised[#raised + 1] = row else level[#level + 1] = row end
+				end
 				local call_ok, count, err = pcall(TranslateHeightTrack, discovery_api, grid, selected.axis,
-					selected.edge == "left" or selected.edge == "top", translation_rows, mx)
+					selected.edge == "left" or selected.edge == "top", raised, mx)
 				if not call_ok or not count then
 					translation_error = tostring(call_ok and err or count); return
 				end
 				modified = modified + count
-				for _, row in ipairs(translation_rows) do
+				for _, row in ipairs(raised) do
 					modified = modified + feather_join(selected.axis, row.along, row.join_lo, row.join_hi)
 					-- Include the whole possible join, even when clipping/no-op values made
 					-- fewer writes. Never reuse pre-write exclusions for a later crossing track.
 					refinement_guide.RegisterWrite(selected.axis, row.along,
 						math.min(row.lo, row.join_lo + 1), math.max(row.hi, row.join_hi - 1))
+				end
+				for _, row in ipairs(level) do
+					modified = modified + blend_row(selected, row.along, row, 0, 1)
 				end
 				-- The contrast test loses a fading seam while it is still about a threshold high, and
 				-- skips rows where it dips inside the track (as does the line test above). Stopping

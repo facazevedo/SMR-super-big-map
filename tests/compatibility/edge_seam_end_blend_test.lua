@@ -41,6 +41,17 @@ local function height(x, y)
 		local p = (y // 10) % 2 == 0 and 3 or 8
 		if x <= p then z = z - 800 end
 	end
+	-- Bottom edge (band y 502..507): an 800-unit seam spread over two cells, like a resampled
+	-- one. A 20-unit bump alternately just inside and just outside it makes the strongest
+	-- three-cell span alternate between 502-505 and 503-506 from column to column.
+	if x >= 150 and x < 350 then
+		-- Relief across the join band, the same in every column.
+		if y >= 480 and y % 3 == 0 then z = z + 60 end
+		if y >= 504 then z = z - 400 end
+		if y >= 505 then z = z - 400 end
+		if x % 2 == 0 and y == 502 then z = z + 20 end
+		if x % 2 == 1 and y == 506 then z = z - 20 end
+	end
 	return z
 end
 local grid = api.NewComputeGrid(N, N, 'u', 16)
@@ -88,6 +99,27 @@ check(fade_worst <= 8, 'the fade before the seam changed terrain by ' .. fade_wo
 for y = 484, 500 do
 	check(new(507, y) - new(508, y) >= 790, 'off-line step translated at row ' .. y)
 	for x = 480, N - 1 do check(new(x, y) == old(x, y), 'off-line row changed at ' .. x .. ',' .. y) end
+end
+-- The two-cell seam is repaired with one span in every column, so its translated strip and join
+-- band do not shift between columns (the per-row choice alternated between 502-505 and 503-506
+-- and, on real relief, left streaks of up to 255 units across repaired strips).
+local first_changed = {}
+for x = 160, 340 do
+	for y = 470, N - 1 do
+		if new(x, y) ~= old(x, y) then first_changed[y] = true; break end
+	end
+end
+local starts = 0
+for _ in pairs(first_changed) do starts = starts + 1 end
+check(starts == 1, 'the join band starts at ' .. starts .. ' different depths along one seam line')
+local streak = 0
+for x = 160, 340 do for y = 480, N - 1 do
+	local grown = math.abs(new(x, y) - new(x - 1, y)) - math.abs(old(x, y) - old(x - 1, y))
+	streak = math.max(streak, grown)
+end end
+check(streak <= 64, 'streak of ' .. streak .. ' across the repaired bottom strip')
+for x = 200, 300 do
+	check(math.abs(new(x, 505) - new(x, 503)) <= 60, 'bottom seam left open at column ' .. x)
 end
 -- The zigzag follows no line, so the left edge is left exactly as it was.
 for y = 0, N - 1 do for x = 0, 12 do
