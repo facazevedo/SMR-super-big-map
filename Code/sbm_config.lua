@@ -180,11 +180,11 @@ config.PreventLandingPadFlatten = true
 -- any Elevator cursor/site fallback through the no-flatten path on Super Big Map maps.
 config.PreventElevatorFlatten = true
 
--- TEMP test aids: show bottom-right buttons that (1) open the normal Elevator placement cursor,
--- unlock and quick-build the next placed Elevator, (2) follow the normal underground map switch
--- path, (3) reveal every surface sector, and (4) reveal all underground resources, anomalies,
--- effects, buried wonders, and darkness for inspection.
-config.PlaceElevatorButtonEnabled = true
+-- Test aids, off in published builds: bottom-right buttons that (1) open the normal Elevator
+-- placement cursor, unlock and quick-build the next placed Elevator, (2) follow the normal
+-- underground map switch path, (3) reveal every surface sector, and (4) reveal all underground
+-- resources, anomalies, effects, buried wonders, and darkness for inspection.
+config.PlaceElevatorButtonEnabled = false
 
 -- Impassable edge border (WORLD UNITS) kept around the expanded map. DEFAULT is full
 -- passability (0) so a rover unloaded from a rocket that lands anywhere -- including near
@@ -490,9 +490,9 @@ config.StretchRelocateStartSector = true
 -- the pair by object reference -- equal transforms on both maps preserve that correspondence).
 -- Underground enrichment density is restored after the final buildable grid exists.
 config.StretchUnderground = true
--- Preserve the cheap generated underground source/plan at START. The existing first-access gate
--- completes the proportional transformation, wonders, passages, markers, and decorations only
--- when the player presses Place Elevator.
+-- Preserve the cheap generated underground source/plan at START. The first-access gate completes
+-- the proportional transformation, wonders, passages, markers, and decorations on the first
+-- switch to the underground.
 config.DeferUndergroundExpansionUntilFirstAccess = true
 -- TEMP test aid: remove the underground darkness blanket on any underground gameplay map,
 -- including vanilla-mode tests, and restore the previous value on surface/menu transitions.

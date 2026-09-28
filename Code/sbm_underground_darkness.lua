@@ -246,7 +246,8 @@ function Darkness.ApplyForMap(map, environment, is_mod_map)
 		local reason = State.underground_darkness_marking_reason
 		Darkness.SetMarking(false)
 		State.underground_darkness_marking_reason = reason
-		if State.underground_darkness_refusal_printed ~= reason then
+		if State.underground_darkness_refusal_printed ~= reason
+			and (SuperBigMap.Config or {}).DEBUG_LOGGING_ENABLED == true then
 			State.underground_darkness_refusal_printed = reason
 			local print_fn = Global("print")
 			if type(print_fn) == "function" then
@@ -312,7 +313,7 @@ do
 			why = "mounted after a map was shown; complete darkness needs a game restart"
 		end
 		State.underground_darkness_mount_reason = why
-		local print_fn = Global("print")
+		local print_fn = (SuperBigMap.Config or {}).DEBUG_LOGGING_ENABLED == true and Global("print")
 		if type(print_fn) == "function" then
 			print_fn("[SuperBigMap] underground darkness shaders " .. (ok and "mounted" or "not mounted")
 				.. ": " .. tostring(why))
