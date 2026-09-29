@@ -341,22 +341,23 @@ local function PatchOverviewCamera()
 	-- environment-specific vanilla calculator immediately.
 	original_calc_overview_camera_pos = current
 
+	-- Retained wrappers must keep their own predecessor across map environments.
 	local wrapper
 	wrapper = function(angle, map)
 		-- Vanilla must own every camera calculation while its temporary source map is
 		-- public. Resolving that source to MainMap here would feed expanded geometry
 		-- into a vanilla-map camera call and recreate the stale startup framing.
 		if CameraMigrationActive() or IsTemporaryVanillaSource(map) then
-			return original_calc_overview_camera_pos(angle, map)
+			return current(angle, map)
 		end
 		local resolved = ResolveLiveMap(map)
 		-- Non-mod map: hand back the engine's vanilla framing untouched (do not even
 		-- override the view angle), so overview is exactly vanilla there.
 		if not IsModMap(resolved) then
-			return original_calc_overview_camera_pos(angle, map)
+			return current(angle, map)
 		end
 		angle = OverviewAngle(angle)
-		local pos, lookat = original_calc_overview_camera_pos(angle, map)
+		local pos, lookat = current(angle, map)
 		map = resolved
 		if not pos or not lookat or not map then
 			return pos, lookat

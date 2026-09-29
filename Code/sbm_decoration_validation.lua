@@ -1198,7 +1198,7 @@ local function Scan(context,source)
 			uncaptured=Validator.Index(6400);uncaptured_complete=true
 			local kind=Global("IsKindOf")
 			local function inspect(obj)
-				if not IsValid(obj) or context.by_object[obj] or Projected(obj)
+				if not IsValid(obj) or context.by_object[obj] or (context.excluded and context.excluded[obj]) or Projected(obj)
 					or (type(kind)=="function" and kind(obj,"EditorVisibleObject")) then return end
 				local b=obj:GetObjectBBox()
 				if not b then uncaptured_complete=false;return end
@@ -3463,13 +3463,13 @@ local function GroundedRigidInstance(obj,map,width,height,tolerance,asset,visibl
 	return count>0,asset
 end
 
-function Validator.Correction(map,layer,apply,native_capture)
+function Validator.Correction(map,layer,apply,native_capture,excluded)
 	local prior=contexts[map]
 	local old_report,old_progress=map.SuperBigMapDecorationValidation,map.SuperBigMapDecorationValidationProgress
 	-- Native history is retained only to protect real authored intersections.
 	-- Proving native gaps is redundant now: they no longer exempt a floating
 	-- expanded component. Current geometry still receives the full gap proof.
-	local context={map=map,list={},by_object={},capture_ms=0,correction_only=true,repair_targets={},positive_only=layer=="Underground" or native_capture,native_capture=native_capture}
+	local context={map=map,list={},by_object={},capture_ms=0,correction_only=true,repair_targets={},positive_only=layer=="Underground" or native_capture,native_capture=native_capture,excluded=excluded}
 	local correction_started=Tick()
 	-- Nomination and its initial scans are one synchronous, read-only phase.
 	-- Reuse its complete native world bounds and hole census only in that phase;
@@ -3517,7 +3517,7 @@ function Validator.Correction(map,layer,apply,native_capture)
 		if layer=="Surface" and hole_flag and type(has_surfaces)=="function" then
 			context.cut_snapshot={}
 			map:MapForEach("map","CObject",function(obj)
-				if IsValid(obj) and has_surfaces(obj,hole_flag,true) then
+				if IsValid(obj) and not (excluded and excluded[obj]) and has_surfaces(obj,hole_flag,true) then
 					context.cut_snapshot[obj]=true
 					local cut=BoxBounds(obj:GetObjectBBox());cut.obj=obj;cuts[#cuts+1]=cut
 				end
@@ -3553,7 +3553,7 @@ function Validator.Correction(map,layer,apply,native_capture)
 		local candidates={};local evidence_profiles={};local eligible=SBM.RockGrounding and SBM.RockGrounding.Eligible
 		context.eligibility_function=eligible
 		map:MapForEach("map","CObject",function(obj)
-			if not IsValid(obj) then return end
+			if not IsValid(obj) or (excluded and excluded[obj]) then return end
 			local record={obj=obj,relevant=false,projected=Projected(obj),
 				editor_only=type(kind)=="function" and kind(obj,"EditorVisibleObject") or false}
 			if layer=="Surface" then record.eligible_rock=false end
@@ -3646,6 +3646,20 @@ function Validator.Correction(map,layer,apply,native_capture)
 		for _,record in ipairs(candidates) do
 			record.relevant=true
 			local b=BoxBounds(record.obj:GetObjectBBox())
+			if layer=="Surface" then
+				-- Neighbour selection must cover the same transformed component boxes
+				-- as Scan, including rotated corners outside the native tight box.
+				if not record.nodes then
+					record.pose=Pose(record.obj);BuildNodes(record)
+					record.correction_prebuilt=true
+				end
+				for _,node in ipairs(record.nodes) do
+					local bounds=WorldBounds(node.transform_record or record,node.component.bounds)
+					for axis=1,3 do
+						b[axis]=min(b[axis],bounds[axis]);b[axis+3]=max(b[axis+3],bounds[axis+3])
+					end
+				end
+			end
 			local range=2
 			local region={b[1]-range,b[2]-range,-1e12,b[4]+range,b[5]+range,1e12}
 			if layer=="Surface" then
@@ -3748,9 +3762,9 @@ function Validator.CaptureNativeCompositions(map)
 	return Protected("Correction",map,"Surface",nil,true)
 end
 
-function Validator.WithCorrectionEvidence(map,layer,apply)
-	if Enabled() then return apply(map) end
-	local result=Protected("Correction",map,layer,apply)
+function Validator.WithCorrectionEvidence(map,layer,apply,excluded)
+	if Enabled() and not excluded then return apply(map) end
+	local result=Protected("Correction",map,layer,apply,nil,excluded)
 	if not result then
 		local failure=map.SuperBigMapDecorationValidation
 		error("decoration correction evidence could not be prepared: "..tostring(failure and failure.error))

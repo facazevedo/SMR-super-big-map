@@ -6,6 +6,48 @@ the diagnostic pass. It is disabled on both layers in the current release-mode
 timing candidate, at the user's explicit request. Production placement rules,
 narrow correction safeguards and rollback remain enabled.
 
+## Entrance-last correction, metadata 1157
+
+Based on `5ce3948`, final surface entrance placement now follows all decoration
+placement and correction. Bootstrap passage anchors are still required to pair
+the maps. The correction transaction excludes only those pending anchors and
+their owned attachments/markers; their provisional terrain cuts are not the
+finished scene. This exclusion is local to that transaction, never saved or
+applied to the final support census.
+
+After seating, a spatial index of the settled cosmetic rocks constrains the
+existing outward hex-ring entrance search. The candidate must satisfy all the
+existing buildability rules and keep the entrance artwork/cut envelope clear of
+rock bounds. The envelope includes actual TerrainHole faces as well as attached
+object bounds. This is conservative clearance, not a claim of the closest
+possible triangle-level fit. Rocks are not moved to make space for an entrance.
+Fresh, unrestricted support evidence after entrance placement still gates T1.
+
+The independent cliff fix selects neighbours over the union of native bounds
+and transformed rendered-component bounds. Rotation can enlarge the latter;
+omitting those neighbours previously prevented a valid correction. This work is
+limited to nominated candidates and reuses their geometry. No coordinate, seed,
+scenario or rock-entity whitelist controls either fix. The overview camera also
+retains each installed wrapper's own predecessor across environment changes,
+preventing the previously observed save/reload recursion.
+
+The user limited this regression round to the two reported sites. Both original
+seeds pass in release-hook/release-prefab mode with zero flushed engine errors:
+
+| Site | Game seed / mystery | START to T1 | Surface support census |
+| --- | --- | ---: | --- |
+| 13N11W | `9vydBJWv` / MirrorSphereMystery | 70.560 s | 27,588 checked; zero unresolved |
+| 10N3W | `cLl9TC-J` / DiggersMystery | 66.807 s | 33,253 checked; zero unresolved |
+
+13N11W adds only the formerly unresolved cliff correction; its other 26 repairs
+match the failed entrance-last baseline exactly. 10N3W retains the same 38 repair
+records and destinations; the two rock groups under the provisional cut remain
+unmoved, while the entrance selects a clear footprint. Both underground loads,
+support censuses and entrance-button checks pass. 13N11W also passes save/reload
+with unchanged entrance positions. All 100 host fixtures pass. These are single
+measurements and two native scenarios, not universal scenario certification.
+Evidence: `_ralph/runs/entrance-last-general-fix-20260928/`.
+
 ## Release logging cleanup - 2026-09-21
 
 Guard **344**, based on `dbf61dc`, keeps all production placement, repair,

@@ -97,3 +97,13 @@ globals.ForEachSurface=function(o,flag,fn)fn(point(0,0,0),point(0,0,1),point(0,0
 assert(r.unresolved==1,'degenerate cut geometry bypassed conservative bounds')
 globals.ForEachSurface=surfaces
 print('terrain-cut supports: actual rendered contact, no movement, missing/editor/excluded geometry fail closed')
+
+-- A provisional entrance belongs to the later placement phase. Its temporary
+-- cut is absent only from the scoped planning scene, never the final census.
+stone.x=1000;stone.z=0;roof.cut=true;missing=true
+local planned=V.WithCorrectionEvidence(map,'Surface',function(owner)
+ return V.SurfaceSupportSummary(owner)
+end,{[roof]=true})
+assert(planned.terrain==1 and planned.unresolved==0)
+assert(census().unresolved==1,'provisional exclusion leaked into final scene')
+print('staged entrance: planning exclusion is scoped; unchanged final cut still fails')

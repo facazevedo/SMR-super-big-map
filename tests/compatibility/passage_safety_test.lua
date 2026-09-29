@@ -56,8 +56,8 @@ local function point(x,y,z)
   SetTerrainZ=function(p) return p end}
 end
 local function distance(q,r) return math.max(math.abs(q-40),math.abs(r-40),math.abs(q+r-80)) end
-for _,case in ipairs({{0},{1},{2},{17},{0,true},{0,false,true}}) do
- local required_ring,invalid_edge,padding_only=case[1],case[2],case[3]
+for _,case in ipairs({{0},{1},{2},{17},{0,true},{0,false,true},{0,false,false,true}}) do
+ local required_ring,invalid_edge,padding_only,decor_block=case[1],case[2],case[3],case[4]
  local surface={Width=100,Height=100,hex_width=100,hex_height=100}
  local underground={Width=100,Height=100,hex_width=100,hex_height=100,
   SuperBigMapGeneratorWidthTiles=50,SuperBigMapGeneratorHeightTiles=50,
@@ -119,9 +119,13 @@ for _,case in ipairs({{0},{1},{2},{17},{0,true},{0,false,true}}) do
  local deferred,result=planner(underground)
  assert(not deferred and result.error:find('not committed') and writes==0 and u.pos.px==20,
   'bootstrap lock alone must reject deferred mutation')
- assert(planner(underground,{source_bootstrap=true,prepare_surface_pad=true}))
+ assert(planner(underground,{source_bootstrap=true,prepare_surface_pad=true,
+  surface_clearance=function(owner,x,y)
+   assert(owner==s,'decoration clearance affected the underground endpoint')
+   return not decor_block or distance(x,y)>=1,'entrance overlaps settled decoration'
+  end}))
  assert(u.pos.px==20 and u.pos.py==20,'surface fallback cannot move underground truth')
- local expected_ring=invalid_edge and 1 or required_ring
+ local expected_ring=(invalid_edge or decor_block) and 1 or required_ring
  assert(distance(s.pos.px,s.pos.py)==expected_ring,
   'a valid center does not authorize an invalid outer Elevator footprint hex')
  assert(surface.SuperBigMapPassageGlueReport[1].ring_distance==expected_ring)

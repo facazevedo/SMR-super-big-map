@@ -1,6 +1,15 @@
 # 1.1 compatibility regression fixtures
 
-The candidate now has 45 host fixture files. The new native-composition fixtures
+The candidate now has 100 host fixture files. Entrance-last coverage checks
+ownership-scoped provisional exclusions, their absence from final validation,
+settled-rock clearance including terrain-cut faces outside the render bounds,
+nearest valid entrance rings, and failure gates before readiness. Translated
+scenes exercise the same algorithm without scenario coordinates.
+`decoration_nomination_bounds_test.lua` covers rotated component boxes extending
+beyond native bounds, unchanged correct neighbours, and unknown-geometry vetoes.
+`overview_camera_rebind_test.lua` covers retained wrappers across reinstallation.
+
+The native-composition fixtures
 keep physical support status separate from source-equivalence evidence: complete
 geometry identity, every fragment frame and a preserved rooted contact path are
 required. Alternative contacts are tested against the captured source triangles,

@@ -664,7 +664,7 @@ local function RunSurface(map)
 	return report
 end
 
-function Seating.Run(map)
+function Seating.Run(map,pending_entrances)
 	if SBM.Engine.MapDataEnvironment(map.mapdata)~="Surface" then return nil end
 	-- Vanilla-authored compositions are judged against the stretch's native height reference.
 	-- Without it every such rock would silently fall back to full terrain contact.
@@ -675,7 +675,7 @@ function Seating.Run(map)
 	local validator=SBM.DecorationValidation
 	local ok,result
 	if validator and validator.WithCorrectionEvidence then
-		ok,result=pcall(validator.WithCorrectionEvidence,map,"Surface",RunSurface)
+		ok,result=pcall(validator.WithCorrectionEvidence,map,"Surface",RunSurface,pending_entrances)
 	else ok,result=pcall(RunSurface,map) end
 	-- Seated rocks now carry their vanilla evidence; the grid is no longer needed.
 	if SBM.TerrainCopy and SBM.TerrainCopy.ReleaseNativeHeightReference then SBM.TerrainCopy.ReleaseNativeHeightReference(map) end

@@ -8933,6 +8933,10 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 			return false, "center outside map"
 		end
 		local center = point_fn(x, y)
+		if map == surface_map and options.surface_clearance then
+			local clear, reason = options.surface_clearance(anchor, x, y)
+			if not clear then return false, reason end
+		end
 		local anchor_at_candidate = false
 		local anchor_pos = anchor and ObjectPosition(anchor)
 		if anchor_pos then
@@ -10142,6 +10146,94 @@ local TerrainCopy = {
 	AuditOuterResourceTerrain = AuditOuterResourceTerrain,
 }
 SuperBigMap.TerrainCopy = TerrainCopy
+
+-- Bootstrap anchors exist to pair the maps, but their provisional footprints
+-- are not part of the finished decoration scene. Track only actual ownership:
+-- no entity-name guesses and no exclusion of unrelated nearby rocks.
+function TerrainCopy.PendingSurfaceEntranceObjects(map)
+	local scene = { objects = {}, anchors = {} }
+	map:MapForEach("map", "ElevatorPassage", function(anchor)
+		if IsLiveGameObject(anchor) and anchor.SuperBigMapCommittedPassageLocked == true
+			and anchor.SuperBigMapPassagePadPrepared ~= true then
+			if not IsLiveGameObject(anchor.other) then error("pending entrance has no linked passage") end
+			scene.anchors[anchor] = true
+		end
+	end)
+	local function include(obj, anchor)
+		if not IsLiveGameObject(obj) or scene.objects[obj] then return end
+		scene.objects[obj] = anchor
+		if type(obj.GetAttaches) == "function" then
+			for _, child in ipairs(obj:GetAttaches() or {}) do include(child, anchor) end
+		end
+	end
+	for anchor in pairs(scene.anchors) do include(anchor, anchor) end
+	map:MapForEach("map", "CObject", function(obj)
+		if not IsLiveGameObject(obj) then return end
+		for anchor in pairs(scene.anchors) do
+			if obj.spawner == anchor or obj.passage == anchor
+				or (obj.tunnel_marker and obj.tunnel_marker.spawner == anchor) then
+				include(obj, anchor)
+			end
+		end
+	end)
+	return scene
+end
+
+-- Build once after seating, then test cheap local bounds at each candidate.
+-- The conservative XY envelope includes the entrance's attached artwork and
+-- actual terrain-cut faces. Cosmetic rocks may be absent from object_hex_grid;
+-- reserving their complete bounds prevents an entrance from cutting their ground.
+-- Only the entrance moves. The final unrestricted support census remains required.
+function TerrainCopy.BuildSurfaceEntranceClearance(map, scene)
+	local validator, grounding = SuperBigMap.DecorationValidation, SuperBigMap.RockGrounding
+	if not validator or not validator.Index or not grounding or not grounding.Eligible then
+		error("surface entrance decoration clearance unavailable")
+	end
+	local index = validator.Index(6400)
+	local function bounds(obj)
+		local b = obj:GetObjectBBox()
+		return { b:minx(), b:miny(), -1e12, b:maxx(), b:maxy(), 1e12 }
+	end
+	map:MapForEach("map", "CObject", function(obj)
+		if IsLiveGameObject(obj) and not scene.objects[obj] and grounding.Eligible(obj) then
+			index:Add({ bounds = bounds(obj) })
+		end
+	end)
+	local envelopes = {}
+	local hole_flag = (Global("EntitySurfaces") or {}).TerrainHole
+	local has_surfaces, for_each = Global("HasAnySurfaces"), Global("ForEachSurface")
+	for anchor in pairs(scene.anchors) do
+		local ax, ay = PointXY(ObjectPosition(anchor))
+		local envelope = { math.huge, math.huge, -1e12, -math.huge, -math.huge, 1e12 }
+		local function include(x, y)
+			envelope[1], envelope[2] = math.min(envelope[1], x-ax), math.min(envelope[2], y-ay)
+			envelope[4], envelope[5] = math.max(envelope[4], x-ax), math.max(envelope[5], y-ay)
+		end
+		for obj, owner in pairs(scene.objects) do if owner == anchor then
+			local b = bounds(obj); include(b[1], b[2]); include(b[4], b[5])
+			if not hole_flag or type(has_surfaces) ~= "function" then
+				error("surface entrance terrain-cut API unavailable")
+			end
+			if has_surfaces(obj, hole_flag, true) then
+				if type(for_each) ~= "function" then error("surface entrance cut geometry unavailable") end
+				local count = 0
+				for_each(obj, hole_flag, function(a, b, c)
+					include(a:xy()); include(b:xy()); include(c:xy())
+					count = count + 1
+				end)
+				if count == 0 then error("surface entrance cut geometry is empty") end
+			end
+		end end
+		envelopes[anchor] = envelope
+	end
+	return function(anchor, x, y)
+		local b = envelopes[anchor]
+		if not b then return false, "surface entrance has no pending footprint" end
+		local target = { b[1]+x, b[2]+y, b[3], b[4]+x, b[5]+y, b[6] }
+		if #index:Query(target, 2) > 0 then return false, "entrance overlaps settled decoration" end
+		return true
+	end
+end
 
 -- The reference must still hold the native heights it was checked against when surface seating
 -- starts; a freed or overwritten grid reads as flat ground and would accept every vanilla float.

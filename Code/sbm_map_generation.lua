@@ -12422,61 +12422,11 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						end
 					end
 				end
-				if cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true) then
-					-- The cheap underground bootstrap records the vanilla underground source hex before
-					-- this surface exists in its stretched form. Project that authoritative hex onto the
-					-- final surface now. Use it exactly when its full footprint is valid; otherwise commit
-					-- the nearest valid surface-only hex without forcing early underground expansion.
-					local maps = Global("Maps")
-					if type(maps) == "table" and type(AlignPassagePairsToSharedHex) == "function" then
-						local seen_underground = {}
-						for slot, underground_map in pairs(maps) do
-							local underground_environment = underground_map and underground_map.mapdata
-								and Engine.MapDataEnvironment(underground_map.mapdata)
-							if slot ~= 1 and underground_environment == "Underground"
-								and not seen_underground[underground_map]
-								and underground_map.SuperBigMapDesiredWidthTiles
-								and underground_map.SuperBigMapUndergroundStretchDone ~= true then
-								seen_underground[underground_map] = true
-								if underground_map.SuperBigMapPassageBootstrapComplete ~= true then
-									error("final surface passage commitment has no completed underground bootstrap")
-								end
-								local plan_ok, plan_stats = AlignPassagePairsToSharedHex(underground_map, {
-									source_bootstrap = true,
-									prepare_surface_pad = true,
-								})
-								if plan_ok ~= true then
-									error("final surface passage commitment failed: "
-										.. tostring(plan_stats and plan_stats.error or "unknown error")
-										.. (plan_stats and plan_stats.reason
-											and (": " .. tostring(plan_stats.reason)) or ""))
-								end
-								local committed, commitment_reason =
-									TerrainCopy.ValidateSurfacePassageCommitment(underground_map)
-								if not committed then
-									error("final surface passage commitment incomplete: " .. tostring(commitment_reason))
-								end
-								underground_map.SuperBigMapPassageSurfaceFinalCommitted = true
-							end
-						end
-					end
-					-- Now every surface passage owns its immutable final coordinate. Scale the remaining
-					-- entrance structures and place each badge relative to that coordinate exactly once.
-					if type(MoveEntranceVisualsToScale) == "function" then
-						SetLoadingPhase("Aligning the underground entrances")
-						MoveEntranceVisualsToScale(map)
-					end
-				end
+				-- Final entrance placement runs after the post-pipeline decoration
+				-- correction below, so no rock is repositioned after the entrance.
 				local rockets = SuperBigMap.RocketRules
 				if rockets and type(rockets.ResnapRocketsOnMap) == "function" then
 					SafeCall( rockets.ResnapRocketsOnMap, map)
-				end
-				-- The first overview can begin before temporary-source objects are migrated.
-				-- Initialize the final passage and badge synchronously now that their final
-				-- positions exist; otherwise vanilla first sees them on the next zoom event.
-				local highlight = SuperBigMap.SectorHighlight
-				if highlight and type(highlight.EnsureEntranceVisualsReady) == "function" then
-					highlight.EnsureEntranceVisualsReady(map, nil, "surface stretch complete")
 				end
 				-- Keep the loading cover through the scheduled post-yield placement and entrance
 				-- validation. ResumeCombinedPassEdits above has already committed every object-grid
@@ -12563,12 +12513,14 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					end
 					-- Complete and verify rock seating under the loading cover, before publishing T1.
 					local validation = SuperBigMap.DecorationValidation
-					if validation then validation.Run("Validate", map, "surface final placement") end
+					local pending_entrances = TerrainCopy.PendingSurfaceEntranceObjects(map)
 					local seating = SuperBigMap.DecorationSeating
 					if not seating or type(seating.Run) ~= "function" then
 						error("surface decoration correction service unavailable")
 					end
-					local result = seating.Run(map)
+					-- Seat against the scene before the entrances are committed. Their
+					-- provisional cuts/visuals cannot support or obstruct these rocks.
+					local result = seating.Run(map, pending_entrances.objects)
 					if not result or result.error or result.validation_error or (result.rejected or 0) > 0 then
 						map.SuperBigMapSurfaceDecorationCorrectionError = tostring(result
 							and (result.error or result.validation_error or "unresolved rock seating")
@@ -12576,6 +12528,73 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						error("surface decoration correction failed: " .. map.SuperBigMapSurfaceDecorationCorrectionError)
 					end
 					map.SuperBigMapSurfaceDecorationCorrectionComplete = true
+					-- All decoration placement and verified corrections are complete. Choose
+					-- the final surface entrance coordinates against that settled scene,
+					-- then align the attached visuals/badges as the final placement step.
+					if cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true) then
+						local entrance_clearance = TerrainCopy.BuildSurfaceEntranceClearance(map, pending_entrances)
+						-- The cheap underground bootstrap records the vanilla underground source hex before
+						-- this surface exists in its stretched form. Project that authoritative hex onto the
+						-- final surface now. Use it exactly when its full footprint is valid; otherwise commit
+						-- the nearest valid surface-only hex without forcing early underground expansion.
+						local maps = Global("Maps")
+						if type(maps) == "table" and type(AlignPassagePairsToSharedHex) == "function" then
+							local seen_underground = {}
+							for slot, underground_map in pairs(maps) do
+								local underground_environment = underground_map and underground_map.mapdata
+									and Engine.MapDataEnvironment(underground_map.mapdata)
+								if slot ~= 1 and underground_environment == "Underground"
+									and not seen_underground[underground_map]
+									and underground_map.SuperBigMapDesiredWidthTiles
+									and underground_map.SuperBigMapUndergroundStretchDone ~= true then
+									seen_underground[underground_map] = true
+									if underground_map.SuperBigMapPassageBootstrapComplete ~= true then
+										error("final surface passage commitment has no completed underground bootstrap")
+									end
+									local plan_ok, plan_stats = AlignPassagePairsToSharedHex(underground_map, {
+										source_bootstrap = true,
+										prepare_surface_pad = true,
+										surface_clearance = entrance_clearance,
+									})
+									if plan_ok ~= true then
+										error("final surface passage commitment failed: "
+											.. tostring(plan_stats and plan_stats.error or "unknown error")
+											.. (plan_stats and plan_stats.reason
+												and (": " .. tostring(plan_stats.reason)) or ""))
+									end
+									local committed, commitment_reason =
+										TerrainCopy.ValidateSurfacePassageCommitment(underground_map)
+									if not committed then
+										error("final surface passage commitment incomplete: " .. tostring(commitment_reason))
+									end
+									underground_map.SuperBigMapPassageSurfaceFinalCommitted = true
+								end
+							end
+						end
+						-- Now every surface passage owns its immutable final coordinate. Scale the remaining
+						-- entrance structures and place each badge relative to that coordinate exactly once.
+						if type(MoveEntranceVisualsToScale) == "function" then
+							SetLoadingPhase("Aligning the underground entrances")
+							MoveEntranceVisualsToScale(map)
+						end
+					end
+					-- The first overview can begin before temporary-source objects are migrated.
+					-- Initialize the final passage and badge synchronously now that their final
+					-- positions exist; otherwise vanilla first sees them on the next zoom event.
+					local highlight = SuperBigMap.SectorHighlight
+					if highlight and type(highlight.EnsureEntranceVisualsReady) == "function" then
+						highlight.EnsureEntranceVisualsReady(map, nil, "surface stretch complete")
+					end
+					-- Read-only verification: a late terrain cut must not silently remove
+					-- support from finished decorations. No correction follows the entrance.
+					if validation then validation.Run("Validate", map, "surface final placement") end
+					local final_support = validation.WithCorrectionEvidence(map, "Surface", function(owner)
+						return validation.SurfaceSupportSummary(owner)
+					end, {}) -- Fresh evidence, with no provisional object exclusions.
+					if not final_support or final_support.unresolved ~= 0 then
+						error("final entrance placement invalidated decoration support: "
+							.. tostring(final_support and final_support.unresolved or "missing proof"))
+					end
 					local seen = {}
 					for _, underground in pairs(Global("Maps") or {}) do
 						if type(underground) == "table" and not seen[underground]
