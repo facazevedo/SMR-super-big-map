@@ -27,6 +27,18 @@ met the rule never reaches the fallback, so its placement and RNG draws are unch
 
 All 100 compatibility fixtures pass. Not timed for acceptance and not checked with save/reload.
 
+Metadata 1162 consistency pass: a settled cluster also gives up the reward budget of the resources
+it could not place (otherwise the anomaly/dome-effect passes read the gap as a free cluster slot),
+and planned candidates a cluster did not use lose their cluster stamps before the ordinary top-up
+passes can reuse them (a stamped leftover reused that way always failed the audit, so passing
+clusters are unaffected). Top-up errors are caught by `SafeCall` and only surface at the final
+audit, which is how this morning's sweep failure at 51S17W (`sdVUfShepin6`, RoughTerrain, "plan=8
+members=4 target=5") presented: the same shortfall. Results (`feedback-settle-D-*-1162-20261001`):
+51S17W RoughTerrain clean with cluster 8 settled at resources 4/5; 24S74W plain identical to 1160;
+24S74W kinds clean with the same six settled clusters as 1161 (cluster 10 reward budget 5 to 4).
+The one remaining composition failure is a cluster that cannot place even one extractor of any
+grade; it cannot form a rocket pad, so it still stops generation.
+
 ## Metadata 1137 / build 474 (`c430156`): complete underground darkness on expanded maps
 
 Owner report 2026-09-26: on the expanded underground the unexplored cave passages were faintly

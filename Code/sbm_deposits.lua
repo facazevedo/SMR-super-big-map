@@ -5966,14 +5966,20 @@ function DepositRules.TopUpDeposits(map)
 						and extractors_added >= minimum_cluster_extractors) then
 						plan.target = cluster_added
 						plan.extractor_target = math.min(plan.extractor_target, extractors_added)
+						-- Resources it could not place leave the reward budget too, so the anomaly and
+						-- dome-effect passes do not read the gap as a free cluster slot.
+						plan.reward_capacity = math.max(cluster_added, (tonumber(plan.reward_capacity)
+							or cluster_added) - (planned_target - cluster_added))
 						plan.settled = table.concat(settled_reasons, "+")
 						for _, candidate in ipairs(plan.candidates) do
 							candidate._sbm_resource_cluster_resource_target = plan.target
 							candidate._sbm_resource_cluster_extractor_target = plan.extractor_target
+							candidate._sbm_resource_cluster_reward_capacity = plan.reward_capacity
 						end
 						for _, marker in ipairs(active_cluster_markers) do
 							marker.SuperBigMapResourceClusterResourceTarget = plan.target
 							marker.SuperBigMapResourceClusterExtractorTarget = plan.extractor_target
+							marker.SuperBigMapResourceClusterRewardCapacity = plan.reward_capacity
 							marker.SuperBigMapResourceClusterPremiumLimit = math.max(1, cluster_premiums)
 							marker.SuperBigMapResourceClusterSettled = true
 						end
@@ -6006,6 +6012,21 @@ function DepositRules.TopUpDeposits(map)
 						.. " available_before=" .. tostring(available_before)
 						.. " badges=" .. table.concat(badges, "+")
 						.. " deficits=" .. table.concat(deficits, ","))
+				end
+				-- Planned candidates this cluster did not use stay in the shared pool for the ordinary
+				-- top-up passes; drop their cluster stamps so a deposit placed there later is not
+				-- counted as a member. (A stamped leftover reused that way always failed the final
+				-- audit, so this changes nothing for any cluster that passed before.)
+				for _, candidate in ipairs(plan.candidates) do
+					if not candidate.used then
+						candidate._sbm_resource_cluster_plan = nil
+						candidate._sbm_resource_cluster_strength = nil
+						candidate._sbm_resource_cluster_resource_target = nil
+						candidate._sbm_resource_cluster_extractor_target = nil
+						candidate._sbm_resource_cluster_anomaly_capacity = nil
+						candidate._sbm_resource_cluster_dome_bonus = nil
+						candidate._sbm_resource_cluster_reward_capacity = nil
+					end
 				end
 				local badge_list = {}
 				for badge in pairs(active_cluster_badges or {}) do badge_list[#badge_list + 1] = badge end
