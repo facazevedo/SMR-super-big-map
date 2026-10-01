@@ -1,5 +1,32 @@
 # Surface START-to-T1 — runtime acceptance and local checkpoint
 
+## Metadata 1161: outer resource clusters settle instead of failing
+
+Player report 2026-10-01: new maps failed almost everywhere with "weighted composition failed:
+cluster=2 ... extractors=1/2"; only 1N166E worked. Not reproduced with SBM alone: six sites
+without any game rule (standard `MAIN` preset; every earlier acceptance run used RoughTerrain)
+were clean (`_ralph/runs/feedback-rules-off-1160-20261001`). Each cluster plans exactly `target`
+candidates, and every extractor after the anchor must be non-premium, so anything that raises
+deposit grades or narrows the deposit kinds (most likely another mod) leaves no recovery.
+
+Owner ruling 2026-10-01: the oasis rule stays the default; only a cluster that cannot meet it
+takes extractors of any grade, then keeps what it placed (at least one extractor and the resource
+minimum). Settled markers carry the settled targets and premium allowance
+(`SuperBigMapResourceClusterPremiumLimit`), which the final terrain audit honours. A cluster that
+met the rule never reaches the fallback, so its placement and RNG draws are unchanged.
+
+24S74W (`v932_sweep_14134_24s74w`), no game rules, `_ralph/runs/feedback-settle-*-20261001`:
+
+| Run | Code | Stress | Result |
+|---|---|---|---|
+| A plain | 1160 | none | clean, 11 clusters |
+| A stress | 1160 | all 68 vanilla extractor templates "High" | fails: cluster 1 extractors 1/2 |
+| C plain | 1161 | none | clean, cluster results identical to A plain |
+| C stress | 1161 | grades | clean; 6 clusters took premium extractors at full targets |
+| C kinds | 1161 | grades + every subsurface kind turned into Metals | clean; cluster 3 extractors 2/3, cluster 10 resources 4/5 |
+
+All 100 compatibility fixtures pass. Not timed for acceptance and not checked with save/reload.
+
 ## Metadata 1137 / build 474 (`c430156`): complete underground darkness on expanded maps
 
 Owner report 2026-09-26: on the expanded underground the unexplored cave passages were faintly

@@ -626,32 +626,28 @@ local function MarkNativeAuthored(map,record)
 				local d=p[3]-terrain.GetHeight(map,Point(p));if d<lowest then lowest=d end
 			end
 			node.native_allowed=allowed
-			if lowest<=allowed then node.native_authored=true end
+			if lowest<=allowed then
+				node.native_authored=true
+			elseif not node.defect then
+				-- A component with a documented vanilla clearance can lose that
+				-- allowance after stretching without yielding a conclusive negative
+				-- face-separation proof (for example, when it touches another loose
+				-- fragment of the same rock). Offer a rigid seating move, then let
+				-- collision checks and independent rendered support decide acceptance.
+				node.seating_proposal=true
+				node.reason="native terrain clearance increased beyond its scaled allowance"
+			end
 		end
 	end end
 end
 
--- The planner measures a vertex's terrain height at point(x,y), which truncates fractional
--- coordinates; MarkNativeAuthored above rounds them half-up. On a steep slope the two samplings
--- differ by several units, more than the planner's one-unit margin, and a rock lowered exactly to
--- its vanilla allowance was then refused by the verifier (39S130W, 2026-09-28). Give the planner
--- a target the verifier's own sampling will accept: the allowance less that measured difference.
--- A vertical move keeps XY, so the difference after the move is exactly the one measured here.
+-- The seating planner and rendered-support validator now sample the same half-up
+-- integer terrain coordinate. Retain one unit for integer pose rounding when a
+-- native float returns to its original scaled clearance.
 local function NativeAllowedTarget(map,record,node)
 	local allowed=node.native_allowed
 	if type(allowed)~="number" then return nil end
-	local terrain=Global("terrain");local point=native_point or Global("point")
-	local lowest_rounded,lowest_truncated=math.huge,math.huge
-	for _,vi in ipairs(Geometry.SupportVertices(node.geometry,node.component)) do
-		local p=World(node.transform_record or record,node.geometry.vertices[vi])
-		local rounded=terrain.GetHeight(map,Point(p))
-		local truncated=terrain.GetHeight(map,point(p[1],p[2]))
-		if type(rounded)~="number" or type(truncated)~="number" then return allowed-1 end
-		if p[3]-rounded<lowest_rounded then lowest_rounded=p[3]-rounded end
-		if p[3]-truncated<lowest_truncated then lowest_truncated=p[3]-truncated end
-	end
-	if lowest_rounded==math.huge then return allowed-1 end
-	return allowed-1-max(0,lowest_rounded-lowest_truncated)
+	return allowed-1
 end
 
 local function WorldBounds(record,b)

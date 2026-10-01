@@ -3609,7 +3609,7 @@ local function PrepareOuterResourceTerrain(map)
 
 	local resources = {}
 	local class_counts = { surface = 0, extractor = 0 }
-	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+	local scan_ok, scan_error = pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
 		if not marker then return end
 		local surface = IsKindOfSafe(marker, "SurfaceDepositMarker")
 		local extractor = IsKindOfSafe(marker, "SubsurfaceDepositMarker")
@@ -3638,8 +3638,55 @@ local function PrepareOuterResourceTerrain(map)
 			cluster_dome_bonus = marker.SuperBigMapResourceClusterDomeBonus == true,
 			cluster_anchor = marker.SuperBigMapResourceClusterAnchor == true,
 			cluster_premium = marker.SuperBigMapResourceClusterPremium == true,
+			cluster_premium_limit = tonumber(marker.SuperBigMapResourceClusterPremiumLimit),
+			cluster_settled = marker.SuperBigMapResourceClusterSettled == true,
 		}
 	end)
+	local found = {}
+	local seen_by_plan = {}
+	for _, entry in ipairs(resources) do
+		found[entry.marker] = true
+		if entry.cluster_plan then
+			seen_by_plan[entry.cluster_plan] = (seen_by_plan[entry.cluster_plan] or 0) + 1
+		end
+	end
+	local missing_cluster_markers = {}
+	local captured_by_plan, plan_differences = {}, {}
+	for _, original in ipairs(map.SuperBigMapTopUpClusterMarkerDebug or {}) do
+		captured_by_plan[original.plan] = (captured_by_plan[original.plan] or 0) + 1
+		local current_plan = tonumber(original.marker
+			and original.marker.SuperBigMapResourceClusterPlan)
+		if current_plan ~= original.plan then
+			plan_differences[#plan_differences + 1] = tostring(original.plan)
+				.. "->" .. tostring(current_plan) .. "@" .. tostring(original.x)
+				.. "," .. tostring(original.y)
+		end
+		if not found[original.marker] then
+			local marker = original.marker
+			local position = ObjectPosition(marker)
+			local x, y = PointXY(position)
+			missing_cluster_markers[#missing_cluster_markers + 1] = string.format(
+				"plan=%s resource=%s initial=%s,%s current=%s,%s class=%s surface=%s subsurface=%s terrain=%s band=%s",
+				tostring(original.plan), tostring(original.resource), tostring(original.x),
+				tostring(original.y), tostring(x), tostring(y), tostring(marker and marker.class),
+				tostring(IsKindOfSafe(marker, "SurfaceDepositMarker")),
+				tostring(IsKindOfSafe(marker, "SubsurfaceDepositMarker")),
+				tostring(IsKindOfSafe(marker, "TerrainDepositMarker")),
+				tostring(in_outer_band(x, y)))
+		end
+	end
+	local plan_counts = {}
+	for plan, count in pairs(captured_by_plan) do
+		plan_counts[#plan_counts + 1] = tostring(plan) .. ":" .. tostring(count)
+			.. "/" .. tostring(seen_by_plan[plan] or 0)
+	end
+	table.sort(plan_counts)
+	map.SuperBigMapTopUpClusterMarkerDebugSummary =
+		"scan=" .. tostring(scan_ok) .. " error=" .. tostring(scan_error)
+		.. " captured=" .. tostring(#(map.SuperBigMapTopUpClusterMarkerDebug or {}))
+		.. " plans=" .. table.concat(plan_counts, ",")
+		.. " plan_differences=" .. table.concat(plan_differences, "; ")
+		.. " missing=" .. table.concat(missing_cluster_markers, "; ")
 	table.sort(resources, function(a, b)
 		if a.q == b.q then
 			if a.r == b.r then return a.resource < b.resource end
@@ -4090,7 +4137,7 @@ local function PrepareOuterResourceTerrain(map)
 					anomaly_capacity = entry.cluster_anomaly_capacity,
 					dome_bonus = entry.cluster_dome_bonus == true,
 					reward_capacity = entry.cluster_reward_capacity,
-					anchors = 0, premiums = 0,
+					anchors = 0, premiums = 0, premium_limit = 1, settled = false,
 				}
 				cluster_groups_by_plan[entry.cluster_plan] = group
 				cluster_groups[#cluster_groups + 1] = group
@@ -4098,6 +4145,11 @@ local function PrepareOuterResourceTerrain(map)
 			group.members[#group.members + 1] = index
 			if entry.cluster_anchor then group.anchors = group.anchors + 1 end
 			if entry.cluster_premium then group.premiums = group.premiums + 1 end
+			-- A cluster that settled (sbm_deposits) may hold more than one premium deposit.
+			if entry.cluster_premium_limit then
+				group.premium_limit = math.max(group.premium_limit, entry.cluster_premium_limit)
+			end
+			if entry.cluster_settled then group.settled = true end
 		end
 	end
 	table.sort(cluster_groups, function(a, b) return a.plan < b.plan end)
@@ -4162,6 +4214,8 @@ local function PrepareOuterResourceTerrain(map)
 					best.reward_capacity = group.reward_capacity
 					best.anchor_members = group.anchors
 					best.premium_members = group.premiums
+					best.premium_limit = group.premium_limit
+					best.settled = group.settled
 					best.cluster_q, best.cluster_r = cq, cr
 					-- Rebuild every planned landing footprint from the finalized height field. The
 					-- engine's pre-rebuild buildable grid can report a pad ready and then invalidate an
@@ -5386,6 +5440,8 @@ local function AuditOuterResourceTerrain(map)
 	local cluster_extractor_shortfall, cluster_extractor_excess = 0, 0
 	local cluster_weighted_composition_failures = 0
 	local cluster_anchor_failures, cluster_premium_excess = 0, 0
+	local cluster_settled = 0
+	local first_cluster_failure = nil
 	for _, site in ipairs(rocket_sites) do
 		local resources = math.max(0, math.floor(tonumber(site.members) or 0))
 		minimum_cluster_resources = minimum_cluster_resources == nil
@@ -5412,8 +5468,23 @@ local function AuditOuterResourceTerrain(map)
 		if math.max(0, math.floor(tonumber(site.anchor_members) or 0)) ~= 1 then
 			cluster_anchor_failures = cluster_anchor_failures + 1
 		end
+		local premium_limit = math.max(1, math.floor(tonumber(site.premium_limit) or 1))
 		cluster_premium_excess = cluster_premium_excess
-			+ math.max(0, math.floor(tonumber(site.premium_members) or 0) - 1)
+			+ math.max(0, math.floor(tonumber(site.premium_members) or 0) - premium_limit)
+		if site.settled == true then cluster_settled = cluster_settled + 1 end
+		if not first_cluster_failure and (resources < cluster_resource_minimum
+			or resources > cluster_resource_maximum
+			or count < cluster_extractor_minimum or count > cluster_extractor_maximum
+			or resources ~= math.max(0, math.floor(tonumber(site.resource_target) or -1))
+			or count < math.max(0, math.floor(tonumber(site.extractor_target) or -1))
+			or math.max(0, math.floor(tonumber(site.anchor_members) or 0)) ~= 1
+			or math.max(0, math.floor(tonumber(site.premium_members) or 0)) > premium_limit) then
+			first_cluster_failure = string.format(
+				"plan=%s members=%s target=%s extractors=%s target=%s anchors=%s premiums=%s",
+				tostring(site.cluster_plan), tostring(resources), tostring(site.resource_target),
+				tostring(count), tostring(site.extractor_target),
+				tostring(site.anchor_members), tostring(site.premium_members))
+		end
 	end
 	local report = {
 		resources = #resource_sites, surface_passable = surface_passable,
@@ -5443,6 +5514,8 @@ local function AuditOuterResourceTerrain(map)
 		cluster_weighted_composition_failures = cluster_weighted_composition_failures,
 		cluster_anchor_failures = cluster_anchor_failures,
 		cluster_premium_excess = cluster_premium_excess,
+		cluster_settled = cluster_settled,
+		first_cluster_failure = first_cluster_failure or "",
 		reason = resource_failures == 0 and rocket_failures == 0
 			and cluster_shortfall == 0 and cluster_excess == 0
 			and cluster_resource_shortfall == 0 and cluster_resource_excess == 0
@@ -5476,6 +5549,7 @@ local function AuditOuterResourceTerrain(map)
 			.. " weighted_failures=" .. tostring(report.cluster_weighted_composition_failures)
 			.. " anchor_failures=" .. tostring(report.cluster_anchor_failures)
 			.. " premium_excess=" .. tostring(report.cluster_premium_excess)
+			.. " settled_clusters=" .. tostring(report.cluster_settled)
 			.. " first_resource_failure=" .. tostring(report.first_resource_failure)
 			.. " first_rocket_failure=" .. tostring(report.first_rocket_failure)
 			.. " verified_mountain_effect_candidates="

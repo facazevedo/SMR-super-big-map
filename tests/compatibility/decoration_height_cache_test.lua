@@ -4,7 +4,9 @@ local reads=0;local delta=0
 local function build(width,height,foundation)
  local env=setmetatable({width=width,height=height,entry={foundation=foundation},map={},
   point_fn=function(x,y)
-   x,y=math.floor(x+.5),math.floor(y+.5)
+   -- The engine point constructor truncates; the production cache must round
+   -- to the validator's half-up terrain coordinate before it calls this.
+   x,y=math.floor(x),math.floor(y)
    return {xy=function()return x,y end}
   end,
   terrain={GetHeight=function(_,p)reads=reads+1;local x,y=p:xy();return x*10000+y+delta end}}, {__index=_G})

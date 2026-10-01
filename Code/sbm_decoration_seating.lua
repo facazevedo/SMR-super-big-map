@@ -387,6 +387,12 @@ local function RunSurface(map)
 		local height_rows=height_cache and (linear_heights and {} or height_cache)
 		local function height_at(px,py)
 			if px<0 or py<0 or px>=width or py>=height then return nil end
+			-- The independent rendered-support proof samples each mesh vertex at
+			-- its half-up integer terrain coordinate. The engine point constructor
+			-- truncates fractional inputs; round here before using either the cache
+			-- or point constructor so a steep cell edge cannot leave a planned rock
+			-- floating when its actual rendered pose is checked.
+			px,py=math.floor(px+0.5),math.floor(py+0.5)
 			-- Foundation edge proofs repeatedly request integer terrain corners.
 			-- A cache hit needs no native point allocation/coordinate conversion.
 			if linear_heights and px%1==0 and py%1==0 then

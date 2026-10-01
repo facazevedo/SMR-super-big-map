@@ -5422,6 +5422,8 @@ function DepositRules.TopUpDeposits(map)
 		-- often each badge has been used by clusters so far. Nil outside cluster placement.
 		local active_cluster_badges
 		local cluster_badge_totals = {}
+		-- The markers placed for the cluster being placed, so a settled cluster can restamp them.
+		local active_cluster_markers
 		local function choose_needed_type()
 			local deficit_total = 0
 			for _, res in ipairs(target_keys) do
@@ -5558,6 +5560,9 @@ function DepositRules.TopUpDeposits(map)
 						if extractor_template(template) then extractor_placed = extractor_placed + 1 end
 						if premium_template(template) then premium_placed = premium_placed + 1 end
 						local res = tostring(template.resource or template.class or "?")
+						if active_cluster_markers then
+							active_cluster_markers[#active_cluster_markers + 1] = clone
+						end
 						if active_cluster_badges then
 							local badge = DepositRules.ClusterBadgeKey(template)
 							if badge then
@@ -5587,6 +5592,14 @@ function DepositRules.TopUpDeposits(map)
 							c._sbm_resource_cluster_dome_bonus == true or nil
 						clone.SuperBigMapResourceClusterAnchor = cluster_anchor == true or nil
 						clone.SuperBigMapResourceClusterPremium = premium_template(template) or nil
+						if c._sbm_resource_cluster_plan then
+							map.SuperBigMapTopUpClusterMarkerDebug =
+								map.SuperBigMapTopUpClusterMarkerDebug or {}
+							map.SuperBigMapTopUpClusterMarkerDebug[#map.SuperBigMapTopUpClusterMarkerDebug + 1] = {
+								marker = clone, plan = c._sbm_resource_cluster_plan,
+								resource = res, x = c.x, y = c.y,
+							}
+						end
 						if selected_mountain_base then
 							surface_mountain_base_resource_added =
 								surface_mountain_base_resource_added + 1
@@ -5808,6 +5821,7 @@ function DepositRules.TopUpDeposits(map)
 			stage = "initializing", error = "", quota = 0, outermost = 0, inner_band = 0,
 			results = "", strategy = "direct_seeded_cluster_v1",
 			desired_clusters = desired_resource_cluster_count, placed_clusters = 0,
+			settled_clusters = 0, settled = "",
 			plan_exhaustions = direct_cluster_stats.plan_exhaustions or 0,
 			cluster_minimum = resource_cluster_minimum_count,
 			cluster_maximum = resource_cluster_maximum_count,
@@ -5861,6 +5875,7 @@ function DepositRules.TopUpDeposits(map)
 				cluster_plan_diagnostic.cluster_target = plan.target
 				local before = surface_resource_quota_added
 				active_cluster_badges = {}
+				active_cluster_markers = {}
 				local selector = new_planned_cluster_selector(plan.candidates)
 				local available_before = selector.Remaining()
 				local placeable_before = available_before
@@ -5874,10 +5889,25 @@ function DepositRules.TopUpDeposits(map)
 						false, false, nil, true)
 				end
 				local extractors_added = anchor_extractors or 0
+				local cluster_premiums = premium_added or 0
 				local extractor_needed = math.max(0, plan.extractor_target - extractors_added)
 				local _, planned_extractors = place_from(selector, false, true, extractor_needed,
 					"candidate", outermost, true, inner_band, true, false, "nonpremium", false)
 				extractors_added = extractors_added + (planned_extractors or 0)
+				-- Settling fallback (owner 2026-10-01). The oasis rule above stays the default; the
+				-- passes below run only for a cluster that has already fallen short of it, where the
+				-- rule's later passes could not recover (they use the same grade policy on a smaller
+				-- pool), so every cluster that met the rule is placed exactly as before. A short
+				-- cluster first takes extractors of any grade, then keeps what it could place.
+				local settled_reasons = {}
+				if extractors_added < plan.extractor_target then
+					settled_reasons[#settled_reasons + 1] = "extractors"
+					local _, any_grade_extractors, any_grade_premiums = place_from(selector, false,
+						true, plan.extractor_target - extractors_added, "candidate", outermost, true,
+						inner_band, true, false, nil, false)
+					extractors_added = extractors_added + (any_grade_extractors or 0)
+					cluster_premiums = cluster_premiums + (any_grade_premiums or 0)
+				end
 				if extractors_added < minimum_cluster_extractors then
 					cluster_plan_fail(tostring(label) .. " extractor minimum failed: cluster="
 						.. tostring(plan.id) .. " required=" .. tostring(minimum_cluster_extractors)
@@ -5897,6 +5927,25 @@ function DepositRules.TopUpDeposits(map)
 					extractors_added = extractors_added + (extra_extractors or 0)
 				end
 				cluster_added = surface_resource_quota_added - before
+				if cluster_added < plan.target then
+					settled_reasons[#settled_reasons + 1] = "resources"
+					if extractors_added < maximum_cluster_extractors then
+						local _, any_grade_extractors, any_grade_premiums = place_from(selector,
+							false, true, math.min(plan.target - cluster_added,
+								maximum_cluster_extractors - extractors_added),
+							"candidate", outermost, true, inner_band, true, false, nil, false)
+						extractors_added = extractors_added + (any_grade_extractors or 0)
+						cluster_premiums = cluster_premiums + (any_grade_premiums or 0)
+						cluster_added = surface_resource_quota_added - before
+					end
+					if cluster_added < plan.target then
+						local _, _, any_grade_premiums = place_from(selector, false, true,
+							plan.target - cluster_added, "candidate", outermost, true, inner_band,
+							false, true, nil, false)
+						cluster_premiums = cluster_premiums + (any_grade_premiums or 0)
+						cluster_added = surface_resource_quota_added - before
+					end
+				end
 				if extractors_added > maximum_cluster_extractors
 					or cluster_added > resource_cluster_maximum_deposits then
 					cluster_plan_fail(tostring(label) .. " cluster cap exceeded: cluster="
@@ -5905,16 +5954,64 @@ function DepositRules.TopUpDeposits(map)
 				end
 				-- A surface badge that has run out is replaced by a distinct extractor badge, so the
 				-- extractor count may exceed its target (never its cap); the total must be exact.
+				-- A cluster the fallback touched keeps the extra premium allowance it used; one that
+				-- still falls short settles for what it holds, as long as it keeps its extractor and
+				-- resource minimums. Its markers carry the settled targets, so the final terrain
+				-- audit verifies what was placed.
+				local planned_target, planned_extractor_target = plan.target, plan.extractor_target
+				if #settled_reasons > 0 then
+					local short = extractors_added < plan.extractor_target or cluster_added ~= plan.target
+					if not short or (cluster_added <= plan.target
+						and cluster_added >= resource_cluster_minimum_deposits
+						and extractors_added >= minimum_cluster_extractors) then
+						plan.target = cluster_added
+						plan.extractor_target = math.min(plan.extractor_target, extractors_added)
+						plan.settled = table.concat(settled_reasons, "+")
+						for _, candidate in ipairs(plan.candidates) do
+							candidate._sbm_resource_cluster_resource_target = plan.target
+							candidate._sbm_resource_cluster_extractor_target = plan.extractor_target
+						end
+						for _, marker in ipairs(active_cluster_markers) do
+							marker.SuperBigMapResourceClusterResourceTarget = plan.target
+							marker.SuperBigMapResourceClusterExtractorTarget = plan.extractor_target
+							marker.SuperBigMapResourceClusterPremiumLimit = math.max(1, cluster_premiums)
+							marker.SuperBigMapResourceClusterSettled = true
+						end
+						local settled = tostring(plan.id) .. ":" .. plan.settled
+							.. ":resources=" .. tostring(cluster_added) .. "/" .. tostring(planned_target)
+							.. ":extractors=" .. tostring(extractors_added) .. "/"
+							.. tostring(planned_extractor_target)
+							.. ":premium=" .. tostring(cluster_premiums)
+						cluster_plan_diagnostic.settled_clusters =
+							cluster_plan_diagnostic.settled_clusters + 1
+						cluster_plan_diagnostic.settled = cluster_plan_diagnostic.settled == ""
+							and settled or cluster_plan_diagnostic.settled .. "," .. settled
+					end
+				end
 				if extractors_added < plan.extractor_target or cluster_added ~= plan.target then
+					local deficits = {}
+					for _, res in ipairs(target_keys) do
+						deficits[#deficits + 1] = tostring(res) .. ":"
+							.. tostring(math.max(0, (target_by_type[res] or 0)
+								- (current_by_type[res] or 0) - (added_by_type[res] or 0)))
+					end
+					local badges = {}
+					for badge in pairs(active_cluster_badges or {}) do badges[#badges + 1] = badge end
+					table.sort(badges)
 					cluster_plan_fail(tostring(label) .. " weighted composition failed: cluster="
 						.. tostring(plan.id) .. " resources=" .. tostring(cluster_added)
 						.. "/" .. tostring(plan.target) .. " extractors="
-						.. tostring(extractors_added) .. "/" .. tostring(plan.extractor_target))
+						.. tostring(extractors_added) .. "/" .. tostring(plan.extractor_target)
+						.. " remaining_candidates=" .. tostring(selector.Remaining())
+						.. " available_before=" .. tostring(available_before)
+						.. " badges=" .. table.concat(badges, "+")
+						.. " deficits=" .. table.concat(deficits, ","))
 				end
 				local badge_list = {}
 				for badge in pairs(active_cluster_badges or {}) do badge_list[#badge_list + 1] = badge end
 				table.sort(badge_list)
 				active_cluster_badges = nil
+				active_cluster_markers = nil
 				local result = table.concat({
 					tostring(plan.id), outermost and "outer" or "inner",
 					"target=" .. tostring(plan.target),
@@ -5923,7 +6020,8 @@ function DepositRules.TopUpDeposits(map)
 					"reward_budget=" .. tostring(plan.reward_capacity),
 					"strength=" .. tostring(plan.strength),
 					"extractors=" .. tostring(extractors_added),
-					"premium=" .. tostring(premium_added or 0),
+					"premium=" .. tostring(cluster_premiums),
+					"settled=" .. tostring(plan.settled or "no"),
 					"anomaly_cap=" .. tostring(plan.anomaly_capacity),
 					"total=" .. tostring(cluster_added),
 					"available=" .. tostring(available_before),

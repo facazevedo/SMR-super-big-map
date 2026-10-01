@@ -12262,12 +12262,27 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								.. " cluster_resource_excess="
 								.. tostring(resource_terrain_audit
 									and resource_terrain_audit.cluster_resource_excess)
+								.. " cluster_resource_shortfall="
+								.. tostring(resource_terrain_audit
+									and resource_terrain_audit.cluster_resource_shortfall)
 								.. " cluster_extractor_shortfall="
 								.. tostring(resource_terrain_audit
 									and resource_terrain_audit.cluster_extractor_shortfall)
 								.. " cluster_extractor_excess="
 								.. tostring(resource_terrain_audit
 									and resource_terrain_audit.cluster_extractor_excess)
+								.. " weighted_failures=" .. tostring(resource_terrain_audit
+									and resource_terrain_audit.cluster_weighted_composition_failures)
+								.. " anchor_failures=" .. tostring(resource_terrain_audit
+									and resource_terrain_audit.cluster_anchor_failures)
+								.. " premium_excess=" .. tostring(resource_terrain_audit
+									and resource_terrain_audit.cluster_premium_excess)
+								.. " first_cluster_failure=" .. tostring(resource_terrain_audit
+									and resource_terrain_audit.first_cluster_failure)
+								.. " marker_capture="
+								.. tostring(map.SuperBigMapTopUpClusterMarkerDebugSummary)
+								.. " plan_result=" .. tostring(map.SuperBigMapResourceClusterPlanDiagnostic
+									and map.SuperBigMapResourceClusterPlanDiagnostic.results)
 								.. " first_resource_failure=" .. tostring(resource_terrain_audit
 									and resource_terrain_audit.first_resource_failure)
 								.. " first_rocket_failure=" .. tostring(resource_terrain_audit
