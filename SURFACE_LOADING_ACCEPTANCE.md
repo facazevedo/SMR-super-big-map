@@ -1,5 +1,18 @@
 # Surface START-to-T1 — runtime acceptance and local checkpoint
 
+## Metadata 1166: rollback-guarded seating for a measured gap on steep slopes
+
+Sweep case 38S111W (`64Yw9AQ35FI2`, RoughTerrain) failed "1 surface rocks have unresolved support";
+the published 1158 build fails identically. Vanilla StonesDarkGroup_02 at (340451,423107): piece 2
+(20 vertices) floats 4.95 units above the interpolated terrain (vanilla native ground 0.15). Its
+proof margins (coarse 3, precise 1) are multiplied by 1+|gx|+|gy| with gradient sum 5, so the gap
+could not be proved, the piece stayed inconclusive and no seating was proposed. Owner ruling
+2026-10-01 (after vanilla/expanded photos, `_ralph/runs/photo-38S111W-rock-20261001`): a measured
+positive gap (every triangle above the interpolated terrain at zero margin) authorizes a seating
+attempt only; the correction service still verifies independently and rolls back unless the
+piece is positively rooted. 38S111W: complete, 32 corrected / 0 rejected; the rock moved 12 units
+straight down, XY, angle and axis unchanged. START-to-T1 88.7 s in that diagnostic run.
+
 ## Metadata 1165: oasis fills respect cluster ownership
 
 Sweep case 23S112W (`8ZVp2hNCzjNI`, RoughTerrain, MetatronMystery) failed the outer resource

@@ -1673,6 +1673,24 @@ local function Scan(context,source)
 						if separated then
 							node.defect=true;node.reason="every rendered triangle separated from bounded terrain and nearby support"
 							node.separation_error_bound=error_bound
+						elseif not node.supported and separation_margin==100 then
+							-- Owner ruling 2026-10-01 (38S111W): on a steep slope the proof margin
+							-- grows with the gradient, so a measured few-unit gap the expansion
+							-- opened cannot be proved. When every rendered triangle is measured
+							-- above the interpolated terrain, allow only a seating ATTEMPT: the
+							-- correction service still verifies independently and rolls back unless
+							-- the component is then positively rooted. No support verdict is granted.
+							heightfield_nodes=heightfield_nodes or {}
+							local function height_at(x,y)
+								local key=x..":"..y;local value=heightfield_nodes[key]
+								if value==nil then value=terrain_api.GetHeight(map,x,y);heightfield_nodes[key]=value or false end
+								return value
+							end
+							local measured,gap=Geometry.TrianglesAboveHeightfield(triangles,height_at,100,width,height,0,65536,true)
+							if measured and type(gap)=="number" and gap>0 then
+								node.seating_proposal=true;node.measured_terrain_gap=gap
+								node.reason="measured terrain gap below the slope-scaled proof margin; rollback-guarded seating proposal"
+							end
 						end
 					end
 				end
