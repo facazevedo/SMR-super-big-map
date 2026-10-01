@@ -4006,6 +4006,22 @@ local function PrepareOuterResourceTerrain(map)
 			rocket_offsets, rocket_hex_radius) or rocket_hex_radius
 	local rocket_level_core = math.ceil(rocket_world_radius + 1)
 	local rocket_required_core = math.ceil(rocket_world_radius + 3)
+	-- The level core reaches the centres of the first ring outside the pad shape, not their outer
+	-- halves. Against a steep slope that ring stays steep, and the engine then marks every shape
+	-- edge hex with two such neighbours unbuildable (g_NCF_MinUnbuildableNeighbours), so the same
+	-- patch fails again on every repair. A pad that failed the previous authoritative audit levels
+	-- one more hex per repair (at most up to the required core); pads that passed are untouched.
+	local rocket_level_boost = type(map.SuperBigMapRocketPadLevelBoost) == "table"
+		and map.SuperBigMapRocketPadLevelBoost or {}
+	for _, previous in ipairs(type(map.SuperBigMapOuterResourceRocketPads) == "table"
+		and map.SuperBigMapOuterResourceRocketPads or {}) do
+		if previous.verified == false and previous.cluster_plan ~= nil then
+			rocket_level_boost[previous.cluster_plan] = math.min(
+				rocket_required_core - rocket_level_core,
+				(rocket_level_boost[previous.cluster_plan] or 0) + 1)
+		end
+	end
+	map.SuperBigMapRocketPadLevelBoost = rocket_level_boost
 	local rocket_outer_radius = rocket_required_core + rocket_extra_feather
 	local rocket_blend_fits = NewRocketBlendEdgeGuard(width, height,
 		rocket_level_core * cells_per_hex, rocket_outer_radius * cells_per_hex,
@@ -4223,11 +4239,12 @@ local function PrepareOuterResourceTerrain(map)
 					best.modified = true
 					best.shape_radius = rocket_hex_radius
 					best.world_shape_radius = rocket_world_radius
+					best.level_boost = rocket_level_boost[group.plan]
 					add_patch("rocket", best.x, best.y, best.q, best.r,
 						-- As with extractors, the live shape is center-based but the final buildable
 						-- verdict consumes the surrounding cells of every edge hex. Keep that broad
 						-- support band gently graded; only the shape plus one hex is perfectly level.
-						rocket_level_core,
+						rocket_level_core + (rocket_level_boost[group.plan] or 0),
 						rocket_outer_radius,
 						{ rocket_site = best,
 							support_cells = rocket_required_core * cells_per_hex })

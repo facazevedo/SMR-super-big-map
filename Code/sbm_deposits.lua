@@ -1259,6 +1259,55 @@ function DepositRules.ClusterBadgeKey(marker)
 	if IsKindOfSafe(marker, "TerrainDepositMarker") then return "terrain:" .. resource end
 	return "other:" .. tostring(marker.class or "?")
 end
+-- Resources whose surface generation presets allow exactly one grade. Vanilla presets always
+-- spread every resource over several grades; a mod such as More Deposits ("grade fix") sets one
+-- grade to 100% and the rest to 0. On such a map every deposit of that resource has the same
+-- grade, so the grade does not distinguish a premium deposit, and the oasis rule's "one premium
+-- per cluster" must not treat them all as premium. Returns { [resource] = true }.
+function DepositRules.SingleGradeResources(presets, grades)
+	local result = {}
+	if type(presets) ~= "table" or type(grades) ~= "table" or #grades == 0 then return result end
+	local function single(preset, keys)
+		local positive = 0
+		for _, key in ipairs(keys) do
+			local weight = tonumber(preset[key]) or 0
+			if weight > 0 then positive = positive + 1 end
+		end
+		return positive == 1
+	end
+	-- Mars surface presets only (e.g. Metals_High). Asteroid and Below & Beyond underground
+	-- presets (Metals_Underground) generate other maps and are not changed by such mods.
+	local surface_levels = { VeryLow = true, Low = true, Average = true, High = true, VeryHigh = true }
+	local seen, mixed = {}, {}
+	for id, preset in pairs(presets) do
+		local resource = type(preset) == "table" and preset.resource
+		if type(resource) == "string" and type(id) == "string"
+			and id:sub(1, #resource + 1) == resource .. "_"
+			and surface_levels[id:sub(#resource + 2)] then
+			local layers = {}
+			if resource == "Concrete" then
+				local keys = {}
+				for index = 1, #grades do keys[#keys + 1] = "TerrWeightGrade" .. index end
+				layers[1] = keys
+			else
+				for layer = 1, 2 do
+					local keys = {}
+					for _, grade in ipairs(grades) do keys[#keys + 1] = "Subs" .. layer .. "Weight" .. grade end
+					layers[#layers + 1] = keys
+				end
+			end
+			seen[resource] = true
+			for _, keys in ipairs(layers) do
+				if not single(preset, keys) then mixed[resource] = true end
+			end
+		end
+	end
+	for resource in pairs(seen) do
+		if not mixed[resource] then result[resource] = true end
+	end
+	return result
+end
+
 -- Hex coordinates on an expanded map span roughly -1024..1024. The offset keeps the packed key
 -- positive and the stride exceeds any reachable row, so the mapping remains collision-free.
 local HEX_KEY_OFFSET = 32768
@@ -5444,7 +5493,10 @@ function DepositRules.TopUpDeposits(map)
 			return IsKindOfSafe(template, "SubsurfaceDepositMarker")
 				or IsKindOfSafe(template, "TerrainDepositMarker")
 		end
+		local single_grade_resources = DepositRules.SingleGradeResources(
+			Global("ResourcePresets"), Global("DepositGradesTable"))
 		local function premium_template(template)
+			if template and single_grade_resources[tostring(template.resource)] then return false end
 			local grade = template and template.grade
 			if type(grade) == "number" then return grade >= 3 end
 			grade = tostring(grade or ""):lower()

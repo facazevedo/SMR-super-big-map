@@ -1,5 +1,29 @@
 # Surface START-to-T1 — runtime acceptance and local checkpoint
 
+## Metadata 1163: More Deposits compatibility, landing pads beside steep slopes
+
+Owner report 2026-10-01: "кластери=2 / екстрактори=1/2" appears whenever Super Big Map and More
+Deposits (Neoness, Steam 3604709443, mod id `uxduyx7`) are both enabled. That mod rewrites the live
+`ResourcePresets` on every ChangeMap; its default "grade fix" sets Concrete (TerrWeightGrade) and
+Metals, PreciousMetals and Water (Subs1/Subs2 weights) to 100% Very High, and doubles their counts.
+Every extractor template was then premium, so strong clusters had no non-premium second extractor.
+`DepositRules.SingleGradeResources` reads the Mars surface presets (`<resource>_VeryLow..VeryHigh`;
+asteroid and Below & Beyond `_Underground` presets excluded) and treats a resource whose presets
+allow one grade as non-premium. No vanilla Mars preset is single-grade, so vanilla maps are
+unchanged. With More Deposits loaded (`compat-G-moredeposits-1163-20261001`), 24S74W and 61N136W
+(no game rules) completed with every cluster at its planned composition, `settled=0`, premium 0;
+24S74W without it is identical to 1160. Test runs reach the debug game through a temporary local
+copy of the mod (the debug build does not scan Steam workshop folders) and the runner's new
+`--extra-mod` option.
+
+Sweep case 5N92W (`5kauyCa7cHva`, RoughTerrain, MetatronMystery) failed `rocket_failures=1` at
+pad 539:48 beside a 25-57 m rise: the level core reaches the centres of the first ring outside the
+pad shape but not their outer halves, that ring stayed steep, and the engine eroded the two shape
+edge hexes with two unbuildable neighbours (`g_NCF_MinUnbuildableNeighbours`); both repairs re-made
+the same patch. A pad that failed the previous audit now levels one more hex per repair (capped at
+the required core). 5N92W then passed on the first repair (71.0 s); pads that pass the first audit
+are untouched.
+
 ## Metadata 1161: outer resource clusters settle instead of failing
 
 Player report 2026-10-01: new maps failed almost everywhere with "weighted composition failed:
