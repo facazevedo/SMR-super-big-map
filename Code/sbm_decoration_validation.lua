@@ -1732,6 +1732,44 @@ local function Scan(context,source)
 			for _,other in ipairs(node.edges) do if other.supported then node.supported=true;changed=true;break end end
 		end end
 	end
+	if not source and not context.positive_only and not context.placement_only and not context.incomplete
+		and separation_margin==100 then
+		-- Owner ruling 2026-10-01 (59N61W): two stones leaning only on each other floated about half
+		-- a metre above terrain. Contact with a piece that is itself unrooted can never support, but
+		-- it blocks the negative proof, so nothing proposed a move. When every rendered triangle of
+		-- such a piece is measured above the interpolated terrain, offer the same rollback-guarded
+		-- seating attempt. Vanilla-authored floats drop the proposal when the row is built.
+		for _,node in ipairs(nodes) do
+			if not node.supported and not node.defect and not node.partial and not node.unknown_support
+				and not node.seating_proposal and #node.edges>0 then
+				local rooted=false
+				for _,other in ipairs(node.edges) do if other.supported then rooted=true;break end end
+				if not rooted then
+					local owner=node.transform_record or node.record
+					local triangles,vertices={},{}
+					for _,t in ipairs(node.component.triangles) do
+						local triangle={}
+						for i,vi in ipairs(t) do
+							vertices[vi]=vertices[vi] or World(owner,node.geometry.vertices[vi])
+							triangle[i]=vertices[vi]
+						end
+						triangles[#triangles+1]=triangle
+					end
+					heightfield_nodes=heightfield_nodes or {}
+					local function height_at(x,y)
+						local key=x..":"..y;local value=heightfield_nodes[key]
+						if value==nil then value=terrain_api.GetHeight(map,x,y);heightfield_nodes[key]=value or false end
+						return value
+					end
+					local measured,gap=Geometry.TrianglesAboveHeightfield(triangles,height_at,100,width,height,0,65536,true)
+					if measured and type(gap)=="number" and gap>0 then
+						node.seating_proposal=true;node.measured_terrain_gap=gap
+						node.reason="unrooted contact group measured above terrain; rollback-guarded seating proposal"
+					end
+				end
+			end
+		end
+	end
 	if context.positive_only then
 		-- A known, signature-guarded blocker correction needs a complete positive
 		-- support proof, not a diagnostic proof of every existing negative gap.
@@ -2818,12 +2856,21 @@ function Validator.SeatingEvidence(map,bounds_only)
 			and (not context.correction_only or context.repair_targets[obj])
 			and not record.pose.parent and #record.nodes>0 then
 			local safe=not (record.foundation and record.foundation.incomplete);local unsupported=record.foundation~=nil
+			-- 59N61W: two stones leaning only on each other. When both sides are unrooted and both
+			-- carry their own seating proposal, neither supports anything; each is seated on its own
+			-- and verified independently. Any rooted or unproposed side still vetoes the move.
+			local function unrooted_pair(a,b)
+				return a and b and not a.supported and not b.supported and a.seating_proposal and b.seating_proposal
+					and not a.native_authored and not b.native_authored
+			end
 			for _,node in ipairs(record.nodes) do
 				if node.geometry.animated or node.partial or node.unknown_support then safe=false end
 				-- An open-base repair proves terrain contact for every component at
 				-- its proposed final pose. Existing rock contact is not itself a veto;
 				-- dependencies must instead survive the exact proposed translation.
-				for _,edge in ipairs(node.edges) do if edge.record~=record and not record.foundation then safe=false end end
+				for _,edge in ipairs(node.edges) do
+					if edge.record~=record and not record.foundation and not unrooted_pair(node,edge) then safe=false end
+				end
 				-- A complete open-base rim gap is itself the float proof. A pair of
 				-- such rocks resting only on each other has no rooted component and
 				-- no per-node negative proof, yet still needs terrain seating.
@@ -2838,7 +2885,9 @@ function Validator.SeatingEvidence(map,bounds_only)
 			local bounds=BoxBounds(obj:GetObjectBBox())
 			for _,other in ipairs(context.index:Query(bounds,Global("const").HeightTileSize)) do
 				if other.record~=record then
-					for _,edge in ipairs(other.edges or {}) do if edge.record==record and not record.foundation then safe=false end end
+					for _,edge in ipairs(other.edges or {}) do
+						if edge.record==record and not record.foundation and not unrooted_pair(other,edge) then safe=false end
+					end
 				end
 			end
 			if safe and unsupported then

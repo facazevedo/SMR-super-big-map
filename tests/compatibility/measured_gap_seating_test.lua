@@ -28,4 +28,15 @@ local mirror=assert(validation:match('if type%(vanilla%)=="number" and vanilla<=
 assert(mirror:find('if lowest_clearance()>tolerance then',1,true),'only a piece that now floats qualifies')
 assert(mirror:find('node.seating_proposal=true',1,true) and not mirror:find('node.supported=true',1,true),
   'a proposal only, never a support verdict')
+-- 59N61W: two top-up stones leaning only on each other, both floating; an unrooted group may be
+-- measured and proposed, and a mutually proposed unrooted pair is not vetoed by its own edge.
+local group=assert(validation:match('Owner ruling 2026%-10%-01 %(59N61W%)(.-)if context%.positive_only then'),
+  'unrooted-group pass not found')
+assert(group:find('if other.supported then rooted=true;break end',1,true),'a rooted neighbour excludes the pass')
+assert(group:find('node.seating_proposal=true',1,true) and not group:find('node.supported=true',1,true),
+  'a proposal only, never a support verdict')
+local pair=assert(validation:match('local function unrooted_pair%(a,b%)(.-)end'),'unrooted pair rule not found')
+assert(pair:find('not a.supported and not b.supported and a.seating_proposal and b.seating_proposal',1,true),
+  'both sides must be unrooted and proposed')
+assert(pair:find('not a.native_authored and not b.native_authored',1,true),'vanilla floats keep the veto')
 print('measured-gap seating: rollback-guarded attempt only')

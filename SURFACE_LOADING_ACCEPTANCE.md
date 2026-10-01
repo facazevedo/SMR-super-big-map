@@ -1,5 +1,15 @@
 # Surface START-to-T1 — runtime acceptance and local checkpoint
 
+## Metadata 1168: seat unrooted pairs of leaning stones
+
+Sweep case 59N61W (`71wdbFzlVZuJ`, RoughTerrain): two decor top-up stones (StonesSlate_02 and
+StonesSlateSmall_01 near (328247,478802)) leaned only on each other, floating 42-70 units above
+terrain. Contact with an unrooted piece blocked the negative proof, and each stone's edge to the
+other vetoed moving it alone. A post-propagation pass now measures any unsupported piece whose
+contacts are all unrooted and proposes a rollback-guarded seating attempt; a mutually proposed
+unrooted pair (neither a vanilla float) no longer vetoes itself. 59N61W: complete, 19 corrected /
+0 rejected, 61.9 s; 67N138E and 38S111W unchanged.
+
 ## Metadata 1167: restore vanilla terrain contact lost in the stretch
 
 Sweep case 67N138E (`UigYAOgrDE7J`, RoughTerrain): vanilla RocksLightSmall_06 at (256031,214031).
