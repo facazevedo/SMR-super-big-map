@@ -1,5 +1,17 @@
 # Surface START-to-T1 — runtime acceptance and local checkpoint
 
+## Metadata 1165: oasis fills respect cluster ownership
+
+Sweep case 23S112W (`8ZVp2hNCzjNI`, RoughTerrain, MetatronMystery) failed the outer resource
+top-up census with `anomaly_cluster_overflow=1 cluster_total_overflow=1`; 1163 fails identically,
+so it predates 1164. Clusters 1 and 6 are 15 hexes apart, so their 12-hex areas overlap.
+FillOasisClusterAnomalies placed cluster 1's anomaly at (278,908): 12 hexes from cluster 1 and 6
+from cluster 6, which has no anomaly slot; the census assigns each anomaly to its nearest cluster
+(lowest index on a tie). The anomaly fill and the oasis dome bonus now accept only spots their own
+cluster owns under that rule (`DepositRules.NearestClusterPadIndex`). 23S112W: complete in 66.3 s;
+24S74W clusters identical. Unlike 1161-1164, this can move a fill on a map that passed before
+(a spot nearer a neighbour with a free slot), so carried sweep results are not bit-identical.
+
 ## Metadata 1164: on-demand anomaly sampling on crowded surfaces
 
 Sweep case 55S11E (`UTzZpVL2RBMB`, RoughTerrain, MetatronMystery) failed "surface top-up spacing

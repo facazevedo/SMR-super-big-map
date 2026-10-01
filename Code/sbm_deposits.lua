@@ -1308,6 +1308,22 @@ function DepositRules.SingleGradeResources(presets, grades)
 	return result
 end
 
+-- The outer resource cluster that owns hex (q, r): the nearest pad centre within radius, the lowest
+-- pad index on a tie. The final census attributes anomalies and dome effects by this same rule.
+function DepositRules.NearestClusterPadIndex(pads, q, r, radius)
+	local best, best_distance
+	for index, pad in ipairs(type(pads) == "table" and pads or {}) do
+		local cq, cr = pad.cluster_q or pad.q, pad.cluster_r or pad.r
+		if type(cq) == "number" and type(cr) == "number" then
+			local distance = AxialHexDistance(q, r, cq, cr)
+			if distance and distance <= radius and (not best_distance or distance < best_distance) then
+				best, best_distance = index, distance
+			end
+		end
+	end
+	return best
+end
+
 -- Hex coordinates on an expanded map span roughly -1024..1024. The offset keeps the packed key
 -- positive and the stride exceeds any reachable row, so the mapping remains collision-free.
 local HEX_KEY_OFFSET = 32768
@@ -6466,8 +6482,12 @@ local function FillOasisClusterAnomalies(map)
 				for _, offset_index in ipairs(order) do
 					local offset = offsets[offset_index]
 					local q, r = cluster.q + offset.dq, cluster.r + offset.dr
-					local clear = true
-					for _, other in ipairs(nearby) do
+					-- Neighbouring clusters' areas can overlap. The census assigns each anomaly to
+					-- its nearest cluster (lowest index on a tie), so a spot nearer another cluster
+					-- would count against that cluster's slots (23S112W: cluster 1's anomaly landed
+					-- 6 hexes from slotless cluster 6). Keep only spots this cluster owns.
+					local clear = nearest_cluster(q, r) == cluster
+					for _, other in ipairs(clear and nearby or {}) do
 						if other.marker ~= source.marker then
 							local distance = AxialHexDistance(q, r, other.q, other.r)
 							local required = IsAnomalyMarker(other.marker)
@@ -9039,8 +9059,10 @@ function DepositRules.TopUpEffectDeposits(map)
 						end
 						for _, offset_index in ipairs(order) do
 							local q, r = cq + offsets[offset_index].dq, cr + offsets[offset_index].dr
-							local clear = true
-							for _, other in ipairs(nearby) do
+							-- As for oasis anomalies: a spot nearer another cluster belongs to it.
+							local clear = DepositRules.NearestClusterPadIndex(
+								map.SuperBigMapOuterResourceRocketPads, q, r, radius) == pad_index
+							for _, other in ipairs(clear and nearby or {}) do
 								local distance = AxialHexDistance(q, r, other.q, other.r)
 								if distance and distance < minimum_enrichment then clear = false; break end
 							end
