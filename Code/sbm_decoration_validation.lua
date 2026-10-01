@@ -618,13 +618,27 @@ local function MarkNativeAuthored(map,record)
 	local terrain=Global("terrain");local tolerance=min(2,Global("const").HeightTileSize/50.0)
 	for _,node in ipairs(record.nodes) do if not node.supported or node.defect then
 		local vanilla=native.nodes[node.key]
-		if type(vanilla)=="number" and vanilla>tolerance then
-			local allowed=vanilla*native.ratio+NATIVE_MARGIN
+		local function lowest_clearance()
 			local lowest=math.huge
 			for _,vi in ipairs(Geometry.SupportVertices(node.geometry,node.component)) do
 				local p=World(node.transform_record or record,node.geometry.vertices[vi])
 				local d=p[3]-terrain.GetHeight(map,Point(p));if d<lowest then lowest=d end
 			end
+			return lowest
+		end
+		if type(vanilla)=="number" and vanilla<=tolerance and not node.defect and not node.partial then
+			-- The mirror case (owner ruling 2026-10-01, 67N138E/38S111W): the component rested on
+			-- vanilla terrain but floats after stretching. That contact is the vanilla relationship
+			-- to restore. A loose piece touching only an unrooted fragment, or a few-unit gap on a
+			-- steep slope, yields no conclusive negative proof; offer the same rollback-guarded
+			-- rigid seating move. Acceptance still needs independent positive support.
+			if lowest_clearance()>tolerance then
+				node.seating_proposal=true
+				node.reason="native terrain contact lost after stretching"
+			end
+		elseif type(vanilla)=="number" and vanilla>tolerance then
+			local allowed=vanilla*native.ratio+NATIVE_MARGIN
+			local lowest=lowest_clearance()
 			node.native_allowed=allowed
 			if lowest<=allowed then
 				node.native_authored=true

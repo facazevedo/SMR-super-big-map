@@ -1,5 +1,15 @@
 # Surface START-to-T1 — runtime acceptance and local checkpoint
 
+## Metadata 1167: restore vanilla terrain contact lost in the stretch
+
+Sweep case 67N138E (`UigYAOgrDE7J`, RoughTerrain): vanilla RocksLightSmall_06 at (256031,214031).
+Its LOD1 piece 2 rested on vanilla terrain (native clearance -0.79) but floats 10-25 units after
+the stretch, touching only LOD1 piece 5, an accepted vanilla float (183.6 native, allowed 248).
+Touching an unrooted fragment blocked the negative proof, so the piece stayed inconclusive.
+MarkNativeAuthored already offered a rollback-guarded seating move to native floats lifted beyond
+their allowance; it now does the same for the mirror case, a piece that touched vanilla terrain
+but floats now. 67N138E: complete, 1 corrected / 0 rejected, 59.8 s; 38S111W still complete (89 s).
+
 ## Metadata 1166: rollback-guarded seating for a measured gap on steep slopes
 
 Sweep case 38S111W (`64Yw9AQ35FI2`, RoughTerrain) failed "1 surface rocks have unresolved support";

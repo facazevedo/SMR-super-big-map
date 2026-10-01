@@ -21,4 +21,11 @@ assert(seating:find('RestoreSurface(row,report)',1,true),'refused corrections ro
 -- The geometry routine reports a positive minimum only when every triangle is above terrain.
 local geometry=read('Code/sbm_decoration_geometry.lua')
 assert(geometry:find('if extrema then return minimum>0,minimum,maximum end',1,true))
+-- 67N138E: a LOD1 piece that rested on vanilla terrain (-0.79) floats 10-25 units after the
+-- stretch and touches only an unrooted vanilla float. The native-contact mirror case proposes.
+local mirror=assert(validation:match('if type%(vanilla%)=="number" and vanilla<=tolerance and not node%.defect and not node%.partial then(.-)elseif type%(vanilla%)=="number" and vanilla>tolerance then'),
+  'native-contact mirror case not found')
+assert(mirror:find('if lowest_clearance()>tolerance then',1,true),'only a piece that now floats qualifies')
+assert(mirror:find('node.seating_proposal=true',1,true) and not mirror:find('node.supported=true',1,true),
+  'a proposal only, never a support verdict')
 print('measured-gap seating: rollback-guarded attempt only')
