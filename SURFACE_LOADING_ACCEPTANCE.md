@@ -1,5 +1,15 @@
 # Surface START-to-T1 — runtime acceptance and local checkpoint
 
+## Metadata 1164: on-demand anomaly sampling on crowded surfaces
+
+Sweep case 55S11E (`UTzZpVL2RBMB`, RoughTerrain, MetatronMystery) failed "surface top-up spacing
+audit failed: density_failures=1": the anomaly top-up placed 21 of 26 (unlock 32/36, sequence
+11/12). The map holds 348 metals after top-up and 220 of 400 sectors are unbuildable, and the
+planned 8-samples-per-sector pool (3192 samples, 424 valid) ran out. The surface now samples
+further whole-map spots on demand, within one more planned round, only after every existing
+selector is exhausted (the underground path already did this). 55S11E: complete in 69.2 s with
+`surface_on_demand_added=5`, shortfall 0. 24S74W: `surface_on_demand_added=0`, clusters identical.
+
 ## Metadata 1163: More Deposits compatibility, landing pads beside steep slopes
 
 Owner report 2026-10-01: "кластери=2 / екстрактори=1/2" appears whenever Super Big Map and More

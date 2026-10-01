@@ -6766,6 +6766,7 @@ function DepositRules.TopUpAnomalies(map)
 	local density_fallback_added = 0
 	local surface_mountain_base_added = 0
 	local surface_plain_added = 0
+	local surface_on_demand_added = 0
 	local surface_base_preference_fallback_added = 0
 	local surface_mountain_base_quota_shortfall = 0
 	local surface_base_preference_stats
@@ -7190,6 +7191,7 @@ function DepositRules.TopUpAnomalies(map)
 		local whole_map_selector = underground and new_whole_map_selector() or nil
 		local relaxed_whole_map_selector
 		local surface_all_terrain_selector
+		local surface_on_demand_selector, surface_on_demand_sample_limit
 		local function rebuild_whole_map_selectors()
 			whole_map_selector = new_whole_map_selector(nil,
 				underground and candidates or preferred_surface_candidates)
@@ -7483,6 +7485,25 @@ function DepositRules.TopUpAnomalies(map)
 					selected_whole_map_selector = c and surface_all_terrain_selector or nil
 					surface_base_preference_fallback = c ~= nil
 				end
+				if not c and not underground then
+					-- A crowded map (55S11E: 348 metals, 220 unbuildable sectors) can exhaust the
+					-- planned 8-per-sector pool before the density target is met. Only then, sample
+					-- further whole-map spots on demand, as the underground path does, within one
+					-- more planned round. The same strict terrain and repulsion rules apply; a map
+					-- whose planned pool suffices never reaches this, so it is placed as before.
+					surface_on_demand_sample_limit = surface_on_demand_sample_limit
+						or (candidate_samples + MAX_SAMPLES)
+					while not c and candidate_samples < surface_on_demand_sample_limit do
+						local before = #candidates
+						grow_candidate_pool(before + 1, surface_on_demand_sample_limit)
+						if #candidates <= before then break end
+						surface_on_demand_selector = new_whole_map_selector(
+							"surface anomalies on-demand", candidates)
+						c = take_reachable_candidate(surface_on_demand_selector, anomaly_profile)
+						selected_whole_map_selector = c and surface_on_demand_selector or nil
+					end
+					if c then surface_on_demand_added = surface_on_demand_added + 1 end
+				end
 				if not c and sequential_underground then
 					-- Search only for the underground anomaly currently being placed. Stop
 					-- validating as soon as one strict candidate succeeds.
@@ -7702,6 +7723,7 @@ function DepositRules.TopUpAnomalies(map)
 		surface_mountain_base_minimum_percent = surface_mountain_base_percent,
 		surface_mountain_base_quota_shortfall = surface_mountain_base_quota_shortfall,
 		surface_plain_added = surface_plain_added,
+		surface_on_demand_added = surface_on_demand_added,
 		surface_base_preference_fallback_added = surface_base_preference_fallback_added,
 		surface_candidate_sectors = surface_base_preference_stats
 			and surface_base_preference_stats.candidate_sectors or 0,
