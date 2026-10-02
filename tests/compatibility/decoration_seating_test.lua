@@ -188,7 +188,7 @@ local report=S.Run(map)
 assert(report.corrected==1 and select(3,pos:xyz())==0 and checks==1,'independent proof accepts verified placement')
 local annotation=obj.SuperBigMapSupportRepair
 success=false;pos=point(20,0,20);report=S.Run(map)
-assert(report.corrected==0 and report.rejected==1 and report.records[1].rolled_back,'failed proof must not be reported as repaired')
+assert(report.corrected==0 and (report.rejected==0 and report.kept_in_place==1) and report.records[1].rolled_back,'failed proof must not be reported as repaired')
 assert(select(3,pos:xyz())==20 and obj.SuperBigMapSupportRepair==annotation,'rollback restores position and previous annotation')
 assert(checks==3,'rollback must refresh the diagnostic ledger')
 success=true
@@ -221,18 +221,18 @@ assert(report.corrected==1 and select(3,pos:xyz())==15 and report.records[1].sup
 annotation=obj.SuperBigMapSupportRepair
 success=false;pos=point(20,0,20);before=pos
 report=S.Run(map)
-assert(report.corrected==0 and report.rejected==1 and pos==before and obj.SuperBigMapSupportRepair==annotation,
+assert(report.corrected==0 and (report.rejected==0 and report.kept_in_place==1) and pos==before and obj.SuperBigMapSupportRepair==annotation,
  'continuous contact proposal does not replace independent rooted-support verification')
 validator.SeatingVerticalContact=function()return -999 end
 success=true;pos=point(20,0,20)
 report=S.Run(map)
-assert(report.corrected==0 and report.rejected==1,'object support proposal may not lower past the visible terrain bound')
+assert(report.corrected==0 and (report.rejected==0 and report.kept_in_place==1),'object support proposal may not lower past the visible terrain bound')
 validator.SeatingVerticalContact=function()return nil,'no rendered support along vertical move' end
 pos=point(20,0,20);report=S.Run(map)
 assert(report.corrected==1 and select(3,pos:xyz())==0,'complete clear sweep allows a terrain seating proposal')
 validator.SeatingVerticalContact=function()return nil,'unknown swept neighbour' end
 pos=point(20,0,20);report=S.Run(map)
-assert(report.corrected==0 and report.rejected==1,'unknown swept geometry must still veto movement')
+assert(report.corrected==0 and (report.rejected==0 and report.kept_in_place==1),'unknown swept geometry must still veto movement')
 print('decoration seating: rigid corrections, no buried clusters, native XY preservation and fail-closed terrain passed')
 validator.SeatingEvidence=function()return {}end
 validator.SurfaceSupportSummary=function()return {eligible=1,unresolved=1}end
@@ -257,7 +257,7 @@ report=S.Run(map)
 assert(report.corrected==0 and pos==before and axis==before_axis and angle==before_angle,
  'failed seating must retain the complete position and orientation')
 pos=point(20,0,20);success=true;report=S.Run(map)
-assert(report.corrected==0 and report.rejected==1 and axis==before_axis and angle==before_angle and rotations==0,
+assert(report.corrected==0 and (report.rejected==0 and report.kept_in_place==1) and axis==before_axis and angle==before_angle and rotations==0,
  'unseatable formation must fail without attempting any added tilt')
 validator.SeatingCurrentPoseClear=function()return false end
 before_axis,before_angle=axis,angle;pos=point(20,0,20);before=pos
@@ -293,7 +293,7 @@ validator.SeatingPlacementClear=function(_,_,bounds,rotation)
  return rotation.degrees==2 or bounds[1]~=20 or bounds[2]~=0
 end
 pos=point(20,0,20);success=true;report=S.Run(map)
-assert(report.corrected==0 and report.rejected==1 and tilted_queries==0 and rotations==0,
+assert(report.corrected==0 and (report.rejected==0 and report.kept_in_place==1) and tilted_queries==0 and rotations==0,
  'an unsafe placement must not invoke the removed tilt fallback')
 assert(select(1,pos:xyz())==20 and select(2,pos:xyz())==0,'failed placement changed authored XY')
 
@@ -348,7 +348,7 @@ validator.SeatingEvidence=old_evidence
 validator.SeatingPlacementClear=function()return false end
 validator.RefineSeatingComponents=function()error('redundant collision-veto terrain refinement')end
 pos=point(20,0,20);report=S.Run(map)
-assert(report.corrected==0 and report.rejected==1 and not report.error,
+assert(report.corrected==0 and (report.rejected==0 and report.kept_in_place==1) and not report.error,
  'collision rejection repeated terrain refinement or swallowed the failure')
 
 -- A rigid support stack is one transaction: refusal or a failed independent
@@ -379,8 +379,8 @@ for _,fault in ipairs({'child annotation','child verification'})do
  end
  report=S.Run(map)
  assert(report.corrected==0 and pos==old_root and rider_pos==old_rider,'partial rigid stack committed: '..fault)
- assert(not report.error and report.rejections[1]
-  and report.rejections[1].reason==(fault=='child annotation' and 'correction evidence was refused'
+ assert(not report.error and report.kept[1]
+  and report.kept[1].reason==(fault=='child annotation' and 'correction evidence was refused'
    or 'independent rendered-placement verification failed'),
   'fixture did not reach its intended child transaction fault: '..fault)
  assert(not obj.SuperBigMapSupportRepair and not rider.SuperBigMapSupportRepair,'rigid stack rollback leaked repair metadata')
@@ -401,20 +401,24 @@ assert(report.corrected==2 and report.rejected==0 and select(1,pos:xyz())==220
  'rigid group skipped the near two-tile pocket and searched only a coarser lattice')
 print('rigid support search: nearest local two-tile pocket precedes the coarse fallback')
 
+-- Owner ruling 2026-10-02: a vanilla group is never relocated beyond the 16 m searches; with
+-- only a 22 m pocket available it stays exactly where it is and is counted as kept in place.
 pos=point(20,0,20);rider_pos=point(20,0,40)
 validator.SeatingPlacementClear=function(_,_,b)return b[1]==2220 and b[2]==2000 end
 report=S.Run(map)
-assert(report.corrected==2 and report.rejected==0 and select(1,pos:xyz())==2220
- and select(2,pos:xyz())==2000 and select(1,rider_pos:xyz())==2220,
- 'rigid group discarded a safe pocket between distant coarse-lattice candidates')
-print('rigid support search: finer fallback fills coarse gaps without extending the search radius')
-
+assert(report.corrected==0 and report.rejected==0 and report.kept_in_place==2
+ and select(1,pos:xyz())==20 and select(1,rider_pos:xyz())==20,
+ 'a vanilla group must be kept in place rather than relocated 22 m')
+print('relocation cap: a vanilla group with only a distant pocket is kept in place')
+-- Before the cap these two cases relocated the vanilla group 22 m to a pocket between coarse
+-- lattice points; that relocation is now intentionally unavailable to vanilla rocks.
 pos=point(20,0,20);rider_pos=point(20,0,40)
 validator.SeatingPlacementClear=function(_,_,b)return b[1]==2220 and b[2]==2100 end
 report=S.Run(map)
-assert(report.corrected==2 and report.rejected==0 and select(2,pos:xyz())==2100
- and select(2,rider_pos:xyz())==2100,'rigid stack missed a one-tile pocket after both coarser lattices failed')
-print('rigid support search: one-tile fallback retains the shared stack pose')
+assert(report.corrected==0 and report.rejected==0 and report.kept_in_place==2
+ and select(2,pos:xyz())==0 and select(2,rider_pos:xyz())==0,
+ 'a vanilla group must not take a 22 m one-tile pocket either')
+print('relocation cap: no vanilla relocation beyond the 16 m searches')
 
 -- Two floating open-base rocks that rest only on each other (30S146E Rocks_03_66
 -- pairs) are seated once as one rigid group. The partner's own stale evidence

@@ -1,5 +1,22 @@
 # Surface START-to-T1 — runtime acceptance and local checkpoint
 
+## Metadata 1171-1172: vanilla rocks are not relocated far; kept in place instead
+
+The seating service's last-resort search moved vanilla rocks up to ~128 m within their sector
+(19N112W: 70 m and 19 m; 38S111W: a CliffDark_03_66 group 102 m sideways and 22 m up). A finer
+nearest-first refinement only cut that to 62 and 96 m and took 38S111W from 89 to 293 s, so it was
+reverted: nothing nearer meets the burial/visibility rules. Owner ruling 2026-10-02 ("cap move, keep
+in place"): vanilla rocks get the in-place attempt and the 16 m searches only; the wide search is
+for mod top-up rocks. A vanilla rock that still cannot be seated, whose move fails verification and
+rolls back, or whose correction is refused (1172), stays where the stretch put it, is marked
+SuperBigMapSeatingKeptInPlace and is counted as kept_in_place by the support summary instead of
+unresolved. Mod top-up rocks keep the old rejection behaviour.
+1171 results (`_ralph/runs/relocation-cap-1171-20261001`): 19N112W complete, 2 kept, vanilla
+sideways 0, 68.4 s; 38S111W complete, 3 kept, 77.8 s (88.7 before); 17S11W, 61N136W, 24S74W
+complete, 0 kept, no vanilla sideways moves. 45S120W, 15S67E, 2S67W, 59N61W and 67N138E were not
+run (the display dropped to 1024x768). decoration_seating_test now asserts kept_in_place for its
+vanilla fixtures and that a vanilla group never takes a 22 m pocket.
+
 ## Metadata 1170: vanilla stacked floats stay as vanilla
 
 Sweep case 19N112W (`Whcum4rIS1hV`, RoughTerrain): three vanilla RocksLightSmall_06 failed with

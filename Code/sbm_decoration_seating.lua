@@ -631,10 +631,18 @@ local function RunSurface(map)
 				return validator.RecordSeating(map,obj,detail.from,detail.to)==true
 			end)
 			if not good or not accepted then
-				RestoreSurface(row,report);report.rejected=report.rejected+1
-				report.rejections[#report.rejections+1]={entity=obj:GetEntity(),reason=good and "correction evidence was refused" or tostring(accepted)}
+				local refusal=good and "correction evidence was refused" or tostring(accepted)
+				RestoreSurface(row,report)
+				if detail.topup then
+					report.rejected=report.rejected+1
+					report.rejections[#report.rejections+1]={entity=obj:GetEntity(),reason=refusal}
+				else
+					keep_in_place(obj,refusal)
+				end
 				for _,previous in ipairs(transaction) do if not previous.rolled_back then
-					RestoreSurface(previous,report);report.corrected=report.corrected-1;report.rejected=report.rejected+1
+					RestoreSurface(previous,report);report.corrected=report.corrected-1
+					if previous.row and previous.row.topup then report.rejected=report.rejected+1
+					else keep_in_place(previous.obj,refusal) end
 				end end
 				break
 			else
