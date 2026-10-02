@@ -16,6 +16,10 @@ sideways 0, 68.4 s; 38S111W complete, 3 kept, 77.8 s (88.7 before); 17S11W, 61N1
 complete, 0 kept, no vanilla sideways moves. 45S120W, 15S67E, 2S67W, 59N61W and 67N138E were not
 run (the display dropped to 1024x768). decoration_seating_test now asserts kept_in_place for its
 vanilla fixtures and that a vanilla group never takes a 22 m pocket.
+1172 results (`_ralph/runs/relocation-cap-1172-20261002`), all complete with 0 rejected: 45S120W
+74.6 s, 15S67E 65.1 s, 2S67W 66.2 s, 59N61W 63.5 s, 67N138E 60.4 s, 19N112W 58.5 s (2 kept),
+38S111W 77.1 s (3 kept). The largest vanilla sideways move was 21.3 m at 67N138E: the local
+one-tile search covers +/-16 m per axis (up to 22.6 m on the diagonal), not a 16 m radius.
 
 ## Metadata 1170: vanilla stacked floats stay as vanilla
 
