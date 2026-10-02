@@ -1,5 +1,30 @@
 # Surface START-to-T1 — runtime acceptance and local checkpoint
 
+## Metadata 1173: stutter in long expanded games (waste rock dump search)
+
+Player save "XL map Stutter save" (SBM 1158 plus WaterDome, KjQQfA3, f4vtvQW, GUreSMy, iooW34Y,
+otpvwU) froze for about 8 s every 25 s. The cause was vanilla ClearWasteRockConstructionSite:GetOutputPile
+with an unreachable dump site. On expanded maps each ConnectivityCheck is a real legacy path search,
+and that loop made about 1900 failing searches without yielding. The same save with SBM only
+stuttered identically, so the other mods are not involved. Two exact mitigations:
+1. Identical path searches are memoized within one GameTime and one passability version
+   (OnPassabilityChanged bumps it).
+2. On legacy maps the dump search skips spots already proved unreachable for the same rover
+   position and passability version, and stops new searches after 100 ms per call. It continues
+   on the next call. Normal-size maps keep the unpatched vanilla search.
+Cold load fixes:
+- EngineChangeMap now detects expanded maps by size alone (8192 tiles). A load from the main menu
+  only has the menu map in the slot.
+- The connectivity hooks are installed at PersistPostLoad whenever a loaded map uses the legacy
+  pathfinder. Vanilla's OnMsg.LoadGame resume had run before the hooks were back and logged
+  "l_ConnectivityProcessResume: pConnectivity" for both maps (the persisted flags were correct).
+Results (`_ralph/runs/stutter-xlmap-20261002`): with all six mods, a cold load from the menu then
+90 s at speed 1 gives 0 Lua errors, a 52 ms worst frame, 0 frames of 100 ms or more, and 90 s of
+game time in 90 s of real time (before: 4 freezes of 8.05-8.09 s). The runner's release-hook
+verdict needs a START boundary, so it is always false on a save load.
+Regressions (`_ralph/runs/regress-1173-20261002`): 61N136W save/reload accepted at 77.2 s, 24S74W
+accepted at 73.0 s.
+
 ## Metadata 1171-1172: vanilla rocks are not relocated far; kept in place instead
 
 The seating service's last-resort search moved vanilla rocks up to ~128 m within their sector
