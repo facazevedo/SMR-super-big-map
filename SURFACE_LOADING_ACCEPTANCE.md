@@ -25,6 +25,15 @@ verdict needs a START boundary, so it is always false on a save load.
 Regressions (`_ralph/runs/regress-1173-20261002`): 61N136W save/reload accepted at 77.2 s, 24S74W
 accepted at 73.0 s.
 
+Publish qualification on 1173 (77a709e), 2026-10-02, run at 1024x768 with the monitor off (owner
+allowed this mode; timings are not comparable with earlier release-mode figures):
+- Fresh sweep (`_ralph/runs/init-sweep-fresh-1173-20261002`): all 105 cases (100 random, five
+  priority) clean, including save/reload on 39S66W and 61N136W. START-to-T1 median 64.7 s; five
+  over 75 s (19N66E 75.8, 21S20E 76.9, 14N47E 77.2, 1S12W 78.9, 61N136W 79.6). Three attempts
+  were stopped by display mode changes (not mod results) and passed on retry.
+- Underground (`_ralph/runs/underground-1173-20261002`): 61N136W, 24S74W and 15S67E accepted, no
+  runtime errors, underground first access 49.4, 44.9 and 45.3 s.
+
 ## Metadata 1171-1172: vanilla rocks are not relocated far; kept in place instead
 
 The seating service's last-resort search moved vanilla rocks up to ~128 m within their sector
