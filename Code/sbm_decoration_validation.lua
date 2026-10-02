@@ -2844,6 +2844,26 @@ function Validator.RecordRubbleSeating(map,obj,from,to)
 		reason="native detailed tunnel rubble with verified fragment seating",source_id=Identity(map,obj)}
 	return true
 end
+-- A dependent that SeatingGroup would accept as a rigid member without an open-base repair.
+local function RigidGroupDependent(context,candidate)
+	local eligible=SBM.RockGrounding and SBM.RockGrounding.Eligible
+	if not candidate or not candidate.complete or not candidate.pose or candidate.pose.parent
+		or not eligible or not eligible(candidate.obj) or not candidate.nodes or #candidate.nodes==0 then return false end
+	if context.seated and context.seated[candidate.obj] then return false end
+	if candidate.foundation then
+		local validation=candidate.obj.SuperBigMapSupportValidation
+		if not (validation and (validation.foundation_support_covered or validation.supported_overhang_preserved
+			or validation.native_rim_preserved)) then return false end
+	end
+	local attached=false
+	if type(candidate.obj.ForEachAttach)=="function" then candidate.obj:ForEachAttach(function()attached=true end) end
+	if attached then return false end
+	for _,node in ipairs(candidate.nodes) do
+		if node.partial or node.geometry.animated or (not node.supported and not node.native_authored) then return false end
+	end
+	return true
+end
+
 -- Read-only evidence for the separate correction service. Unknown geometry,
 -- attachments, stacks and dependent formations cannot be treated as loose stones.
 function Validator.SeatingEvidence(map,bounds_only)
@@ -2883,10 +2903,17 @@ function Validator.SeatingEvidence(map,bounds_only)
 			end
 			if type(obj.ForEachAttach)=="function" then obj:ForEachAttach(function()safe=false end) end
 			local bounds=BoxBounds(obj:GetObjectBBox())
+			-- 2S67W: a lifted vanilla float with a neighbour resting on it. A dependent that could
+			-- join a rigid group (complete, unattached, eligible, every component supported or
+			-- vanilla-authored, no open-base repair of its own) no longer vetoes the move; the
+			-- root is then only ever moved together with it (SeatingGroup). Others still veto.
+			local group_root=false
 			for _,other in ipairs(context.index:Query(bounds,Global("const").HeightTileSize)) do
 				if other.record~=record then
 					for _,edge in ipairs(other.edges or {}) do
-						if edge.record==record and not record.foundation and not unrooted_pair(other,edge) then safe=false end
+						if edge.record==record and not record.foundation and not unrooted_pair(other,edge) then
+							if RigidGroupDependent(context,other.record) then group_root=true else safe=false end
+						end
 					end
 				end
 			end
@@ -2909,7 +2936,7 @@ function Validator.SeatingEvidence(map,bounds_only)
 					c.height=hi-lo;components[#components+1]=c
 				end
 				result[#result+1]={obj=obj,components=components,bounds=bounds,foundation=record.foundation~=nil,
-					confirmed=row.status=="confirmed defect" or row.seating_proposal}
+					group_root=group_root or nil,confirmed=row.status=="confirmed defect" or row.seating_proposal}
 			end
 		end
 	end
@@ -2922,7 +2949,7 @@ end
 -- budget; a separate small object does not become an attached fragment.
 function Validator.SeatingGroup(map,entry)
 	local context=contexts[map];local root=context and context.by_object[entry.obj]
-	if not root or not root.foundation then return nil end
+	if not root or not (root.foundation or entry.group_root) then return nil end
 	local members,member_set={root},{[root]=true}
 	local floating={}
 	local eligible=SBM.RockGrounding and SBM.RockGrounding.Eligible
@@ -2979,7 +3006,8 @@ function Validator.SeatingGroup(map,entry)
 	local result={obj=entry.obj,bounds=entry.bounds,foundation=true,confirmed=entry.confirmed,components={},members={},group_members={}}
 	for _,record in ipairs(members) do
 		result.group_members[record.obj]=true
-		local member={obj=record.obj,bounds=BoxBounds(record.obj:GetObjectBBox()),foundation=record==root or floating[record]}
+		local member={obj=record.obj,bounds=BoxBounds(record.obj:GetObjectBBox()),
+			foundation=(record==root and root.foundation~=nil) or floating[record]}
 		result.members[#result.members+1]=member
 		for i,node in ipairs(record.nodes) do
 			local c

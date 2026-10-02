@@ -328,7 +328,16 @@ local function RunSurface(map)
 	local prepared,prepare_error=pcall(function()
 	for _,candidate in ipairs(validator.SeatingEvidence(map)) do if not group_moved[candidate.obj] then
 		local entry=candidate
-		if entry.foundation and validator.SeatingGroup then entry=validator.SeatingGroup(map,entry) or entry end
+		if (entry.foundation or entry.group_root) and validator.SeatingGroup then
+			local grouped=validator.SeatingGroup(map,entry)
+			-- A group root may move only together with the rocks resting on it.
+			if grouped then entry=grouped elseif entry.group_root then entry=nil end
+		end
+		if not entry then
+			report.rejected=report.rejected+1
+			report.rejections[#report.rejections+1]={entity=candidate.obj:GetEntity(),
+				reason="a dependent rock could not join the rigid seating group"}
+		else
 		Seating.MarkSmallFragments(entry.components)
 		local obj=entry.obj;local pos=obj:GetVisualPos();local x,y,z=pos:xyz()
 		local topup=obj.SuperBigMapDecorEnginePass==true
@@ -622,6 +631,7 @@ local function RunSurface(map)
 			for _,row in ipairs(transaction) do if not row.rolled_back then group_moved[row.obj]=true end end
 		end
 		else report.rejected=report.rejected+1;report.rejections[#report.rejections+1]={entity=obj:GetEntity(),position={x,y,z},reason=why} end
+		end
 	end end
 	end)
 	if not prepared then

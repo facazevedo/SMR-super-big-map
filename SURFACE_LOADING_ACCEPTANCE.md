@@ -1,5 +1,14 @@
 # Surface START-to-T1 — runtime acceptance and local checkpoint
 
+## Metadata 1169: lifted floats move with the rocks resting on them
+
+Sweep case 2S67W (`zy3ID4BIBw8H`, RoughTerrain): vanilla StonesDarkGroup_03 at (431820,496763);
+piece 2 floated 166 units in vanilla (allowed 225.5 scaled) and 251 now, a confirmed defect and a
+repair target, but another StonesDarkGroup_03 rested on it, and SeatingEvidence vetoed any
+non-open-base rock with a dependent. A dependent that qualifies as a rigid-group member now marks
+the rock a group root; SeatingGroup accepts such roots, and seating never moves a group root alone.
+2S67W: complete, 15 corrected / 0 rejected (was 13), 64.4 s; 59N61W, 67N138E, 38S111W unchanged.
+
 ## Metadata 1168: seat unrooted pairs of leaning stones
 
 Sweep case 59N61W (`71wdbFzlVZuJ`, RoughTerrain): two decor top-up stones (StonesSlate_02 and
