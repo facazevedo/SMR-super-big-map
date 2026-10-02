@@ -14,7 +14,7 @@ return PlaceObj('ModDef', {
 	},
 	'id', "SuperBigMap",
 	'author', "fredware",
-	'version', 1169,
+	'version', 1170,
 	'lua_revision', 350453,
 	'saved_with_revision', 405907,
 	'code', {

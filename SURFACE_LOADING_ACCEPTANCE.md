@@ -1,5 +1,19 @@
 # Surface START-to-T1 — runtime acceptance and local checkpoint
 
+## Metadata 1170: vanilla stacked floats stay as vanilla
+
+Sweep case 19N112W (`Whcum4rIS1hV`, RoughTerrain): three vanilla RocksLightSmall_06 failed with
+3 rejected corrections (1167 fails identically). Each has vanilla floats stacked on each other
+(e.g. LOD0 piece 4, allowance 426, resting on piece 5, an accepted vanilla float). The stacked
+piece exceeded its terrain allowance, got the pre-existing "native terrain clearance increased"
+proposal, and no rigid move could satisfy every piece. MarkNativeAuthored now accepts a vanilla
+float that still touches an accepted vanilla-authored (or supported) piece of the same rock.
+19N112W: complete, 7 corrected / 0 rejected (8 before, the stacks are no longer moved), 56.8 s;
+2S67W, 59N61W, 67N138E, 38S111W unchanged. This can keep a stacked float in place on a map that
+passed before by moving it, so carried sweep results are not bit-identical.
+Observed, pre-existing and not changed: seating may relocate vanilla rocks in XY within their
+sector (one passing 19N112W move shifted a vanilla rock about 70 m).
+
 ## Metadata 1169: lifted floats move with the rocks resting on them
 
 Sweep case 2S67W (`zy3ID4BIBw8H`, RoughTerrain): vanilla StonesDarkGroup_03 at (431820,496763);

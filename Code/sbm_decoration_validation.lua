@@ -653,6 +653,25 @@ local function MarkNativeAuthored(map,record)
 			end
 		end
 	end end
+	-- Vanilla stacks (vanilla-composition ruling 2026-09-25; 19N112W, 2026-10-01). A piece that floated in vanilla because it
+	-- rests on another piece of the same rock keeps that relationship when it still touches an
+	-- accepted vanilla-authored (or supported) piece. Its terrain clearance changes with the stretch,
+	-- but the stack is intact, so it is vanilla composition, not something a rigid move can repair.
+	local changed=true
+	while changed do
+		changed=false
+		for _,node in ipairs(record.nodes) do
+			if not node.supported and not node.native_authored and not node.defect and node.native_allowed then
+				for _,other in ipairs(node.edges or {}) do
+					if other.record==record and (other.native_authored or other.supported) then
+						node.native_authored=true;node.seating_proposal=nil
+						node.reason="vanilla stacked float resting on its accepted vanilla support"
+						changed=true;break
+					end
+				end
+			end
+		end
+	end
 end
 
 -- The seating planner and rendered-support validator now sample the same half-up
