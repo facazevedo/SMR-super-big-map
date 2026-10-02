@@ -41,9 +41,7 @@ assert(pair:find('not a.supported and not b.supported and a.seating_proposal and
 assert(pair:find('not a.native_authored and not b.native_authored',1,true),'vanilla floats keep the veto')
 -- 19N112W: a vanilla float resting on another accepted vanilla float of the same rock is vanilla
 -- composition (a stack); it is accepted, not handed to a rigid move that cannot repair it.
-local stack=assert(validation:match('Vanilla stacks %(vanilla%-composition ruling 2026%-09%-25(.-)?
-end?
-'),'stack rule not found')
+local stack=assert(validation:match('Vanilla stacks %(vanilla%-composition ruling 2026%-09%-25(.-)\r?\nend\r?\n'),'stack rule not found')
 assert(stack:find('node.native_allowed',1,true),'only pieces that floated in vanilla qualify')
 assert(stack:find('other.record==record and (other.native_authored or other.supported)',1,true),
   'the support must be an accepted piece of the same rock')
