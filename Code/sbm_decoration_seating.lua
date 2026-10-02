@@ -318,7 +318,15 @@ local function RunSurface(map)
 	if not validator or not validator.SeatingEvidence then return nil end
 	local terrain,point_fn=Global("terrain"),Global("point")
 	local tile=Global("const").HeightTileSize;local width,height=map:GetMapSize()
-	local report={corrected=0,rejected=0,records={},rejections={}}
+	local report={corrected=0,rejected=0,records={},rejections={},kept_in_place=0,kept={}}
+	-- A vanilla rock that cannot be seated within the 16 m cap, or whose move fails verification and
+	-- rolls back, stays exactly where the stretch put it and is accepted (owner ruling 2026-10-01).
+	local function keep_in_place(obj,reason)
+		obj.SuperBigMapSeatingKeptInPlace=true
+		report.kept_in_place=report.kept_in_place+1
+		local x,y,z=obj:GetVisualPos():xyz()
+		report.kept[#report.kept+1]={entity=obj:GetEntity(),position={x,y,z},reason=reason}
+	end
 	map.SuperBigMapDecorationSeating=report
 	local pending={}
 	-- Members already committed with an earlier rigid group keep that shared
@@ -334,9 +342,13 @@ local function RunSurface(map)
 			if grouped then entry=grouped elseif entry.group_root then entry=nil end
 		end
 		if not entry then
-			report.rejected=report.rejected+1
-			report.rejections[#report.rejections+1]={entity=candidate.obj:GetEntity(),
-				reason="a dependent rock could not join the rigid seating group"}
+			if candidate.obj.SuperBigMapDecorEnginePass~=true then
+				keep_in_place(candidate.obj,"a dependent rock could not join the rigid seating group")
+			else
+				report.rejected=report.rejected+1
+				report.rejections[#report.rejections+1]={entity=candidate.obj:GetEntity(),
+					reason="a dependent rock could not join the rigid seating group"}
+			end
 		else
 		Seating.MarkSmallFragments(entry.components)
 		local obj=entry.obj;local pos=obj:GetVisualPos();local x,y,z=pos:xyz()
@@ -541,7 +553,9 @@ local function RunSurface(map)
 				end,visible_fraction=0.5,retain_existing_visibility=true})
 			if plan then plan.support="bounded open-base terrain seating" end
 		end
-		if not plan and entry.confirmed and sector_limits then
+		-- Owner ruling 2026-10-01: a vanilla rock is not relocated far from its vanilla spot. Its
+		-- sideways moves stay within the 16 m searches above; beyond them it is kept in place.
+		if not plan and entry.confirmed and sector_limits and topup then
 			-- Preserve the main shape rather than burying it or changing its
 			-- authored tilt. Only confirmed difficult formations reach this search.
 			-- Candidates are nearest-first, bounded, and retain every member's
@@ -630,6 +644,8 @@ local function RunSurface(map)
 		if entry.members then
 			for _,row in ipairs(transaction) do if not row.rolled_back then group_moved[row.obj]=true end end
 		end
+		elseif not topup then
+			for _,member in ipairs(entry.members or {{obj=obj}}) do keep_in_place(member.obj,why or "no seating within 16 m") end
 		else report.rejected=report.rejected+1;report.rejections[#report.rejections+1]={entity=obj:GetEntity(),position={x,y,z},reason=why} end
 		end
 	end end
@@ -661,8 +677,13 @@ local function RunSurface(map)
 		for _,change in ipairs(pending) do
 			if not change.rolled_back and failed_transactions[change.transaction] then
 				RestoreSurface(change,report);rolled_back=true
-				report.corrected=report.corrected-1;report.rejected=report.rejected+1
-				report.rejections[#report.rejections+1]={entity=change.obj:GetEntity(),reason="independent rendered-placement verification failed"}
+				report.corrected=report.corrected-1
+				if change.row and change.row.topup then
+					report.rejected=report.rejected+1
+					report.rejections[#report.rejections+1]={entity=change.obj:GetEntity(),reason="independent rendered-placement verification failed"}
+				else
+					keep_in_place(change.obj,"independent rendered-placement verification failed")
+				end
 			end
 		end
 		if rolled_back then

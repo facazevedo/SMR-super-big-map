@@ -3161,7 +3161,7 @@ Validator.NativeAllowedTarget=NativeAllowedTarget
 function Validator.SurfaceSupportSummary(map)
 	local context=contexts[map]
 	if not context then return nil,"surface support context unavailable" end
-	local result={eligible=0,terrain=0,graph=0,native_composition=0,unresolved=0,findings={}}
+	local result={eligible=0,terrain=0,graph=0,native_composition=0,kept_in_place=0,unresolved=0,findings={}}
 	local eligible=SBM.RockGrounding and SBM.RockGrounding.Eligible
 	if not eligible then return nil,"rock eligibility unavailable" end
 	for _,record in ipairs(context.list) do
@@ -3176,6 +3176,10 @@ function Validator.SurfaceSupportSummary(map)
 			and not row.foundation_unresolved then
 			if row.native_composition_verified then result.native_composition=result.native_composition+1
 			else result.graph=result.graph+1 end
+		elseif record.obj.SuperBigMapSeatingKeptInPlace==true then
+			-- Owner ruling 2026-10-01: a vanilla rock the seating service could not place within
+			-- 16 m stays in its stretched vanilla spot and is accepted; counted, not hidden.
+			result.kept_in_place=result.kept_in_place+1
 		else
 			result.unresolved=result.unresolved+1
 			result.findings[#result.findings+1]={entity=record.obj:GetEntity(),position=XYZ(record.obj:GetVisualPos()),
