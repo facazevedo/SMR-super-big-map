@@ -27,6 +27,7 @@ sys.path.insert(0, str(HARNESS_DIR))
 
 import dap
 import cli
+import test_audio
 
 GAME_EXE = r"C:\Games\Surviving Mars Relaunched\MarsDebug.exe"
 GAME_DIR = Path(r"C:\Games\Surviving Mars Relaunched")
@@ -594,6 +595,7 @@ def spawn_game(tag):
     log_path = OUT / f"game-{tag}.log"
     lf = open(log_path, "wb")
     cmdline = [GAME_EXE, "-nointro", "-no_interactive_asserts", "-stdout", "-hidden"]
+    test_audio.ensure_master_volume_zero()  # owner request 2026-10-01: tests run muted
     proc = subprocess.Popen(
         cmdline, cwd=str(GAME_DIR), stdout=lf, stderr=subprocess.STDOUT,
         stdin=subprocess.DEVNULL,
