@@ -34,6 +34,18 @@ allowed this mode; timings are not comparable with earlier release-mode figures)
 - Underground (`_ralph/runs/underground-1173-20261002`): 61N136W, 24S74W and 15S67E accepted, no
   runtime errors, underground first access 49.4, 44.9 and 45.3 s.
 
+Release Mars.exe smoke test, 2026-10-02, owner present: temporary autostart build 1174
+(a5afcb0, the 1123 file-free script on top of 1173; reverted in 1175 fdccc3f, code identical to
+1173). One elevated launch loaded only SuperBigMap 1174 from AppData/Mods. All 15 cases (A, B,
+control at 61N136W, 24S74W, 17S11W, 45S120W, 15S67E) finished complete with no errors in the log:
+expanded START-to-T1 50.3-63.7 s (45S120W A slowest), 0 rejected and 0 unresolved rocks, the
+underground ready at 39.5-50.9 s, and an error registry of 0/0/0 in every case. A second Mars.exe,
+not started by the runner, opened at 22:13 during the batch. Its autostart began the same list and
+the process got WM_QUIT 26 s later, mid-load. On quit it logged vanilla's OnMsg.ApplicationQuit
+"SetLuaMapDestroying: Map expected" (CommonLua/Core/map.lua:217, a map slot still being created).
+Evidence: `_ralph/runs/release-smoke-1174-20261002/batch` (engine_flushed.log,
+second_instance.log, release_timing_manual.json).
+
 ## Metadata 1171-1172: vanilla rocks are not relocated far; kept in place instead
 
 The seating service's last-resort search moved vanilla rocks up to ~128 m within their sector
