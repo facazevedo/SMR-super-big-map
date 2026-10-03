@@ -40,7 +40,7 @@ Release Mars.exe smoke test, 2026-10-02, owner present: temporary autostart buil
 control at 61N136W, 24S74W, 17S11W, 45S120W, 15S67E) finished complete with no errors in the log:
 expanded START-to-T1 50.3-63.7 s (45S120W A slowest), 0 rejected and 0 unresolved rocks, the
 underground ready at 39.5-50.9 s, and an error registry of 0/0/0 in every case. A second Mars.exe,
-not started by the runner, opened at 22:13 during the batch. Its autostart began the same list and
+started by hand by the owner, opened at 22:13 during the batch. Its autostart began the same list and
 the process got WM_QUIT 26 s later, mid-load. On quit it logged vanilla's OnMsg.ApplicationQuit
 "SetLuaMapDestroying: Map expected" (CommonLua/Core/map.lua:217, a map slot still being created).
 Evidence: `_ralph/runs/release-smoke-1174-20261002/batch` (engine_flushed.log,
