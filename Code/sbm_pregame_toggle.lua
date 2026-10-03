@@ -378,6 +378,150 @@ ApplyExpandUnderline = function(dialog)
 	return true
 end
 
+-- The Colony Site panel is as wide as its widest column child. EXPAND MAP widens the action bar,
+-- and when that makes the bar the widest child, the decorations that fill the panel (the title
+-- strip behind COLONY SITE and the ribbon behind THREATS / RESOURCES) grow with it (owner
+-- 2026-10-03: "always the same size as vanilla"). Only those two decorations are narrowed, by
+-- exactly the width EXPAND MAP adds; the buttons keep their boxes so every one stays clickable.
+-- The excess is recomputed at every layout, so label changes and toolbar rebuilds by other mods
+-- (Filter Landing Spots adds its own button, which keeps its vanilla effect) stay exact.
+local function VanillaWidthExcess(dialog)
+	local bar = IsAlive(dialog) and dialog.idActionBar
+	local container = bar and bar.parent
+	local button = container and ResolveExpandButton(dialog)
+	local toolbar = button and button.parent
+	if not toolbar or button.visible == false then return 0 end
+	local scale_xy = Global("ScaleXY")
+	local spacing = type(scale_xy) == "function" and scale_xy(toolbar.scale, toolbar.LayoutHSpacing or 0)
+		or (toolbar.LayoutHSpacing or 0)
+	local widest = (bar.measure_width or 0) - (button.measure_width or 0) - spacing
+	for _, child in ipairs(container) do
+		if child ~= bar then widest = math.max(widest, child.measure_width or 0) end
+	end
+	return math.max(0, (container.measure_width or 0) - widest)
+end
+
+-- Background strip behind the COLONY SITE titles (holds the blur rect and the title_pad frame).
+local function IsTitleStrip(win)
+	if win.Dock ~= "box" or win.MinHeight ~= 70 then return false end
+	for _, child in ipairs(win) do
+		if child.Image == "UI/CommonRemaster/title_pad.png" then return true end
+	end
+	return false
+end
+
+-- Ribbon behind THREATS / RESOURCES.
+local function IsResourceRibbon(win)
+	return win.Dock == "box" and win.Image == "UI/CommonRemaster/pg_header_small.png"
+end
+
+local function FindWindows(root, match, found)
+	found = found or {}
+	if match(root) then found[#found + 1] = root end
+	for _, child in ipairs(root) do FindWindows(child, match, found) end
+	return found
+end
+
+-- Owner 2026-10-03: the ribbon ends at the last letter of the widest threat/resource name (the
+-- last "e" of Concrete in English) instead of spanning the panel. Labels are laid out after the
+-- box-docked ribbon in each pass, so the row reads them when its layout completes and moves the
+-- ribbon's right edge there.
+local function LabelTextRight(row)
+	local right
+	for _, label in ipairs(FindWindows(row, function(w) return w.Id == "idName" end)) do
+		local box = label.visible ~= false and label.content_box
+		if box and type(box.maxx) == "function" and box:sizex() > 0 then
+			right = math.max(right or box:maxx(), box:maxx())
+		end
+	end
+	return right
+end
+
+-- Bookkeeping lives in weak side tables: debug builds reject new fields on UI windows.
+local function Marks(name)
+	local key = "pregame_" .. name
+	State[key] = State[key] or setmetatable({}, { __mode = "k" })
+	return State[key]
+end
+
+local RIBBON_TRANSPARENT_EDGE = 11
+
+local function InstallRibbonAlignment(ribbon)
+	local row = ribbon.parent
+	local aligned, rows = Marks("ribbon_aligned"), Marks("ribbon_rows")
+	if not row or aligned[ribbon] then return end
+	local base_space = ribbon.SetLayoutSpace
+	local base_complete = row.OnLayoutComplete
+	local entry = { right = false }
+	aligned[ribbon] = true
+	rows[row] = entry
+	ribbon.SetLayoutSpace = function(self, x, y, width, height, ...)
+		if entry.right then
+			local _, _, margin_right = self:GetEffectiveMargins()
+			width = entry.right + margin_right
+		end
+		return base_space(self, x, y, width, height, ...)
+	end
+	row.OnLayoutComplete = function(self, ...)
+		if type(base_complete) == "function" then base_complete(self, ...) end
+		local right = LabelTextRight(self)
+		if right then
+			-- pg_header_small.png ends in a transparent edge (measured in game at UI scale
+			-- 0.83: box edge 568, painted edge 557, glyph end 566); 11 px puts the painted end on the letter.
+			local scale_xy = Global("ScaleXY")
+			right = right + (type(scale_xy) == "function" and scale_xy(ribbon.scale, RIBBON_TRANSPARENT_EDGE)
+				or RIBBON_TRANSPARENT_EDGE)
+		end
+		local content = self.content_box
+		if right and content then
+			local offset = right - content:minx()
+			entry.right = offset
+			-- InvalidateLayout is ignored while this pass runs, so place the ribbon now; later
+			-- passes reach the same edge through SetLayoutSpace above.
+			local box = IsAlive(ribbon) and ribbon.box
+			if box and box:maxx() ~= right and right > box:minx() and type(ribbon.SetBox) == "function" then
+				ribbon:SetBox(box:minx(), box:miny(), right - box:minx(), box:sizey())
+			end
+		end
+	end
+	if type(row.InvalidateLayout) == "function" then SafeCall(row.InvalidateLayout, row) end
+end
+
+local function InstallVanillaWidthDecorations(dialog)
+	if not IsAlive(dialog) then return 0 end
+	local installed, strips = 0, Marks("vanilla_width")
+	for _, win in ipairs(FindWindows(dialog, IsTitleStrip)) do
+		if not strips[win] then
+			local base = win.SetLayoutSpace
+			strips[win] = true
+			win.SetLayoutSpace = function(self, x, y, width, height, ...)
+				return base(self, x, y, width - VanillaWidthExcess(dialog), height, ...)
+			end
+		end
+		installed = installed + 1
+	end
+	for _, ribbon in ipairs(FindWindows(dialog, IsResourceRibbon)) do
+		InstallRibbonAlignment(ribbon)
+		installed = installed + 1
+	end
+	if type(dialog.InvalidateLayout) == "function" then SafeCall(dialog.InvalidateLayout, dialog) end
+	return installed
+end
+
+local function RestoreVanillaWidthDecorations(dialog)
+	if not IsAlive(dialog) then return end
+	local strips, aligned, rows = Marks("vanilla_width"), Marks("ribbon_aligned"), Marks("ribbon_rows")
+	for _, win in ipairs(FindWindows(dialog, function(w) return strips[w] or aligned[w] end)) do
+		win.SetLayoutSpace = nil
+		strips[win], aligned[win] = nil, nil
+	end
+	for _, row in ipairs(FindWindows(dialog, function(w) return rows[w] ~= nil end)) do
+		row.OnLayoutComplete = nil
+		rows[row] = nil
+	end
+	if type(dialog.InvalidateLayout) == "function" then SafeCall(dialog.InvalidateLayout, dialog) end
+end
+
 local function SetSortKey(action, key)
 	if not action then return end
 	if type(action.SetActionSortKey) == "function" then
@@ -455,6 +599,7 @@ local function InstallLandingDialogAction(dialog)
 		existing_action.IgnoreRepeated = true
 		ReorderLandingActions(dialog)
 		RefreshActions(dialog)
+		InstallVanillaWidthDecorations(dialog)
 		dialog.SuperBigMapExpandActionInstalled = true
 		return false
 	end
@@ -520,6 +665,7 @@ local function InstallLandingDialogAction(dialog)
 	ReorderLandingActions(dialog)
 	UpdateDialogExpandActionLabel(dialog)
 	RefreshActions(dialog)
+	InstallVanillaWidthDecorations(dialog)
 	return true
 end
 
@@ -589,6 +735,7 @@ local function RestoreLandingDialog()
 			end
 		end
 		dialog.SuperBigMapExpandActionInstalled = nil
+		RestoreVanillaWidthDecorations(dialog)
 		if type(dialog.UpdateActionViews) == "function" then
 			SafeCall(dialog.UpdateActionViews, dialog, dialog.idActionBar or dialog)
 		end
@@ -623,6 +770,8 @@ local PregameToggle = {
 	ShouldUseModZoom = ShouldUseModZoom,
 	InstallLandingDialogAction = InstallLandingDialogAction,
 	PatchLandingDialog = PatchLandingDialog,
+	InstallVanillaWidthDecorations = InstallVanillaWidthDecorations,
+	RestoreVanillaWidthDecorations = RestoreVanillaWidthDecorations,
 }
 
 function PregameToggle.ApplyModBehavior()
