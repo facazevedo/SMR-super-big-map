@@ -441,47 +441,84 @@ local function Install()
 	end
 
 
-	-- Off-map cursor test (both maps): GetTerrainCursor clamps to the terrain edge. Rely only on
-	-- GameToScreen's explicit validity result. Comparing the projected terrain point to the mouse
-	-- is not valid over relief in the overview camera: test_grid showed valid sectors diverging by
-	-- 50-193 pixels, which suppressed their highlight and made them impossible to scan.
-	local function CursorOffMap()
-		local gtc, g2s = Engine.Global("GetTerrainCursor"), Engine.Global("GameToScreen")
-		local data = {
-			get_terrain_cursor = tostring(gtc),
-			game_to_screen = tostring(g2s),
-		}
-		if type(gtc) ~= "function" or type(g2s) ~= "function" then
-			data.reason = "cursor API unavailable"
+	-- Off-map cursor test (surface and underground). GetTerrainCursor clamps to the terrain edge,
+	-- and the sector lookup clamps to the edge sector, so both report a sector for a cursor in the
+	-- void beyond the map. A clamped point also projects back on screen, which made the previous
+	-- GameToScreen test always pass (owner 2026-10-03: "if the cursor is pointing outside the map,
+	-- no sector should be selected"). Cast the real mouse ray instead: off the map when it misses
+	-- the terrain or lands outside the sector grid (measured at 15S67E: every point beyond the
+	-- edge missed, and the bottom screen row hit 2-5 m outside the grid).
+	local function CursorOffMap(map, screen_pt)
+		local data = { screen_pt = tostring(screen_pt) }
+		local camera_tbl, s2g = Engine.Global("camera"), Engine.Global("ScreenToGame")
+		local terrain_tbl, is_point = Engine.Global("terrain"), Engine.Global("IsPoint")
+		if type(is_point) ~= "function" or not is_point(screen_pt) then
+			data.reason = "no mouse position (gamepad or forced selection)"
 			return false, data
 		end
-		local ok_c, cur = pcall(gtc)
-		data.terrain_cursor_ok = tostring(ok_c)
-		data.terrain_cursor = tostring(cur)
-		if not ok_c or not cur then
-			data.reason = "terrain cursor unavailable"
+		if type(camera_tbl) ~= "table" or type(camera_tbl.GetEye) ~= "function" or type(s2g) ~= "function"
+			or type(terrain_tbl) ~= "table" or type(terrain_tbl.IntersectRay) ~= "function" or not map then
+			data.reason = "ray API unavailable"
 			return false, data
 		end
-		local ok_w, world_x, world_y, world_z = pcall(function()
-			return cur:x(), cur:y(), cur:z()
+		local precision = 128
+		local ok, hit = pcall(function()
+			local eye = camera_tbl.GetEye()
+			local far = s2g(screen_pt, precision)
+			return terrain_tbl.IntersectRay(map, eye, eye + (far - eye * precision))
 		end)
-		if ok_w then
-			data.terrain_cursor_x = tostring(world_x)
-			data.terrain_cursor_y = tostring(world_y)
-			data.terrain_cursor_z = tostring(world_z)
-		end
-		local ok_s, a, b = pcall(g2s, cur)
-		data.game_to_screen_ok = tostring(ok_s)
-		data.game_to_screen_primary = tostring(a)
-		data.game_to_screen_secondary = tostring(b)
-		if not ok_s then
-			data.reason = "GameToScreen failed"
+		data.ray_ok = tostring(ok)
+		if not ok then
+			data.reason = "ray failed: " .. tostring(hit)
 			return false, data
 		end
-		local off_map = a == false
-		data.off_map = tostring(off_map)
-		data.reason = off_map and "terrain projection explicitly invalid" or "terrain projection valid"
-		return off_map, data
+		if not hit then
+			data.reason = "mouse ray misses the terrain"
+			return true, data
+		end
+		data.hit = tostring(hit)
+		local sectors = map.City and map.City.MapSectors
+		local first = sectors and sectors[1] and sectors[1][1]
+		local last_col = sectors and sectors[#sectors]
+		local last = last_col and last_col[#last_col]
+		if not (first and first.area and last and last.area) then
+			data.reason = "sector grid unavailable"
+			return false, data
+		end
+		local x, y = hit:x(), hit:y()
+		local inside = x >= first.area:minx() and y >= first.area:miny()
+			and x < last.area:maxx() and y < last.area:maxy()
+		data.reason = inside and "mouse ray hits the sector grid" or "mouse ray lands outside the sector grid"
+		return not inside, data
+	end
+
+	local function ViewedMap()
+		local uicity = Engine.Global("UICity")
+		local ok_map, viewed_map = pcall(function() return uicity and uicity:GetMap() end)
+		return ok_map and viewed_map or Engine.Global("CurrentMap")
+	end
+
+	-- Vanilla's click handler looks the sector up again from the clamped terrain cursor, so a click
+	-- beyond the edge would queue (left) or unqueue (right) the edge sector. Off the map, keep the
+	-- unit-command handling and vanilla's "no sector" exits; right-click still leaves scan mode.
+	local original_mouse_down = State.original_overview_mouse_button_down or overview_class.OnMouseButtonDown
+	State.original_overview_mouse_button_down = original_mouse_down
+	if type(original_mouse_down) == "function" then
+		overview_class.OnMouseButtonDown = function(self, pt, button, ...)
+			local map = ViewedMap()
+			if not IsModMap(map) or not (button == "L" or (button == "R" and not self.scan_mode))
+				or not CursorOffMap(map, pt) then
+				return original_mouse_down(self, pt, button, ...)
+			end
+			local unit_dialog = Engine.Global("UnitDirectionModeDialog")
+			local result = unit_dialog and type(unit_dialog.OnMouseButtonDown) == "function"
+				and unit_dialog.OnMouseButtonDown(self, pt, button, ...)
+			local queue_available = Engine.Global("IsExplorationAvailable_Queue")
+			if type(queue_available) == "function" and not queue_available(Engine.Global("UICity")) then
+				return
+			end
+			if result == "break" then return result end
+		end
 	end
 
 	overview_class.SelectSector = function(self, sector, rollover_pos, forced, ...)
@@ -489,15 +526,14 @@ local function Install()
 		-- visual handling in a vanilla game.  Delegating at the first instruction makes
 		-- the wrapper observationally equivalent to the unmodified class method.
 		local uicity = Engine.Global("UICity")
-		local ok_map, viewed_map = pcall(function() return uicity and uicity:GetMap() end)
-		viewed_map = ok_map and viewed_map or Engine.Global("CurrentMap")
+		local viewed_map = ViewedMap()
 		if not IsModMap(viewed_map) then
 			return original_select_sector(self, sector, rollover_pos, forced, ...)
 		end
 		local input_sector = sector
 		local off_map, cursor_data = false, { reason = "forced selection; cursor test skipped" }
 		if not forced then
-			off_map, cursor_data = CursorOffMap()
+			off_map, cursor_data = CursorOffMap(viewed_map, rollover_pos)
 		end
 		-- Suppress highlight + tooltip when the mouse is off the map (mouse-driven calls only;
 		-- a `forced` selection e.g. overview exit_to has no meaningful cursor).
@@ -518,6 +554,12 @@ local function Install()
 			pcall(function() self:EnsureSectorObjPresent() end)
 		end
 		local r1, r2 = original_select_sector(self, sector, rollover_pos, forced, ...)
+		if input_sector and sector == false then
+			-- Vanilla hides the highlight but remembers the last sector id, and only redraws when
+			-- the id changes: forget it so returning to that sector highlights it again.
+			self.sector_id = false
+			self.current_sector = false
+		end
 		if SectorInteractionEnabled() then
 			local signature = tostring(viewed_map) .. ":" .. tostring(input_sector and input_sector.id)
 				.. ":" .. tostring(off_map) .. ":" .. tostring(forced)
@@ -616,6 +658,9 @@ function SectorHighlight.RestoreVanillaBehavior()
 	if overview_class and State and type(State.original_overview_select_sector) == "function" then
 		overview_class.SelectSector = State.original_overview_select_sector
 	end
+	if overview_class and State and type(State.original_overview_mouse_button_down) == "function" then
+		overview_class.OnMouseButtonDown = State.original_overview_mouse_button_down
+	end
 	if overview_class and State and type(State.original_overview_generate_rollover) == "function" then
 		overview_class.GenerateSectorRolloverContext = State.original_overview_generate_rollover
 	end
@@ -640,6 +685,7 @@ function SectorHighlight.RestoreVanillaBehavior()
 	if State then
 		State.original_overview_select_sector = nil
 		State.original_overview_generate_rollover = nil
+		State.original_overview_mouse_button_down = nil
 		State.original_sector_queue_for_exploration = nil
 		State.original_map_sector_update_decal = nil
 		State.original_map_sector_set_scan_fx = nil
