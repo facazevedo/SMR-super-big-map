@@ -1,5 +1,30 @@
 # Surface START-to-T1 — runtime acceptance and local checkpoint
 
+## Metadata 1186-1187: the remaining high-speed stutter in "United States of Mars"
+
+Owner 2026-10-05 asked for the stutter to go completely. Measured at speed 5 with the profiler,
+then by timing every unit path request (`_ralph/tmp/pf_worker_probe.lua`): three automated Explorer
+rovers made 327 failing path requests a minute (76 ms average, 426 ms worst, 25 s of pathfinding
+per minute) for the map's 15 revealed surface anomalies, all outer-ring top-ups sitting in passable
+pockets no rover can reach (`anomaly_probe`, `anomaly_variants`, `anomaly_grid`). Vanilla's
+ExplorerRover:Idle retries each unreachable anomaly every game hour; on a legacy map each retry
+floods the rover's region, and every other pathfinding call (the engine's pfStop, SetPos,
+MapForEach, the mod's synchronous searches) waited behind the worker: identical restricted dome
+searches took 1-2 ms paused and up to 80-240 ms during play (`pf_contention_probe`).
+Owner rulings: no placement change (outer-ring top-ups may be unreachable); auto rovers must stop
+checking unreachable anomalies and check again as soon as they can become reachable.
+1186: CheckWalkableDistance searches restricted to the disc of radius L/2 around the midpoint
+(every dome pair within L agreed with the unrestricted search), RC Terraformer ranking by vanilla's
+2D fallback. 1187: Explorers share one unreachable-anomaly record per legacy map, cleared by
+vanilla's PFTunnelChanged/LandscapeCompleted/RubbleCleared, by any passability change within two
+sectors of the anomaly, and by a 12-hour fallback re-check.
+Speed 5, all eight mods, 120 s, no profiler: frames >= 100 ms 47 (1185) -> 31-36 (1186) -> 7-9
+(1187); p99 105 -> 79 -> 53-55 ms; worst non-autosave frame 806 -> 314 ms; Explorer requests
+327 -> 16 a minute; ClearPath waits over 50 ms 11 -> 0-1. Speed 3 (1186): 9-19 frames >= 100 ms.
+What remains is vanilla: the autosave (~1.9 s, engine serialization plus collectgarbage of a 165 MB
+Lua heap), the hourly faction update (~150 ms), hourly object cleanup pass edits (~150 ms), and
+emigration planning. Large pass grid is a subset of the normal one (1233 samples, 0 violations).
+
 ## Metadata 1185: high game speeds in large colonies
 
 The owner still saw stutter in "United States of Mars", mainly at speed 3; 1180 had been measured

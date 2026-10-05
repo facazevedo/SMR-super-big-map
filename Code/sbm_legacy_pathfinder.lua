@@ -124,10 +124,17 @@ local function RestrictedLength(map, pt1, pt2, pfclass, limit)
 	-- of radius limit around p1, and still containing every path the caller can accept.
 	local center = point((ax + bx) // 2, (ay + by) // 2, ((az or 0) + (bz or 0)) // 2)
 	local radius = limit // 2 + 2 * const.HexSize
+	local ticks = GetPreciseTicks()
 	local reachable, length = pf.PosPathLen(map, pt1, pt2, pfclass, 0, 0, nil, radius, center)
 	local result = reachable and length or false
 	entries[key] = result
 	Legacy.restricted_searches = (Legacy.restricted_searches or 0) + 1
+	if not result then Legacy.restricted_failures = (Legacy.restricted_failures or 0) + 1 end
+	local spent = GetPreciseTicks() - ticks
+	if spent >= 50 then
+		Legacy.restricted_slow = (Legacy.restricted_slow or 0) + 1
+		if not result then Legacy.restricted_slow_failures = (Legacy.restricted_slow_failures or 0) + 1 end
+	end
 	return result or nil
 end
 
@@ -383,6 +390,7 @@ function Legacy.ApplyModBehavior()
 	Legacy.PatchWasteRockDumpSearch(members)
 	Legacy.PatchDroneApproachEstimate(members)
 	Legacy.PatchTerraformerRanking(members)
+	Legacy.PatchExplorerAnomalySearch(members)
 	return true
 end
 
@@ -539,6 +547,102 @@ function Legacy.PatchTerraformerRanking(members)
 		end
 	end
 	state.legacy_ranking_patch = { original = original, wrapper = pick, token = RANKING_PATCH_TOKEN }
+	return true
+end
+
+-- ExplorerRover:Idle (auto mode) asks HasPath for the nearest anomaly every 2.5 s of game time and
+-- retries an unreachable one every game hour. Each failed request is a path search that floods the
+-- rover's whole region on a legacy map (2026-10-05 "United States of Mars": 15 unreachable outer-ring
+-- anomalies, three auto Explorers, 327 failing searches a minute at 5x, 25 s of pathfinding per
+-- minute; every other pathfinding call then waited behind them). Owner 2026-10-05: top-ups may sit
+-- in unreachable places; auto rovers must stop checking them and check again as soon as they can
+-- become reachable. On legacy maps every Explorer shares one record per map: an anomaly proved
+-- unreachable is not searched again until (a) the events vanilla uses to clear its own unreachable
+-- lists (PFTunnelChanged, LandscapeCompleted, RubbleCleared), (b) a passability change within
+-- ANOMALY_NEAR_SECTORS sectors of the anomaly (a building removed, terrain reshaped), or (c) one
+-- fallback re-check per ANOMALY_RETRY_HOURS so nothing can be skipped forever.
+local ANOMALY_RETRY_HOURS = 12
+local ANOMALY_NEAR_SECTORS = 2
+local anomaly_unreachable = setmetatable({}, { __mode = "k" })
+local EXPLORER_PATCH_TOKEN = {}
+local function ClearAnomalyRecords()
+	for map in pairs(anomaly_unreachable) do anomaly_unreachable[map] = nil end
+end
+local function AnomalyRecordsNearChange(map, box)
+	local record = map and anomaly_unreachable[map]
+	if not record then return end
+	if not box or type(box.minx) ~= "function" then
+		anomaly_unreachable[map] = nil
+		return
+	end
+	local sector = 0
+	local terrain_api = rawget(_G, "terrain")
+	local get_size = type(terrain_api) == "table" and terrain_api.GetMapSize
+	if type(get_size) == "function" then
+		local ok, width = pcall(get_size, map)
+		if ok and type(width) == "number" then sector = width // 20 end
+	end
+	local near = (sector > 0 and sector or 40960) * ANOMALY_NEAR_SECTORS
+	local x1, y1, x2, y2 = box:minx() - near, box:miny() - near, box:maxx() + near, box:maxy() + near
+	for anomaly, entry in pairs(record) do
+		if entry.x >= x1 and entry.x <= x2 and entry.y >= y1 and entry.y <= y2 then
+			record[anomaly] = nil
+			Legacy.anomaly_rechecks = (Legacy.anomaly_rechecks or 0) + 1
+		end
+	end
+end
+if not state.legacy_pathfinder_anomaly_msgs and SBM.Engine and SBM.Engine.ChainOnMsg then
+	state.legacy_pathfinder_anomaly_msgs = true
+	for _, msg in ipairs({ "PFTunnelChanged", "LandscapeCompleted", "RubbleCleared" }) do
+		SBM.Engine.ChainOnMsg(msg, ClearAnomalyRecords)
+	end
+	SBM.Engine.ChainOnMsg("OnPassabilityChanged", function(map, box) AnomalyRecordsNearChange(map, box) end)
+end
+function Legacy.PatchExplorerAnomalySearch(members)
+	local classes = rawget(_G, "g_Classes")
+	local base = classes and classes.ExplorerRover
+	if not base or type(base.HasPath) ~= "function" then return false end
+	local saved = state.legacy_explorer_patch
+	if saved and saved.token == EXPLORER_PATCH_TOKEN and base.HasPath == saved.wrapper then return true end
+	local original = base.HasPath
+	if saved and (original == saved.wrapper or original == saved.original) then original = saved.original end
+	local previous = saved and saved.wrapper
+	local game_time = rawget(_G, "GameTime")
+	local function has_path(self, dest, ...)
+		local map = Resolve(self)
+		if not Legacy.IsMap(map) or not IsValid(dest) or not IsKindOf(dest, "SubsurfaceAnomaly")
+			or type(game_time) ~= "function" then
+			return original(self, dest, ...)
+		end
+		local hour = const.HourDuration or 60000
+		local record = anomaly_unreachable[map]
+		if not record then
+			record = setmetatable({}, { __mode = "k" })
+			anomaly_unreachable[map] = record
+		end
+		local entry = record[dest]
+		if entry and game_time() - entry.time < ANOMALY_RETRY_HOURS * hour then
+			Legacy.anomaly_skips = (Legacy.anomaly_skips or 0) + 1
+			return false
+		end
+		local result = original(self, dest, ...)
+		if not result then
+			local x, y = dest:GetPos():xyz()
+			record[dest] = { time = game_time(), x = x, y = y }
+		end
+		return result
+	end
+	for _, class in pairs(classes) do
+		local method = class.HasPath
+		if method == original or (previous and method == previous) then
+			local ancestors = class.__ancestors
+			if class == base or (type(ancestors) == "table" and ancestors.ExplorerRover) then
+				members[#members + 1] = { target = class, key = "HasPath", original = original, wrapper = has_path }
+				class.HasPath = has_path
+			end
+		end
+	end
+	state.legacy_explorer_patch = { original = original, wrapper = has_path, token = EXPLORER_PATCH_TOKEN }
 	return true
 end
 

@@ -5,7 +5,7 @@
 -- 2. on legacy maps the dump-spot search skips spots already proved unreachable for the same rover
 --    position and stops new searches after a per-call budget, continuing on the next call.
 SuperBigMap={State={}}
-const={ConnectivitySupported=true,HexSize=0}
+const={ConnectivitySupported=true,HexSize=0,HourDuration=60000}
 MapVarValues={}
 function MapVar(name,default) MapVarValues[name]=default end
 local function P(x,y,z) return {ispoint=true,x=x,y=y,z=z or 0,xyz=function(p) return p.x,p.y,p.z end,
@@ -58,7 +58,7 @@ local depot_class={GetDroneApproachDist=requester_class.GetDroneApproachDist}
 g_CObjectFuncs={}
 g_Classes={ClearWasteRockConstructionSite=site_class,DerivedSite=derived,Map={},
   TaskRequester=requester_class,Depot=depot_class}
-SuperBigMap.Engine={ChainOnMsg=function(name,fn) handlers[name]=fn end}
+SuperBigMap.Engine={ChainOnMsg=function(name,fn) local prev=handlers[name] handlers[name]=function(...) if prev then prev(...) end fn(...) end end}
 assert(loadfile('Code/sbm_legacy_pathfinder.lua'))()
 local legacy=SuperBigMap.LegacyPathfinder
 assert(handlers.OnPassabilityChanged,'the cache listens for passability changes')
@@ -222,3 +222,36 @@ assert(g_Classes.RCTerraformer.PickNearestByConnectivity(rover,piles).x==-5 and 
 local vanilla_rover={map=vanilla,GetDist2D=rover.GetDist2D}
 assert(g_Classes.RCTerraformer.PickNearestByConnectivity(vanilla_rover,piles)=='vanilla' and ranking_calls==1,'vanilla maps keep the ranking')
 print('legacy terraformer ranking: 2D-nearest fallback on legacy maps')
+-- 10. Explorer anomaly searches: a proved-unreachable anomaly is skipped by every Explorer until a
+-- vanilla invalidation event, a passability change within two sectors of it, or a 12-hour fallback;
+-- other destinations and maps untouched.
+terrain.GetMapSize=function(m) return 819200,819200 end
+local function B(x1,y1,x2,y2) return {minx=function() return x1 end,miny=function() return y1 end,maxx=function() return x2 end,maxy=function() return y2 end} end
+local explorer_calls=0
+g_Classes.ExplorerRover={HasPath=function(self,dest) explorer_calls=explorer_calls+1 return false end}
+g_Classes.ExplorerRoverFancy={__ancestors={ExplorerRover=true},HasPath=g_Classes.ExplorerRover.HasPath}
+g_Classes.RCTransport={HasPath=g_Classes.ExplorerRover.HasPath}
+legacy.ApplyModBehavior()
+assert(g_Classes.ExplorerRoverFancy.HasPath==g_Classes.ExplorerRover.HasPath,'descendants patched')
+assert(g_Classes.RCTransport.HasPath~=g_Classes.ExplorerRover.HasPath,'other rovers keep vanilla HasPath')
+local anomaly={valid=true,kind='SubsurfaceAnomaly',GetPos=function() return P(400000,50000) end}
+local e1={map=map} local e2={map=map}
+now=now+1
+assert(g_Classes.ExplorerRover.HasPath(e1,anomaly)==false and explorer_calls==1)
+assert(g_Classes.ExplorerRover.HasPath(e2,anomaly)==false and explorer_calls==1,'another Explorer skips the proved-unreachable anomaly')
+now=now+2*60000
+assert(g_Classes.ExplorerRover.HasPath(e1,anomaly)==false and explorer_calls==1,'still skipped after two hours')
+handlers.OnPassabilityChanged(map,B(100000,500000,105000,505000))
+assert(g_Classes.ExplorerRover.HasPath(e1,anomaly)==false and explorer_calls==1,'a far passability change does not re-check')
+handlers.OnPassabilityChanged(map,B(430000,120000,435000,125000))
+assert(g_Classes.ExplorerRover.HasPath(e1,anomaly)==false and explorer_calls==2,'a change within two sectors re-checks at once')
+now=now+13*60000
+assert(g_Classes.ExplorerRover.HasPath(e1,anomaly)==false and explorer_calls==3,'fallback re-check after twelve hours')
+handlers.RubbleCleared()
+assert(g_Classes.ExplorerRover.HasPath(e1,anomaly)==false and explorer_calls==4,'vanilla invalidation events clear the record')
+local pile={valid=true,kind='WasteRockStockpile',GetPos=anomaly.GetPos}
+g_Classes.ExplorerRover.HasPath(e1,pile);g_Classes.ExplorerRover.HasPath(e1,pile)
+assert(explorer_calls==6,'other destinations are not recorded')
+g_Classes.ExplorerRover.HasPath({map=vanilla},anomaly);g_Classes.ExplorerRover.HasPath({map=vanilla},anomaly)
+assert(explorer_calls==8,'vanilla-size maps keep vanilla')
+print('legacy explorer anomalies: shared unreachable record, re-checked on nearby or vanilla-event changes')
