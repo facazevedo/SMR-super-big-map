@@ -1,5 +1,37 @@
 # Surface START-to-T1 — runtime acceptance and local checkpoint
 
+## Metadata 1180: stutter in large colonies (connectivity estimates on expanded maps)
+
+Player save "United States of Mars" (SBM 1179, sol 135, 478 drones, two automated RC Terraformers;
+mods: Relaunched Fix Pack and Opt-In Modules, Red Horizon, Configurable Deposits, ProductionOverUnder,
+Filter Landing Spots, Force Delete; needs both DLCs, so it was run in the C:\Games 405907 build).
+Patch 1.1's automation calls connectivity, a cheap region lookup on vanilla maps; on expanded maps
+each call is a real path search. The profile (`_ralph/runs/stutter-usm-20261004/allmods_profile`)
+put 51% of all game execution in path searches:
+- Drone:TryTaskSwap on every pickup: TaskRequester:GetDroneApproachDist, up to three per recent drone
+  of the command center, one search per work spot (47%).
+- RCTerraformer:ProcAutomation: ConnectivityCheckObj over a landscaping site's 149 drone_dests,
+  all unreachable, 149 failing searches = 5.5 s per idle rover.
+Fixes, legacy (expanded) maps only:
+1. List-form connectivity ("any destination reachable?"): one search to the points' centre that may
+   end anywhere within a radius covering them all rejects an unreachable set exactly (183-200 ms
+   instead of 5.6 s); otherwise nearest-first with early exit.
+2. Drone approach estimates: vanilla's reachability verdict, remembered per command center and
+   target until passability or a tunnel changes (PFTunnelChanged now also bumps the version) or
+   150 s of game time; the distance is the 2D distance vanilla uses for flying drones.
+3. GetTopClosestDests (every drone approach to a landscaping site or lake): vanilla's own 2D
+   fallback order, no path searches.
+Results with all eight mods, 90 s at speed 1:
+- before (1179, profiled): 84,229 path searches; 140 frames >= 100 ms; worst 5,506 ms;
+  71.1 s of game time.
+- after (1180, no profiler, `final_1180`): 1,183 searches; 7 frames >= 100 ms; worst 309 ms;
+  p95 29 ms; 89.7 s of game time. The remaining long frames are mostly vanilla (faction hourly
+  update, RC Transport loading, vegetation) plus a bounded 24-probe Terraformer ranking.
+Audit of every other vanilla connectivity call site: UpdateUnreachableSurfaceDeposits (only after a
+failed deposit approach), PathLenCached (cached, daily) and RC Safari routes are bounded;
+BaseUnit:CanReach and ScriptRandom's reachable_from have no vanilla callers on these maps. The debug
+log's "'<color ...>v</color>' as a localized string" errors come from a mod's infobar arrows, not SBM.
+
 ## Metadata 1173: stutter in long expanded games (waste rock dump search)
 
 Player save "XL map Stutter save" (SBM 1158 plus WaterDome, KjQQfA3, f4vtvQW, GUreSMy, iooW34Y,

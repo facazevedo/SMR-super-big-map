@@ -5,7 +5,7 @@
 -- 2. on legacy maps the dump-spot search skips spots already proved unreachable for the same rover
 --    position and stops new searches after a per-call budget, continuing on the next call.
 SuperBigMap={State={}}
-const={ConnectivitySupported=true}
+const={ConnectivitySupported=true,HexSize=0}
 MapVarValues={}
 function MapVar(name,default) MapVarValues[name]=default end
 local function P(x,y,z) return {ispoint=true,x=x,y=y,z=z or 0,xyz=function(p) return p.x,p.y,p.z end,
@@ -20,7 +20,7 @@ Maps={[1]=map,[2]=vanilla}
 LoadedMaps={}
 for _,name in ipairs({'ConnectivityResume','ConnectivitySuspend','ConnectivityCheck','ConnectivityCheckAll',
   'ConnectivityCheckObj','ConnectivityCheckObjAll','ConnectivityCheckObjSpot','EngineChangeMap',
-  'LoadGame','LoadGameFromMem'}) do _G[name]=function() return 'native' end end
+  'LoadGame','LoadGameFromMem','GetTopClosestDests'}) do _G[name]=function() return 'native' end end
 local last_alloc
 function EngineChangeMap(slot,folder,data) last_alloc=data;return 'allocated' end
 local now=1000
@@ -29,8 +29,12 @@ local ticks=0
 function GetPreciseTicks() return ticks end
 local handlers={}
 local searches=0
-pf={PosPathLen=function(m,a,b,c) searches=searches+1;ticks=ticks+10
-  if b.x<0 then return false end return true,math.abs(b.x-a.x)+math.abs(b.y-a.y) end}
+-- Reachable = x >= 0. A ranged search succeeds when any point within range of the target is.
+pf={PosPathLen=function(m,a,b,c,range) searches=searches+1;ticks=ticks+10
+  if b.x+(range or 0)<0 then return false end
+  if b.x<0 then return true,math.abs(a.x)+math.abs(a.y) end
+  return true,math.abs(b.x-a.x)+math.abs(b.y-a.y) end}
+function IsKindOf(o,cls) return type(o)=='table' and o.kind==cls end
 terrain={FindPassable=function(m,p) return p end}
 -- Vanilla-shaped waste rock site: probes many spots, all unreachable, without yielding.
 local site_class={}
@@ -44,8 +48,16 @@ function site_class.GetOutputPile(self,rover)
   return false
 end
 local derived={GetOutputPile=site_class.GetOutputPile,IsRoverReachable=site_class.IsRoverReachable}
+-- Vanilla-shaped drone estimate: one connectivity search from the drone to the requester.
+local approach_calls=0
+local requester_class={GetDroneApproachDist=function(self,drone)
+  approach_calls=approach_calls+1
+  return ConnectivityCheck(drone.map,drone:GetPos(),self:GetPos(),0)
+end}
+local depot_class={GetDroneApproachDist=requester_class.GetDroneApproachDist}
 g_CObjectFuncs={}
-g_Classes={ClearWasteRockConstructionSite=site_class,DerivedSite=derived,Map={}}
+g_Classes={ClearWasteRockConstructionSite=site_class,DerivedSite=derived,Map={},
+  TaskRequester=requester_class,Depot=depot_class}
 SuperBigMap.Engine={ChainOnMsg=function(name,fn) handlers[name]=fn end}
 assert(loadfile('Code/sbm_legacy_pathfinder.lua'))()
 local legacy=SuperBigMap.LegacyPathfinder
@@ -128,3 +140,62 @@ handlers.PersistPostLoad()
 assert(ConnectivityResume(map)==nil,'a legacy map never reaches the native resume')
 assert(ConnectivityResume(vanilla)=='native','vanilla maps still resume natively')
 print('legacy cold load: hooks installed at PersistPostLoad, before LoadGame resumes connectivity')
+-- 5. List form ("any destination reachable?"): a ranged search rejects an unreachable set at once,
+-- and otherwise the nearest destinations are searched first with an early exit.
+LoadedMaps={map}
+legacy.ApplyModBehavior()
+now=now+100;searches=0
+local far={P(-50,0),P(-50,10),P(-50,20),P(-50,30),P(-50,40),P(-50,50)}
+assert(ConnectivityCheck(map,P(0,0),far,0)==nil and searches==1,'an unreachable site costs one ranged search: '..searches)
+now=now+1;searches=0
+local mixed={P(-50,0),P(-50,10),P(2,0),P(-50,20),P(-50,30),P(-50,40)}
+assert(ConnectivityCheck(map,P(0,0),mixed,0)==2 and searches==2,'nearest reachable point ends the search: '..searches)
+now=now+1;searches=0
+assert(ConnectivityCheck(map,P(0,0),{P(-1,0),P(3,0)},0)==3,'short lists skip the ranged search')
+print('legacy list check: ranged rejection and nearest-first early exit')
+-- 6. Drone task-swap estimate: vanilla reachability, remembered per drone and target; 2D distance.
+assert(g_Classes.Depot.GetDroneApproachDist==g_Classes.TaskRequester.GetDroneApproachDist,'derived copies patched')
+local function obj(x,y,extra) local o={valid=true,map=map,GetPos=function() return P(x,y) end}
+  for k,v in pairs(extra or {}) do o[k]=v end return setmetatable(o,{__index=requester_class}) end
+local hub={}
+local drone={valid=true,map=map,command_center=hub,GetPos=function() return P(0,0) end,
+  GetDist2D=function(self,o) local x,y=o:GetPos():xyz() return math.floor(math.sqrt(x*x+y*y)) end}
+local target=obj(30,40)
+approach_calls=0
+assert(target:GetDroneApproachDist(drone)==50 and approach_calls==1)
+now=now+1
+assert(target:GetDroneApproachDist(drone)==50 and approach_calls==1,'reachability is remembered across ticks')
+local unreachable=obj(-30,0)
+assert(unreachable:GetDroneApproachDist(drone)==nil and approach_calls==2)
+assert(unreachable:GetDroneApproachDist(drone)==nil and approach_calls==2,'unreachable is remembered too')
+handlers.OnPassabilityChanged(map)
+assert(target:GetDroneApproachDist(drone)==50 and approach_calls==3,'passability change asks again')
+handlers.PFTunnelChanged()
+assert(target:GetDroneApproachDist(drone)==50 and approach_calls==4,'tunnel change asks again')
+local sibling=setmetatable({},{__index=drone})
+assert(target:GetDroneApproachDist(sibling)==50 and approach_calls==4,'drones of one command center share the answer')
+drone.command_center={}
+assert(target:GetDroneApproachDist(drone)==50 and approach_calls==5,'another command center asks again')
+now=now+150001
+assert(target:GetDroneApproachDist(drone)==50 and approach_calls==6,'entries expire')
+local flyer=setmetatable({kind='FlyingObject'},{__index=drone})
+target:GetDroneApproachDist(flyer);target:GetDroneApproachDist(flyer)
+assert(approach_calls==8,'flying drones keep the vanilla call')
+local vanilla_drone=setmetatable({map=vanilla},{__index=drone})
+target:GetDroneApproachDist(vanilla_drone)
+assert(approach_calls==9,'vanilla-size maps keep the vanilla call')
+print('legacy drone estimate: reachability cached per command center and target, invalidated on changes, 2D distance')
+-- 7. GetTopClosestDests: vanilla's 2D fallback order on legacy maps, no path searches.
+function table.icopy(t) local c={} for i=1,#t do c[i]=t[i] end return c end
+function IsCloser2D(u,a,b) local ux,uy=u:GetPos():xyz() local ax,ay=a:xyz() local bx,by=b:xyz()
+  return (ax-ux)^2+(ay-uy)^2 < (bx-ux)^2+(by-uy)^2 end
+local walker={valid=true,map=map,GetPos=function() return P(0,0) end}
+local ring={}
+for i=1,30 do ring[i]=P(i*10*((i%2==0) and 1 or -1),0) end
+searches=0
+local top=GetTopClosestDests(map,ring,walker,3)
+assert(#top==3 and searches==0,'no path searches')
+assert(top[1].x==-10 and top[2].x==20 and top[3].x==-30,'2D order')
+assert(#GetTopClosestDests(map,{P(1,0),P(2,0)},walker,5)==2,'short lists returned whole')
+assert(GetTopClosestDests(vanilla,ring,walker,3)=='native','vanilla maps keep the vanilla ranking')
+print('legacy GetTopClosestDests: 2D fallback order on legacy maps, vanilla elsewhere')

@@ -3,7 +3,8 @@ SuperBigMap={State={}}
 const={ConnectivitySupported=true}
 MapVarValues={}
 function MapVar(name,default) MapVarValues[name]=default end
-function point(x,y,z) return {ispoint=true,x=x,y=y,z=z} end
+local point_meta={__index={xyz=function(p) return p.x,p.y,p.z end,xy=function(p) return p.x,p.y end}}
+function point(x,y,z) return setmetatable({ispoint=true,x=x,y=y,z=z},point_meta) end
 function IsPoint(p) return type(p)=='table' and p.ispoint==true end
 function IsValid(o) return type(o)=='table' and o.valid==true end
 function ResolveMap(v) return type(v)=='table' and (v.mapdata and v or v.map) or Maps[v] end

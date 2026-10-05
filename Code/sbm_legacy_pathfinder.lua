@@ -54,6 +54,15 @@ if not state.legacy_pathfinder_pass_msg and SBM.Engine and SBM.Engine.ChainOnMsg
 		if s then s.legacy_pathfinder_pass_version = (s.legacy_pathfinder_pass_version or 0) + 1 end
 	end)
 end
+-- Tunnels join or split path components without a passability change; invalidate on them too.
+if not state.legacy_pathfinder_tunnel_msg and SBM.Engine and SBM.Engine.ChainOnMsg then
+	state.legacy_pathfinder_tunnel_msg = true
+	SBM.Engine.ChainOnMsg("PFTunnelChanged", function()
+		local live = rawget(_G, "SuperBigMap")
+		local s = live and live.State
+		if s then s.legacy_pathfinder_pass_version = (s.legacy_pathfinder_pass_version or 0) + 1 end
+	end)
+end
 local MEMO_LIMIT = 8192
 local memo = { map = false, stamp = false, version = false, entries = {}, count = 0 }
 local function PathLength(map, from, to, pfclass)
@@ -101,6 +110,73 @@ local function Distance(map, source, dest, pfclass, radius)
 	return PathLength(map, from, to, pfclass)
 end
 
+-- The list form asks "can the source reach any of these destinations?". Vanilla callers pass
+-- whole site peripheries: RCTerraformer automation hands over a landscaping site's
+-- drone_dests_cache ("can have 100+ points") and ClearWasteRock asks the same for a rover. Natively
+-- that is a cheap region lookup; here every point was a path search, and an unreachable site cost
+-- one failing search per point (2026-10-04 "United States of Mars": 149 points, 5.6 s per idle
+-- RC Terraformer). Two exact shortcuts:
+-- 1. one search to the points' centre that may end anywhere within a radius covering every
+--    point (plus the passable-endpoint search radius): if even that fails, no point is reachable;
+-- 2. otherwise search the points nearest-first and stop at the first reachable one.
+-- Callers only test the result for truth; it is now the first reachable point's path length
+-- rather than the shortest one.
+local RANGED_MIN_POINTS = 4
+local function CheckAny(map, source, dests, pfclass, radius)
+	local from = Position(source)
+	if not from or #dests == 0 then return nil end
+	local points = {}
+	for i = 1, #dests do
+		if not IsPoint(dests[i]) then points = nil break end
+		points[i] = dests[i]
+	end
+	local class = Class(source, pfclass)
+	if points and #points >= RANGED_MIN_POINTS then
+		local start = from
+		if radius and radius > 0 then start = terrain.FindPassable(map, from, class, radius) end
+		if not start then return nil end
+		local sx, sy = 0, 0
+		for i = 1, #points do
+			local x, y = points[i]:xyz()
+			sx, sy = sx + x, sy + y
+		end
+		local cx, cy = sx // #points, sy // #points
+		local center = point(cx, cy)
+		local cz = type(map.GetHeight) == "function" and map:GetHeight(center) or 0
+		center = point(cx, cy, cz)
+		local reach = 0
+		for i = 1, #points do
+			local x, y, z = points[i]:xyz()
+			local dx, dy, dz = x - cx, y - cy, (z or cz) - cz
+			reach = math.max(reach, math.ceil(math.sqrt(dx * dx + dy * dy + dz * dz)))
+		end
+		reach = reach + (radius or 0) + const.HexSize
+		Legacy.ranged_checks = (Legacy.ranged_checks or 0) + 1
+		if not pf.PosPathLen(map, start, center, class, reach) then
+			Legacy.ranged_rejects = (Legacy.ranged_rejects or 0) + 1
+			return nil
+		end
+	end
+	local order, distance = {}, {}
+	local fx, fy = from:xyz()
+	for i = 1, #dests do
+		order[i] = i
+		local p = Position(dests[i])
+		if p then
+			local x, y = p:xyz()
+			distance[i] = (x - fx) * (x - fx) + (y - fy) * (y - fy)
+		else
+			distance[i] = math.huge
+		end
+	end
+	table.sort(order, function(a, b) return distance[a] < distance[b] end)
+	for _, i in ipairs(order) do
+		local length = Distance(map, source, dests[i], pfclass, radius)
+		if length then return length end
+	end
+	return nil
+end
+
 local function Check(map, source, dest, pfclass, radius, ...)
 	-- Public overload: (map, source, x, y, z, pfclass, radius).
 	if type(dest) == "number" then
@@ -108,12 +184,7 @@ local function Check(map, source, dest, pfclass, radius, ...)
 		dest, pfclass, radius = point(dest, pfclass, radius), passclass, search_radius
 	end
 	if type(dest) == "table" and not IsPoint(dest) and not IsValid(dest) then
-		local best
-		for i = 1, #dest do
-			local length = Distance(map, source, dest[i], pfclass, radius)
-			if length and (not best or length < best) then best = length end
-		end
-		return best
+		return CheckAny(map, source, dest, pfclass, radius)
 	end
 	return Distance(map, source, dest, pfclass, radius)
 end
@@ -185,6 +256,26 @@ function Legacy.ApplyModBehavior()
 			end
 		end)
 	end
+	-- GetTopClosestDests ranks a landscaping site's or lake's whole periphery on every drone approach
+	-- ("there can be hundreds of destinations ... checked by each PF wave"): one ConnectivityCheckAll,
+	-- i.e. one path search per destination on a legacy map. Vanilla falls back to ordering by 2D
+	-- distance whenever connectivity data is unavailable, and that is also its exact order when no
+	-- destination is reachable. Use that fallback on legacy maps; the drone's Goto to the chosen
+	-- destinations still pathfinds for real, with vanilla's Goto_NoDestlock retry.
+	InstallGlobal("GetTopClosestDests", function(original)
+		return function(map, dests, unit, top_count, ...)
+			if not Legacy.IsMap(Resolve(map) or Resolve(unit)) then return original(map, dests, unit, top_count, ...) end
+			top_count = top_count or 10
+			local count = #dests
+			if count <= top_count then return table.icopy(dests) end
+			local order = {}
+			for i = 1, count do order[i] = i end
+			table.sort(order, function(i1, i2) return IsCloser2D(unit, dests[i1], dests[i2]) end)
+			local top_dests = {}
+			for i = 1, top_count do top_dests[i] = dests[order[i]] end
+			return top_dests
+		end
+	end)
 	for _, name in ipairs({"ConnectivityCheck", "ConnectivityCheckAll"}) do
 		local query = name == "ConnectivityCheck" and Check or CheckAll
 		InstallGlobal(name, function(original)
@@ -226,6 +317,7 @@ function Legacy.ApplyModBehavior()
 	ReplaceMembers(g_CObjectFuncs or {})
 	for _, class in pairs(g_Classes or {}) do ReplaceMembers(class) end
 	Legacy.PatchWasteRockDumpSearch(members)
+	Legacy.PatchDroneApproachEstimate(members)
 	return true
 end
 
@@ -306,6 +398,65 @@ function Legacy.PatchWasteRockDumpSearch(members)
 	end
 	state.legacy_dump_patch = { original_pile = original_pile, original_reach = original_reach, pile = pile, reach = reach,
 		token = DUMP_PATCH_TOKEN }
+	return true
+end
+
+-- Drone:TryTaskSwap (1.1) weighs swaps with TaskRequester:GetDroneApproachDist, which vanilla
+-- documents as a "coarse" connectivity-grid estimate that "needs no computed path"; flying drones
+-- use the plain 2D distance. Every pickup compares the drone with each recent drone of its
+-- command center, up to three estimates each, and on an expanded map each estimate was a real path
+-- search per work spot (2026-10-04 "United States of Mars": 47% of all game execution time).
+-- On legacy maps a ground drone's estimate keeps vanilla's reachability answer from a real search
+-- but remembers it per command center and target: drones leave from their command center and a
+-- walking drone cannot leave that path component, so every drone of a center shares the answer.
+-- It holds until passability or a tunnel changes, or APPROACH_TTL game time passes (covers a
+-- center that moves, such as an RC rover). The distance itself is the 2D distance, the estimate
+-- vanilla already uses for flying drones.
+local APPROACH_TTL = 150000
+local approach_cache = setmetatable({}, { __mode = "k" })
+local APPROACH_PATCH_TOKEN = {}
+function Legacy.PatchDroneApproachEstimate(members)
+	local classes = rawget(_G, "g_Classes")
+	local base = classes and classes.TaskRequester
+	if not base or type(base.GetDroneApproachDist) ~= "function" then return false end
+	local saved = state.legacy_approach_patch
+	if saved and saved.token == APPROACH_PATCH_TOKEN and base.GetDroneApproachDist == saved.wrapper then return true end
+	local original = base.GetDroneApproachDist
+	if saved and (original == saved.wrapper or original == saved.original) then original = saved.original end
+	local previous = saved and saved.wrapper
+	local game_time = rawget(_G, "GameTime")
+	local function estimate(self, drone, ...)
+		local map = drone and Resolve(drone)
+		if not Legacy.IsMap(map) or not IsValid(self) or not IsValid(drone) or IsKindOf(drone, "FlyingObject")
+			or type(game_time) ~= "function" then
+			return original(self, drone, ...)
+		end
+		local now, version = game_time(), state.legacy_pathfinder_pass_version
+		local owner = drone.command_center or drone
+		local entry = approach_cache[owner]
+		if not entry or entry.map ~= map or entry.version ~= version or now - entry.stamp > APPROACH_TTL then
+			entry = { map = map, version = version, stamp = now, targets = setmetatable({}, { __mode = "k" }) }
+			approach_cache[owner] = entry
+		end
+		local reachable = entry.targets[self]
+		if reachable == nil then
+			reachable = original(self, drone, ...) ~= nil
+			entry.targets[self] = reachable
+			Legacy.approach_searches = (Legacy.approach_searches or 0) + 1
+		else
+			Legacy.approach_cached = (Legacy.approach_cached or 0) + 1
+		end
+		if not reachable then return nil end
+		return drone:GetDist2D(self)
+	end
+	for _, class in pairs(classes) do
+		local method = class.GetDroneApproachDist
+		if method == original or (previous and method == previous) then
+			members[#members + 1] = { target = class, key = "GetDroneApproachDist", original = original, wrapper = estimate }
+			class.GetDroneApproachDist = estimate
+		end
+	end
+	state.legacy_approach_patch = { original = original, wrapper = estimate, token = APPROACH_PATCH_TOKEN }
 	return true
 end
 
