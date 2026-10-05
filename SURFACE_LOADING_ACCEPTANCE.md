@@ -25,6 +25,13 @@ Publish qualification on 1182 (a3543ad), 2026-10-05, C:\Games MarsDebug.exe, 102
   and 77.57 s (a second 1173 run died before the main menu, no crash signature). The code is not
   slower; the sweep difference is environmental.
 
+- Release Mars.exe (C:\Games, 405907), owner present, temporary autostart 1183 (1540960, reverted in
+  1184 b03abab, code identical to 1182): one launch loaded only SuperBigMap 1183 from AppData/Mods; all
+  15 cases finished complete, 0 rejected and 0 unresolved rocks, error registry 0/0/0, no errors in
+  the log. Expanded START-to-T1 49.1-57.9 s, underground first access 37.4-48.5 s.
+  The runner's "accepted" is false only because the file-free payload leaves case.txt unread
+  (same as the 1174 run). Evidence: `_ralph/runs/release-smoke-1183-20261005/batch`.
+
 ## Metadata 1180: stutter in large colonies (connectivity estimates on expanded maps)
 
 Player save "United States of Mars" (SBM 1179, sol 135, 478 drones, two automated RC Terraformers;
