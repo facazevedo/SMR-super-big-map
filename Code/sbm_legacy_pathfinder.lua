@@ -96,6 +96,41 @@ end
 -- Return real path length or nil, never a straight-line guess or a partial path.
 -- Connectivity's explicit radius is a passable-endpoint search, not permission
 -- to walk through impassable cells.
+-- Restricted walking searches (see CheckWalkableDistance below): exact path lengths within the
+-- disc of radius limit/2 (+ two hexes for the passable-point snap) around the midpoint. They live
+-- in vanilla's own map.PathCache (a separate field), so they share its lifetime exactly: reset when
+-- map.PassVersion changes and kept by PathLenCacheValidate; the shared lengths table is untouched.
+local walk_restrict
+local function RestrictedLength(map, pt1, pt2, pfclass, limit)
+	local pass_id = map.PassVersion
+	local path_cache = map.PathCache
+	if not path_cache or path_cache.pass_id ~= pass_id then
+		path_cache = { pass_id = pass_id, lengths = {}, hits = 0 }
+		map.PathCache = path_cache
+	end
+	local entries = path_cache.sbm_restricted
+	if not entries then
+		entries = {}
+		path_cache.sbm_restricted = entries
+	end
+	local ax, ay, az = pt1:xyz()
+	local bx, by, bz = pt2:xyz()
+	local key = tostring(ax) .. "," .. tostring(ay) .. "," .. tostring(az) .. ">" .. tostring(bx) .. ","
+		.. tostring(by) .. "," .. tostring(bz) .. ":" .. tostring(pfclass) .. ":" .. tostring(limit)
+	local cached = entries[key]
+	if cached ~= nil then return cached or nil end
+	-- Every point x of a path no longer than limit has |x-p1| + |x-p2| <= limit, hence lies within
+	-- limit/2 of the midpoint m (|x-m| <= (|x-p1| + |x-p2|) / 2): a disc a quarter the area of one
+	-- of radius limit around p1, and still containing every path the caller can accept.
+	local center = point((ax + bx) // 2, (ay + by) // 2, ((az or 0) + (bz or 0)) // 2)
+	local radius = limit // 2 + 2 * const.HexSize
+	local reachable, length = pf.PosPathLen(map, pt1, pt2, pfclass, 0, 0, nil, radius, center)
+	local result = reachable and length or false
+	entries[key] = result
+	Legacy.restricted_searches = (Legacy.restricted_searches or 0) + 1
+	return result or nil
+end
+
 local function Distance(map, source, dest, pfclass, radius)
 	local from, to = Position(source), Position(dest)
 	if not from or not to then return nil end
@@ -262,6 +297,35 @@ function Legacy.ApplyModBehavior()
 	-- distance whenever connectivity data is unavailable, and that is also its exact order when no
 	-- destination is reachable. Use that fallback on legacy maps; the drone's Goto to the chosen
 	-- destinations still pathfinds for real, with vanilla's Goto_NoDestlock retry.
+	-- Vanilla CheckWalkableDistance (domes, emigration, colonists leaving Mars) only accepts a path
+	-- no longer than ColonistMaxDomeWalkDist L; pairs farther apart than L in 2D never search. A
+	-- path of length <= L never leaves the disc of radius L/2 around the midpoint of its ends, so on
+	-- legacy maps the nested PathLenCached searches only that disc (restrict_radius/restrict_center):
+	-- the same answer and length for every walkable pair, and a failing pair no longer floods the
+	-- whole expanded map (2026-10-05 "United States of Mars" at 5x: 220 and 144 ms stalls; on that
+	-- save all 14 dome pairs within L agreed exactly with the unrestricted search). The restricted
+	-- results have their own cache, so vanilla's shared path cache (IsConnectedByFoot, uncapped)
+	-- never sees them. A pair that is not walkable reports length -1 rather than its long route.
+	InstallGlobal("CheckWalkableDistance", function(original)
+		return function(map, ...)
+			if not Legacy.IsMap(map) then return original(map, ...) end
+			local consts = rawget(_G, "g_Consts")
+			local limit = consts and consts.ColonistMaxDomeWalkDist
+			if type(limit) ~= "number" or limit <= 0 or walk_restrict then return original(map, ...) end
+			walk_restrict = limit
+			local results = { pcall(original, map, ...) }
+			walk_restrict = nil
+			if not results[1] then error(results[2], 0) end
+			return (table.unpack or unpack)(results, 2)
+		end
+	end)
+	InstallGlobal("PathLenCached", function(original)
+		return function(map, pt1, pt2, pfclass, ...)
+			if not walk_restrict or not Legacy.IsMap(map) then return original(map, pt1, pt2, pfclass, ...) end
+			local len = RestrictedLength(map, pt1, pt2, pfclass, walk_restrict)
+			return len ~= nil, len or -1
+		end
+	end)
 	InstallGlobal("GetTopClosestDests", function(original)
 		return function(map, dests, unit, top_count, ...)
 			if not Legacy.IsMap(Resolve(map) or Resolve(unit)) then return original(map, dests, unit, top_count, ...) end
@@ -318,6 +382,7 @@ function Legacy.ApplyModBehavior()
 	for _, class in pairs(g_Classes or {}) do ReplaceMembers(class) end
 	Legacy.PatchWasteRockDumpSearch(members)
 	Legacy.PatchDroneApproachEstimate(members)
+	Legacy.PatchTerraformerRanking(members)
 	return true
 end
 
@@ -441,6 +506,39 @@ function Legacy.PatchDroneApproachEstimate(members)
 		end
 	end
 	state.legacy_approach_patch = { original = original, wrapper = estimate, token = APPROACH_PATCH_TOKEN }
+	return true
+end
+
+-- RCTerraformer:PickNearestByConnectivity ranks the 8 nearest candidates (up to 24 probes) with
+-- ConnectivityCheckAll: up to 24 path searches on a legacy map (243 ms stalls at 5x on
+-- 2026-10-05). Vanilla falls back to the 2D-nearest candidate (objects[1] after its own 2D sort)
+-- whenever connectivity gives no answer, and its callers then confirm with HasPath and mark an
+-- unreachable target. Use that fallback on legacy maps.
+local RANKING_PATCH_TOKEN = {}
+function Legacy.PatchTerraformerRanking(members)
+	local classes = rawget(_G, "g_Classes")
+	local base = classes and classes.RCTerraformer
+	if not base or type(base.PickNearestByConnectivity) ~= "function" then return false end
+	local saved = state.legacy_ranking_patch
+	if saved and saved.token == RANKING_PATCH_TOKEN and base.PickNearestByConnectivity == saved.wrapper then return true end
+	local original = base.PickNearestByConnectivity
+	if saved and (original == saved.wrapper or original == saved.original) then original = saved.original end
+	local previous = saved and saved.wrapper
+	local function pick(self, objects, ...)
+		if not objects or #objects <= 1 or not Legacy.IsMap(Resolve(self)) then
+			return original(self, objects, ...)
+		end
+		table.sort(objects, function(a, b) return self:GetDist2D(a) < self:GetDist2D(b) end)
+		return objects[1]
+	end
+	for _, class in pairs(classes) do
+		local method = class.PickNearestByConnectivity
+		if method == original or (previous and method == previous) then
+			members[#members + 1] = { target = class, key = "PickNearestByConnectivity", original = original, wrapper = pick }
+			class.PickNearestByConnectivity = pick
+		end
+	end
+	state.legacy_ranking_patch = { original = original, wrapper = pick, token = RANKING_PATCH_TOKEN }
 	return true
 end
 

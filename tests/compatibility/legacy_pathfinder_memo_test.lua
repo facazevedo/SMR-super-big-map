@@ -187,3 +187,38 @@ assert(top[1].x==-10 and top[2].x==20 and top[3].x==-30,'2D order')
 assert(#GetTopClosestDests(map,{P(1,0),P(2,0)},walker,5)==2,'short lists returned whole')
 assert(GetTopClosestDests(vanilla,ring,walker,3)=='native','vanilla maps keep the vanilla ranking')
 print('legacy GetTopClosestDests: 2D fallback order on legacy maps, vanilla elsewhere')
+-- 8. CheckWalkableDistance: searches restricted to the walk-distance disc, own cache.
+g_Consts={ColonistMaxDomeWalkDist=100}
+local vanilla_cache_calls=0
+function PathLenCached(m,p1,p2,cls) vanilla_cache_calls=vanilla_cache_calls+1
+  local len=ConnectivityCheck(m,p1,p2,cls) return not not len, len or -1 end
+function CheckWalkableDistance(m,b1,b2) local has,len=PathLenCached(m,b1,b2,0)
+  if has and type(len)=='number' and len>100 then has=false end return has or false,len end
+local ranking_calls=0
+g_Classes.RCTerraformer={PickNearestByConnectivity=function(self,objects) ranking_calls=ranking_calls+1 return 'vanilla' end}
+legacy.ApplyModBehavior()
+local base_pf=pf.PosPathLen
+local restrict
+pf.PosPathLen=function(m,a,b,c,range,minr,owner,rr,rc) restrict=rr return base_pf(m,a,b,c,range) end
+now=now+1;searches=0
+local walkable,len=CheckWalkableDistance(map,P(0,0),P(30,40))
+assert(walkable==true and len==70 and restrict==50 and vanilla_cache_calls==0,'restricted to radius L/2 around the midpoint, vanilla cache untouched')
+CheckWalkableDistance(map,P(0,0),P(30,40))
+assert(searches==1,'restricted results are cached')
+walkable,len=CheckWalkableDistance(map,P(0,0),P(-5,0))
+assert(walkable==false and len==-1,'no walk within the disc')
+restrict=nil
+PathLenCached(map,P(0,0),P(30,40),0)
+assert(vanilla_cache_calls==1 and restrict==nil,'plain PathLenCached keeps vanilla')
+CheckWalkableDistance(vanilla,P(0,0),P(30,40))
+assert(vanilla_cache_calls==2,'vanilla maps keep vanilla')
+pf.PosPathLen=base_pf
+print('legacy walk distance: restricted to the walk disc, separate cache, vanilla elsewhere')
+-- 9. RC Terraformer ranking: vanilla's 2D-nearest fallback on legacy maps, no path search.
+local rover={map=map,GetDist2D=function(self,o) return math.abs(o.x) end}
+local piles={{x=30},{x=-5},{x=12}}
+searches=0
+assert(g_Classes.RCTerraformer.PickNearestByConnectivity(rover,piles).x==-5 and searches==0,'2D nearest')
+local vanilla_rover={map=vanilla,GetDist2D=rover.GetDist2D}
+assert(g_Classes.RCTerraformer.PickNearestByConnectivity(vanilla_rover,piles)=='vanilla' and ranking_calls==1,'vanilla maps keep the ranking')
+print('legacy terraformer ranking: 2D-nearest fallback on legacy maps')
