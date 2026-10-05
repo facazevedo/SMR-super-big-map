@@ -22,10 +22,18 @@ local Global = Engine.Global
 local SafeCall = Engine.SafeCall
 local Config = SuperBigMap.Config or {}
 
+-- GetHeatAt runs for every drone and unit on every update (hundreds of thousands of calls per
+-- minute at 5x speed in a large colony, 2026-10-05 "United States of Mars": 8% of all execution).
+-- A map stays expanded once it is, so remember positive answers per map; others are asked again.
+local expanded_maps = setmetatable({}, { __mode = "k" })
 local function IsModMap(map)
+	if not map then return false end
+	if expanded_maps[map] then return true end
 	local grid = SuperBigMap.SectorGrid
-	return type(grid) == "table" and type(grid.IsModMap) == "function"
+	local result = type(grid) == "table" and type(grid.IsModMap) == "function"
 		and grid.IsModMap(map) == true
+	if result then expanded_maps[map] = true end
+	return result
 end
 
 local function ObjectMap(obj)
@@ -37,10 +45,15 @@ end
 
 -- Clamp a world (x, y) into the heat grid's valid coverage [border, size - border - 1].
 -- The grid is sized from self.map_width/map_height minus const.HeatGridBorder on each side.
+local heat_border
 local function ClampToGrid(self, x, y)
-	local const_tbl = Global("const")
-	local border = (type(const_tbl) == "table" and type(const_tbl.HeatGridBorder) == "number" and const_tbl.HeatGridBorder > 0)
-		and const_tbl.HeatGridBorder or 10000
+	local border = heat_border
+	if not border then
+		local const_tbl = Global("const")
+		border = (type(const_tbl) == "table" and type(const_tbl.HeatGridBorder) == "number" and const_tbl.HeatGridBorder > 0)
+			and const_tbl.HeatGridBorder or 10000
+		heat_border = border
+	end
 	local w = (type(self.map_width) == "number" and self.map_width) or 0
 	local h = (type(self.map_height) == "number" and self.map_height) or 0
 	local max_x = w - border - 1
@@ -133,20 +146,25 @@ local function Install()
 	local get_heat_at_xy = Global("GetHeatAtXY")
 	if type(get_heat_at) == "function" then
 		original_global_get_heat_at = get_heat_at
+		local is_valid = Global("IsValid")
 		rawset(_G, "GetHeatAt", function(obj)
-			local is_valid = Global("IsValid")
 			if type(obj) == "table" and (type(is_valid) ~= "function" or is_valid(obj) == true)
 				and type(obj.GetMap) == "function" then
-				local map = SafeCall(obj.GetMap, obj)
+				-- A valid object answers GetMap/GetPosXYZ directly; no protected calls needed.
+				local map = obj:GetMap()
 				if not IsModMap(map) then
 					return original_global_get_heat_at(obj)
 				end
 				local heat_grid = map and map.heat_grid
 				if heat_grid then
-					local x, y = ObjXY(obj)
+					local x, y
+					if type(obj.GetPosXYZ) == "function" then x, y = obj:GetPosXYZ() end
+					if type(x) ~= "number" or type(y) ~= "number" then x, y = ObjXY(obj) end
 					if type(x) == "number" and type(y) == "number" then
 						x, y = ClampToGrid(heat_grid, x, y)
-						-- GetHeatAtXY takes explicit coords; clamped -> never out of grid.
+						-- Clamped explicit coords never leave the grid; call the engine lookup
+						-- directly instead of re-entering the class wrapper above.
+						if original_get_heat_at_xy then return original_get_heat_at_xy(heat_grid, x, y) end
 						return heat_grid:GetHeatAtXY(x, y)
 					end
 				end

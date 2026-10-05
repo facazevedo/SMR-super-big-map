@@ -153,38 +153,26 @@ assert(ConnectivityCheck(map,P(0,0),mixed,0)==2 and searches==2,'nearest reachab
 now=now+1;searches=0
 assert(ConnectivityCheck(map,P(0,0),{P(-1,0),P(3,0)},0)==3,'short lists skip the ranged search')
 print('legacy list check: ranged rejection and nearest-first early exit')
--- 6. Drone task-swap estimate: vanilla reachability, remembered per drone and target; 2D distance.
+-- 6. Drone task-swap estimate: 2D distance with no path search; nil for a target the drone failed.
 assert(g_Classes.Depot.GetDroneApproachDist==g_Classes.TaskRequester.GetDroneApproachDist,'derived copies patched')
 local function obj(x,y,extra) local o={valid=true,map=map,GetPos=function() return P(x,y) end}
   for k,v in pairs(extra or {}) do o[k]=v end return setmetatable(o,{__index=requester_class}) end
-local hub={}
-local drone={valid=true,map=map,command_center=hub,GetPos=function() return P(0,0) end,
+local drone={valid=true,map=map,command_center={},GetPos=function() return P(0,0) end,
   GetDist2D=function(self,o) local x,y=o:GetPos():xyz() return math.floor(math.sqrt(x*x+y*y)) end}
 local target=obj(30,40)
-approach_calls=0
-assert(target:GetDroneApproachDist(drone)==50 and approach_calls==1)
-now=now+1
-assert(target:GetDroneApproachDist(drone)==50 and approach_calls==1,'reachability is remembered across ticks')
-local unreachable=obj(-30,0)
-assert(unreachable:GetDroneApproachDist(drone)==nil and approach_calls==2)
-assert(unreachable:GetDroneApproachDist(drone)==nil and approach_calls==2,'unreachable is remembered too')
-handlers.OnPassabilityChanged(map)
-assert(target:GetDroneApproachDist(drone)==50 and approach_calls==3,'passability change asks again')
-handlers.PFTunnelChanged()
-assert(target:GetDroneApproachDist(drone)==50 and approach_calls==4,'tunnel change asks again')
-local sibling=setmetatable({},{__index=drone})
-assert(target:GetDroneApproachDist(sibling)==50 and approach_calls==4,'drones of one command center share the answer')
-drone.command_center={}
-assert(target:GetDroneApproachDist(drone)==50 and approach_calls==5,'another command center asks again')
-now=now+150001
-assert(target:GetDroneApproachDist(drone)==50 and approach_calls==6,'entries expire')
+approach_calls=0;searches=0
+assert(target:GetDroneApproachDist(drone)==50 and approach_calls==0 and searches==0,'2D estimate, no search')
+local far_side=obj(-30,0)
+assert(far_side:GetDroneApproachDist(drone)==30 and searches==0,'reachability is not searched')
+drone.unreachable_buildings={[far_side]=1}
+assert(far_side:GetDroneApproachDist(drone)==nil,'a target the drone failed to reach has no estimate')
 local flyer=setmetatable({kind='FlyingObject'},{__index=drone})
-target:GetDroneApproachDist(flyer);target:GetDroneApproachDist(flyer)
-assert(approach_calls==8,'flying drones keep the vanilla call')
+target:GetDroneApproachDist(flyer)
+assert(approach_calls==1,'flying drones keep the vanilla call')
 local vanilla_drone=setmetatable({map=vanilla},{__index=drone})
 target:GetDroneApproachDist(vanilla_drone)
-assert(approach_calls==9,'vanilla-size maps keep the vanilla call')
-print('legacy drone estimate: reachability cached per command center and target, invalidated on changes, 2D distance')
+assert(approach_calls==2,'vanilla-size maps keep the vanilla call')
+print('legacy drone estimate: 2D distance without path searches, known-unreachable targets excluded')
 -- 7. GetTopClosestDests: vanilla's 2D fallback order on legacy maps, no path searches.
 function table.icopy(t) local c={} for i=1,#t do c[i]=t[i] end return c end
 function IsCloser2D(u,a,b) local ux,uy=u:GetPos():xyz() local ax,ay=a:xyz() local bx,by=b:xyz()

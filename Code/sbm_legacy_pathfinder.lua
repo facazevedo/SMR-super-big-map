@@ -405,15 +405,14 @@ end
 -- documents as a "coarse" connectivity-grid estimate that "needs no computed path"; flying drones
 -- use the plain 2D distance. Every pickup compares the drone with each recent drone of its
 -- command center, up to three estimates each, and on an expanded map each estimate was a real path
--- search per work spot (2026-10-04 "United States of Mars": 47% of all game execution time).
--- On legacy maps a ground drone's estimate keeps vanilla's reachability answer from a real search
--- but remembers it per command center and target: drones leave from their command center and a
--- walking drone cannot leave that path component, so every drone of a center shares the answer.
--- It holds until passability or a tunnel changes, or APPROACH_TTL game time passes (covers a
--- center that moves, such as an RC rover). The distance itself is the 2D distance, the estimate
--- vanilla already uses for flying drones.
-local APPROACH_TTL = 150000
-local approach_cache = setmetatable({}, { __mode = "k" })
+-- search per work spot (2026-10-04 "United States of Mars": 47% of all game execution). 1180
+-- remembered reachability per command center, but at 5x speed passability changes so often that
+-- the cache still missed 709 times in two minutes (13% of execution, 360 ms stalls; 2026-10-05).
+-- On legacy maps a ground drone's estimate is therefore the 2D distance vanilla uses for flying
+-- drones, with no path search, and nil for a target this drone already failed to reach
+-- (unreachable_buildings, vanilla's own record). TryTaskSwap also skips targets the other drone
+-- failed to reach; a swap that hands over an unreachable target ends in vanilla's failed approach,
+-- which records it and frees the task.
 local APPROACH_PATCH_TOKEN = {}
 function Legacy.PatchDroneApproachEstimate(members)
 	local classes = rawget(_G, "g_Classes")
@@ -424,29 +423,14 @@ function Legacy.PatchDroneApproachEstimate(members)
 	local original = base.GetDroneApproachDist
 	if saved and (original == saved.wrapper or original == saved.original) then original = saved.original end
 	local previous = saved and saved.wrapper
-	local game_time = rawget(_G, "GameTime")
 	local function estimate(self, drone, ...)
 		local map = drone and Resolve(drone)
-		if not Legacy.IsMap(map) or not IsValid(self) or not IsValid(drone) or IsKindOf(drone, "FlyingObject")
-			or type(game_time) ~= "function" then
+		if not Legacy.IsMap(map) or not IsValid(self) or not IsValid(drone) or IsKindOf(drone, "FlyingObject") then
 			return original(self, drone, ...)
 		end
-		local now, version = game_time(), state.legacy_pathfinder_pass_version
-		local owner = drone.command_center or drone
-		local entry = approach_cache[owner]
-		if not entry or entry.map ~= map or entry.version ~= version or now - entry.stamp > APPROACH_TTL then
-			entry = { map = map, version = version, stamp = now, targets = setmetatable({}, { __mode = "k" }) }
-			approach_cache[owner] = entry
-		end
-		local reachable = entry.targets[self]
-		if reachable == nil then
-			reachable = original(self, drone, ...) ~= nil
-			entry.targets[self] = reachable
-			Legacy.approach_searches = (Legacy.approach_searches or 0) + 1
-		else
-			Legacy.approach_cached = (Legacy.approach_cached or 0) + 1
-		end
-		if not reachable then return nil end
+		local unreachable = drone.unreachable_buildings
+		if unreachable and unreachable[self] then return nil end
+		Legacy.approach_estimates = (Legacy.approach_estimates or 0) + 1
 		return drone:GetDist2D(self)
 	end
 	for _, class in pairs(classes) do
