@@ -13,6 +13,18 @@ plain-string parameters as Untranslated() (same rendering). "United States of Ma
 mods in C:\Games MarsDebug.exe: 129 errors per minute before, 0 after; translated infobar texts
 unchanged (e.g. Food "462 <color 100 0 0>v</color>", Metals "661 <color 0 255 0>^</color>").
 
+Publish qualification on 1182 (a3543ad), 2026-10-05, C:\Games MarsDebug.exe, 1024x768 (monitor off):
+- XL map Stutter save with its six mods: 0 frames >= 100 ms (worst 94 ms), full game time, 87 path
+  searches (1,223 on 1173), no Lua errors. Frames were a uniform ~77 ms with the monitor off
+  (the 1173 run at 3840x2160 had 21 ms), consistent with render throttling while the display is off.
+- Fresh sweep (`_ralph/runs/init-sweep-fresh-1182-20261004`): all 105 cases clean, save/reload on
+  39S66W and 61N136W. One attempt died during engine startup (WER c0000374 in ntdll before the main
+  menu) and passed on retry. Median START-to-T1 66.3 s; every case 1.9 s slower than the 1173
+  sweep on average (median 1.8, max 5.4).
+- A/B on 61N136W, back to back (`_ralph/runs/ab-1173-1182-20261005`): 1173 77.89 s, 1182 77.86 s
+  and 77.57 s (a second 1173 run died before the main menu, no crash signature). The code is not
+  slower; the sweep difference is environmental.
+
 ## Metadata 1180: stutter in large colonies (connectivity estimates on expanded maps)
 
 Player save "United States of Mars" (SBM 1179, sol 135, 478 drones, two automated RC Terraformers;
