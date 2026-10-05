@@ -12,6 +12,10 @@ return {
 		'CodeFileName', "Code/sbm_engine.lua",
 	}),
 	PlaceObj('ModItemCode', {
+		'name', "sbm_mod_compat",
+		'CodeFileName', "Code/sbm_mod_compat.lua",
+	}),
+	PlaceObj('ModItemCode', {
 		'name', "sbm_diagnostics",
 		'CodeFileName', "Code/sbm_diagnostics.lua",
 	}),

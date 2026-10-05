@@ -1,5 +1,18 @@
 # Surface START-to-T1 — runtime acceptance and local checkpoint
 
+## Metadata 1182: ProductionOverUnder infobar arrows in debug builds
+
+MarsDebug.exe raised "Attempt to use plain text or numbers '<color 100 0 0>v</color>' as a
+localized string" on every infobar refresh with ProductionOverUnder (sSK4LjU). That mod rawsets
+InfobarObj.GetResourceText to return T{"<resource_text> <arrow>", arrow = "<color %d 0 0>v</color>"},
+a plain string parameter; only debug/developer builds check it (localization.lua `dev`), and "^"
+and "-" pass as punctuation, so only the red "v" asserted. Owner: fix from SBM, do not modify the
+other mod. New module sbm_mod_compat.lua (debug/developer builds only) wraps whatever
+GetResourceText is current, after all ClassesBuilt handlers and on LoadGame/NewMapLoaded, passing
+plain-string parameters as Untranslated() (same rendering). "United States of Mars" with all eight
+mods in C:\Games MarsDebug.exe: 129 errors per minute before, 0 after; translated infobar texts
+unchanged (e.g. Food "462 <color 100 0 0>v</color>", Metals "661 <color 0 255 0>^</color>").
+
 ## Metadata 1180: stutter in large colonies (connectivity estimates on expanded maps)
 
 Player save "United States of Mars" (SBM 1179, sol 135, 478 drones, two automated RC Terraformers;
