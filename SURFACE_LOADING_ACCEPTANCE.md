@@ -1,5 +1,22 @@
 # Surface START-to-T1 — runtime acceptance and local checkpoint
 
+## Metadata 1185: high game speeds in large colonies
+
+The owner still saw stutter in "United States of Mars", mainly at speed 3; 1180 had been measured
+at speed 1 only. Profiled at speed 5 (`_ralph/runs/stutter-usm-20261004/speed5_1184`): drone task-swap
+estimates were still 13% of execution because passability changes so often at 5x that the 1180
+per-command-center cache missed 709 times in two minutes; the heat-query wrapper was 8%.
+1185: ground-drone task-swap estimates on legacy maps are the 2D distance (vanilla's flying-drone
+estimate), nil for a target the drone already failed to reach, with no path search; the heat
+wrapper remembers expanded maps, reads valid objects directly and calls the engine lookup once.
+Unprofiled, all eight mods, 120 s (`np_s5_1184`, `np_s5_1185`, `np_s3_1185`):
+- speed 5: frames >= 100 ms 96 -> 47, p99 162 -> 105 ms, p95 57 -> 40 ms; 4.7x -> 4.8x reached.
+- speed 3 on 1185: 16 frames >= 100 ms, p99 54 ms, p95 32 ms, 2.9x reached.
+- every run: one ~1.9 s frame from the autosave (EngineSaveGame plus compression of the 70+ MB
+  expanded save).
+Remaining load is mostly the engine's unit pathfinding on the 20x20 map (pfStep, pfStop), vanilla
+colonist emigration planning, meteor pass edits and the bounded 24-probe Terraformer ranking.
+
 ## Metadata 1182: ProductionOverUnder infobar arrows in debug builds
 
 MarsDebug.exe raised "Attempt to use plain text or numbers '<color 100 0 0>v</color>' as a
