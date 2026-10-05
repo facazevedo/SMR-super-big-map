@@ -14,7 +14,7 @@ return PlaceObj('ModDef', {
 	},
 	'id', "SuperBigMap",
 	'author', "fredware",
-	'version', 1187,
+	'version', 1188,
 	'lua_revision', 350453,
 	'saved_with_revision', 405907,
 	'code', {
@@ -57,10 +57,10 @@ return PlaceObj('ModDef', {
 		"Code/sbm_lifecycle.lua",
 		"Code/SuperBigMap.lua",
 	},
-	'saved', 1790998091,
-	'code_hash', -3977527250857025683,
+	'saved', 1791216856,
+	'code_hash', 4002211230779271681,
 	'pdx_id', 146312,
-	'pdx_version', "19",
+	'pdx_version', "20",
 	'steam_id', "3759751183",
 	'TagGameplay', true,
 })
