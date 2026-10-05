@@ -32,6 +32,14 @@ failed deposit approach), PathLenCached (cached, daily) and RC Safari routes are
 BaseUnit:CanReach and ScriptRandom's reachable_from have no vanilla callers on these maps. The debug
 log's "'<color ...>v</color>' as a localized string" errors come from a mod's infobar arrows, not SBM.
 
+Regression (`_ralph/runs/regress-1180-20261004`): the first 61N136W save/reload run on 1180 showed
+two "l_GetTerrainIntersection: pt1.IsValid()" errors from the 1178 overview off-map test, raised
+when vanilla hovers while the overview dialog is opening (camera eye not valid yet); 1181 tests the
+ray only once both ends are valid. One "stored under two different labels" (XDef customStation) in
+that run came from the harness switching the process from the save's eight mods to SBM only and
+did not recur. On 1181: 61N136W save/reload accepted (80.4 s, clean log); underground accepted
+(T1 82.7 s, first access 44.4 s).
+
 ## Metadata 1173: stutter in long expanded games (waste rock dump search)
 
 Player save "XL map Stutter save" (SBM 1158 plus WaterDome, KjQQfA3, f4vtvQW, GUreSMy, iooW34Y,

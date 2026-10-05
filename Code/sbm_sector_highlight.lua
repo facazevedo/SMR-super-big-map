@@ -462,9 +462,17 @@ local function Install()
 			return false, data
 		end
 		local precision = 128
+		-- Vanilla also hovers while the overview dialog is still opening (SetFocus on open, the
+		-- interface restore after a load), before the camera has an eye; the engine logs an error
+		-- for an invalid ray even under pcall, so test only once both ends of the ray exist.
+		local ok_eye, eye = pcall(camera_tbl.GetEye)
+		local ok_far, far = pcall(s2g, screen_pt, precision)
+		local function valid(pt) return pt and (type(pt.IsValid) ~= "function" or pt:IsValid()) end
+		if not ok_eye or not ok_far or not valid(eye) or not valid(far) then
+			data.reason = "camera not ready"
+			return false, data
+		end
 		local ok, hit = pcall(function()
-			local eye = camera_tbl.GetEye()
-			local far = s2g(screen_pt, precision)
 			return terrain_tbl.IntersectRay(map, eye, eye + (far - eye * precision))
 		end)
 		data.ray_ok = tostring(ok)
