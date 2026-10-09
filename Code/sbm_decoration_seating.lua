@@ -334,7 +334,12 @@ local function RunSurface(map)
 	local group_moved={}
 	local start=Global("GetPreciseTicks")()
 	local prepared,prepare_error=pcall(function()
-	for _,candidate in ipairs(validator.SeatingEvidence(map)) do if not group_moved[candidate.obj] then
+	local evidence,refused_native=validator.SeatingEvidence(map)
+	for _,entry in ipairs(refused_native or {}) do
+		if entry.obj.SuperBigMapDecorEnginePass==true then error("added rock cannot use native refusal policy") end
+		keep_in_place(entry.obj,entry.reason)
+	end
+	for _,candidate in ipairs(evidence) do if not group_moved[candidate.obj] then
 		local entry=candidate
 		if (entry.foundation or entry.group_root) and validator.SeatingGroup then
 			local grouped=validator.SeatingGroup(map,entry)

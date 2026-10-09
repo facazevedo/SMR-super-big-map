@@ -1,6 +1,7 @@
 local file = assert(io.open('Code/sbm_deposits.lua', 'r'))
 local source = file:read('*a'); file:close()
-local block = assert(source:match('function DepositRules.InitializeSurfaceDepositDiscovery.-\nend\n'))
+local block = assert(source:match('local function IsCommanderStartDeposit.-\nend\n'))
+  .. assert(source:match('function DepositRules.InitializeSurfaceDepositDiscovery.-\nend\n'))
   .. assert(source:match('function DepositRules.RestorePendingSurfaceDiscovery.-\nend\n'))
 local hidden, scanned = {status='unexplored'}, {status='scanned'}
 local globals = {g_SignsVisible=true, ShouldShowResourceIcons=function() return true end,

@@ -1110,6 +1110,9 @@ local function ContactFrameEntry(node,record)
 		and v[4]==s[1] and v[5]==s[2] and v[6]==s[3] and frame.asset_local==pose.asset_local
 	if same then for i=1,3 do for j=1,3 do if v[6+(i-1)*3+j]~=c[i][j] then same=false end end end end
 	if not same then
+		-- WorldBounds caches the absolute basis on the matrix itself. A changed
+		-- basis must invalidate it along with the pose's pair/projection caches.
+		matrix.absolute_columns=nil
 		pose.contact_bounds=nil;pose.contact_vertices=nil;pose.contact_triangles=nil;pose.oriented_contact_bounds=nil
 		pose.reference_frames=nil
 		v={o[1],o[2],o[3],s[1],s[2],s[3]}
@@ -1719,7 +1722,7 @@ local function Scan(context,source)
 								if value==nil then value=terrain_api.GetHeight(map,x,y);heightfield_nodes[key]=value or false end
 								return value
 							end
-							local measured,gap=Geometry.TrianglesAboveHeightfield(triangles,height_at,100,width,height,0,65536,true)
+							local measured,gap=Geometry.TrianglesAboveHeightfield(triangles,height_at,100,width,height,0,65536,"positive")
 							if measured and type(gap)=="number" and gap>0 then
 								node.seating_proposal=true;node.measured_terrain_gap=gap
 								node.reason="measured terrain gap below the slope-scaled proof margin; rollback-guarded seating proposal"
@@ -1780,7 +1783,7 @@ local function Scan(context,source)
 						if value==nil then value=terrain_api.GetHeight(map,x,y);heightfield_nodes[key]=value or false end
 						return value
 					end
-					local measured,gap=Geometry.TrianglesAboveHeightfield(triangles,height_at,100,width,height,0,65536,true)
+					local measured,gap=Geometry.TrianglesAboveHeightfield(triangles,height_at,100,width,height,0,65536,"positive")
 					if measured and type(gap)=="number" and gap>0 then
 						node.seating_proposal=true;node.measured_terrain_gap=gap
 						node.reason="unrooted contact group measured above terrain; rollback-guarded seating proposal"
@@ -2886,7 +2889,7 @@ end
 -- Read-only evidence for the separate correction service. Unknown geometry,
 -- attachments, stacks and dependent formations cannot be treated as loose stones.
 function Validator.SeatingEvidence(map,bounds_only)
-	local context=contexts[map];local result={}
+	local context=contexts[map];local result,refused_native={},{}
 	if not context or context.incomplete or not context.index then return result end
 	local eligible=SBM.RockGrounding and SBM.RockGrounding.Eligible
 	for _,record in ipairs(context.list) do
@@ -2895,6 +2898,7 @@ function Validator.SeatingEvidence(map,bounds_only)
 			and (not context.correction_only or context.repair_targets[obj])
 			and not record.pose.parent and #record.nodes>0 then
 			local safe=not (record.foundation and record.foundation.incomplete);local unsupported=record.foundation~=nil
+			local own_geometry_safe=safe;local unknown_neighbour=false
 			-- 59N61W: two stones leaning only on each other. When both sides are unrooted and both
 			-- carry their own seating proposal, neither supports anything; each is seated on its own
 			-- and verified independently. Any rooted or unproposed side still vetoes the move.
@@ -2904,11 +2908,21 @@ function Validator.SeatingEvidence(map,bounds_only)
 			end
 			for _,node in ipairs(record.nodes) do
 				if node.geometry.animated or node.partial or node.unknown_support then safe=false end
+				if node.geometry.animated or node.partial then own_geometry_safe=false end
+				if node.unknown_support then unknown_neighbour=true end
 				-- An open-base repair proves terrain contact for every component at
 				-- its proposed final pose. Existing rock contact is not itself a veto;
 				-- dependencies must instead survive the exact proposed translation.
 				for _,edge in ipairs(node.edges) do
-					if edge.record~=record and not record.foundation and not unrooted_pair(node,edge) then safe=false end
+					-- Outgoing contact with another cosmetic rock is not a dependent:
+					-- one LOD can touch it while another still floats. Nominate that
+					-- rigid rock for the existing terrain/visibility/collision planner.
+					-- Incoming dependencies are checked below and still move as a
+					-- verified group or veto the correction. Non-rock supports retain
+					-- their strict refusal; contact never grants a support exemption.
+					local cosmetic_support=edge.record~=record and eligible(edge.record.obj)
+					if edge.record~=record and not record.foundation and not unrooted_pair(node,edge)
+						and not cosmetic_support then safe=false end
 				end
 				-- A complete open-base rim gap is itself the float proof. A pair of
 				-- such rocks resting only on each other has no rooted component and
@@ -2920,7 +2934,7 @@ function Validator.SeatingEvidence(map,bounds_only)
 				-- itself. The planner must retain every component's visible extent;
 				-- attachment/object edges and dependents still veto movement here.
 			end
-			if type(obj.ForEachAttach)=="function" then obj:ForEachAttach(function()safe=false end) end
+			if type(obj.ForEachAttach)=="function" then obj:ForEachAttach(function()safe=false;own_geometry_safe=false end) end
 			local bounds=BoxBounds(obj:GetObjectBBox())
 			-- 2S67W: a lifted vanilla float with a neighbour resting on it. A dependent that could
 			-- join a rigid group (complete, unattached, eligible, every component supported or
@@ -2956,10 +2970,21 @@ function Validator.SeatingEvidence(map,bounds_only)
 				end
 				result[#result+1]={obj=obj,components=components,bounds=bounds,foundation=record.foundation~=nil,
 					group_root=group_root or nil,confirmed=row.status=="confirmed defect" or row.seating_proposal}
+			elseif not safe and unsupported and own_geometry_safe and unknown_neighbour
+				and row.seating_proposal and obj.SuperBigMapDecorEnginePass~=true
+				and type(obj.SuperBigMapNativeGround)=="table"
+				and obj.SuperBigMapNativeGround.version==NATIVE_GROUND_VERSION then
+				-- Apply the existing native-rock keep-in-place policy to refusals
+				-- discovered before the planner as well as inside its swept check.
+				-- The rock has complete static geometry and measured native terrain
+				-- history. Unknown neighbours still forbid movement and never become
+				-- support witnesses. Added/unrecorded/partial rocks remain unresolved.
+				refused_native[#refused_native+1]={obj=obj,
+					reason="native correction refused: neighbouring support geometry is unknown"}
 			end
 		end
 	end
-	return result
+	return result,refused_native
 end
 
 -- Keep a small supported stack rigid instead of lowering its root out from

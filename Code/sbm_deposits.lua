@@ -485,11 +485,15 @@ end
 
 local function BuildUndergroundReachability(map)
 	if not IsUndergroundMap(map) then return nil end
+	local pass_version = map.PassVersion
+	local legacy_pass_version = (SuperBigMap.State or {}).legacy_pathfinder_pass_version
 	local cached = underground_reachability_by_map[map]
-	if cached then return cached end
+	if cached and cached.pass_version == pass_version
+		and cached.legacy_pass_version == legacy_pass_version then return cached end
 	local state = {
 		seeds = {}, results = {}, checks = 0, reachable = 0, rejected = 0,
 		failures = 0, method = "unavailable",
+		pass_version = pass_version, legacy_pass_version = legacy_pass_version,
 	}
 	underground_reachability_by_map[map] = state
 	local connectivity_check = Global("ConnectivityCheck")
@@ -539,7 +543,82 @@ local function BuildUndergroundReachability(map)
 		end
 	end
 	state.available = #state.seeds > 0 and state.method ~= "unavailable"
+	-- Reachability is an OR over entrance seeds. If a retained entrance has a real
+	-- path to another seed, every destination reachable from that seed is also
+	-- reachable from the retained entrance. Keep only undominated seeds, in native
+	-- order. This uses directed path evidence; proximity, shared cavern appearance
+	-- and the reverse direction alone never justify removing an entrance. On the
+	-- legacy pathfinder this avoids flooding the same cavern once per entrance for
+	-- every rejected placement. Failed/unknown checks retain the seed.
+	state.original_seeds = #state.seeds
+	state.seed_checks, state.redundant_seeds = 0, 0
+	if state.available and #state.seeds > 1 then
+		local retained = {}
+		for _, seed in ipairs(state.seeds) do
+			local covered = false
+			for _, representative in ipairs(retained) do
+				state.seed_checks = state.seed_checks + 1
+				local ok, result
+				if state.method == "ConnectivityCheck" then
+					ok, result = pcall(connectivity_check, map, representative, seed, 1, 0)
+				else
+					ok, result = pcall(pf_api.HasPosPath, map, representative, seed, 1)
+				end
+				if ok and (result == true or type(result) == "number" and result >= 0) then
+					covered = true
+					break
+				elseif not ok then
+					state.failures = state.failures + 1
+				end
+			end
+			if covered then state.redundant_seeds = state.redundant_seeds + 1
+			else retained[#retained + 1] = seed end
+		end
+		state.query_seeds = retained
+	end
 	return state
+end
+
+-- A failed native ranged path query proves that no destination inside its
+-- arrival sphere is reachable. Reuse that negative evidence for nearby samples,
+-- never a guessed connected component. The normal exact query still decides
+-- every point outside those spheres. All evidence lives in the same pass/tunnel
+-- versioned state as the entrance proofs above.
+local function InUnreachableUndergroundRegion(state, target)
+	if type(target.xyz) ~= "function" then return false end
+	local x, y, z = target:xyz()
+	if type(z) ~= "number" then return false end
+	for _, region in ipairs(state.negative_regions or {}) do
+		local dx, dy, dz = x-region.x, y-region.y, z-region.z
+		if dx*dx+dy*dy+dz*dz <= region.radius*region.radius then
+			state.region_hits = (state.region_hits or 0) + 1
+			return true
+		end
+	end
+	return false
+end
+
+local function RememberUnreachableUndergroundRegion(map, state, target)
+	local pf_api = state.pf_api
+	if map.SuperBigMapLegacyPathfinder ~= true or type(pf_api) ~= "table"
+		or type(pf_api.PosPathLen) ~= "function" or type(target.xyz) ~= "function" then return end
+	local x, y, z = target:xyz()
+	if type(z) ~= "number" then return end
+	local radius = 16000
+	local key = tostring(math.floor(x/radius)) .. ":" .. tostring(math.floor(y/radius))
+		.. ":" .. tostring(math.floor(z/radius))
+	state.region_probes = state.region_probes or {}
+	if state.region_probes[key] then return end
+	state.region_probes[key] = true
+	for _, seed in ipairs(state.query_seeds or state.seeds) do
+		state.region_checks = (state.region_checks or 0) + 1
+		local ok, reachable = pcall(pf_api.PosPathLen, map, seed, target, 1, radius)
+		-- Only an explicit successful negative answer is evidence. API errors or
+		-- unknown return shapes leave the exact per-point path checks in place.
+		if not ok or reachable ~= false then return end
+	end
+	state.negative_regions = state.negative_regions or {}
+	state.negative_regions[#state.negative_regions+1] = {x=x,y=y,z=z,radius=radius}
 end
 
 local function IsReachableFromUndergroundEntrance(map, pt, known_q, known_r)
@@ -570,7 +649,8 @@ local function IsReachableFromUndergroundEntrance(map, pt, known_q, known_r)
 	local connectivity_check = state.connectivity_check
 	local pf_api = state.pf_api
 	local reachable = false
-	for _, seed in ipairs(state.seeds) do
+	local region_rejected = InUnreachableUndergroundRegion(state, target)
+	for _, seed in ipairs(not region_rejected and (state.query_seeds or state.seeds) or {}) do
 		local ok, result
 		if state.method == "ConnectivityCheck" and type(connectivity_check) == "function" then
 			ok, result = pcall(connectivity_check, map, seed, target, 1, 0)
@@ -585,6 +665,9 @@ local function IsReachableFromUndergroundEntrance(map, pt, known_q, known_r)
 		elseif not ok then
 			state.failures = state.failures + 1
 		end
+	end
+	if not reachable and not region_rejected then
+		RememberUnreachableUndergroundRegion(map, state, target)
 	end
 	state.results[key] = reachable
 	if reachable then state.reachable = state.reachable + 1 else state.rejected = state.rejected + 1 end
@@ -1704,7 +1787,72 @@ function DepositRules.BadgeHexOccupied(occupied, q, r)
 	return BadgeHexOccupied(occupied, q, r)
 end
 
+-- Starting-tech mods can invoke vanilla's gameplay resource spawner during
+-- CityInit, after the immutable native-source census. These are technology
+-- rewards, not generator markers. Run that native call once on final terrain,
+-- after enrichment/scan replay and before rock seating and entrance commitment.
+local function PatchStartupTechnologySpawns()
+	local state = SuperBigMap.State
+	local current = Global("SpawnResourceOrAnomaly")
+	if current == state.startup_technology_spawn_wrapper then
+		if state.startup_technology_spawn_version == SuperBigMap.GENERATOR_PATCH_VERSION then return true end
+		current = state.startup_technology_spawn_original
+	end
+	if type(current) ~= "function" then return false end
+	state.startup_technology_spawn_original = current
+	local function wrapper(tech, resource, environment)
+		local map = Global("MainMap")
+		local pending = map and (map.SuperBigMapStretchPipelinePending == true
+			or map.SuperBigMapSurfaceStretchScheduled == true
+			or DepositRules.HasStagedNativeEnrichmentRecords(map))
+		if pending and map.SuperBigMapSurfacePostPipelineRevalidationComplete ~= true
+			and (environment == nil or environment == "Surface")
+			and SuperBigMap.SectorGrid.IsModMap(map) then
+			if not tech or type(tech.id) ~= "string" then return current(tech, resource, environment) end
+			local queue = map.SuperBigMapDeferredStartupTechSpawns
+			if type(queue) ~= "table" then queue = {}; map.SuperBigMapDeferredStartupTechSpawns = queue end
+			queue[#queue + 1] = { tech_id = tech.id, resource = resource, environment = environment }
+			return
+		end
+		return current(tech, resource, environment)
+	end
+	state.startup_technology_spawn_wrapper = wrapper
+	state.startup_technology_spawn_version = SuperBigMap.GENERATOR_PATCH_VERSION
+	SpawnResourceOrAnomaly = wrapper
+	return true
+end
+
+function DepositRules.FlushStartupTechnologySpawns(map)
+	local queue = map and map.SuperBigMapDeferredStartupTechSpawns
+	if type(queue) ~= "table" or #queue == 0 then return true, 0 end
+	if map.SuperBigMapSurfaceStretchFailed or map.SuperBigMapSurfaceStretchDone ~= true then
+		return false, "technology rewards require completed surface terrain"
+	end
+	local original = (SuperBigMap.State or {}).startup_technology_spawn_original
+	local definitions = Global("TechDef")
+	if type(original) ~= "function" or type(definitions) ~= "table" then return false, "technology spawn API unavailable" end
+	local completed = 0
+	for _, request in ipairs(queue) do
+		if request.status ~= "complete" then
+			-- A partially executed foreign callback must not grant duplicate rewards
+			-- if generation/recovery is retried. Keep its diagnostic in the save.
+			if request.status then return false, request.error or "technology reward execution was interrupted" end
+			local tech = definitions[request.tech_id]
+			if not tech then return false, "technology definition unavailable: " .. tostring(request.tech_id) end
+			request.status = "applying"
+			local ok, err = pcall(original, tech, request.resource, request.environment)
+			if not ok then request.status, request.error = "failed", tostring(err); return false, request.error end
+			request.status = "complete"
+		end
+		completed = completed + 1
+	end
+	map.SuperBigMapDeferredStartupTechSpawns = false
+	map.SuperBigMapStartupTechnologySpawns = { completed = completed }
+	return true, completed
+end
+
 function DepositRules.ApplyModBehavior()
+	PatchStartupTechnologySpawns()
 	if not ExpansionStepEnabled(3) or not ExpansionStepEnabled(18) then
 		RestoreBadgeOverlapPrevention()
 		return false
@@ -1714,6 +1862,13 @@ end
 
 function DepositRules.RestoreVanillaBehavior()
 	RestoreBadgeOverlapPrevention()
+	local state = SuperBigMap.State or {}
+	if type(state.startup_technology_spawn_original) == "function"
+		and Global("SpawnResourceOrAnomaly") == state.startup_technology_spawn_wrapper then
+		SpawnResourceOrAnomaly = state.startup_technology_spawn_original
+	end
+	state.startup_technology_spawn_wrapper, state.startup_technology_spawn_original = nil, nil
+	state.startup_technology_spawn_version = nil
 end
 
 -- Called for every freshly-created expansion clone (no-op unless it is a scan-gated deposit).
@@ -2561,6 +2716,19 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers, capture_rej
 
 	return {
 		CanPlace = can_place,
+		ForgetCandidate = function(candidate) placement_cache[candidate] = nil end,
+		HexExclusions = function(profile)
+			local circles = {}
+			for _, column in pairs(buckets) do for _, bucket in pairs(column) do
+				for _, entry in ipairs(bucket) do
+					local radius = PairRepulsionRadius(profile, entry.profile)
+					if type(radius) == "number" and radius >= 0 then
+						circles[#circles + 1] = { x = entry.x, y = entry.y, radius = radius }
+					end
+				end
+			end end
+			return DepositRules.BuildHexCircleExclusions(circles)
+		end,
 		CanPlaceUnique = can_place_unique,
 		CanPlaceMinimum = can_place_minimum,
 		Commit = commit,
@@ -2979,6 +3147,31 @@ local function NativePropertyValuesEqual(actual, expected)
 		if ok then return equal == true end
 	end
 	return false
+end
+
+-- Constructor fields do not necessarily invoke native property setters. Preserve
+-- the captured portable values even when Init resets a field or its getter reads
+-- engine storage instead of the constructor table. Never relax the later audit.
+local function RestoreNativeMarkerProperties(marker, properties)
+	local restored, first = 0, nil
+	for id, expected in pairs(properties or {}) do
+		local ok, actual = pcall(marker.GetProperty, marker, id)
+		if not ok then return false, "cannot read native property " .. tostring(id) end
+		if not NativePropertyValuesEqual(actual, expected) then
+			if type(marker.SetProperty) ~= "function" then return false, "native property setter unavailable: " .. tostring(id) end
+			local metadata = type(marker.GetPropertyMetadata) == "function" and marker:GetPropertyMetadata(id) or { id = id }
+			local value = CloneNativePropertyValue(marker, expected, metadata)
+			local set_ok, set_error = pcall(marker.SetProperty, marker, id, value)
+			if not set_ok then return false, "cannot restore native property " .. tostring(id) .. ": " .. tostring(set_error) end
+			local read_ok, restored_value = pcall(marker.GetProperty, marker, id)
+			if not read_ok or not NativePropertyValuesEqual(restored_value, expected) then
+				return false, "native property restoration did not stick: " .. tostring(id)
+			end
+			restored = restored + 1
+			first = first or { class = marker.class, property = tostring(id), expected = tostring(expected), actual = tostring(actual) }
+		end
+	end
+	return true, restored, first
 end
 
 local function NativeRecordBaseGeometry(map, record)
@@ -3437,6 +3630,10 @@ function DepositRules.VerifyRecreatedNativeEnrichments(map, records, reason)
 					local ok_value, actual_value = pcall(marker.GetProperty, marker, id)
 					if not ok_value or not NativePropertyValuesEqual(actual_value, expected_value) then
 						stats.property_mismatches = stats.property_mismatches + 1
+						stats.first_property_mismatch = stats.first_property_mismatch or {
+							class = marker.class, property = tostring(id),
+							expected = tostring(expected_value), actual = tostring(actual_value),
+						}
 					end
 				end
 			end
@@ -3633,6 +3830,10 @@ function DepositRules.RecreateStagedNativeEnrichments(map, reason)
 				and type(marker.SetCollectionIndex) == "function" then
 				marker:SetCollectionIndex(record.collection_index)
 			end
+			local properties_ok, property_count, first_property = RestoreNativeMarkerProperties(marker, record.properties)
+			if not properties_ok then error("record " .. tostring(i) .. ": " .. tostring(property_count)) end
+			stats.properties_restored = (stats.properties_restored or 0) + property_count
+			stats.first_property_restored = stats.first_property_restored or first_property
 			marker.SuperBigMapNativeSourceX = record.source_x
 			marker.SuperBigMapNativeSourceY = record.source_y
 			marker.SuperBigMapNativeSourceZ = record.source_z
@@ -3694,6 +3895,7 @@ function DepositRules.RecreateStagedNativeEnrichments(map, reason)
 	map.SuperBigMapNativeEnrichmentCaptureCount = #records
 	map.SuperBigMapNativeEnrichmentRecordSignature = NativeRecordSignature(records)
 	map.SuperBigMapNativeEnrichmentRecreatedCount = #records
+	map.SuperBigMapNativePropertyRestoration = { count = stats.properties_restored or 0, first = stats.first_property_restored }
 	return true, stats
 end
 
@@ -6570,6 +6772,133 @@ local function FillOasisClusterAnomalies(map)
 	return true, stats
 end
 
+-- A failed random search is not proof that a crowded surface has no legal slots.
+-- Enumerate the finite axial lattice only after that search is exhausted. Four
+-- projected corners bound every hex centre in the rectangular placement area;
+-- the world-space test removes the extra corners of that axial bounding box.
+-- The caller retains the existing family/cluster predicate, and every accepted
+-- hex still passes the ordinary terrain, passability and obstruction validator.
+function DepositRules.BuildHexCircleExclusions(circles)
+	-- Intersect each immutable repulsion disk with axial grid lines. Merged integer
+	-- intervals skip only blocked centres; all remaining positions retain the full
+	-- live validator. HexToWorld supplies the actual lattice origin and basis.
+	local to_hex, to_world, point_fn = Global("WorldToHex"), Global("HexToWorld"), Global("point")
+	local ox, oy = to_world(0, 0)
+	local rx, ry = to_world(0, 1)
+	local vx, vy = rx - ox + 0.0, ry - oy + 0.0
+	local length_sq = vx * vx + vy * vy
+	assert(length_sq > 0, "invalid axial lattice basis")
+	local rows = {}
+	for _, disk in ipairs(circles) do
+		local radius, first_q, last_q = disk.radius
+		for _, x in ipairs({disk.x - radius, disk.x + radius}) do
+			for _, y in ipairs({disk.y - radius, disk.y + radius}) do
+				local q = to_hex(point_fn(x, y))
+				first_q, last_q = math.min(first_q or q, q), math.max(last_q or q, q)
+			end
+		end
+		local radius_sq = radius * (radius + 0.0)
+		for q = math.floor(first_q) - 1, math.ceil(last_q) + 1 do
+			local x, y = to_world(q, 0)
+			local dx, dy = x - disk.x, y - disk.y
+			local dot = dx * vx + dy * vy
+			local discriminant = dot * dot - length_sq * (dx * dx + dy * dy - radius_sq)
+			if discriminant >= 0 then
+				local root = math.sqrt(discriminant)
+				local first = math.ceil((-dot - root) / length_sq)
+				local last = math.floor((-dot + root) / length_sq)
+				local function inside(r)
+					local px, py = to_world(q, r)
+					local ex, ey = px - disk.x, py - disk.y
+					return ex * ex + ey * ey <= radius_sq
+				end
+				-- Floating roots may round at an integer boundary. Native-coordinate
+				-- checks ensure that a legal boundary centre is never excluded.
+				while first <= last and not inside(first) do first = first + 1 end
+				while first <= last and not inside(last) do last = last - 1 end
+				if first <= last then
+					local row = rows[q] or {}; rows[q] = row
+					row[#row + 1] = {first, last}
+				end
+			end
+		end
+	end
+	for q, row in pairs(rows) do
+		table.sort(row, function(a, b) return a[1] < b[1] end)
+		local merged = {}
+		for _, interval in ipairs(row) do
+			local tail = merged[#merged]
+			if tail and interval[1] <= tail[2] + 1 then tail[2] = math.max(tail[2], interval[2])
+			else merged[#merged + 1] = interval end
+		end
+		rows[q] = merged
+	end
+	return rows
+end
+
+function DepositRules.BuildSurfaceResidualHexCandidates(map, context, bounds, accept, exclusions)
+	local candidates = {}
+	local stats = { visited = 0, terrain_checks = 0, accepted = 0, repulsion_skipped = 0 }
+	if IsUndergroundMap(map) then return candidates, stats end
+	local to_hex, to_world, point_fn = Global("WorldToHex"), Global("HexToWorld"), Global("point")
+	assert(type(to_hex) == "function" and type(to_world) == "function"
+		and type(point_fn) == "function", "surface residual hex geometry unavailable")
+	local q0, q1, r0, r1
+	for _, x in ipairs({ bounds.x0, bounds.x1 }) do
+		for _, y in ipairs({ bounds.y0, bounds.y1 }) do
+			local q, r = to_hex(point_fn(x, y))
+			assert(type(q) == "number" and type(r) == "number", "surface residual hex bounds invalid")
+			q0, q1 = math.min(q0 or q, q), math.max(q1 or q, q)
+			r0, r1 = math.min(r0 or r, r), math.max(r1 or r, r)
+		end
+	end
+	for q = math.floor(q0) - 1, math.ceil(q1) + 1 do
+		local row, interval_n = exclusions and exclusions[q], 1
+		local r, last_r = math.floor(r0) - 1, math.ceil(r1) + 1
+		while r <= last_r do
+			while row and row[interval_n] and row[interval_n][2] < r do interval_n = interval_n + 1 end
+			local interval = row and row[interval_n]
+			if interval and interval[1] <= r then
+				local next_r = math.min(last_r, interval[2]) + 1
+				stats.repulsion_skipped = stats.repulsion_skipped + next_r - r
+				r = next_r
+			else
+			local x, y = to_world(q, r)
+			if x >= bounds.x0 and x < bounds.x1 and y >= bounds.y0 and y < bounds.y1 then
+				stats.visited = stats.visited + 1
+				local pt = point_fn(x, y)
+				-- The native buildability grid rejects most mountain/void hexes.
+				-- Check this cheap member of the same conjunction before the Lua
+				-- repulsion search; CanReceiveDeposit still verifies every survivor.
+				if IsBuildableAt(map, pt, true, context) then
+				local sector = SectorAtPoint(map, x, y)
+				if sector and not SectorIsScanned(sector) then
+					local c = { x = x, y = y, q = q, r = r, sector = sector,
+						_sbm_repulsion_hex = tostring(q) .. ":" .. tostring(r) }
+					if accept(c) then
+						stats.terrain_checks = stats.terrain_checks + 1
+						local valid, passable, flatness, buildable, _, _, unobstructed =
+							CanReceiveDeposit(map, pt, context)
+						if valid then
+							c.passable, c.flatness, c.buildable, c.unobstructed = passable, flatness, buildable, unobstructed
+							c._sbm_terrain_valid = true
+							c.valley_score, c.mountain_base_rise, c.mountain_base_higher_samples =
+								ValleyScore(map, point_fn(x, y))
+							c.mountain_base = IsMountainBaseRelief(c.valley_score, c.mountain_base_rise, c.mountain_base_higher_samples)
+							candidates[#candidates + 1] = c
+						end
+					end
+				end
+				end
+			end
+			r = r + 1
+			end
+		end
+	end
+	stats.accepted = #candidates
+	return candidates, stats
+end
+
 function DepositRules.TopUpAnomalies(map)
 	if cfg().TOPUP_ANOMALIES ~= true then return end
 	if not ExpansionAdditionStagesReady("anomaly top-up") then return end
@@ -6614,7 +6943,7 @@ function DepositRules.TopUpAnomalies(map)
 	end
 	-- Markers remain as the authoritative backing records after an anomaly is spawned;
 	-- counting live SubsurfaceAnomaly objects too would double-count revealed markers.
-	-- Targets use only original generator output; current counts include prior top-ups so a
+	-- Targets include exact native requests; current counts include prior top-ups so a
 	-- repeated call remains a no-op.
 	local templates, standard_templates, standard_templates_by_kind = {}, {}, {}
 	local current_by_kind, current_standard_by_kind = {}, {}
@@ -6641,21 +6970,23 @@ function DepositRules.TopUpAnomalies(map)
 	DepositRules.SortNativeTemplates(templates)
 	DepositRules.SortNativeTemplates(standard_templates)
 	for _, list in pairs(standard_templates_by_kind) do DepositRules.SortNativeTemplates(list) end
-	local target_by_kind, target_keys = {}, {}
-	-- This is also the authoritative surface top-up category filter. Do not broaden it to
-	-- breakthrough/other: those are finite-pool or unique families rather than density top-ups.
-	local scalable_kind = { complete = true, unlock = true, sequence = true }
-	for kind, current_count in pairs(current_by_kind) do
-		-- Breakthroughs are capped and pruned by City:InitBreakThroughAnomalies;
-		-- `other` includes unique underground/cave content. Preserve both exactly.
-		if scalable_kind[kind] then
-			local standard_current = current_standard_by_kind[kind] or 0
-			local special_current = math.max(0, current_count - standard_current)
-			target_by_kind[kind] = special_current
-				+ math.floor((source_standard_by_kind[kind] or 0) * area_factor + 0.5)
-		else
-			target_by_kind[kind] = current_count
+	local requested = map.SuperBigMapRequestedAnomalies
+	local target_by_kind = SuperBigMap.AnomalyQuota.Targets(requested,
+		source_standard_by_kind, current_by_kind, current_standard_by_kind, area_factor)
+	local target_keys = {}
+	-- If a crowded source placed no ordinary anomalies at all, construct a
+	-- standard marker at an already validated candidate instead of requiring
+	-- a donor. Never clone unique/special underground anomaly subclasses.
+	local function create_anomaly(template, x, y)
+		if template then
+			local pos = ObjectPos(template)
+			if not (pos and type(pos.xy) == "function") then return nil end
+			local tx, ty = pos:xy()
+			return clone_fn(map, template, point(x - tx, y - ty, 0))
 		end
+		local place = Global("PlaceObject")
+		if type(place) ~= "function" then return nil end
+		return place("SubsurfaceAnomalyMarker", { depth_layer = 1 }, map, nil, point(x, y))
 	end
 	-- Build the engine-configured Event scenario pool. Prefer scenarios not already
 	-- assigned to native markers; once exhausted, reuse is allowed just as vanilla's
@@ -6722,12 +7053,15 @@ function DepositRules.TopUpAnomalies(map)
 		if IsUndergroundMap(map) or surface_edge_ring then return end
 		local fill_ok, fill_error = RunPaused("SuperBigMapOasisClusterAnomalies", function()
 			local ok, fill_stats = FillOasisClusterAnomalies(map)
+			if type(fill_stats) == "table" and type(oasis_stats) == "table" then
+				fill_stats.moved = (fill_stats.moved or 0) + (oasis_stats.moved or 0)
+			end
 			oasis_stats = fill_stats
 			if not ok then error(fill_stats and fill_stats.error or "unknown oasis anomaly failure") end
 		end)
 		if not fill_ok then error("oasis cluster anomaly placement failed: " .. tostring(fill_error)) end
 	end
-	if shortfall <= 0 or #templates == 0 then
+	if shortfall <= 0 then
 		fill_oasis_clusters()
 		if surface_edge_ring then
 			local redistribution_ok, redistribution_error = RunPaused(
@@ -6742,6 +7076,7 @@ function DepositRules.TopUpAnomalies(map)
 		end
 		SetEnrichmentTopUpStatus(map, "anomalies", shortfall <= 0, shortfall, {
 			area_factor = area_factor, source_counts = CountMapString(source_by_kind),
+		requested_counts = CountMapString(type(requested) == "table" and requested or {}),
 			target_counts = CountMapString(target_by_kind),
 			current_counts = CountMapString(current_by_kind), added_counts = "",
 			outer_ring_redistributed = redistribution_stats and redistribution_stats.moved or 0,
@@ -6787,6 +7122,8 @@ function DepositRules.TopUpAnomalies(map)
 	local surface_mountain_base_added = 0
 	local surface_plain_added = 0
 	local surface_on_demand_added = 0
+	local surface_hex_fallback_added, surface_hex_fallback_stats = 0, nil
+	local surface_oasis_capacity_refills = 0
 	local surface_base_preference_fallback_added = 0
 	local surface_mountain_base_quota_shortfall = 0
 	local surface_base_preference_stats
@@ -6833,9 +7170,6 @@ function DepositRules.TopUpAnomalies(map)
 			if #placeholder_sectors ~= expected_ring_sectors or #placeholder_sectors == 0 then
 				error("surface anomaly placeholders cannot resolve the complete outer-ring sector list")
 			end
-			if #standard_templates == 0 then
-				error("surface anomaly placeholder template pool is empty")
-			end
 			for i = #placeholder_sectors, 2, -1 do
 				local j = RandInt(i) + 1
 				placeholder_sectors[i], placeholder_sectors[j] =
@@ -6846,21 +7180,16 @@ function DepositRules.TopUpAnomalies(map)
 				if not needed_kind then error("surface anomaly deficit selection exhausted early") end
 				local kind_templates = standard_templates_by_kind[needed_kind]
 				local template = kind_templates and kind_templates[RandInt(#kind_templates) + 1]
-					or standard_templates[RandInt(#standard_templates) + 1]
+					or (#standard_templates > 0 and standard_templates[RandInt(#standard_templates) + 1])
 				local event_sequence, event_sequence_list
 				if needed_kind == "sequence" then
 					event_sequence, event_sequence_list = take_event_scenario(template)
 					if not event_sequence then error("surface anomaly event scenario pool unavailable") end
 				end
-				local tpos = ObjectPos(template)
-				if not (tpos and type(tpos.xy) == "function") then
-					error("surface anomaly template position unavailable")
-				end
 				local sector = placeholder_sectors[((placement_n - 1) % #placeholder_sectors) + 1]
 				local x = math.floor((sector.area_x0 + sector.area_x1) / 2)
 				local y = math.floor((sector.area_y0 + sector.area_y1) / 2)
-				local tx, ty = tpos:xy()
-				local clone = clone_fn(map, template, point(x - tx, y - ty, 0))
+				local clone = create_anomaly(template, x, y)
 				if not clone or type(clone) ~= "table" then
 					error("surface anomaly placeholder creation failed")
 				end
@@ -7195,14 +7524,14 @@ function DepositRules.TopUpAnomalies(map)
 			return true
 		end
 		-- Both surface and underground extras use the shared capacity-normalized whole-map selector.
-		local function new_whole_map_selector(label, selector_candidates)
+		local function new_whole_map_selector(label, selector_candidates, shared_loads)
 			selector_candidates = selector_candidates or candidates
 			return not surface_edge_ring
 				and NewSectorBalancedCandidateSelector(map, selector_candidates,
 					label or (underground and "underground anomalies" or "surface anomalies"),
 					function(candidate, profile)
 						return outside_oasis_clusters(candidate) and repulsion.CanPlace(candidate, profile)
-					end) or nil
+					end, shared_loads) or nil
 		end
 		local mountain_base_selector = not underground and #mountain_base_surface_candidates > 0
 			and new_whole_map_selector("surface anomaly mountain-base quota",
@@ -7212,6 +7541,27 @@ function DepositRules.TopUpAnomalies(map)
 		local relaxed_whole_map_selector
 		local surface_all_terrain_selector
 		local surface_on_demand_selector, surface_on_demand_sample_limit
+		local surface_hex_selector
+		local function rebuild_surface_hex_selector()
+			local hex_candidates, stats = DepositRules.BuildSurfaceResidualHexCandidates(
+				map, validation_context,
+				{ x0 = lo_x, y0 = lo_y, x1 = lo_x + span_x, y1 = lo_y + span_y },
+				function(candidate)
+					local valid = outside_oasis_clusters(candidate) and repulsion.CanPlace(candidate, anomaly_profile)
+					-- Grid probes must not retain a map-sized cache of rejects.
+					repulsion.ForgetCandidate(candidate)
+					return valid
+				end, repulsion.HexExclusions(anomaly_profile))
+			if surface_hex_fallback_stats then
+				for key, value in pairs(stats) do
+					if type(value) == "number" then
+						stats[key] = value + (tonumber(surface_hex_fallback_stats[key]) or 0)
+					end
+				end
+			end
+			surface_hex_fallback_stats = stats
+			return new_whole_map_selector("surface anomaly residual hex search", hex_candidates)
+		end
 		local function rebuild_whole_map_selectors()
 			whole_map_selector = new_whole_map_selector(nil,
 				underground and candidates or preferred_surface_candidates)
@@ -7505,24 +7855,37 @@ function DepositRules.TopUpAnomalies(map)
 					selected_whole_map_selector = c and surface_all_terrain_selector or nil
 					surface_base_preference_fallback = c ~= nil
 				end
-				if not c and not underground then
+				if not c and not underground and not surface_hex_selector then
 					-- A crowded map (55S11E: 348 metals, 220 unbuildable sectors) can exhaust the
 					-- planned 8-per-sector pool before the density target is met. Only then, sample
-					-- further whole-map spots on demand, as the underground path does, within one
-					-- more planned round. The same strict terrain and repulsion rules apply; a map
-					-- whose planned pool suffices never reaches this, so it is placed as before.
-					surface_on_demand_sample_limit = surface_on_demand_sample_limit
-						or (candidate_samples + MAX_SAMPLES)
+					-- further whole-map spots on demand. Give each residual placement one bounded
+					-- round: successful placements must not consume a shared lifetime budget and
+					-- strand later anomalies (the reported 16N111E save stopped seven short).
+					-- A full round with no legal spot still fails closed. Existing placements and
+					-- all strict terrain/repulsion rules are unchanged.
+					surface_on_demand_sample_limit = candidate_samples + MAX_SAMPLES
 					while not c and candidate_samples < surface_on_demand_sample_limit do
 						local before = #candidates
 						grow_candidate_pool(before + 1, surface_on_demand_sample_limit)
 						if #candidates <= before then break end
+						-- Every earlier candidate was already exhausted with this same
+						-- profile. Obstacles only accumulate, so only the new candidate
+						-- can pass. Preserve the selector's single-candidate random draw
+						-- without rebuilding/scanning the full pool or marker census.
 						surface_on_demand_selector = new_whole_map_selector(
-							"surface anomalies on-demand", candidates)
+							"surface anomalies on-demand", {candidates[#candidates]}, {})
 						c = take_reachable_candidate(surface_on_demand_selector, anomaly_profile)
 						selected_whole_map_selector = c and surface_on_demand_selector or nil
 					end
 					if c then surface_on_demand_added = surface_on_demand_added + 1 end
+				end
+				if not c and not underground then
+					if not surface_hex_selector then
+						surface_hex_selector = rebuild_surface_hex_selector()
+					end
+					c = take_reachable_candidate(surface_hex_selector, anomaly_profile)
+					selected_whole_map_selector = c and surface_hex_selector or nil
+					if c then surface_hex_fallback_added = surface_hex_fallback_added + 1 end
 				end
 				if not c and sequential_underground then
 					-- Search only for the underground anomaly currently being placed. Stop
@@ -7567,6 +7930,24 @@ function DepositRules.TopUpAnomalies(map)
 						end
 					end
 				end
+				if not c and not underground and not surface_edge_ring then
+					-- Oasis assignments move only existing top-ups, freeing their old
+					-- strict placement slots. An exhausted search predates those moves
+					-- and cannot prove the final layout is full. Rebuild both occupancy
+					-- and candidates after actual movement; stale negative cache entries
+					-- and the old exclusion disks must not survive this boundary. The
+					-- cluster assignment is idempotent, so no movement means no retry.
+					local prior_moves = oasis_stats and oasis_stats.moved or 0
+					fill_oasis_clusters()
+					if (oasis_stats and oasis_stats.moved or 0) > prior_moves then
+						surface_oasis_capacity_refills = surface_oasis_capacity_refills + 1
+						repulsion = NewTopUpRepulsionTracker(map, "anomalies after oasis placement")
+						surface_hex_selector = rebuild_surface_hex_selector()
+						c = take_reachable_candidate(surface_hex_selector, anomaly_profile)
+						selected_whole_map_selector = c and surface_hex_selector or nil
+						if c then surface_hex_fallback_added = surface_hex_fallback_added + 1 end
+					end
+				end
 				if not c then break end
 			end
 			local needed_kind = choose_needed_kind()
@@ -7574,19 +7955,16 @@ function DepositRules.TopUpAnomalies(map)
 			-- FreeTech may have no source marker at all. Any anomaly marker is a
 			-- valid structural template; its reward category is rewritten below.
 			local fallback_templates = standard_templates
-			if #fallback_templates == 0 then break end
 			local template = kind_templates and kind_templates[RandInt(#kind_templates) + 1]
-				or fallback_templates[RandInt(#fallback_templates) + 1]
+				or (#fallback_templates > 0 and fallback_templates[RandInt(#fallback_templates) + 1])
 			local event_sequence, event_sequence_list
 			if needed_kind == "sequence" then
 				event_sequence, event_sequence_list = take_event_scenario(template)
 				if not event_sequence then break end
 			end
-			local tpos = ObjectPos(template)
 			local placement_succeeded = false
-			if tpos and type(tpos.xy) == "function" then
-				local tx, ty = tpos:xy()
-				local clone = clone_fn(map, template, point(c.x - tx, c.y - ty, 0))
+			do
+				local clone = create_anomaly(template, c.x, c.y)
 				if clone and type(clone) == "table" then
 					placement_succeeded = true
 					if selected_whole_map_selector then selected_whole_map_selector.Commit(c) end
@@ -7714,6 +8092,7 @@ function DepositRules.TopUpAnomalies(map)
 	end
 	SetEnrichmentTopUpStatus(map, "anomalies", remaining_shortfall == 0, remaining_shortfall, {
 		area_factor = area_factor, source_counts = CountMapString(source_by_kind),
+		requested_counts = CountMapString(type(requested) == "table" and requested or {}),
 		target_counts = CountMapString(target_by_kind), final_counts = CountMapString(final_by_kind),
 		added_counts = CountMapString(added_by_kind), added_total = added,
 		underground_density_fallback_added = density_fallback_added,
@@ -7744,6 +8123,10 @@ function DepositRules.TopUpAnomalies(map)
 		surface_mountain_base_quota_shortfall = surface_mountain_base_quota_shortfall,
 		surface_plain_added = surface_plain_added,
 		surface_on_demand_added = surface_on_demand_added,
+		surface_hex_fallback_added = surface_hex_fallback_added,
+		surface_oasis_capacity_refills = surface_oasis_capacity_refills,
+		surface_hex_fallback_visited = surface_hex_fallback_stats and surface_hex_fallback_stats.visited or 0,
+		surface_hex_fallback_candidates = surface_hex_fallback_stats and surface_hex_fallback_stats.accepted or 0,
 		surface_base_preference_fallback_added = surface_base_preference_fallback_added,
 		surface_candidate_sectors = surface_base_preference_stats
 			and surface_base_preference_stats.candidate_sectors or 0,
@@ -11990,6 +12373,76 @@ end
 
 DepositRules.IsResourceDepositMarker = IsResourceDepositMarker
 
+-- A commander grants one discovered deposit independently of sector scanning.
+-- Persist the exact grant, including completion after depletion, so scan cleanup
+-- cannot erase it and a repeated initialization cannot grant another deposit.
+local function IsCommanderStartDeposit(map, obj)
+	local grant = map and map.SuperBigMapCommanderStartDeposit
+	return type(grant) == "table" and obj ~= nil
+		and (obj == grant.deposit or obj == grant.marker)
+end
+
+function DepositRules.RevealCommanderStartDeposit(map, repairing_save)
+	local grid = SuperBigMap.SectorGrid
+	if not map or not grid or not grid.IsModMap(map) or IsUndergroundMap(map)
+		or not map.City or not map.City.InitialSector then return true end
+	if type(map.SuperBigMapCommanderStartDeposit) == "table" then return true end
+	local get_profile = Global("GetCommanderProfile")
+	local profile = type(get_profile) == "function" and get_profile()
+	local id = profile and profile.id
+	local class, resource
+	if id == "hydroengineer" then
+		class, resource = "SubsurfaceDepositWater", "Water"
+	elseif id == "astrogeologist" then
+		class, resource = "SubsurfaceDepositPreciousMetals", "PreciousMetals"
+	else
+		return true
+	end
+	local center = map.City.InitialSector.area:Center()
+	local valid = Global("IsValid")
+	local function HasPlacedDeposit(marker)
+		return marker.placed_obj and (type(valid) ~= "function" or valid(marker.placed_obj))
+	end
+	-- A physically placed start-footprint deposit can still be undiscovered.
+	-- Only an actually revealed deposit already satisfies the commander bonus.
+	local deposit = map:MapFindNearest(center, "map", class, function(obj)
+		return obj.revealed == true
+	end)
+	local marker = deposit and deposit.marker
+	if not deposit then
+		-- Old saves have no grant record. A revealed, spent marker is evidence
+		-- that discovery already happened; never replace an exhausted deposit.
+		if repairing_save then
+			local spent = map:MapFindNearest(center, "map", "SubsurfaceDepositMarker", function(obj)
+				return obj.resource == resource and obj.revealed == true
+					and obj.is_placed == true and not HasPlacedDeposit(obj)
+			end)
+			if spent then
+				map.SuperBigMapCommanderStartDeposit = { profile = id, marker = spent, deposit = false }
+				return true
+			end
+		end
+		marker = map:MapFindNearest(center, "map", "SubsurfaceDepositMarker", function(obj)
+			return obj.resource == resource and type(obj.depth_layer) == "number"
+				and obj.depth_layer <= 1
+				and (obj.is_placed ~= true or HasPlacedDeposit(obj))
+		end)
+		if not marker then return false, "commander start deposit marker unavailable: " .. id end
+		deposit = marker.placed_obj
+		if not deposit or (type(valid) == "function" and not valid(deposit)) then
+			marker.revealed = true
+			deposit = marker:PlaceDeposit()
+		end
+		if not deposit then return false, "commander start deposit placement failed: " .. id end
+	end
+	map.SuperBigMapCommanderStartDeposit = { profile = id, marker = marker, deposit = deposit }
+	local pending = map.SuperBigMapScanHiddenDeposits
+	if type(pending) == "table" then pending[deposit] = nil end
+	if marker then marker.revealed = true end
+	SetRevealedState(deposit, true)
+	return true
+end
+
 -- Placement parity does not grant discovery in a different destination sector.
 -- Called in the existing start-placement loop, before deferred GameInit/FX.
 -- Return false only when discovery must wait for the actual destination scan.
@@ -11997,6 +12450,7 @@ function DepositRules.InitializeSurfaceDepositDiscovery(map, obj)
 	local grid = SuperBigMap.SectorGrid
 	if not map or not obj or not grid or not grid.IsModMap(map) or IsUndergroundMap(map)
 		or not map.City or cfg().STRETCH_ENFORCE_SCAN_GATE ~= true then return true end
+	if IsCommanderStartDeposit(map, obj) then return true end
 	if not IsScanGatedDeposit(obj) and not IsKindOfSafe(obj, "TerrainDeposit") then return true end
 	local pos = ObjectPos(obj)
 	if not pos then return true end
@@ -12099,6 +12553,7 @@ function DepositRules.EnforceScanGateAfterStretch(map)
 	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
 		if not (marker and IsResourceDepositMarker(marker)) then return end
 		if marker.is_placed ~= true then return end
+		if IsCommanderStartDeposit(map, marker) then return end
 		local pos = ObjectPos(marker)
 		if not pos or type(pos.xy) ~= "function" then return end
 		local px, py = pos:xy()

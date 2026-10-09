@@ -1,7 +1,8 @@
 -- Super Big Map -- temporary gameplay inspection buttons.
 --
 -- This test aid uses the normal Elevator construction cursor and snap rules, then quick-builds
--- the complete two-map construction group. A second temporary button follows the normal map
+-- the complete two-map construction group, including while the simulation is paused.
+-- A second temporary button follows the normal map
 -- switch path so deferred underground generation finishes, opens the underground, and removes
 -- its darkness blanket for visual parity inspection. Two additional buttons reveal every surface
 -- sector and every underground enrichment for whole-map inspection.
@@ -373,6 +374,7 @@ local function HandleElevatorConstructionSitePlaced(site, class_name)
 
 	local function finish()
 		local map = ObjectMap(site)
+		if not Enabled() or not IsExpandedSessionMap(map) then return false end
 		local leader, members, resolve_error = ResolveElevatorConstructionGroup(site)
 		if not leader then
 			return ReportFailure(resolve_error, { class = tostring(class_name) }, map)
@@ -421,12 +423,20 @@ local function HandleElevatorConstructionSitePlaced(site, class_name)
 		end
 		return true
 	end
-	local create_thread = Global("CreateGameTimeThread")
-	if type(create_thread) ~= "function" then
-		return ReportFailure("game-time task API is unavailable; refusing a one-sided quick-build",
+	local create_thread = Global("CreateRealTimeThread")
+	local wait_frame = Global("WaitNextFrame")
+	if type(create_thread) ~= "function" or type(wait_frame) ~= "function" then
+		return ReportFailure("real-time placement task API is unavailable; refusing a one-sided quick-build",
 			{ class = tostring(class_name) }, ObjectMap(site))
 	end
-	create_thread(finish)
+	create_thread(function()
+		-- The first ConstructionSitePlaced message arrives before the other half and
+		-- its final entity exist. Leave that placement stack before completing the
+		-- native group, but do not wait for game time: the owner may be paused.
+		-- Building GameInit/linking retains its normal game-time scheduling above.
+		wait_frame(1)
+		finish()
+	end)
 end
 
 local function HandleConstructionSitePlaced(site, class_name)
@@ -717,8 +727,13 @@ PlaceElevatorButton.ClearLegacySurfaceRevealPassSuspension =
 SuperBigMap.PlaceElevatorButton = PlaceElevatorButton
 
 State.place_elevator_button_message_handler = HandleConstructionSitePlaced
-if State.place_elevator_button_message_registered ~= true then
+-- Full Lua reloads replace the engine's message registry but preserve mod State.
+-- Match lifecycle registration: the sandbox OnMsg proxy is not a registry token.
+local message_registry = Global("GetStaticMsgNames") or Global("OnMsg")
+if message_registry and (State.place_elevator_button_message_registered ~= true
+	or State.place_elevator_button_message_registry ~= message_registry) then
 	State.place_elevator_button_message_registered = true
+	State.place_elevator_button_message_registry = message_registry
 	Engine.ChainOnMsg("ConstructionSitePlaced", function(...)
 		local handler = (SuperBigMap.State or {}).place_elevator_button_message_handler
 		if type(handler) == "function" then return handler(...) end

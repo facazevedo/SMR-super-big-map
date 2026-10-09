@@ -47,13 +47,18 @@ do
 		-- compact grid bytes until deferred underground stretching consumes it.
 		register("SuperBigMapForcedImpassSource", false)
 	end
-	-- First access may occur in a different process. These are scalar/value-only
-	-- generator records, not generator instances, closures or scratch grids.
+	-- First access may occur in a different process. These are serializable
+	-- records (including saved object references), not generator instances,
+	-- closures or scratch grids.
 	for _, name in ipairs({
+		"SuperBigMapCommanderStartDeposit",
+		"SuperBigMapRequestedAnomalies",
 		"SuperBigMapForcedImpassDeferred",
 		"SuperBigMapPlacementSeed", "SuperBigMapDeferredUndergroundWonderRecords",
 		"SuperBigMapDeferredUndergroundWondersPending", "SuperBigMapDeferredUndergroundWonderCount",
 		"SuperBigMapSurfaceStretchFailed", "SuperBigMapUndergroundStretchFailed",
+		"SuperBigMapLegacySurfaceRecovery",
+		"SuperBigMapDeferredStartupTechSpawns",
 	}) do
 		if type(register) == "function" and (type(registry) ~= "table" or registry[name] == nil) then
 			register(name, false)
@@ -182,7 +187,14 @@ local function IsModMap(map)
 			return false
 		end
 	end
-	-- Persisted per-map marker (survives save/load) -- set when the mod expands the map.
+	-- Ownership and completion are different: a failed pipeline has already changed
+	-- the terrain, but intentionally leaves Expanded=false and access blocked. Its
+	-- persisted failure still identifies this map after SyncMapDataToGrids consumes
+	-- the world/preset-size fallback. Do not clear the failure or publish readiness.
+	for _, name in ipairs({ "SuperBigMapSurfaceStretchFailed", "SuperBigMapUndergroundStretchFailed" }) do
+		if type(map[name]) == "string" and map[name] ~= "" then return true end
+	end
+	-- Persisted completion marker (survives save/load).
 	if map.SuperBigMapExpanded == true then
 		return true
 	end

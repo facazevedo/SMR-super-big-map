@@ -1,4 +1,319 @@
+## 2026-10-08: temporary elevator button, metadata 1202
+
+The owner requested a completed elevator from the temporary Place Elevator button.
+Native reproduction on the retained 55N147W prepared checkpoint found the
+ConstructionSitePlaced registration was lost after Lua reload: mod State retained
+its registered flag while the engine rebuilt its private message registry. The
+button now keys registration to GetStaticMsgNames, matching lifecycle registration.
+Its paired native quick-build also runs after one rendered frame on a real-time
+thread, so pausing simulation does not leave construction sites waiting. Native
+GameInit and pair linking retain their normal game-time scheduling.
+
+Validation: the new host fixture first failed paused completion, then passed all
+13 checks including replacement registries; the existing template persistence
+fixture passed 14 checks. Native attempt 3 passed release hook/prefab verification,
+with one completed Elevator on each map at unchanged GameTime 2096, reciprocal
+links after resume, an underground visit, and save/reload retaining the pair.
+No Lua errors. Attempts 1 and 2 reproduced the lost-handler fault before its fix.
+Evidence: `_ralph/runs/elevator-button-1202-20261008/attempt3/measurement.json`.
+Only the button module and metadata differ from 1201; initialization and stutter
+fixes are unchanged. The 95 matrix qualifications are retained with their actual
+1200/1201 payload hashes; 55N147W and 60S24W are requalified before the pending
+35S61W retry and remaining scenarios. The user's pause was revoked after this fix.
+35S61W's 1201 attempt was invalidated by a desktop change (1024x768 to 3840x2160),
+not a qualified initialization measurement. Its exact seeds/configuration remain.
+
+## Metadata 1200 configuration regression ? in progress (2026-10-08)
+
+The broadened matrix found a repeatable strict resource-cluster failure at
+`additional_036_25S118E` with Roscosmos/Hydro Engineer/Marsgate, severe disasters,
+EasyResearch, GrantBreakthroughs, and Start with all Breakthroughs. Four metadata
+1199 attempts exhausted finite outer cluster sites before T1. Native buildability
+requires a connected area strictly larger than `g_NCF_MinArea` and a bounded
+height spread; the previous four-hex apron core and slope cap did not ensure this.
+Metadata 1200 derives core size and slope from those native requirements, retaining
+the existing feather, strict placement predicates, and exact case seeds.
+All 122 host fixtures passed. Installed/source payload SHA-256:
+`59a601199757e093b18d751a32802a1a0c39d8911371a15668410b7089d27c78`.
+
+Exact-case native qualification, release hooks and prefab names verified:
+
+- Attempt 1: surface 59.675 s, underground 37.825 s; rejected for a camera restore
+  assertion after initialization. No timing threshold failure.
+- Attempt 2: tracing repeat passed, 58.164 / 37.726 s. Trace exposed the driver
+  replacing an already-open overview and leaving its asynchronous exit pending.
+- Driver now uses native idempotent `SetDialogMode` and waits for camera restoration
+  before the next map transition; it asserts the old overview render state cleared.
+- Attempt 3, without lifecycle tracing: passed 58.841 / 37.644 s, no Lua errors,
+  outer scan, prepared save/reload and underground revisit all passed.
+
+Evidence: `_ralph/runs/random-initializations-1200-20261008/`.
+At the clean boundary after 57N19E, 12 of 138 configurations passed on this payload,
+including all six added terrain comparisons. The maximum accepted surface time
+was 76.245 s (16N58E stress); maximum underground time was 54.044 s (59S41E).
+The controlled delayed-breakthrough regression at 57N19E also passed on metadata
+1200 (60.021 s surface / 46.902 s underground, no Lua errors, placement/reload
+checks passed), recorded in `random-initializations-1200-late-effects-20261008`.
+At 34 accepted configurations, additional_007_6N8E attempt 1 was rejected by
+the display guard after Windows changed from 1024x768 to 3840x2160. It has no
+qualified surface or underground measurement; retry keeps the exact case and
+windowed 1024x768 game setting while preserving the current desktop mode.
+The complete configuration matrix, late-game stutter requalification, and final
+timing export remain in progress. Prior successful metadata 1199 cases remain
+historical evidence, not qualification of the changed terrain payload.
+
 # Surface START-to-T1 — runtime acceptance and local checkpoint
+
+## Metadata 1199: initialization campaign in progress, 2026-10-08
+
+Current installed/source payload SHA-256:
+`6f03318828c2e739f5c48c89a4c917348441d2d8ce8161d0088c807a01deb082`.
+The original 30 random cases, both retained controls and the first two additional
+random cases passed correctness and the owner's surface <100 s / underground
+<70 s limits. The remaining 98 additional random cases are not yet qualified.
+Native evidence is in `_ralph/runs/random-initializations-1199-20261007/`.
+Every accepted case includes prepared save/reload, underground revisit and outer
+sector scanning. Odd draws, controls and difficult-seed variants additionally
+save/reload before the first underground preparation.
+
+The owner requested broader terrain/configuration variation while the batch was
+running. The active native game finished and closed before revising the schedule.
+The revision preserves all completed configurations and all original random map
+sites, game seeds, underground seeds and commanders. The remaining cases cover
+48 combinations of ordinary/Rough Terrain, three research settings, four disaster
+settings and normal/fast scanning, with each combination assigned at least twice.
+Independent balanced assignments cover 14 available sponsors, 18 commanders,
+12 mysteries plus none, nine companion-mod sets and compatible extra rule groups.
+Six new comparisons on the difficult 55N147W, 59S41E and 16N58E seeds precede the
+unmeasured cases. These comparisons do not replace the 100 additional random draws.
+`manifest.before-configuration-revision.json` retains the original configurations.
+`additional_003_56S148W_attempt1` stopped at the scheduling gate before launching
+a native game; it is not a failed initialization or a timing sample.
+
+The surface optimization removes repeated rescans of exhausted anomaly candidate
+pools, skips axial hex intervals proven excluded by spacing disks, and checks
+buildability before expensive repulsion predicates. On the same 55N147W seed,
+1194 to 1199 surface time decreased from 250.979 s to 67.175 s. Anomaly top-up
+decreased from 186.527 s to 4.356 s, while decoration top-up stayed 1.223 s versus
+1.220 s. Both runs added 232 resources and 47 anomalies, completed six rock seating
+corrections, and preserved all 388 checked native object transforms.
+
+Underground reachability now removes redundant entrance queries only after a
+positive directed native path proves dominance. Negative regions require explicit
+native pathfinder failures from every representative entrance over the entire
+queried sphere; errors and unknown results do not certify a region. Both caches
+are invalidated by passability/tunnel changes. The crowded 57N19E startup variant
+also exposed an oasis move freeing anomaly slots after an exhausted search. A
+bounded refill rebuilds live occupancy and legal hex candidates only after actual
+oasis movement. The controlled late-breakthrough case now places all 47 required
+anomalies and passes save/reload at 64.771 s surface / 47.073 s underground.
+
+An independent 100 ms host log observer checked three full native runs using
+Python's monotonic performance counter. Surface differences were 11-33 ms.
+Underground observations were 0.369-0.412 s longer because the observed ending
+stage follows five post-readiness render frames. Evidence is
+`independent-wallclock.jsonl` in the campaign directory. The observer has stopped.
+Rock seating and surface top-up still finish before T1. Full campaign completion,
+late-game stutter-save requalification and the final timing export remain pending.
+
+## Metadata 1191: downloaded feedback saves, 2026-10-07
+
+Reproduced both reports with their original saves and complete mod sets:
+[usu3svregn](https://smr-mods-feedback.fredware.app/thread/usu3svregn)
+and [leh13wxui6](https://smr-mods-feedback.fredware.app/thread/leh13wxui6).
+Paradox installation did not remain available across startup; the dependencies
+were downloaded with the Steam client and copied into local `feedback-*` mod
+folders. Download hashes and native evidence are in
+`_ralph/runs/feedback-bugs-20261007/`.
+
+Both saves contained the same late surface density-audit failure, with every
+spacing violation counter zero. It preceded final entrance preparation. Reload
+synchronized map metadata to 8192, after which the old size-ratio ownership test
+misclassified the unfinished expanded map. The overview lost its expanded render
+settings and outer-sector scanning stopped working. The map now retains its
+identity independently of successful generation; failure still blocks readiness.
+Mixed 10/20-sector cities also use their own dimensions during background scanning.
+
+The anomaly fallback incorrectly shared one lifetime search budget across all
+remaining placements. Each residual placement now receives a bounded search
+round, with unchanged terrain, uniqueness and repulsion rules. The original
+16N111E input stopped seven anomalies short; the candidate completes its quota.
+
+Two additional failures surfaced in the full-mod fresh-generation checks:
+
+- `Start with all Breakthroughs` spawned technology rewards after source capture.
+  Four native reward calls are now deferred until enrichment/scan replay is done,
+  before final rock seating and entrance commitment. They run once, persist if
+  waiting across a save, and retain a failed/interrupted callback rather than
+  duplicating partially granted rewards. Ordinary runtime research stays native.
+- Native constructors sometimes ignored captured property values. The failing
+  33-mod case had 383 property mismatches. The final native run restored all 383
+  `DetailClass` values from `From Entity` to captured `Essential` through native
+  setters, then passed the unchanged verifier. Missing, failed or ineffective
+  setters remain errors; native positions and the captured values are preserved.
+
+The load migration is limited to the recognized late density failure and requires
+matching surface/deferred geometry plus completed native generation and CityInit.
+It completes the interrupted entrance stage without replaying terrain, resources
+or decoration generation in a developed colony. It does not replenish historical
+density deficits that may now include consumed resources/anomalies. Unfinished
+elevator sites and their construction groups retain their handles. Completed
+elevators are kept in place only after link, coordinate and native footprint
+validation. Valid links to Second Colony's separate vanilla-size surface are
+outside the main-surface commitment check; broken or unsupported links still fail.
+The original failure remains in the persisted recovery record. No seed-specific
+placement or unconditional failure clearing was introduced.
+
+Final code: metadata 1191, sector guard 84, generator guard 477; Paradox publication
+version 21 retained. The existing commander-bonus work is preserved. The local mod
+is installed; nothing was published or pushed.
+
+Final native checks used the requested
+`C:\Games\Surviving Mars Relaunched\MarsDebug.exe`, revision 405907/assets 33225,
+with verified release debug hooks and release prefab-name resolution. Original
+report saves were written with Lua revision 406343. The first report loads all
+33 mods; the second loads all 12. Filter Landing Spots is locally version 29,
+where the first save recorded 28. These version differences are retained in the logs.
+
+| Fresh case | Surface START-to-T1 | Save/reload | Runtime result |
+| --- | ---: | --- | --- |
+| 16N111E, full report mods | 95.731 s | Pass | Functional pass; runner rejects two external Omega Telescope errors |
+| 61N136W, exact retained Horticulturalist case | 77.425 s | Pass | Accepted, no Lua errors |
+| 1N135W, full report mods | 81.396 s | Pass | Accepted, no Lua errors; four reward calls, 10 resource deposits and 8 Alien Imprints anomalies |
+| 24S74W, exact retained Astrogeologist case | 71.522 s | Pass | Accepted, no Lua errors |
+
+The batch used current worst-time order: 16N111E, 61N136W, 1N135W, 24S74W;
+each case completed save/reload before the next launch. The machine was idle
+during these final timed runs. Rock seating and entrance validation preceded T1.
+The exact report surface/underground seeds, rules, sponsor, commander and mystery
+are preserved in each case JSON. Earlier diagnostic runs and the test-driver
+welcome-dialog save-gate failure are retained, not counted as clean passes.
+
+Both original saves were reloaded from their untouched source files on the final
+payload, repaired, entered underground, saved separately and reloaded again.
+Final functional underground preparation took 83.799 s (Meklon) and 69.334 s (IMM).
+Overview screenshots show the full expanded map after reload. Outer sector
+(1,11) queued and scanned in both. Meklon's original construction group completed
+into a linked elevator pair in the disposable gameplay test; IMM's pre-existing
+pair stayed linked without moving the surface building. Those gameplay changes
+were not saved into the delivered repaired checkpoints. Sector states survived
+the save/reload check, and no colony building or resource deposit was removed;
+the IMM object-ID differences are regenerated night lights and stockpile visuals.
+
+The delivered files in the requested save folder are
+`Meklon Sol 90 - SBM repaired 20261007(2).savegame.sav` and
+`IMM - SBM repaired 20261007(2).savegame.sav`.
+Final save evidence is under `final_repair_usu3svregn/` and
+`final_repair_leh13wxui6/`; generation evidence uses `verified_477_*`.
+
+115 host compatibility fixtures pass. The report-one mod set still logs the
+pre-existing `OmegaTelescopeActiveandPowered` and
+`ChanceForBreakthroughSequenceToActivate` strict-global errors. Completing its
+elevator also invokes Mars Expedition Deluxe's obsolete global `MapGet` in
+`Mod/AKQWwUW/Code/NorseName.lua.lua:227`. These are separate third-party errors;
+the native elevator pair completed and linked, but this mod set is not claimed
+to have an error-free runtime log. No guarantee is made for arbitrary future
+engine changes or mod combinations; failed safety checks remain explicit.
+
+## Metadata 1189: commander bonuses, 2026-10-06
+
+Fixed the starting Rare Metals reveal for Astrogeologist and starting Water reveal
+for Hydro Engineer. The expanded-map start routine created their bonus deposit,
+then treated it as an ordinary deposit in an unscanned destination sector. Discovery
+initialization hid it, and the later scan gate could delete it. The old existence
+check could also count a physically placed but hidden deposit as satisfying the bonus.
+
+The grant now chooses an already revealed matching deposit or reveals the nearest
+eligible shallow marker. Its exact marker/deposit is persisted in
+`SuperBigMapCommanderStartDeposit` and excluded from scan hiding/removal. It does
+not scan another sector or reveal unrelated resources. Loading an older expanded
+save repairs a missing grant once; a revealed exhausted marker counts as fulfilled.
+The saved grant survives native depletion without producing a replacement. An old
+colony with no usable candidate can still load. Vanilla and underground maps are
+excluded. Sector wrapper guard is 83; generator guard remains 474.
+
+All 18 actual profiles were checked using
+`C:\Games\Surviving Mars Relaunched\MarsDebug.exe` (revision 405907, assets 33225),
+including the installed DLC profiles. `Random` and `None` are selection placeholders.
+Every accepted fresh run completed START-to-T1 with rock seating, then save/reload,
+with no Lua errors or display-mode violations. Only SuperBigMap was enabled in the
+test process, with IMM sponsor, Rough Terrain, and Metatron mystery. User mod
+selection was not saved. Tests used disposable saves and closed the owned game.
+
+| Profile | Verified bonuses/state before and after reload | 61N136W START-to-T1 |
+| --- | --- | ---: |
+| Astrogeologist | Revealed, visible Rare Metals; extractor performance +20; water production +20%; Deep Scanning and Deep Asteroid Survey (`DeepAsteroidMining`) | 81.003 s |
+| Hydro Engineer | Revealed, visible Water; dome water consumption -25%; Water Reclamation | 82.693 s |
+| Rocket Scientist | Two extra rockets (six with IMM); CO2 Jet Propulsion and Advanced Martian Engines | 80.950 s |
+| City Mayor | Additional 2,000M funding; maintenance thresholds +20% for inside/outside buildings; legacy `MarsNoveau` technology grant | 82.351 s |
+| Oligarch | Fuel production +100%; native flight policy permits Fuel exports; Arcology | 81.017 s |
+| Agronomist | `ResilientVegetationMod` -30%; crop growth time -33%; Soil Adaptation | 82.062 s |
+| Horticulturalist | Hydroponic Farm automation enabled, workers -100%, automatic performance 100; automation upgrade lock; Utility Crops and Gene Adaptation | 86.530 s |
+| Geo Engineer | Two GHG Factory and two Forestation Plant prefabs; Seeds unlocked and half price; resource visibility unlock; Designed Forestation | 84.282 s |
+| Space Miner | Starting asteroid and lander; Recon Center prefab; Micro-G Mining and Recon Center technologies | 80.837 s |
+| Spelunker | Elevator and two Drone Hub Extender prefabs; Low-G Shaft Digging; underground sanity recovery and reduced dome power penalty | 80.999 s |
+| Transport Tycoon | Native track cost halved; two small station prefabs; Big Stations and Train Stations | 86.175 s |
+| CEO | Native funding calculation returns 1.2M for a 1M gain; Martian Patents | 81.996 s |
+| Politician | Law funding/research upkeep -30%; policy preparation time -50%; Assembly efficiency and approval parameter 300 | 81.726 s |
+| Inventor | Autonomous Hubs; three valid persisted improvement threads, every two Sols for 50 repetitions, with correct signs and values | 81.144 s |
+| Doctor | Birth comfort threshold -15; Stem Reconstruction | 81.315 s |
+| Transhumanist (`psychologist`) | Behavioral Shaping; saved profile retains the +5 resting sanity parameter | 81.206 s |
+| Ecologist | Decoration comfort +10; Hanging Gardens prefab and technology | 81.196 s |
+| Futurist (`author`) | Breakthrough research boost 50%; profile retained for the native fourth breakthrough choice | 83.347 s |
+
+Spelunker additionally entered the underground through SBM's actual map-switch
+wrapper and returned to the surface. Underground preparation took 44.200 s;
+`LackOfLight` was -6000 (recovery), and the dome electricity penalty was 25.
+For conditional later-game benefits, the installed native consumers were also
+read: colonist resting sanity, faction approval/Assembly, breakthrough choices,
+track construction, fuel exports, and timed Inventor effects. This qualification
+checks applied state, native calculations where practical, and persistence; it is
+not a 100-Sol simulation or a colonist-by-colonist playthrough. Futurist has no
+separate bonus technology in the installed preset.
+
+Ordering used newer evidence rather than the historical 1135 ranking: 61N136W
+was first, with save/reload completed before 24S74W. The exact seeds were retained:
+
+| Site | Game seed | Pinned underground seed | Worst accepted surface time this round |
+| --- | --- | --- | ---: |
+| 61N136W | `v932_sweep_14134_61n136w` | `3838460155450369287` | 86.530 s |
+| 24S74W | `v932_sweep_14134_24s74w` | `7578917061178043875` | 77.355 s |
+
+The two final-payload 24S74W runs passed all bonus checks and save/reload:
+Astrogeologist 77.355 s, Hydro Engineer 76.072 s. Their revealed deposits remained
+visible in unexplored sectors, outside the pending discovery set. All measured
+runs used verified release debug hooks and release prefab-name resolution, on an
+idle machine with no parallel agents or test suites. These are qualification
+timings, not an optimization comparison. Earlier completed roster evidence was
+retained while later edits added/hardened old-save deposit repair. The final payload
+also ran Transhumanist, Ecologist, and Futurist on 61N136W.
+
+The final old-save test loaded the original broken Astrogeologist checkpoint,
+verified the repair, saved a new copy and reloaded it, exhausted the deposit with
+the native depletion method, then saved/reloaded another copy. The grant stayed
+fulfilled and no replacement appeared. This load-only test has no START/T0: its
+functional verdict passes, but the general timing runner's `accepted` flag remains
+false for the missing timing boundary. It is not included in performance results.
+
+Evidence: [_ralph/runs/commander-bonuses-20261006/summary.json](_ralph/runs/commander-bonuses-20261006/summary.json)
+lists the 20 accepted fresh runs (18 profiles plus two second-site runs), with
+per-run paths. `legacy_depletion_final/functional_verdict.json` records the final
+repair/depletion check. Drivers and snapshot/judge tools are under
+`_ralph/tools/compatibility/commander_*` and `run_commander_bonuses.py`.
+
+Excluded attempts are retained: baseline translation assertions in the diagnostic
+preset dump; an Inventor probe using the wrong persistence-flag name; a Spelunker
+probe bypassing the real map-switch wrapper and its subsequent busy-process launch;
+and one Transhumanist native heap crash (`c0000374`, ntdll) at `NewGame`, before
+START. Its identical-seed retry passed. None of these attempts supplies acceptance
+timings. The original baseline still proves that both Astrogeologist technologies
+and extractor modifiers were present while its Rare Metals deposit was absent.
+
+Final host verification: all 109 compatibility fixture files pass, all 38 production
+modules plus metadata/items parse, and all 99 installed payload files match the
+workspace. `commander_deposit_test.lua` covers both resource profiles with unplaced,
+hidden, and already revealed deposits; scan cleanup; no extra sector scans;
+idempotence/depletion; old-save handling; and vanilla/underground isolation.
 
 ## Metadata 1186-1187: the remaining high-speed stutter in "United States of Mars"
 
@@ -258,6 +573,26 @@ planned 8-samples-per-sector pool (3192 samples, 424 valid) ran out. The surface
 further whole-map spots on demand, within one more planned round, only after every existing
 selector is exhausted (the underground path already did this). 55S11E: complete in 69.2 s with
 `surface_on_demand_added=5`, shortfall 0. 24S74W: `surface_on_demand_added=0`, clusters identical.
+
+Follow-up underground-access report, 2026-10-06: the exact same error signature
+was reported without a save/version/site. `density_failures=1` counts an incomplete
+resources/anomalies/effects pass; the zero spacing counters do not identify which
+pass failed. Underground readiness forwards `SuperBigMapSurfaceStretchFailed`, a
+persisted MapVar. Updating alone does not clear an already failed save or replay
+the partly completed surface transform.
+
+Re-ran `UTzZpVL2RBMB` at 55S11E on the owner's installed metadata 1190 (code matches
+the tested 1189 workspace; owner-generated publication metadata was preserved),
+RoughTerrain/Metatron, source seed `6148131280072793550`. All density passes complete,
+zero shortfalls/spacing violations, 26 added anomalies including the five on-demand
+placements. Surface T1 73.918 s, then save/reload, real underground entry (44.400 s),
+and return to surface all passed; no Lua errors. Current desktop was 1024x768 and
+was preserved, so these times are not a comparison against the earlier 4K runs.
+Retained the already completed, identical-code 61N136W/24S74W qualification before
+this faster site. The existing passage-safety failure-gate fixture also passed.
+Evidence: [_ralph/runs/underground-density-report-20261006/summary.json](_ralph/runs/underground-density-report-20261006/summary.json).
+This verifies the known fix; it does not establish the reporter's category or that
+their particular save is recoverable. No production code was changed for this report.
 
 ## Metadata 1163: More Deposits compatibility, landing pads beside steep slopes
 
@@ -807,3 +1142,186 @@ The earlier guard-371/372 sub-75 measurements are **not clean acceptance results
 - Deployment audit: 43/43 payload files match the workspace.
 
 These are local-machine timings and focused runtime checks for the requested scenario, not a guarantee for every seed or hardware configuration.
+
+
+## 2026-10-08: build1206 decoration correction and ten additional expanded scenarios
+
+The exact2N31W unsupported RocksSlate_03 was reproduced on1203 and repaired by
+allowing mixed-LOD cosmetic outgoing contacts to reach the existing guarded
+seating planner. Final1206 debug-layout verification preserves all16662 rocks,
+including targetd226 at(458276,230839,15171), unchanged XY/rotation/scale, valid
+in all three LODs. Release-layout qualification preserves15635 decorations.
+Both pass surface/underground, deferred/prepared reload, re-entry and outer scan.
+No new whole-map mapping pass, decoration deletion or map-specific exceptions.
+
+The extra-ten batch found slow57S168E at107.688s. General exact heightfield cell
+reuse and trivial clipping paths lower it to98.705s with identical decoration
+poses, resource markers and density reports. Per-query caches cannot outlive
+terrain queries; full positive proofs and budgets stay intact. Early negative
+proposal exit alone(1205) was insufficient at104.619s. All127 host fixtures pass,
+including3000 exact frozen-reference comparisons.
+
+Final1206 results (all expanded819200x819200/400 sectors, release hooks/prefab
+names verified; idle serial runs; surface<100s and underground<70s):
+
+| Site | Surface START-to-T1 s | Underground s | Terrain |
+|---|---:|---:|---|
+| 57S168E | 98.705 | 42.119 | RoughTerrain |
+| 60S24W (control) | 89.850 | 39.039 | RoughTerrain |
+| 27S167W | 88.206 | 34.125 | RoughTerrain |
+| 61S131W | 73.692 | 39.278 | MAIN |
+| 18N26W | 76.263 | 42.639 | MAIN |
+| 20N69W | 80.391 | 38.532 | RoughTerrain |
+| 20S34W | 75.003 | 34.445 | RoughTerrain |
+| 51N80W | 70.743 | 52.227 | MAIN |
+| 65S47E | 66.912 | 33.803 | RoughTerrain |
+| 19N87W | 63.965 | 46.633 | RoughTerrain |
+| 28S28W | 60.046 | 33.489 | MAIN |
+
+All ten plus the control pass complete resource/anomaly/effect quotas, zero
+unresolved surface decoration support, decoration count/pose persistence across
+reloads, underground revisit and outer-sector scanning. Original2N31W additional
+release regression:75.250s/46.255s. Debug-layout exact-repro regression:
+73.825s/46.115s; not a release-prefab timing comparison.
+
+Cross-build caveat:61S131W and28S28W native source counts differ despite equal
+requested seeds/mysteries, so their times are standalone results, not A/B
+speedup evidence.19N87W decorations/density match but marker signatures differ
+across builds; all within-run persistence checks pass. The broad105/138 campaign
+remains paused. Previous stutter fixes unchanged; no new1206 long-colony stutter
+measurement is claimed. All41 installed runtime files match the final source.
+
+Full configuration, exact seeds, every timing and archived failed/profile runs:
+`_ralph/runs/random-initializations-1206-extra10-20261008/summary.json`.
+Original failure and baseline/fix evidence:
+`_ralph/runs/rock-support-2n31w-1203-20261008`.
+
+
+## 2026-10-08 - Release 1207 qualification
+
+Removed the four temporary inspection controls from the release configuration,
+kept all diagnostic/automatic-reveal switches off, cleaned temporary-button release
+notes, and excluded development documents/caches from the publishing payload.
+Host qualification found a real stale absolute-matrix-basis cache after an in-place
+rotation. ContactFrameEntry now invalidates that derived cache with the other
+pose caches. The new deterministic fixture fails on the old implementation;
+the original randomized fixture passes Lua 5.3, 5.4 and 5.5. All 128 host fixtures
+and 41 Lua syntax checks pass.
+
+Ten new preregistered random configurations (five Tough Terrain, five standard;
+nine companion-mod combinations) plus exact slow control 57S168E passed twice.
+Both rounds use the identical release1207 payload. The second round captures
+fresh decoration top-up reports and complete CObject censuses after timing;
+those reports are deliberately not serialized, so the attempted cold-save-only
+report inspection was inconclusive and is retained separately.
+
+All 22 native runs pass surface START-to-T1 <100s, underground <70s, verified
+release hooks/prefab names, no runtime Lua errors, deferred/prepared save-reload,
+deposit signatures, decoration pose/count persistence, outer scanning and
+underground revisits. Worst measured surface 92.121s; underground 46.222s.
+All fresh decoration group targets and surviving top-up object counts agree.
+Resource/anomaly/effect quotas have no remaining shortfalls. No unresolved
+surface support, native transform mismatch or enrichment reachability failure.
+Underground extra decor-pass targets are zero because the native underground
+preset placed no decor-pass groups; terrain-prefab decorations and rubble are
+still present and audited. Underground correction records have no rejections.
+
+46N118E logs the shipped native generator warning that not all requested FreeTech
+anomalies fit; both rounds reproduce it. SBM quotas based on the actual native
+source are nevertheless complete. This is preserved as an observation, not hidden
+or described as a warning-free native generation.
+
+The clean ZIP contains 100 files, each identical to the tested installed payload;
+all archive members were read back and SHA256-verified. No upload performed.
+The broader 105/138 campaign remains paused. Existing stutter code is unchanged;
+this round is not a new long-colony stutter qualification.
+Evidence: `_ralph/runs/release1207-content-20261008/summary.json` and `report.html`.
+Package: `_ralph/runs/release1207-content-20261008/SuperBigMap-1207.zip`.
+
+
+## 2026-10-08 - Build 1208: requested anomaly quotas and ten fresh configurations
+
+SBM captures the exact native Event/TechUnlock/FreeTech random draws through the
+scoped generation environment, without rerolling or requiring debug APIs. The
+native-sized temporary surface transfers those requests to the destination;
+per-map persistence retains them across deferred underground save/reload. Expanded
+targets use the larger of the requested quota and actual ordinary native count.
+Unique and finite breakthrough families retain their previous treatment. Legacy
+saves without quota records keep their existing calculation; no historical quota
+is invented. Empty native categories are supported, including construction of a
+standard marker when the source has no ordinary marker donor.
+
+Exact 46N118E reproduces the shipped FreeTech placement warning: requested17,
+native placed15. The final expanded count is now30 (previous27), with15 added,
+zero density/spacing failure, and save/reload persistence. The stock warning is
+retained because it describes the native backing before SBM restores the quota.
+
+The first development run exposed a missed temporary-surface capture branch.
+After correction, exact slow control57S168E passed correctness but took102.977s;
+a profiled repeat took101.914s. Anomaly top-up was only512ms. Decoration terrain
+clipping was the hotspot. A conservative mesh-edge separation test now skips
+clipping cells outside a face; height validation and per-cell budgets remain
+unchanged. Expanded diagonal half-planes require three times the XY error padding;
+the original parity fixture caught an initial one-error proposal. Final parity
+covers1000 random inputs in three modes plus reversed/degenerate/boundary cases.
+A focused host benchmark improved0.563s to0.330s with identical extrema.
+
+The final payload passed exact57S168E first (93.994s surface /41.021s underground),
+then46N118E (69.068/46.898), then ten new random expanded configurations. Five
+Tough Terrain/five standard, nine companion-mod combinations, varied sponsors,
+commanders, mysteries and rules. All twelve native runs use verified release
+hooks/prefab names on an idle machine. The ten new cases range61.522-79.136s on
+surface and32.459-58.846s underground. All129 host fixtures and42 syntax files pass.
+
+Fresh surface/underground reports verify requested anomaly quotas, all resource/
+anomaly/effect targets, decoration group quotas and top-up object counts, native
+transforms, support, reachability, marker/rock signatures, deferred/prepared
+save-reload, outer scanning and underground revisits. Temporary controls remain
+absent. No runtime Lua errors. No dedicated new XL-stutter run; that code is
+unchanged. All native games closed cleanly; the broader105/138 campaign is paused.
+
+Final evidence: `_ralph/runs/release1208-extra10-20261008/summary.json`, `report.html`.
+Retained controls: `_ralph/runs/release1208-quota-r3-20261008/`.
+Earlier failed attempts remain under `release1208-quota-20261008` and
+`release1208-quota-r2-20261008`. No evidence was discarded.
+Package: `SuperBigMap-1208.zip` in the final evidence directory;101 files exactly
+matching installed/tested source, archive readback verified. SHA256:
+`5b25697b2ddad16c7e7fe88d5b973f50abf494aae2ce6a621653ad9135d10f55`.
+Installed locally; not uploaded to Steam or Paradox.
+
+
+## 2026-10-08 - SBM1208 original-save regression and fresh-process reload
+
+Tested unchanged originals Meklon Sol90 and International Mars Mission Sol69 on
+MarsDebug with exactly33 and12 required mods, respectively. Meklon ran first,
+following earlier measured difficult-save ordering. The1208 payload and101
+installed/package files are byte-identical to the qualified release. Both saved
+surface density_failures=1 records recover successfully; safe entrances, expanded
+underground access, complete underground density/spacing audits, rendered full
+surface overview and outer-sector queue/scan pass.
+
+Meklon's original saved elevator construction completes through native callbacks;
+the pair links, author naming and owner-map queries succeed without globalMapGet
+pollution, and Omega counters reset correctly. International's existing pair and
+181 surface buildings remain in place through reload. Meklon preserves270 other
+surface buildings; the intentionally completed elevator construction is tracked
+separately. Underground preparation: Meklon50160ms, International42627ms.
+
+Both separate test checkpoints survive an independent cold-process load with
+valid entrances, prepared underground, stable elevator identities/positions and
+working overview. Four accepted native runs have no Lua errors/assertion messages;
+release hooks/prefab names and display stability verified. No production changes.
+Original SHA256 values match their downloaded originals. All games closed cleanly.
+
+Two failed driver attempts are retained. Meklon cold initially switched maps before
+native overview camera restoration settled; explicit camera/selection settlement,
+as used by the established random driver, fixes the probe. International's preview
+observer translated a plain mod-list string directly; native SaveLoadUI wraps it
+withUntranslated. The corrected observer follows native rendering and passes.
+Neither required a production patch. Reports retain both failures and explanations.
+
+Legacy saves lack captured original anomaly requests; existing source-based quota
+behavior is preserved rather than inventing unknown historical counts. No colony
+regeneration or original-save rewrite. Dedicated XL-stutter testing was not part
+of this run. The broader105/138 campaign remains paused.
+Evidence: `_ralph/runs/original-saves-1208-20261008/summary.json` and `report.html`.

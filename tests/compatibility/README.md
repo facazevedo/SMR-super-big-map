@@ -1,6 +1,51 @@
 # 1.1 compatibility regression fixtures
 
-The candidate now has 100 host fixture files. Entrance-last coverage checks
+The temporary elevator-button fixture covers paused two-map completion, native
+message-registry replacement after Lua reload, duplicate-event prevention, and
+ordinary construction remaining unchanged. Native build 1202 evidence includes
+paused placement, linked finished buildings, underground visitation and save/reload.
+
+The candidate now has 128 host fixture files. The release 1207 configuration hides
+all four temporary controls. A deterministic contact-basis mutation fixture proves
+that rotated geometry invalidates matrix-derived bounds, including a previously
+missed Lua 5.3 random draw; the prior implementation fails that fixture.
+Release 1207 passed ten new expanded random configurations and the retained
+57S168E control twice. The second round adds fresh decoration top-up targets,
+surviving object counts and complete CObject censuses for both layers. Detailed
+evidence is in `_ralph/runs/release1207-content-20261008/summary.json`.
+Cosmetic-contact seating coverage
+and exact heightfield parity cover mixed-LOD repair nomination, per-query terrain
+cell reuse, early rejection of non-floating proposals, and unchanged complete
+clearance extrema. Native build 1206 passed ten additional expanded random
+configurations, a retained slow control, and both original 2N31W layouts.
+Cosmetic-contact seating coverage
+checks that a rock supported at one LOD but floating at others reaches the
+existing correction planner, while unknown geometry, non-rock contacts, and
+incoming dependencies retain their safety checks. The legacy-mod fixtures cover
+Mars Expedition Deluxe v55's removed map query API with per-callback map ownership,
+Omega Telescope v37's undeclared counters, mod/version isolation, reload/unload,
+and the exact debug Load-screen ellipsis correction. Native Meklon qualification
+is recorded separately; host fixtures do not establish a successful game load.
+Feedback-save coverage includes
+failed-map identity after metadata synchronization, mixed-size city scanning,
+per-placement anomaly search budgets, narrow and idempotent legacy recovery,
+completed elevators kept in place, deferred starting technology rewards, and
+native property setters with failed/ignored-write rejection. The passage and T1
+fixtures also cover foreign vanilla-size surfaces and reward completion before
+final geometry validation. Native save/reload and full-mod evidence is recorded
+in `SURFACE_LOADING_ACCEPTANCE.md`.
+
+The initialization campaign adds residual anomaly hex-search coverage, exact
+repulsion-disk exclusion parity, bounded candidate budgets, native underground
+relocation ordering, native rock keep-in-place policy, entrance reachability
+dominance with directed paths, versioned negative-sphere reachability evidence,
+and oasis movement restoring strict anomaly placement capacity. All 122 fixtures
+passed for metadata 1200, including native apron area/height-spread policy; the broader native configuration campaign is ongoing.
+
+Commander discovery coverage checks
+Astrogeologist and Hydro Engineer grants through scan cleanup, hidden placements,
+depletion, old-save repair, and repeated initialization without scanning extra sectors.
+Entrance-last coverage checks
 ownership-scoped provisional exclusions, their absence from final validation,
 settled-rock clearance including terrain-cut faces outside the render bounds,
 nearest valid entrance rings, and failure gates before readiness. Translated
@@ -174,3 +219,6 @@ save/load, switching, entrances and six player-command rover moves, then restore
 its checkpoint. New cave-in geometry remains a separate failing gate. The three
 measured original-rubble gap points are impassable for both drone and rover path
 classes; this does not certify every possible route through or around the rubble.
+
+
+Build1208 adds anomaly_requested_quota_test.lua: exact native random quotas, no rerolls, absent categories/donors, finite-pool preservation, legacy fallback and cleanup. The heightfield parity fixture also covers expanded diagonal planes, reversed winding and degenerate faces. All129 fixture files pass; twelve final-payload native scenarios pass. Evidence: _ralph/runs/release1208-extra10-20261008/summary.json.

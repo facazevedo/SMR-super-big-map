@@ -16,6 +16,10 @@ return {
 		'CodeFileName', "Code/sbm_mod_compat.lua",
 	}),
 	PlaceObj('ModItemCode', {
+		'name', "sbm_mod_compat_legacy",
+		'CodeFileName', "Code/sbm_mod_compat_legacy.lua",
+	}),
+	PlaceObj('ModItemCode', {
 		'name', "sbm_diagnostics",
 		'CodeFileName', "Code/sbm_diagnostics.lua",
 	}),
@@ -110,6 +114,10 @@ return {
 	PlaceObj('ModItemCode', {
 		'name', "sbm_pass_border",
 		'CodeFileName', "Code/sbm_pass_border.lua",
+	}),
+	PlaceObj('ModItemCode', {
+		'name', "sbm_anomaly_quota",
+		'CodeFileName', "Code/sbm_anomaly_quota.lua",
 	}),
 	PlaceObj('ModItemCode', {
 		'name', "sbm_map_generation",

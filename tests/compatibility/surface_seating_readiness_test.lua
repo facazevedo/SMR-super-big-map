@@ -2,7 +2,7 @@
 local file=assert(io.open('Code/sbm_map_generation.lua','rb'))
 local source=file:read('*a');file:close()
 local block=assert(source:match('(\t\tif thread_ok and map.SuperBigMapSurfaceStretchDone == true.-)\n\t\tif not thread_ok then'))
-for _,case in ipairs({'success','error','missing','rejected','verification_error','source_cleanup','commit_error','entrance_error','late_support_error'}) do
+for _,case in ipairs({'success','error','missing','rejected','verification_error','source_cleanup','commit_error','entrance_error','late_support_error','reward_error'}) do
  local map={SuperBigMapSurfaceStretchDone=true,SuperBigMapSurfaceFinalGridRebuildPending=true}
  if case=='source_cleanup' then map.SuperBigMapRetainedNativeSourceUnloadFailed='injected cleanup failure' end
  local events,queue={},{}
@@ -33,7 +33,10 @@ for _,case in ipairs({'success','error','missing','rejected','verification_error
    record('entrance')
    if case=='entrance_error' then error('injected entrance failure') end
   end,
-  SuperBigMap={DecorationValidation={Run=function()record('validate')end,
+  SuperBigMap={DepositRules={FlushStartupTechnologySpawns=function(owner)
+   assert(owner==map and #events==0,'technology rewards did not precede final geometry validation')
+   record('rewards');return case~='reward_error','injected reward failure'
+  end},DecorationValidation={Run=function()record('validate')end,
    WithCorrectionEvidence=function(owner,layer,fn)return fn(owner)end,
    SurfaceSupportSummary=function()
     assert(events[#events]=='validate','final support was checked before entrance placement')
@@ -42,7 +45,7 @@ for _,case in ipairs({'success','error','missing','rejected','verification_error
    DecorationSeating={Run=function(owner,excluded)
     assert(owner==map and excluded==pending.objects)
     assert(not map.SuperBigMapSurfacePostPipelineRevalidationComplete,'T1 published before seating')
-    assert(#events==0,'loading cover closed before seating');record('seat')
+    assert(#events==1 and events[1]=='rewards','loading cover closed before seating');record('seat')
     if case=='error' then error('injected correction failure')end
     if case=='missing' then return nil end
     if case=='rejected' then return {rejected=1}end
@@ -60,7 +63,7 @@ for _,case in ipairs({'success','error','missing','rejected','verification_error
  queue[1]()
  assert(#queue==1,'seating escaped into a separate deferred thread')
  if case=='success' then
-  assert(table.concat(events,',')=='seat,commit,entrance,badge,validate,support,close,ready')
+  assert(table.concat(events,',')=='rewards,seat,commit,entrance,badge,validate,support,close,ready')
   assert(map.SuperBigMapSurfacePostPipelineRevalidationComplete and not map.failure)
  else
   assert(map.failure and not map.SuperBigMapSurfacePostPipelineRevalidationComplete,

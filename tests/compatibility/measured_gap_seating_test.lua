@@ -7,7 +7,7 @@ local validation=read('Code/sbm_decoration_validation.lua')
 local seating=read('Code/sbm_decoration_seating.lua')
 local branch=assert(validation:match('elseif not node%.supported and separation_margin==100 then(.-)\r?\n\t\t\t\t\t\tend\r?\n'),
   'measured-gap seating branch not found')
-assert(branch:find('TrianglesAboveHeightfield(triangles,height_at,100,width,height,0,65536,true)',1,true),
+assert(branch:find('TrianglesAboveHeightfield(triangles,height_at,100,width,height,0,65536,"positive")',1,true),
   'the gap is measured against the interpolated terrain with zero margin')
 assert(branch:find('gap>0',1,true),'only a strictly positive measured gap qualifies')
 assert(branch:find('node.seating_proposal=true',1,true),'it authorizes a seating proposal')

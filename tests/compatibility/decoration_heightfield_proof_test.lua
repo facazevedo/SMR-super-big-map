@@ -37,3 +37,33 @@ for i=1,500 do
  assert(prove({t},h,10,100,100,error)==(i%2==0),'slope/uncertainty oracle mismatch '..i)
 end
 print('heightfield proof: full triangle clipping, native diagonal, terrain peaks, numerical bounds and fail-closed limits')
+
+-- Proposal-only mode retains exactly the full scan's positive result/extrema.
+-- Negative scans stop at their first counterexample and expose no partial gap.
+local full_queries,fast_queries=0,0
+local touching=triangle(-.2)
+local full,lo,hi=prove(touching,function(x,y)full_queries=full_queries+1;return plane(x,y)end,10,100,100,0,65536,true)
+local fast,a,b=prove(touching,function(x,y)fast_queries=fast_queries+1;return plane(x,y)end,10,100,100,0,65536,'positive')
+assert(not full and not fast and a==nil and b==nil)
+assert(fast_queries<full_queries/4,'nonpositive witness must stop redundant clearance work')
+assert(lo<0 and hi<0,'full extrema mode must still finish penetrating meshes')
+math.randomseed(570168)
+for i=1,400 do
+ local samples={}
+ for x=0,100,10 do for y=0,100,10 do samples[x..':'..y]=math.random(-50,50) end end
+ local function h(x,y)return samples[x..':'..y]end
+ local faces={}
+ for j=1,3 do
+  local t={}
+  for k=1,3 do t[k]={math.random(10,85),math.random(10,85),math.random(-80,100)+(i%2==0 and 150 or 0)} end
+  faces[j]=t
+ end
+ local budget=i%7==0 and 1 or 65536
+ local old,low,high=prove(faces,h,10,110,110,0,budget,true)
+ local new,l,u=prove(faces,h,10,110,110,0,budget,'positive')
+ assert(old==new,'proposal parity on rough terrain '..i)
+ if old then assert(low==l and high==u,'positive extrema must remain complete '..i)
+ else assert(l==nil and u==nil,'failed proposal must not publish a partial clearance') end
+end
+assert(not prove(triangle(10),function()return nil end,10,100,100,0,65536,'positive'))
+print('positive clearance: randomized full-scan parity, complete extrema, early counterexample and failed-proof isolation')

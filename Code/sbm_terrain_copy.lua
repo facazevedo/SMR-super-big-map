@@ -2662,6 +2662,40 @@ end
 -- Full-resolution native apron blend. Rounding envelopes wider than the allowed
 -- stored-height tolerance use the original scalar expression. Strict callers
 -- default to zero; release foothills permit one height quantum per patch.
+-- NATURAL_APRON_BUILDABLE_POLICY_BEGIN
+local function NaturalApronBuildableCorePolicy(minimum_area, minimum_delta,
+		cells_per_hex, configured_core, configured_feather)
+	local values = {minimum_area, minimum_delta, cells_per_hex, configured_core, configured_feather}
+	for index = 1, 5 do
+		local value = values[index]
+		if type(value) ~= "number" or value ~= value or math.abs(value) == math.huge then
+			return nil, "non-finite native apron buildability policy"
+		end
+	end
+	if minimum_area < 0 or minimum_area > 1000000 or minimum_delta <= 2
+		or cells_per_hex <= 0 or configured_core <= 0 or configured_feather <= 0 then
+		return nil, "invalid native apron buildability policy"
+	end
+	-- Native ProcessBuildableGrid requires STRICTLY more than minimum_area
+	-- connected hexes. Keep three extra rings for hex alignment, the complete
+	-- terrain sample footprint, and the native unbuildable-neighbour erosion.
+	local rings = 0
+	while 1 + 3 * rings * (rings + 1) <= minimum_area do rings = rings + 1 end
+	-- The apron mask's short-axis variant is at least .952 and its angular
+	-- boundary at least .91. Use .90 here to leave a rounding margin.
+	local core = math.max(configured_core, math.ceil((rings + 3) / (0.952 * 0.90)))
+	local feather = math.max(configured_feather, core + 2, math.ceil(core / 0.75))
+	-- A native flood fill can start at either side of the patch and tests
+	-- 2*abs(z-start_z) <= minimum_delta. Bound the entire plane's diameter,
+	-- including the longest variant/lobe and two U16 rounding quanta.
+	local maximum_radius = core * cells_per_hex * 1.35 * 1.036 * 1.09
+	local maximum_gradient = (minimum_delta - 2.0) / (4 * maximum_radius)
+	return {core_hexes = core, feather_hexes = feather,
+		maximum_gradient = maximum_gradient, support_rings = rings,
+		minimum_area = minimum_area, minimum_delta = minimum_delta}
+end
+-- NATURAL_APRON_BUILDABLE_POLICY_END
+
 local function RasterNaturalMountainBaseAprons(api, grid, selected, policy)
 	local math, type, ipairs, pairs, table = math, type, ipairs, pairs, table
 	local floor, ceil, min, max, sqrt = math.floor, math.ceil, math.min, math.max, math.sqrt
@@ -3076,6 +3110,11 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 		cfg_number("MOUNTAIN_BASE_APRON_CORE_RADIUS_HEXES", 4))
 	local feather_hexes = apron_max(core_hexes + 2,
 		cfg_number("MOUNTAIN_BASE_APRON_FEATHER_RADIUS_HEXES", 12))
+	local buildable_policy, policy_error = NaturalApronBuildableCorePolicy(
+		Global("g_NCF_MinArea"), Global("g_NCF_FlatThresholdAreaMinHeightDelta"),
+		cells_per_hex, core_hexes, feather_hexes)
+	if not buildable_policy then error(policy_error) end
+	core_hexes, feather_hexes = buildable_policy.core_hexes, buildable_policy.feather_hexes
 	local core_fraction = apron_min(0.75, apron_max(0.20,
 		(core_hexes + 0.0) / feather_hexes))
 	local outer_short = feather_hexes * cells_per_hex
@@ -3178,11 +3217,12 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 		if mountain_length < 1 then mountain_x, mountain_y, mountain_length = 1, 0, 1 end
 		mountain_x, mountain_y = mountain_x / mountain_length, mountain_y / mountain_length
 
-		-- Leave a gentle natural grade in the core. Four height units per 100-wu tile is well under
-		-- the top-up suite's five-degree terrain-normal ceiling, even diagonally.
+		-- A locally gentle slope can still fail the native minimum connected-area
+		-- and total-height-spread tests. Derive the retained grade from those tests.
 		local gradient_length = apron_sqrt(gx * gx + gy * gy)
-		if gradient_length > 4 then
-			gx, gy = gx * 4 / gradient_length, gy * 4 / gradient_length
+		if gradient_length > buildable_policy.maximum_gradient then
+			gx, gy = gx * buildable_policy.maximum_gradient / gradient_length,
+				gy * buildable_policy.maximum_gradient / gradient_length
 		end
 		local edit_tier = maximum_local_slope < 9 and 0
 			or apron_max(1, apron_ceil((maximum_local_slope - 8) / 4))
@@ -3294,6 +3334,7 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 		candidates = #candidates, considered = considered,
 		relief_rejections = relief_rejections, slope_rejections = slope_rejections,
 		ring_sectors = ring_sectors, error = ok_apply and "" or tostring(apply_error),
+		buildable_core_policy = buildable_policy,
 	}
 	map.SuperBigMapNaturalMountainBaseApronReport = report
 	LoadingStep("natural mountain-base buildable aprons", report, map)
@@ -8899,8 +8940,19 @@ local function ValidateSurfacePassageCommitment(underground_map, validate_terrai
 		if not IsLiveGameObject(anchor) then return end
 		local other = anchor.other
 		if not IsLiveGameObject(other) or other.other ~= anchor
-			or type(other.GetMap) ~= "function" or other:GetMap() ~= surface then
+			or type(other.GetMap) ~= "function" then
 			failure = failure or "linked surface passage unavailable"
+			return
+		end
+		if other:GetMap() ~= surface then
+			-- Second Colony owns a separate, unexpanded surface endpoint. This
+			-- planner only commits the main surface (the alignment pass uses the
+			-- same scope); keep checking malformed links and expanded destinations.
+			local target = other:GetMap()
+			local grid = SuperBigMap.SectorGrid
+			if target and target.mapdata and Engine.MapDataEnvironment(target.mapdata) == "Surface"
+				and grid and type(grid.IsModMap) == "function" and not grid.IsModMap(target) then return end
+			failure = failure or "linked surface passage belongs to an unsupported map"
 			return
 		end
 		count = count + 1
@@ -9474,6 +9526,7 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 			local surface_anchor = anchor and anchor.other
 			if IsLiveGameObject(anchor) and IsLiveGameObject(surface_anchor)
 				and surface_anchor.other == anchor and map_of(surface_anchor) == surface_map
+				and (options.only_unprepared_surface ~= true or surface_anchor.SuperBigMapPassagePadPrepared ~= true)
 				and not seen[anchor] then
 				seen[anchor], seen[surface_anchor] = true, true
 				linked_pairs[#linked_pairs + 1] = { underground = anchor, surface = surface_anchor }
@@ -10261,7 +10314,7 @@ function TerrainCopy.PendingSurfaceEntranceObjects(map)
 	map:MapForEach("map", "CObject", function(obj)
 		if not IsLiveGameObject(obj) then return end
 		for anchor in pairs(scene.anchors) do
-			if obj.spawner == anchor or obj.passage == anchor
+			if obj.spawner == anchor or obj.passage == anchor or obj.SuperBigMapDeferredElevatorPassage == anchor
 				or (obj.tunnel_marker and obj.tunnel_marker.spawner == anchor) then
 				include(obj, anchor)
 			end

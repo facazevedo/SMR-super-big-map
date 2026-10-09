@@ -957,15 +957,29 @@ function Geometry.TrianglesAboveHeightfield(triangles,height,tile,width,height_l
 		or not Finite(width) or not Finite(height_limit) or width<=0 or height_limit<=0 then return false end
 	local remaining=budget or 4096
 	local minimum,maximum=math.huge,-math.huge
-	local function clip(poly,a,b)
+	-- One immutable heightfield query. Adjacent mesh faces revisit the same
+	-- cells; retain their exact planes only for this call, never across terrain
+	-- edits or placement verification. Budget accounting remains per face/cell.
+	local cells={}
+	local function plane(a,b)
 		local dx,dy=b[1]-a[1],b[2]-a[2]
-		local padding=error_bound*(math.abs(dx)+math.abs(dy))
-		local function side(p)return dx*(p[2]-a[2])-dy*(p[1]-a[1])+padding end
-		local out={};local previous=poly[#poly]
-		if not previous then return out end
-		local before=side(previous)
+		return {dx,dy,a[1],a[2],error_bound*(math.abs(dx)+math.abs(dy))}
+	end
+	local function clip(poly,line)
+		local dx,dy,ax,ay,padding=line[1],line[2],line[3],line[4],line[5]
+		local previous=poly[#poly]
+		if not previous then return poly end
+		local before=dx*(previous[2]-ay)-dy*(previous[1]-ax)+padding
+		local inside,outside=false,false
+		for _,p in ipairs(poly) do
+			local d=dx*(p[2]-ay)-dy*(p[1]-ax)+padding
+			if d>=0 then inside=true else outside=true end
+		end
+		if not outside then return poly end
+		if not inside then return {} end
+		local out={}
 		for _,current in ipairs(poly) do
-			local after=side(current)
+			local after=dx*(current[2]-ay)-dy*(current[1]-ax)+padding
 			if (before>=0)~=(after>=0) then
 				local t=before/(before-after)
 				out[#out+1]={previous[1]+t*(current[1]-previous[1]),previous[2]+t*(current[2]-previous[2]),previous[3]+t*(current[3]-previous[3])}
@@ -987,26 +1001,69 @@ function Geometry.TrianglesAboveHeightfield(triangles,height,tile,width,height_l
 		local x1=math.floor((bounds[4]+error_bound)/tile)*tile
 		local y1=math.floor((bounds[5]+error_bound)/tile)*tile
 		if x0<0 or y0<0 or x1+tile>=width or y1+tile>=height_limit then return false end
+		-- A triangle's bounding rectangle may cover many terrain cells it never
+		-- touches. Separate those cells on the mesh-edge normals before polygon
+		-- clipping. Keep height validation and budget accounting unchanged.
+		local axes={}
+		local origin=triangle[1]
+		for i=1,3 do
+			local a,b=triangle[i],triangle[i%3+1]
+			local nx,ny=-(b[2]-a[2]),b[1]-a[1]
+			local low,high=math.huge,-math.huge
+			for j=1,3 do
+				local p=triangle[j];local d=nx*(p[1]-origin[1])+ny*(p[2]-origin[2])
+				low=math.min(low,d);high=math.max(high,d)
+			end
+			-- Expanded diagonal half-planes can extend a face three errors
+			-- beyond the cell axis bounds (one axis error plus two diagonal).
+			local pad=3*error_bound*(math.abs(nx)+math.abs(ny))
+				+1e-7*math.max(1,math.abs(low),math.abs(high),tile*(math.abs(nx)+math.abs(ny)))
+			axes[i]={nx,ny,low-pad,high+pad,
+				tile*(math.min(0,nx)+math.min(0,ny)),tile*(math.max(0,nx)+math.max(0,ny))}
+		end
 		for x=x0,x1,tile do for y=y0,y1,tile do
 			remaining=remaining-1;if remaining<0 then return false end
-			local h00,h10,h01,h11=height(x,y),height(x+tile,y),height(x,y+tile),height(x+tile,y+tile)
-			if not Finite(h00) or not Finite(h10) or not Finite(h01) or not Finite(h11) then return false end
-			local corners={{x,y},{x+tile,y},{x+tile,y+tile},{x,y+tile}}
+			local column=cells[x]
+			if not column then column={};cells[x]=column end
+			local cell=column[y]
+			if not cell then
+				local h00,h10,h01,h11=height(x,y),height(x+tile,y),height(x,y+tile),height(x+tile,y+tile)
+				if not Finite(h00) or not Finite(h10) or not Finite(h01) or not Finite(h11) then return false end
+				local corners={{x,y},{x+tile,y},{x+tile,y+tile},{x,y+tile}}
+				cell={height=h00,faces={
+					{plane(corners[1],corners[2]),plane(corners[2],corners[3]),plane(corners[3],corners[1])},
+					{plane(corners[1],corners[3]),plane(corners[3],corners[4]),plane(corners[4],corners[1])}},
+					gx={(h10-h00)/tile,(h11-h01)/tile},gy={(h11-h10)/tile,(h01-h00)/tile},
+					roundoff=1e-7*math.max(1,math.abs(h00),math.abs(h10),math.abs(h01),math.abs(h11))}
+				cell.margin={}
+				for half=1,2 do cell.margin[half]=error_bound*(1+math.abs(cell.gx[half])+math.abs(cell.gy[half])) end
+				column[y]=cell
+			end
+			local separated=false
+			for i=1,3 do
+				local a=axes[i];local d=a[1]*(x-origin[1])+a[2]*(y-origin[2])
+				if d+a[6]<a[3] or d+a[5]>a[4] then separated=true;break end
+			end
+			if not separated then
 			for half=1,2 do
-				local face=half==1 and {corners[1],corners[2],corners[3]} or {corners[1],corners[3],corners[4]}
+				local face=cell.faces[half]
 				local poly=triangle
-				for i=1,3 do poly=clip(poly,face[i],face[i%3+1]) end
-				local gx,gy
-				if half==1 then gx,gy=(h10-h00)/tile,(h11-h10)/tile
-				else gx,gy=(h11-h01)/tile,(h01-h00)/tile end
-				local margin=error_bound*(1+math.abs(gx)+math.abs(gy))
-				local roundoff=1e-7*math.max(1,math.abs(h00),math.abs(h10),math.abs(h01),math.abs(h11))
+				for i=1,3 do poly=clip(poly,face[i]) end
+				local gx,gy=cell.gx[half],cell.gy[half]
+				local margin=cell.margin[half]
+				local roundoff=cell.roundoff
 				for _,p in ipairs(poly) do
-					local clearance=p[3]-(h00+gx*(p[1]-x)+gy*(p[2]-y))
+					local clearance=p[3]-(cell.height+gx*(p[1]-x)+gy*(p[2]-y))
 					if extrema then
+						-- Proposal callers only need extrema when the WHOLE mesh floats.
+						-- A nonpositive witness disproves that immediately. Full extrema
+						-- mode remains available to the placement planner, including gaps
+						-- below terrain; successful positive scans still visit every face.
+						if extrema=="positive" and clearance<=0 then return false end
 						minimum=math.min(minimum,clearance);maximum=math.max(maximum,clearance)
 					elseif clearance<=margin+roundoff then return false end
 				end
+			end
 			end
 		end end
 	end

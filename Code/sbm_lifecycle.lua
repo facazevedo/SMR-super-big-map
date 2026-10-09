@@ -981,6 +981,10 @@ RegisterOnce("LoadGame", function()
 			if bounds and type(bounds.ResetMapDataBounds) == "function" then bounds.ResetMapDataBounds(loaded) end
 		end
 	end
+	local readiness = SuperBigMap.GenerationReadiness
+	if readiness and type(readiness.RecoverLoadedSurfaceDensityFailure) == "function" then
+		readiness.RecoverLoadedSurfaceDensityFailure(Global("MainMap"))
+	end
 	if gen and type(gen.PatchDeferredUndergroundAccess) == "function" then
 		gen.PatchDeferredUndergroundAccess("LoadGame")
 	end
@@ -1032,6 +1036,16 @@ RegisterOnce("LoadGame", function()
 	if deposits and type(deposits.RestorePendingSurfaceDiscovery) == "function" then
 		for _, loaded in ipairs(Global("LoadedMaps") or {}) do
 			deposits.RestorePendingSurfaceDiscovery(loaded)
+			-- Older expanded saves predate the explicit commander grant. Repair it
+			-- once; the persisted record prevents re-granting a depleted deposit.
+			if type(deposits.RevealCommanderStartDeposit) == "function" then
+				local granted, reason = deposits.RevealCommanderStartDeposit(loaded, true)
+				-- A developed old colony may have exhausted/obstructed every
+				-- candidate. That must not prevent loading the player's save.
+				if not granted then
+					LoadingLifecycle("commander deposit repair unavailable", loaded, { reason = reason })
+				end
+			end
 		end
 	end
 	-- Re-invalidate so the expanded terrain gets textures painted on. The save preserves the

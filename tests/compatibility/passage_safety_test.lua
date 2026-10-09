@@ -139,6 +139,19 @@ for _,case in ipairs({{0},{1},{2},{17},{0,true},{0,false,true},{0,false,false,tr
  underground.SuperBigMapPassageSurfaceFinalCommitted=nil
  local validator=compile(validate,'ValidateSurfacePassageCommitment',environment)
  assert(validator(underground) and validator(underground,true))
+ -- Another mod's native-size surface is outside the main-surface planner's
+ -- ownership. Malformed links and other expanded destinations remain errors.
+ local foreign={mapdata={environment='Surface'}}
+ local fu,fs=anchor(underground,70,70),anchor(foreign,70,70)
+ fu.other,fs.other=fs,fu
+ environment.SuperBigMap={SectorGrid={IsModMap=function(m)return m==surface or m.expanded==true end}}
+ environment.Engine={MapDataEnvironment=function(d)return d.environment end}
+ underground.MapForEach=function(self,scope,class,fn)if class=='ElevatorPassage' then fn(u);fn(fu) end end
+ assert(validator(underground),'foreign vanilla surface blocked main entrance')
+ foreign.expanded=true;assert(not validator(underground),'unsupported expanded destination accepted');foreign.expanded=false
+ fs.other=false;assert(not validator(underground),'broken foreign reciprocal link accepted');fs.other=fu
+ foreign.mapdata.environment='Underground';assert(not validator(underground),'underground-to-underground link accepted')
+ underground.MapForEach=function(self,scope,class,fn)if class=='ElevatorPassage' then fn(u) end end
  local previous_flat=globals.IsTerrainFlatForPlacement
  globals.IsTerrainFlatForPlacement=function() return false end
  assert(validator(underground) and not validator(underground,true),

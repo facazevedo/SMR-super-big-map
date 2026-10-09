@@ -2315,28 +2315,9 @@ local function RevealVanillaStartSectors(map)
 				end
 			end
 		end)
-		-- Vanilla tail: commander-profile bonus subsurface deposit near the start.
-		pcall(function()
-			local get_profile = Global("GetCommanderProfile")
-			local profile = type(get_profile) == "function" and get_profile().id or nil
-			local deposit, resource
-			if profile == "hydroengineer" then
-				deposit, resource = "SubsurfaceDepositWater", "Water"
-			elseif profile == "astrogeologist" then
-				deposit, resource = "SubsurfaceDepositPreciousMetals", "PreciousMetals"
-			end
-			if deposit and not map:MapHasAny("map", deposit) then
-				local marker = map:MapFindNearest(city.InitialSector.area:Center(), "map",
-					"SubsurfaceDepositMarker", function(o)
-						return not o.is_placed and o.resource == resource and o.depth_layer <= 1
-					end)
-				if marker then
-					marker.revealed = true
-					local placed = marker:PlaceDeposit()
-					SuperBigMap.DepositRules.InitializeSurfaceDepositDiscovery(map, placed)
-				end
-			end
-		end)
+		-- Commander discovery is independent of the one scanned starting sector.
+		local granted, reason = SuperBigMap.DepositRules.RevealCommanderStartDeposit(map)
+		if not granted then error(reason) end
 	end
 	return scanned_total
 end
@@ -2477,7 +2458,15 @@ local function InstallSectorPatch()
 	function UnexploredSectorsExist(city)
 		if not UsesCustomCitySectors(city) then
 			local original = State.original_unexplored_sectors_exist
-			if type(original) == "function" then return original(city) end
+			-- Other mods can keep a vanilla city active beside the expanded one.
+			-- Its background exploration tick must use its own saved grid, not the
+			-- current map's process-global SectorCount (20 versus Second Colony's 10).
+			local cols, rows = LiveSectorGridDimensions(city and city.MapSectors)
+			local constants = Global("const")
+			local count = constants and constants.SectorCount
+			if type(original) == "function" and (cols == 0 or (cols == count and rows == count)) then
+				return original(city)
+			end
 		end
 		local can_scan
 		local fully_scanned = true

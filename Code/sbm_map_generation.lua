@@ -5684,6 +5684,7 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		else
 			SuperBigMap.State.test_twin_underground_seed = nil
 		end
+		destination.SuperBigMapRequestedAnomalies = source.SuperBigMapRequestedAnomalies
 		local coordinate_capture_token = LoadingBegin("capture native enrichment coordinates", source)
 		source_generated_enrichments = CaptureGeneratedNativeEnrichments(
 			source, "temporary vanilla backing generation complete")
@@ -10134,6 +10135,16 @@ local function PatchRandomMapGenerator()
 				and Engine.MapDataEnvironment(map.mapdata) or nil
 			-- Normal generations enter the original method unchanged.
 			if State.rmg_placement_active_map ~= map then
+				-- The native-sized temporary surface does not need the source-view
+				-- grid bridge below, but its unfulfilled quotas must travel with it.
+				if IsExpansionGeneration(map) then
+					local finish = SuperBigMap.AnomalyQuota.Begin(self, env)
+					local results = PackValues(pcall(CallOnGenerateLogicTimed,
+						original_on_generate_logic, self, env, map, ...))
+					finish(results[1])
+					if not results[1] then error(results[2]) end
+					return Unpack(results, 2, results.n)
+				end
 				return CallOnGenerateLogicTimed(original_on_generate_logic, self, env, map, ...)
 			end
 			local is_underground = environment == "Underground"
@@ -10728,6 +10739,7 @@ local function PatchRandomMapGenerator()
 			State.buildable_grid_generation_hook =
 				rebuild_buildable_grid_installed and rebuild_buildable_grid_wrapper or nil
 
+			local finish_anomaly_quota = SuperBigMap.AnomalyQuota.Begin(self, env)
 			local results
 			if rebuild_buildable_grid_required and not rebuild_buildable_grid_installed then
 				results = { false, "source buildable raw-grid bridge hook unavailable" }
@@ -10736,6 +10748,7 @@ local function PatchRandomMapGenerator()
 					original_on_generate_logic, self, env, map, ...) }
 			end
 
+			finish_anomaly_quota(results[1])
 			if retained_source_buildable_grid then
 				local retained = retained_source_buildable_grid
 				retained_source_buildable_grid = nil
@@ -12527,6 +12540,8 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						error("temporary source cleanup failed: "..tostring(map.SuperBigMapRetainedNativeSourceUnloadFailed))
 					end
 					-- Complete and verify rock seating under the loading cover, before publishing T1.
+					local rewards_ok, rewards_error = SuperBigMap.DepositRules.FlushStartupTechnologySpawns(map)
+					if not rewards_ok then error("startup technology rewards failed: " .. tostring(rewards_error)) end
 					local validation = SuperBigMap.DecorationValidation
 					local pending_entrances = TerrainCopy.PendingSurfaceEntranceObjects(map)
 					local seating = SuperBigMap.DecorationSeating
@@ -12885,6 +12900,163 @@ function SuperBigMap.GenerationReadiness.RecoverLoadedUnderground(source)
 	inspect(Global("CurrentMap"))
 	inspect(Global("MainMap"))
 	return recovered, inspected
+end
+
+-- The old density audit ran after terrain/resource work, but before the final
+-- entrance commitment. A developed save cannot replay generation: deposits and
+-- anomalies may already be consumed, and the player may have built on the map.
+-- Recover only this late failure, preserving the population and terrain. The
+-- normal generator still requires every density target and rock seating at T1.
+function SuperBigMap.GenerationReadiness.IsLegacySurfaceDensityFailure(reason)
+	if type(reason) ~= "string" or not reason:find("surface top-up spacing audit failed:", 1, true) then
+		return false
+	end
+	local density = tonumber(reason:match("density_failures=(%d+)"))
+	if not density or density < 1 or density > 3 then return false end
+	for _, field in ipairs({ "duplicate_hex_pairs", "repulsion_violations",
+		"outer_ring_spacing_violations", "surface_quota_spacing_violations" }) do
+		if tonumber(reason:match(field .. "=(%-?%d+)")) ~= 0 then return false end
+	end
+	return true
+end
+
+function SuperBigMap.GenerationReadiness.RecoverLoadedSurfaceDensityFailure(surface)
+	local readiness = SuperBigMap.GenerationReadiness
+	local reason = surface and surface.SuperBigMapSurfaceStretchFailed
+	if not readiness.IsLegacySurfaceDensityFailure(reason) then return false, "not a recoverable density failure" end
+	local underground = Global("UndergroundMap")
+	if surface ~= Global("MainMap") or surface.SuperBigMapExpanded == true
+		or surface.SuperBigMapNativeGenerationComplete ~= true
+		or surface.SuperBigMapCityInitializationComplete ~= true
+		or surface.SuperBigMapStretchPipelinePending == true
+		or not underground or underground.SuperBigMapNativeGenerationComplete ~= true
+		or underground.SuperBigMapCityInitializationComplete ~= true
+		or underground.SuperBigMapUndergroundPrepared == true
+		or type(underground.SuperBigMapUndergroundDeferredGeometry) ~= "table" then
+		return false, "interrupted surface recovery evidence is incomplete"
+	end
+	local g = underground.SuperBigMapUndergroundDeferredGeometry
+	if type(surface.GetMapSize) ~= "function" then return false, "saved surface geometry unavailable" end
+	local size_ok, width, height = pcall(surface.GetMapSize, surface)
+	local tile = (Global("const") or {}).HeightTileSize
+	if not size_ok or type(tile) ~= "number" or type(g.desired_width_tiles) ~= "number"
+		or type(g.desired_height_tiles) ~= "number"
+		or width ~= g.desired_width_tiles * tile or height ~= g.desired_height_tiles * tile then
+		return false, "saved surface/deferred geometry mismatch"
+	end
+	local report = { version = 1, original_failure = reason, status = "repairing", sites = {} }
+	surface.SuperBigMapLegacySurfaceRecovery = report
+	local failure
+	local function require_recovery(ok, why)
+		if ok then return end
+		failure = tostring(why)
+		local abort; abort() -- engine error() may only log; this must unwind.
+	end
+	local pause, resume = Global("Pause"), Global("Resume")
+	local pause_ild, resume_ild = Global("PauseInfiniteLoopDetection"), Global("ResumeInfiniteLoopDetection")
+	local key = "SuperBigMapLegacySurfaceRecovery"
+	local ok, err = pcall(function()
+		require_recovery(type(pause) == "function" and type(resume) == "function", "pause API unavailable")
+		pause(key)
+		if type(pause_ild) == "function" then pause_ild(key) end
+		require_recovery(RestoreDeferredUndergroundGeometry(underground), "deferred geometry unavailable")
+		local scene = TerrainCopy.PendingSurfaceEntranceObjects(surface)
+		local valid = Global("IsValid")
+		local existing_elevators = {}
+		for anchor in pairs(scene.anchors) do
+			local elevator = anchor.elevator
+			if valid(elevator) then
+				-- An already-built pair may have a valid native footprint despite the
+				-- interrupted final stage. Adopt it in place only with complete link,
+				-- coordinate and terrain evidence; never move a completed building.
+				local twin, other = anchor.other, elevator.other
+				require_recovery(valid(twin) and twin.other == anchor and twin:GetMap() == underground
+					and valid(other) and other.other == elevator and twin.elevator == other
+					and elevator.passage == anchor and other.passage == twin
+					and elevator:GetMap() == surface and other:GetMap() == underground,
+					"completed Elevator links are incomplete")
+				local pos, epos = anchor:GetPos(), elevator:GetPos()
+				require_recovery(anchor.SuperBigMapCommittedPassageLocked == true
+					and twin.SuperBigMapCommittedPassageLocked == true
+					and pos:x() == anchor.SuperBigMapCommittedPassageX
+					and pos:y() == anchor.SuperBigMapCommittedPassageY
+					and pos:x() == epos:x() and pos:y() == epos:y(),
+					"completed Elevator moved from its saved commitment")
+				local template = (Global("BuildingTemplates") or {}).Elevator
+				local flat, outline = Global("IsTerrainFlatForPlacement"), Global("GetEntityOutlineShape")
+				require_recovery(template and type(template.GetBuildShape) == "function"
+					and type(flat) == "function" and type(outline) == "function"
+					and flat(surface.buildable, template:GetBuildShape(), pos, anchor:GetAngle())
+					and flat(surface.buildable, outline(anchor.entity), pos, anchor:GetAngle()),
+					"completed Elevator footprint is invalid; relocation refused")
+				existing_elevators[#existing_elevators + 1] = anchor
+			end
+		end
+		for _, anchor in ipairs(existing_elevators) do anchor.SuperBigMapPassagePadPrepared = true end
+		report.existing_elevators_kept = #existing_elevators
+		-- Vanilla construction saves its connection in snapped_to. Associate the
+		-- unfinished site and its group leader with the existing passage mover so
+		-- handles, deliveries and progress survive the corrected footprint.
+		local sites = {}
+		surface:MapForEach("map", "ConstructionSite", function(site)
+			local anchor = site.snapped_to
+			if site.building_class == "Elevator" and scene.anchors[anchor] then
+				site.SuperBigMapDeferredElevatorPassage = anchor
+				sites[#sites + 1] = site
+				report.sites[#report.sites + 1] = { handle = site.handle, before = tostring(site:GetPos()) }
+				local leader = site.construction_group and site.construction_group[1]
+				if valid(leader) and leader:GetMap() == surface then
+					leader.SuperBigMapDeferredElevatorPassage = anchor
+				end
+			end
+		end)
+		scene = TerrainCopy.PendingSurfaceEntranceObjects(surface)
+		if next(scene.anchors) ~= nil then
+			local clearance = TerrainCopy.BuildSurfaceEntranceClearance(surface, scene)
+			local aligned, stats = TerrainCopy.AlignPassagePairsToSharedHex(underground, {
+				source_bootstrap = true, prepare_surface_pad = true, surface_clearance = clearance,
+				only_unprepared_surface = true,
+			})
+			report.alignment = stats
+			require_recovery(aligned, stats and (tostring(stats.error) .. ": " .. tostring(stats.reason)))
+		end
+		local committed, why = TerrainCopy.ValidateSurfacePassageCommitment(underground, true)
+		require_recovery(committed, why)
+		for i, site in ipairs(sites) do
+			report.sites[i].after = tostring(site:GetPos())
+			local bbox = Global("GetConstructionBBox")
+			if type(bbox) == "function" then
+				site.construction_bbox = bbox(site)
+				local group = site.construction_group
+				local leader = group and group[1]
+				if valid(leader) and type(leader.construction_bbox) == "table" then
+					for n = 2, #group do if group[n] == site then leader.construction_bbox[n] = site.construction_bbox end end
+				end
+			end
+			if type(site.UpdateConstructionVisualization) == "function" then site:UpdateConstructionVisualization() end
+		end
+		underground.SuperBigMapPassageSurfaceFinalCommitted = true
+		-- Keep the historical failure in the persisted recovery record. Only the
+		-- validated entrance stage is completed; no terrain stretch, resource
+		-- top-up, decoration relocation, or colony reset is replayed on load.
+		surface.SuperBigMapExpanded = true
+		surface.SuperBigMapSurfaceStretchDone = true
+		surface.SuperBigMapSurfaceStretchFailed = false
+		local rewards_ok, rewards_error = SuperBigMap.DepositRules.FlushStartupTechnologySpawns(surface)
+		if not rewards_ok then
+			surface.SuperBigMapExpanded, surface.SuperBigMapSurfaceStretchDone = false, false
+			surface.SuperBigMapSurfaceStretchFailed = reason
+			require_recovery(false, rewards_error)
+		end
+		report.status = "complete"
+	end)
+	if type(resume_ild) == "function" then pcall(resume_ild, key) end
+	if type(resume) == "function" then pcall(resume, key) end
+	if not ok then
+		report.status, report.error = "failed", failure or tostring(err)
+		return false, report.error
+	end
+	return true, report
 end
 
 local function UndergroundExpansionReadiness(map)
@@ -13376,6 +13548,24 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 					if type(deposits.BeginUndergroundTopUpWallIgnore) ~= "function"
 						or type(deposits.EndUndergroundTopUpWallIgnore) ~= "function" then
 						error("underground rubble-wall density transaction is unavailable")
+					end
+					-- Native markers displaced by a wonder must claim reachable terrain before
+					-- additions reserve it with their family repulsion. Relocating them only
+					-- after top-ups can saturate every candidate (1S158E: native Metals versus
+					-- added Metals, 51,200 world-unit exclusion). The same strict validator
+					-- runs again after additions and rubble-wall restoration below.
+					if type(deposits.RelocateUnreachableUndergroundEnrichments) ~= "function" then
+						error("underground native enrichment reachability is unavailable")
+					end
+					local native_relocation_token = LoadingBegin("underground native enrichment reachability before additions", map)
+					local native_relocation_ok, native_relocation_stats =
+						deposits.RelocateUnreachableUndergroundEnrichments(map)
+					map.SuperBigMapNativeEnrichmentReachability = native_relocation_stats
+					LoadingEnd(native_relocation_token, native_relocation_stats, native_relocation_ok == true)
+					if native_relocation_ok ~= true then
+						error("underground native enrichment reachability failed before additions: "
+							.. tostring(native_relocation_stats and (native_relocation_stats.unresolved_details
+								or native_relocation_stats.error or native_relocation_stats.unresolved)))
 					end
 					local wall_token = LoadingBegin("underground suspend removable rubble walls", map)
 					local wall_begin_ok, wall_begin_stats =
