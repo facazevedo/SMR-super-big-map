@@ -501,6 +501,14 @@ local function RunSurface(map)
 			end
 			if complete and low<=high then component.clearance={low,high} end
 		end end
+		-- Rounded point heights can claim contact on a steep slope while the
+		-- rendered triangle still floats. For added rocks already nominated for
+		-- correction, use the exact terrain-face extrema before choosing a drop.
+		-- This bounded local refinement leaves the full-map witness pass unchanged;
+		-- independent actual-pose validation still decides whether to commit.
+		if topup and not entry.foundation and validator.RefineSeatingComponents then
+			validator.RefineSeatingComponents(map,entry)
+		end
 		local plan,why,terrain_proposal=Seating.Plan(entry.components,height_at,{tile=5*tile,allow_xy=topup and not entry.foundation,rings=32,allowed=allowed,
 			visible_fraction=0.5,retain_existing_visibility=true})
 		-- A collision veto cannot be fixed by recomputing the same terrain-only
