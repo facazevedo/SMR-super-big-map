@@ -1370,3 +1370,56 @@ Local mod code is deployed, metadata remains1210, and nothing was published.
 The24-mod preference was restored and owned native games closed cleanly.
 The broader105/138 campaign remains paused. Evidence:
 `_ralph/runs/sol95-underground1210-20261014/summary.json`.
+
+## 2026-10-14 - Ten random expanded configurations, generator guard486
+
+The requested round found a reproducible5N73E surface top-up support failure.
+Rounded terrain samples selected an insufficient drop for a slate rock on a
+steep slope; independent rendered-geometry validation correctly rejected it.
+The general correction uses existing bounded terrain-face refinement for added
+rocks already nominated for repair. It adds no whole-map scan and preserves
+visibility, collision, rollback and final independent support checks.
+The new production-service fixture fails before the change and passes after it;
+all131 host fixtures and40 Lua syntax checks pass. Fix commit1275ee6.
+
+The exact failing5N73E was qualified before continuing. It retains all14,343
+surface rocks, with9 corrected and0 unresolved/rejected; surface63.171s and
+underground49.201s, including entrance rubble, full content and both reload
+paths. This identical-payload qualification is retained in the final round.
+Earlier guard485 passes were rerun on guard486, ordered by worst measured
+surface time and then underground time, with exact retained57S168E first.
+Its save/reload qualification completed before the next launch.
+
+| Scenario | Surface START-to-T1(s) | Underground(s) |
+|---|---:|---:|
+|57S168E retained control|84.663|38.603|
+|34S10W|60.689|37.938|
+|25S5W|65.877|50.452|
+|2N69W|65.889|31.304|
+|53S106E|59.255|29.895|
+|5N73E|63.171|49.201|
+|12N21E|83.255|35.266|
+|66S107W|79.790|35.118|
+|0S130W|75.779|40.642|
+|36S158W|79.537|43.687|
+|49S75W|51.733|29.965|
+
+All eleven final qualifications have verified release hooks/prefab resolution,
+no Lua errors and timings below100s/70s. The ten random cases cover five rough
+and five normal maps, ten commanders, eight sponsors, four mysteries and nine
+companion-mod combinations. Five inject cave-in rubble at both deferred
+entrances. Both-layer resource/deposit/anomaly/effect and decoration top-ups,
+surface support, underground correction/reachability, immutable passages,
+deferred/prepared save-reload, overview/outer scanning and revisit checks pass.
+Final marker/decor signatures remain stable across reload. These are single
+measurements per final configuration, not long-running colony simulations.
+
+Two native launches crashed before scenario generation: PDXSDK.dll/c0000005 on
+the first5N73E launch, and ntdll.dll/c0000374 on a diagnostic launch. Crash dumps
+and exact-retry evidence remain preserved; neither is hidden as a passed run.
+Four missing companion packs were restored from the existing Steam cache with
+matching historical hashes. The original24-mod preference was restored and all
+owned games closed cleanly. Source/local payload hashes match; metadata1210 is
+unchanged, and no publication was performed. The broader105/138 campaign stays
+paused. Evidence: `_ralph/runs/guard486-random10-20261014/summary.json` and
+`report.html`; earlier evidence: `_ralph/runs/guard485-random10-20261014`.

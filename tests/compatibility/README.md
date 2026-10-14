@@ -241,3 +241,19 @@ with release hooks/prefab names and no Lua errors. Full-mod Sol95 gameplay check
 pass, but its strict log gate remains unclean because of the pre-existing Red
 Horizon LowGHydrosynthsis assertion. Available Automated Food Farm12 differs
 from the save's13. These limitations are not suppressed by the tests.
+
+Generator guard486 adds topup_slope_seating_test.lua, proven red before the fix.
+It exercises the production correction service and terrain-face refinement with
+a steep plane where rounded point samples falsely suggest contact. The final
+independent check requires actual contact and retained visible height. Added
+rocks already nominated for correction now receive the existing bounded face
+refinement before planning; full-map nomination and final validation are unchanged.
+All131 fixture files and40 production Lua syntax checks pass.
+
+The ten new random expanded configurations and exact retained57S168E control
+pass on guard486. Coverage includes five rough/five normal maps, ten commanders,
+eight sponsors, four mysteries, nine companion-mod combinations and five cases
+with cave-in rubble injected at both entrances. Both layers pass content/top-up
+censuses, quotas, support, save/reload, scanning and underground revisit checks.
+Evidence: _ralph/runs/guard486-random10-20261014/summary.json and report.html.
+The preceding guard485 round and its5N73E failure remain preserved.
