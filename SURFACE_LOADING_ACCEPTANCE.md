@@ -1325,3 +1325,48 @@ behavior is preserved rather than inventing unknown historical counts. No colony
 regeneration or original-save rewrite. Dedicated XL-stutter testing was not part
 of this run. The broader105/138 campaign remains paused.
 Evidence: `_ralph/runs/original-saves-1208-20261008/summary.json` and `report.html`.
+
+## 2026-10-14 - Sol95 deferred passage failure, generator guard485
+
+The unchanged `_ Sol 95.savegame.sav` reproduces the final passage pad failure:
+two vanilla CaveInRubble objects occupy the expanded underground Elevator
+footprint. The planner now preserves these gameplay objects while seating the
+committed underground pad. Surface/bootstrap footprints, terrain validity,
+authored tunnel walls and unrelated buildings remain strict. The change adds
+only a predicate to the existing footprint walk, with no new whole-map scan.
+
+Existing saves at this exact failed stage can resume after the one-way terrain
+transform. Eligibility checks persisted geometry and passage commitments; live
+wonder reservations are reconstructed before top-ups. Unknown failures and
+previous recovery attempts remain blocked. A readiness wait does not consume
+the recovery attempt. Original Sol95 recovers in19.627s, preserving859 surface
+buildings,46 rubble objects,2 wonders and the paired elevators. The independent
+checkpoint `SBM Sol95 underground fixed test.savegame.sav` passes warm and cold
+reload and underground revisit. The original SHA256 remains
+`93d6668d659c7bb59be892374267e26e77fa2228e9069c39433709b1e53140f1`.
+
+The exact retained57S168E scenario ran first in the fresh regression round,
+following its worst107.688s/current93.994s release-mode evidence. Seeds,
+MetatronMystery, Agronomist, TerraInitiative, Hunger and RoughTerrain were held
+fixed. Injected cave-in rubble at both deferred entrances survives expansion
+and reload, through the normal new-game path. The accepted SBM-only run has
+85.783s surface START-to-T1 and35.907s underground preparation; release hooks
+and prefab resolution verified, no Lua errors. Both-layer content censuses,
+decoration stability, resource/anomaly/effect quotas, deferred/prepared reload,
+outer-sector scanning and underground revisit pass. This is one measured case,
+not an average or a new ten-case campaign.
+
+The full24-mod save has a pre-existing Red Horizon LowGHydrosynthsis parent-cache
+assertion during mod startup. Cold gameplay checks pass, but the full-mod run
+does not qualify as error-free. Its first log fetch also hit a Windows CLI Unicode
+encoding error; the same owned log was retrieved with PYTHONUTF8=1. Automated
+Food Farm12 is the available Steam version, versus13 recorded by the save. All
+other required mod versions match. Required debug executable revision405907
+differs from the save's406343. No original save or game-install file was changed.
+
+All130 host fixtures and40 production Lua syntax checks passed; the final
+readiness-order correction additionally passes its production entry-path fixture.
+Local mod code is deployed, metadata remains1210, and nothing was published.
+The24-mod preference was restored and owned native games closed cleanly.
+The broader105/138 campaign remains paused. Evidence:
+`_ralph/runs/sol95-underground1210-20261014/summary.json`.

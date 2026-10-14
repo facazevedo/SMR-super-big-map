@@ -58,6 +58,7 @@ do
 		"SuperBigMapDeferredUndergroundWondersPending", "SuperBigMapDeferredUndergroundWonderCount",
 		"SuperBigMapSurfaceStretchFailed", "SuperBigMapUndergroundStretchFailed",
 		"SuperBigMapLegacySurfaceRecovery",
+		"SuperBigMapPassageFailureRecovery",
 		"SuperBigMapDeferredStartupTechSpawns",
 	}) do
 		if type(register) == "function" and (type(registry) ~= "table" or registry[name] == nil) then

@@ -7001,7 +7001,7 @@ end
 -- affine anchors used during materialization, then every deposit placement query performs only a
 -- single hash lookup. Unioning the enclosed and outline shapes covers both the playable interior
 -- and the authored wall/crystal geometry without adding an artificial clearance ring.
-function WonderVerticalDiagnostics.ReserveDeferredUndergroundWonderFootprints(map, deposit_rules)
+function WonderVerticalDiagnostics.ReserveDeferredUndergroundWonderFootprints(map, deposit_rules, from_live_wonders)
 	if type(deposit_rules) ~= "table"
 		or type(deposit_rules.SetUndergroundWonderReservedHexes) ~= "function" then
 		return false, { error = "underground wonder reservation API is unavailable" }
@@ -7025,8 +7025,9 @@ function WonderVerticalDiagnostics.ReserveDeferredUndergroundWonderFootprints(ma
 
 	local reserved, classes = {}, {}
 	local wonders, source_shape_hexes, scaled_shape_hexes = 0, 0, 0
-	for _, marker in ipairs(ArtefactMapGet(map, "BuriedWonderMarker")) do
-		local class_name = marker and marker.SuperBigMapDeferredWonderClass
+	for _, marker in ipairs(ArtefactMapGet(map,
+		from_live_wonders and "UndergroundWonder" or "BuriedWonderMarker")) do
+		local class_name = marker and (from_live_wonders and marker.class or marker.SuperBigMapDeferredWonderClass)
 		if type(class_name) == "string" and class_name ~= "" then
 			local template = templates[class_name]
 			local entity = type(template) == "table" and template.entity or nil
@@ -13099,6 +13100,44 @@ local function UndergroundExpansionReadiness(map)
 	return false, "surface expansion transaction has not completed"
 end
 
+-- Only this terminal failure identifies a completed terrain/object transform
+-- stopped immediately before passage activation and enrichment top-ups. Never
+-- retry its one-way source stages, or infer completion from allocated size alone.
+function SuperBigMap.GenerationReadiness.CanResumePassageFailure(map)
+	if type(map) ~= "table" or map.SuperBigMapUndergroundPreparationFailed ~= true
+		or map.SuperBigMapPassageFailureRecovery or map.SuperBigMapUndergroundPrepared == true
+		or map.SuperBigMapExpanded == true or map.SuperBigMapForcedImpassDeferred == true
+		or map.SuperBigMapNativeGenerationComplete ~= true
+		or map.SuperBigMapCityInitializationComplete ~= true then return false end
+	local failure = map.SuperBigMapUndergroundStretchFailed
+	local signature = "final passage-pair alignment failed: underground passage pad preparation failed: refusing to flatten invalid Elevator footprint: blocked footprint hex"
+	if type(failure) ~= "string" or failure:sub(-#signature) ~= signature then return false end
+	if not map.mapdata or Engine.MapDataEnvironment(map.mapdata) ~= "Underground"
+		or not SuperBigMap.SectorGrid.IsModMap(map) then return false end
+	local geometry = map.SuperBigMapUndergroundDeferredGeometry
+	if type(geometry) ~= "table" or type(geometry.source_width_tiles) ~= "number"
+		or type(geometry.source_height_tiles) ~= "number"
+		or type(geometry.desired_width_tiles) ~= "number"
+		or type(geometry.desired_height_tiles) ~= "number"
+		or geometry.desired_width_tiles <= geometry.source_width_tiles
+		or geometry.desired_height_tiles <= geometry.source_height_tiles then return false end
+	local surface = Global("MainMap")
+	if not surface or surface.SuperBigMapExpanded ~= true
+		or not TerrainCopy.ValidateSurfacePassageCommitment(map) then return false end
+	local count, valid = 0, true
+	for _, passage in ipairs(ArtefactMapGet(map, "ElevatorPassage")) do
+		if passage.other and passage.other:GetMap() == surface then
+			count = count + 1
+			local x, y = PointXY(passage:GetPos())
+			if passage.SuperBigMapCommittedPassageLocked ~= true
+				or passage.SuperBigMapDeferredTunnelSpawnPending ~= true
+				or x ~= passage.SuperBigMapTrueUndergroundPassageX
+				or y ~= passage.SuperBigMapTrueUndergroundPassageY then valid = false end
+		end
+	end
+	return valid and count > 0
+end
+
 local function RunUndergroundStretchIfEnabled(map, force_now)
 	if not cfg_bool("STRETCH_UNDERGROUND", false) then
 		return false, "underground stretch is disabled"
@@ -13120,7 +13159,9 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 	if map.SuperBigMapUndergroundStretchDone == true then
 		return force_now == true and true or false
 	end
-	if map.SuperBigMapUndergroundPreparationFailed == true then
+	local resume_passage_failure = force_now == true
+		and SuperBigMap.GenerationReadiness.CanResumePassageFailure(map)
+	if map.SuperBigMapUndergroundPreparationFailed == true and not resume_passage_failure then
 		return false, map.SuperBigMapUndergroundStretchFailed
 			or "a previous underground preparation attempt failed"
 	end
@@ -13163,6 +13204,14 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 	if force_now ~= true and (type(create_thread) ~= "function"
 		or (not ready_now and type(wait_msg) ~= "function")) then
 		return false, "required asynchronous engine functions are unavailable"
+	end
+	if resume_passage_failure then
+		-- A temporarily unready surface must not consume the single recovery attempt.
+		map.SuperBigMapPassageFailureRecovery = {
+			status = "running", original_failure = map.SuperBigMapUndergroundStretchFailed,
+			stage = "final passage alignment", terrain_replayed = false,
+		}
+		map.SuperBigMapUndergroundPreparationFailed = false
 	end
 	map.SuperBigMapUndergroundStretchPending = true
 	map.SuperBigMapUndergroundStretchRunning = true
@@ -13226,6 +13275,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 		end
 		local terrain_stretch_error
 		local ok_branch, branch_err = pcall(function()
+			if not resume_passage_failure then
 			-- A surface Elevator may already be finished while its paired underground half is a
 			-- pending site with a destroyed linked_obj. Snapshot/remove only that underground half
 			-- before any position sweep; rebuild it after the final buildable grid exists.
@@ -13362,6 +13412,18 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				local wonder_ok, wonder_result = MaterializeDeferredUndergroundWonders(map)
 				if wonder_ok ~= true then
 					error("deferred underground wonder materialization failed: " .. tostring(wonder_result))
+				end
+			end
+			end -- source transform: never replay on a saved passage-stage failure
+			if resume_passage_failure then
+				-- Reservations are transient and their markers were consumed. Rebuild
+				-- from each live wonder's persisted source pose before any top-up; do not respawn
+				-- wonders or repeat native clearance on the already expanded map.
+				local reserved, reservation = WonderVerticalDiagnostics.ReserveDeferredUndergroundWonderFootprints(
+					map, SuperBigMap.DepositRules, true)
+				if not reserved or not reservation
+					or reservation.wonders ~= map.SuperBigMapDeferredUndergroundWonderCount then
+					error("saved underground wonder reservations could not be restored")
 				end
 			end
 			-- Entrance visuals are finalized only after the authoritative underground coordinate has
@@ -13931,6 +13993,11 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			map.SuperBigMapSkipNextLifecycleBoundsRebuild = nil
 		end
 		map.SuperBigMapUndergroundStretchRunning = false
+		if resume_passage_failure then
+			local report = map.SuperBigMapPassageFailureRecovery
+			report.status = ok_branch and "complete" or "failed"
+			report.error = not ok_branch and tostring(branch_err) or nil
+		end
 		local msg = Global("Msg")
 		if type(msg) == "function" then
 			local restore_token = ok_branch and Global("CurrentMap") == map
@@ -14882,8 +14949,9 @@ local function PatchDeferredUndergroundAccess(source)
 			end
 		end
 
-		if target.SuperBigMapUndergroundStretchFailed
-			or target.SuperBigMapUndergroundPreparationFailed == true then
+		if (target.SuperBigMapUndergroundStretchFailed
+			or target.SuperBigMapUndergroundPreparationFailed == true)
+			and not SuperBigMap.GenerationReadiness.CanResumePassageFailure(target) then
 			show_failure(target.SuperBigMapUndergroundStretchFailed
 				or "A previous underground preparation attempt failed")
 			return false

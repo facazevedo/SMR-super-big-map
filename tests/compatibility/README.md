@@ -222,3 +222,22 @@ classes; this does not certify every possible route through or around the rubble
 
 
 Build1208 adds anomaly_requested_quota_test.lua: exact native random quotas, no rerolls, absent categories/donors, finite-pool preservation, legacy fallback and cleanup. The heightfield parity fixture also covers expanded diagonal planes, reversed winding and degenerate faces. All129 fixture files pass; twelve final-payload native scenarios pass. Evidence: _ralph/runs/release1208-extra10-20261008/summary.json.
+
+Generator guard485 fixes deferred entrance preparation beneath preserved vanilla
+cave-in rubble. The passage safety fixture was red on the original planner; it
+now accepts CaveInRubble while continuing to reject tunnel walls and unrelated
+buildings. passage_failure_recovery_test.lua checks the production eligibility
+gate and entry path: exact failed stage, immutable anchors, foreign maps,
+incomplete geometry, retry prevention, and readiness waits that preserve the
+original failure evidence. All130 fixtures passed; the recovery entry fixture
+was rerun after the final readiness-order correction.
+
+Native MarsDebug evidence for the original Sol95 save, save/reload, cold reload
+and the retained expanded57S168E case is under
+_ralph/runs/sol95-underground1210-20261014. The SBM-only fresh case deliberately
+places cave-in rubble at both deferred entrances and verifies it survives
+expansion and reload. Surface START-to-T1:85.783s; underground:35.907s; accepted
+with release hooks/prefab names and no Lua errors. Full-mod Sol95 gameplay checks
+pass, but its strict log gate remains unclean because of the pre-existing Red
+Horizon LowGHydrosynthsis assertion. Available Automated Food Farm12 differs
+from the save's13. These limitations are not suppressed by the tests.

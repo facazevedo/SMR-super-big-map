@@ -9053,6 +9053,21 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 		return ok and value or nil
 	end
 
+	local function compatible_occupant(obstruction, anchor, map)
+		if obstruction == anchor or (obstruction and (obstruction.passage == anchor
+			or obstruction.other == anchor or obstruction.linked_obj == anchor
+			or obstruction.SuperBigMapDeferredElevatorPassage == anchor
+			or obstruction.spawner == anchor)) then return true end
+		-- Disasters run while first underground access is deferred. Their rubble
+		-- is deliberately preserved by the stretch and native ClearObstructions
+		-- does not remove Buildings. Seating an already committed pad beneath it
+		-- must not become a new-building placement check: leave its obstruction,
+		-- shrouding and clearing requests intact for normal gameplay. Bootstrap,
+		-- surface placement, tunnel walls and every other Building remain strict.
+		return not source_bootstrap and map == underground_map
+			and IsKindOfSafe(obstruction, "CaveInRubble") and map_of(obstruction) == map
+	end
+
 	local function map_point_in_bounds(map, x, y)
 		local w, h = map == surface_map and surface_w or underground_w,
 			map == surface_map and surface_h or underground_h
@@ -9138,11 +9153,7 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 				if type(obstructions) == "table" then
 					for i = 1, #obstructions do
 						local obstruction = obstructions[i]
-						local follows_anchor = obstruction == anchor
-							or (obstruction and (obstruction.passage == anchor
-								or obstruction.other == anchor or obstruction.linked_obj == anchor
-								or obstruction.SuperBigMapDeferredElevatorPassage == anchor
-								or obstruction.spawner == anchor))
+						local follows_anchor = compatible_occupant(obstruction, anchor, map)
 						if not follows_anchor then
 							failure_reason = "blocked footprint hex"
 							return false
@@ -9209,11 +9220,7 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 				if ok_obstructions and type(obstructions) == "table" then
 					for oi = 1, #obstructions do
 						local obstruction = obstructions[oi]
-						local follows_anchor = obstruction == anchor
-							or (obstruction and (obstruction.passage == anchor
-								or obstruction.other == anchor or obstruction.linked_obj == anchor
-								or obstruction.SuperBigMapDeferredElevatorPassage == anchor
-								or obstruction.spawner == anchor))
+						local follows_anchor = compatible_occupant(obstruction, anchor, map)
 						if not follows_anchor then
 							blockers = blockers + 1
 							first_blocker = first_blocker or tostring(obstruction and obstruction.class)

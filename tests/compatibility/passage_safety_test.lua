@@ -157,6 +157,20 @@ for _,case in ipairs({{0},{1},{2},{17},{0,true},{0,false,true},{0,false,false,tr
  assert(validator(underground) and not validator(underground,true),
   'generation must check the settled terrain, but later Elevator occupancy is not a load failure')
  globals.IsTerrainFlatForPlacement=previous_flat
+ -- Cave-ins can occur on the deferred underground while the colony plays on
+ -- the surface. They remain gameplay rubble, not a failure to seat the pad.
+ -- Only that rubble on the final underground may coexist with the pad.
+ for _,class in ipairs({'CaveInRubble','TunnelBlockerRubble','Building'}) do
+  local blocker=anchor(underground,40,40);blocker.class=class
+  environment.IsKindOfSafe=function(o,c) return o.class==c end
+  underground.object_hex_grid.GetBuildObstructions=function() return {blocker} end
+  local accepted,reason=planner(underground)
+  assert(accepted==(class=='CaveInRubble'),
+   'final passage must preserve cave-in rubble while rejecting unrelated blockers: '..class)
+  assert(blocker.pos.px==40 and blocker.pos.py==40,'passage preparation moved gameplay rubble')
+ end
+ underground.object_hex_grid.GetBuildObstructions=function() return {} end
+ environment.IsKindOfSafe=function() return false end
  -- Every pair is checked before any deferred mutation, including a corrupt second pair.
  local u2,s2=anchor(underground,25,25),anchor(surface,50,50)
  u2.other,s2.other=s2,u2
