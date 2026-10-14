@@ -3,7 +3,7 @@ return PlaceObj('ModDef', {
 	'description', "Super Big Map\n\n3x more map. No extra fries.\n\nOn the Colony Site screen, toggle EXPAND MAP before pressing START. Expanded new games use a 20 x 20 sector grid, giving you 300 additional sectors to explore and build on. The native vanilla terrain is generated once and proportionally stretched across the expanded destination; no terrain mirroring or alternate expansion mode is used. Leave EXPAND MAP off for a completely vanilla game: all Super Big Map gameplay, UI, camera, and generation changes remain disabled.\n\nExpanded-map zoom can be changed in Game Options -> Options -> Display -> Max Zoom Level.\n\nRequirements and Compatibility:\n\nYou must start a new game with EXPAND MAP enabled. Existing saves will not be expanded.\nInitial loading takes longer because the expanded map requires more processing.\nDo not use other zoom mods. SBM includes its own zoom settings for expanded maps.\n\n[IMPORTANT]: Quit and restart the game after enabling this mod to clear cached data.\nTested on Surviving Mars Relaunched v1.1.1.405907 on Windows 11. This compatibility version is Lua-only and needs no executable patch. Start a new expanded game; pre-update expanded saves have not been validated.\n\nFeedback and bug reports: https://smr-mods-feedback.fredware.app or https://github.com/facazevedo/surviving-mars-relaunched-mods/issues",
 	'short_description', "Adds an opt-in stretch-generated 20 x 20 map expansion.",
 	'image', "Mod/SuperBigMap/Images/final_composed.jpg",
-	'last_changes', "Version 1210\n\nExpanded anomaly targets now preserve the counts requested by the native generator, including FreeTech anomalies missing from crowded source maps. Resources, deposits and decoration top-ups retain their placement checks.\n\nFixed loading failures caused by floating rocks at different detail levels. Exact terrain clearance checks reuse cells and skip cells outside the rock face, reducing loading work without scanning the whole map or removing decorations.\n\nInterrupted expansions recover surface scanning and underground access while preserving the colony and completed elevators. Starting commander deposits and breakthrough rewards initialize against the finished terrain.\n\nAdded scoped compatibility for Mars Expedition Deluxe elevator queries, Omega Telescope load counters and the debug Load screen. Removed the four temporary controls.\n\nValidated with varied expanded-map configurations and save/reload checks, including Meklon and International Mars Mission Sol 69.",
+	'last_changes', "Version 1212\n\nExpanded anomaly targets now preserve the counts requested by the native generator, including FreeTech anomalies missing from crowded source maps. Resources, deposits and decoration top-ups retain their placement checks.\n\nFixed loading failures caused by floating rocks at different detail levels. Exact terrain clearance checks reuse cells and skip cells outside the rock face, reducing loading work without scanning the whole map or removing decorations.\n\nInterrupted expansions recover surface scanning and underground access while preserving the colony and completed elevators. Starting commander deposits and breakthrough rewards initialize against the finished terrain.\n\nAdded scoped compatibility for Mars Expedition Deluxe elevator queries, Omega Telescope load counters and the debug Load screen. Removed the four temporary controls.\n\nValidated with varied expanded-map configurations and save/reload checks, including Meklon and International Mars Mission Sol 69.",
 	'ignore_files', {
 		"*.git/*",
 		".git/*",
@@ -18,7 +18,7 @@ return PlaceObj('ModDef', {
 	},
 	'id', "SuperBigMap",
 	'author', "fredware",
-	'version', 1210,
+	'version', 1213,
 	'lua_revision', 350453,
 	'saved_with_revision', 405907,
 	'code', {
@@ -63,10 +63,10 @@ return PlaceObj('ModDef', {
 		"Code/sbm_lifecycle.lua",
 		"Code/SuperBigMap.lua",
 	},
-	'saved', 1791216856,
-	'code_hash', 4002211230779271681,
+	'saved', 1791987190,
+	'code_hash', 6874932590822874242,
 	'pdx_id', 146312,
-	'pdx_version', "22",
+	'pdx_version', "23",
 	'steam_id', "3759751183",
 	'TagGameplay', true,
 })
